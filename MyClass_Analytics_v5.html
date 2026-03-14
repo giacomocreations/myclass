@@ -11056,36 +11056,34 @@ Rispondi SOLO con JSON valido:
         async function _driveCheckNewerVersion() {
             if (!_driveToken) return;
             try {
-                // Cerca il file su Drive e legge la data di modifica
-                const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
-                const res = await fetch(
-                    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,modifiedTime)`,
-                    { headers: { Authorization: `Bearer ${_driveToken}` } }
-                );
-                if (!res.ok) return;
-                const json = await res.json();
-                const file = json.files?.[0];
-                if (!file) return;
+                await _driveApiCall(async () => {
+                    const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+                    const res = await fetch(
+                        `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,modifiedTime)`,
+                        { headers: { Authorization: `Bearer ${_driveToken}` } }
+                    );
+                    if (!res.ok) throw new Error(res.status);
+                    const json = await res.json();
+                    const file = json.files?.[0];
+                    if (!file) return;
 
-                _driveFileId = file.id;
-                localStorage.setItem(DRIVE_FILE_ID_KEY, file.id);
+                    _driveFileId = file.id;
+                    localStorage.setItem(DRIVE_FILE_ID_KEY, file.id);
 
-                const driveModified = new Date(file.modifiedTime).getTime();
-                const localSaved    = parseInt(localStorage.getItem('myclass_last_save') || '0');
+                    const driveModified = new Date(file.modifiedTime).getTime();
+                    const localSaved    = parseInt(localStorage.getItem('myclass_last_save') || '0');
 
-                // Se Drive è più recente di almeno 30 secondi rispetto al salvataggio locale
-                if (driveModified > localSaved + 30000) {
-                    const driveTime = new Date(file.modifiedTime).toLocaleString('it-IT', {
-                        day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'
-                    });
-                    const localTime = localSaved
-                        ? new Date(localSaved).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
-                        : 'mai';
-
-                    // Mostra banner non invasivo in cima
-                    _driveShowUpdateBanner(driveTime, localTime);
-                }
-            } catch(e) { /* silenzioso */ }
+                    if (driveModified > localSaved + 30000) {
+                        const driveTime = new Date(file.modifiedTime).toLocaleString('it-IT', {
+                            day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'
+                        });
+                        const localTime = localSaved
+                            ? new Date(localSaved).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+                            : 'mai';
+                        _driveShowUpdateBanner(driveTime, localTime);
+                    }
+                });
+            } catch(e) { /* silenzioso — token scaduto gestito da _driveApiCall */ }
         }
 
         function _driveShowUpdateBanner(driveTime, localTime) {
