@@ -11043,12 +11043,75 @@ Rispondi SOLO con JSON valido:
             }
             const savedToken = _driveLoadToken();
             if (savedToken) {
-                _driveToken  = savedToken;
-                _driveFileId = localStorage.getItem(DRIVE_FILE_ID_KEY) || null;
+                _driveToken    = savedToken;
+                _driveFileId   = localStorage.getItem(DRIVE_FILE_ID_KEY) || null;
                 _driveAutoSave = localStorage.getItem(DRIVE_AUTO_KEY) === 'true';
                 _driveUpdateUI(true);
                 _driveStatusMsg('✅ Connesso a Google Drive', '#34a853');
+                // Controlla silenziosamente se Drive ha una versione più recente
+                _driveCheckNewerVersion();
             }
+        }
+
+        async function _driveCheckNewerVersion() {
+            if (!_driveToken) return;
+            try {
+                // Cerca il file su Drive e legge la data di modifica
+                const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+                const res = await fetch(
+                    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,modifiedTime)`,
+                    { headers: { Authorization: `Bearer ${_driveToken}` } }
+                );
+                if (!res.ok) return;
+                const json = await res.json();
+                const file = json.files?.[0];
+                if (!file) return;
+
+                _driveFileId = file.id;
+                localStorage.setItem(DRIVE_FILE_ID_KEY, file.id);
+
+                const driveModified = new Date(file.modifiedTime).getTime();
+                const localSaved    = parseInt(localStorage.getItem('myclass_last_save') || '0');
+
+                // Se Drive è più recente di almeno 30 secondi rispetto al salvataggio locale
+                if (driveModified > localSaved + 30000) {
+                    const driveTime = new Date(file.modifiedTime).toLocaleString('it-IT', {
+                        day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'
+                    });
+                    const localTime = localSaved
+                        ? new Date(localSaved).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+                        : 'mai';
+
+                    // Mostra banner non invasivo in cima
+                    _driveShowUpdateBanner(driveTime, localTime);
+                }
+            } catch(e) { /* silenzioso */ }
+        }
+
+        function _driveShowUpdateBanner(driveTime, localTime) {
+            // Rimuovi eventuale banner precedente
+            document.getElementById('driveBanner')?.remove();
+
+            const banner = document.createElement('div');
+            banner.id = 'driveBanner';
+            banner.style.cssText = `
+                position:fixed; top:0; left:0; right:0; z-index:99999;
+                background:#1565c0; color:white;
+                padding:10px 20px; font-size:13px; font-weight:600;
+                display:flex; align-items:center; justify-content:center;
+                gap:14px; flex-wrap:wrap; box-shadow:0 2px 8px rgba(0,0,0,0.3);
+            `;
+            banner.innerHTML = `
+                <span>☁️ Su Drive c'è una versione più recente (${driveTime}) — locale: ${localTime}</span>
+                <button onclick="driveLoadSilent()" style="background:white;color:#1565c0;border:none;border-radius:6px;padding:5px 14px;font-weight:700;cursor:pointer;font-size:13px;">📥 Carica</button>
+                <button onclick="document.getElementById('driveBanner').remove()" style="background:rgba(255,255,255,0.25);color:white;border:none;border-radius:6px;padding:5px 12px;font-weight:600;cursor:pointer;font-size:13px;">Ignora</button>
+            `;
+            document.body.prepend(banner);
+        }
+
+        async function driveLoadSilent() {
+            document.getElementById('driveBanner')?.remove();
+            await driveLoad();
         }
 
         function _driveLoadToken() {
@@ -11174,6 +11237,7 @@ Rispondi SOLO con JSON valido:
 
                 _driveFileId = fileId;
                 const now = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                localStorage.setItem('myclass_last_save', Date.now().toString());
                 _driveStatusMsg('✅ Salvato su Drive alle ' + now, '#34a853');
                 const lastEl = document.getElementById('driveLastSave');
                 if (lastEl) { lastEl.textContent = 'Ultimo salvataggio: ' + now; lastEl.style.display = ''; }
@@ -11210,7 +11274,8 @@ Rispondi SOLO con JSON valido:
                 if (!confirm('📥 Vuoi caricare il backup da Drive?\n\nI dati attuali verranno sostituiti.\n\nContinuare?')) return;
 
                 data = loaded;
-                localStorage.setItem('myclass_data', JSON.stringify(data));
+                localStorage.setItem('myclass_gemini_data', JSON.stringify(data));
+                localStorage.setItem('myclass_last_save', Date.now().toString());
                 _driveFileId = fileId;
                 localStorage.setItem(DRIVE_FILE_ID_KEY, fileId);
                 _driveStatusMsg('✅ Dati caricati da Drive', '#34a853');
