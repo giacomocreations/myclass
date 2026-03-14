@@ -11123,6 +11123,8 @@ Rispondi SOLO con JSON valido:
             } catch { return null; }
         }
 
+        let _driveTokenClient = null; // cached tokenClient for silent refresh
+
         function driveConnect() {
             const clientId = document.getElementById('driveClientId')?.value.trim();
             if (!clientId) { alert('Inserisci il Client ID OAuth prima di connetterti.'); return; }
@@ -11133,18 +11135,117 @@ Rispondi SOLO con JSON valido:
                 return;
             }
 
-            const tokenClient = google.accounts.oauth2.initTokenClient({
+            _driveInitTokenClient(clientId, (resp) => {
+                if (resp.error) {
+                    _driveStatusMsg('❌ Errore autorizzazione: ' + resp.error, '#e53935');
+                    return;
+                }
+                _driveHandleToken(resp.access_token, resp.expires_in || 3600);
+            });
+            _driveTokenClient.requestAccessToken({ prompt: 'select_account' });
+        }
+
+        function _driveInitTokenClient(clientId, callback) {
+            _driveTokenClient = google.accounts.oauth2.initTokenClient({
                 client_id: clientId,
                 scope:     DRIVE_SCOPES,
-                callback:  (resp) => {
-                    if (resp.error) {
-                        _driveStatusMsg('❌ Errore autorizzazione: ' + resp.error, '#e53935');
-                        return;
-                    }
-                    _driveHandleToken(resp.access_token, resp.expires_in || 3600);
+                callback:  callback
+            });
+        }
+
+        // Rinnova il token silenziosamente (senza prompt se già loggato su Google)
+        function _driveRefreshToken(onSuccess) {
+            const clientId = localStorage.getItem(DRIVE_CLIENT_ID_KEY);
+            if (!clientId || !window.google?.accounts?.oauth2) {
+                if (onSuccess) onSuccess(false);
+                return;
+            }
+            _driveInitTokenClient(clientId, (resp) => {
+                if (resp.error || !resp.access_token) {
+                    if (onSuccess) onSuccess(false);
+                    return;
+                }
+                _driveToken = resp.access_token;
+                localStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({
+                    access_token: resp.access_token,
+                    expires_at: Date.now() + parseInt(resp.expires_in || 3600) * 1000
+                }));
+                if (onSuccess) onSuccess(true);
+            });
+            // prompt:'none' = silenzioso, nessun popup se già autenticato
+            _driveTokenClient.requestAccessToken({ prompt: '' });
+        }
+
+        // Wrapper che rinnova automaticamente il token se scaduto prima di fare chiamate Drive
+        async function _driveApiCall(fn) {
+            // Prova subito
+            try {
+                return await fn();
+            } catch(err) {
+                const msg = String(err.message || '');
+                if (msg.includes('401') || msg.includes('403') || !_driveToken) {
+                    // Token scaduto — prova rinnovo silenzioso
+                    _driveStatusMsg('🔄 Rinnovo sessione Drive...', '#667eea');
+                    return new Promise((resolve, reject) => {
+                        _driveRefreshToken(async (ok) => {
+                            if (!ok) {
+                                // Rinnovo fallito — mostra bottone riconnetti
+                                _driveToken = null;
+                                localStorage.removeItem(DRIVE_TOKEN_KEY);
+                                _driveUpdateUI(false);
+                                _driveStatusMsg('⚠️ Sessione scaduta — riconnettiti', '#e65100');
+                                // Mostra banner riconnessione
+                                _driveShowReconnectBanner();
+                                reject(new Error('Token scaduto'));
+                                return;
+                            }
+                            try {
+                                resolve(await fn());
+                            } catch(e2) { reject(e2); }
+                        });
+                    });
+                }
+                throw err;
+            }
+        }
+
+        function _driveShowReconnectBanner() {
+            document.getElementById('driveReconnectBanner')?.remove();
+            const b = document.createElement('div');
+            b.id = 'driveReconnectBanner';
+            b.style.cssText = `position:fixed;top:0;left:0;right:0;z-index:99999;
+                background:#e65100;color:white;padding:10px 20px;font-size:13px;font-weight:600;
+                display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;
+                box-shadow:0 2px 8px rgba(0,0,0,0.3);`;
+            b.innerHTML = `
+                <span>⚠️ Sessione Google Drive scaduta</span>
+                <button onclick="driveReconnectSilent()" style="background:white;color:#e65100;border:none;border-radius:6px;padding:5px 14px;font-weight:700;cursor:pointer;font-size:13px;">🔄 Riconnetti</button>
+                <button onclick="document.getElementById('driveReconnectBanner').remove()" style="background:rgba(255,255,255,0.25);color:white;border:none;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:13px;">✕</button>
+            `;
+            document.body.prepend(b);
+        }
+
+        function driveReconnectSilent() {
+            document.getElementById('driveReconnectBanner')?.remove();
+            const clientId = localStorage.getItem(DRIVE_CLIENT_ID_KEY);
+            if (!clientId || !window.google?.accounts?.oauth2) {
+                alert('Vai in Impostazioni e clicca 🔗 Connetti per riautorizzare.');
+                return;
+            }
+            _driveRefreshToken((ok) => {
+                if (ok) {
+                    _driveUpdateUI(true);
+                    _driveStatusMsg('✅ Sessione rinnovata', '#34a853');
+                } else {
+                    // Fallback con prompt esplicito
+                    _driveInitTokenClient(clientId, (resp) => {
+                        if (!resp.error && resp.access_token) {
+                            _driveHandleToken(resp.access_token, resp.expires_in || 3600);
+                        }
+                    });
+                    _driveTokenClient.requestAccessToken({ prompt: 'select_account' });
                 }
             });
-            tokenClient.requestAccessToken({ prompt: 'select_account' });
         }
 
         function _driveHandleToken(token, expiresIn) {
@@ -11211,6 +11312,7 @@ Rispondi SOLO con JSON valido:
             if (!_driveToken) { alert('Connettiti prima a Google Drive.'); return; }
             _driveStatusMsg('⏳ Salvataggio in corso...', '#667eea');
             try {
+                await _driveApiCall(async () => {
                 const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
                 let fileId = _driveFileId || await _driveFindFile();
 
@@ -11241,14 +11343,10 @@ Rispondi SOLO con JSON valido:
                 _driveStatusMsg('✅ Salvato su Drive alle ' + now, '#34a853');
                 const lastEl = document.getElementById('driveLastSave');
                 if (lastEl) { lastEl.textContent = 'Ultimo salvataggio: ' + now; lastEl.style.display = ''; }
-
+                }); // end _driveApiCall
             } catch(err) {
-                _driveStatusMsg('❌ Errore: ' + err.message, '#e53935');
-                if (String(err.message).includes('401') || String(err.message).includes('403')) {
-                    _driveToken = null;
-                    localStorage.removeItem(DRIVE_TOKEN_KEY);
-                    _driveUpdateUI(false);
-                    alert('Sessione Drive scaduta. Riconnettiti nelle Impostazioni.');
+                if (err.message !== 'Token scaduto') {
+                    _driveStatusMsg('❌ Errore: ' + err.message, '#e53935');
                 }
             }
         }
