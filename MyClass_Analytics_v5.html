@@ -11357,8 +11357,17 @@ Rispondi SOLO con JSON valido:
                 { key:'fase3', label:'✅ Consolidamento / Chiusura', color:'#5c6bc0', bg:'#e8eaf6' },
             ];
             function estraiMinuti(t) {
-                const m=[...(t||'').matchAll(/[\(\[]([\d]+)\s*min[uti]*[\)\]]/gi)];
-                return m.length ? m.reduce((s,x)=>s+parseInt(x[1]),0) : null;
+                if (!t) return null;
+                // 1. Cerca tutti i valori (X min) o [X min] e sommali (tempo per ogni attività)
+                const mPar = [...t.matchAll(/[\(\[]([\d]+)\s*min[uti]*[\)\]]/gi)];
+                if (mPar.length) return mPar.reduce((s,x)=>s+parseInt(x[1]),0);
+                // 2. Fallback: cerca range "X-Y min" o "X–Y min" → prende la media
+                const mRange = t.match(/(\d+)[\-–](\d+)\s*min[uti]*/i);
+                if (mRange) return Math.round((parseInt(mRange[1])+parseInt(mRange[2]))/2);
+                // 3. Fallback: cerca "X min" senza parentesi
+                const mPlain = [...t.matchAll(/(\d+)\s*min[uti]*/gi)];
+                if (mPlain.length) return mPlain.reduce((s,x)=>s+parseInt(x[1]),0);
+                return null;
             }
             const fasi = FASI_DEF.map(f=>({...f,testo:pd[f.key]||'',minuti:estraiMinuti(pd[f.key])})).filter(f=>f.testo.trim());
 
