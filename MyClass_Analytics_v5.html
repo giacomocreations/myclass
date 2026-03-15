@@ -166,6 +166,35 @@
         .day-lezione-block .dlb-titolo { font-size: 13px; font-weight: 600; color: #0c4a6e; margin-top: 3px; }
         .day-lezione-block .dlb-tipo { font-size: 11px; }
         .day-date-label { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.9); }
+        /* ── Colonna 3: Prep Lezione ── */
+        .prep-block {
+            background: white;
+            border: 1px solid #e8eaf6;
+            border-radius: 10px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            border-left: 4px solid #667eea;
+        }
+        .prep-block.has-piano { border-left-color: #00897b; }
+        .prep-block.no-piano  { border-left-color: #e57373; }
+        .prep-header { display:flex; align-items:center; justify-content:space-between; gap:6px; margin-bottom:6px; }
+        .prep-classe { font-size:11px; font-weight:700; color:#667eea; background:#e0e4ff; border-radius:6px; padding:1px 6px; }
+        .prep-titolo { font-size:13px; font-weight:600; color:#1a2a2a; margin-bottom:4px; }
+        .prep-durata { font-size:11px; color:#888; margin-bottom:5px; }
+        .prep-risorse { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:5px; }
+        .prep-risorsa-chip { font-size:11px; background:#f0f4ff; color:#5c6bc0; border-radius:12px; padding:2px 8px; text-decoration:none; white-space:nowrap; }
+        .prep-risorsa-chip:hover { background:#e0e4ff; }
+        .prep-no-piano { font-size:11px; color:#e57373; font-style:italic; }
+        .prep-piano-ok { font-size:11px; color:#00897b; }
+        .btn-live {
+            display:inline-flex; align-items:center; gap:5px;
+            background:linear-gradient(135deg,#667eea,#764ba2);
+            color:white; border:none; border-radius:20px;
+            padding:5px 14px; font-size:12px; font-weight:700;
+            cursor:pointer; white-space:nowrap; transition:opacity 0.15s;
+        }
+        .btn-live:hover { opacity:0.85; }
+        .btn-live:disabled { opacity:0.4; cursor:not-allowed; }
         .day-today-badge { font-size: 11px; background: rgba(255,255,255,0.25); border-radius: 10px; padding: 2px 8px; margin-left: 6px; }
 
         /* ===== GRAFICI ===== */
@@ -1576,6 +1605,12 @@
                             <span class="upload-status" id="statusOrario">Non caricato</span>
                             <button class="upload-reset-btn" title="Rimuovi orario" onclick="event.stopPropagation(); resetDato('orario')">✕</button>
                             <input type="file" id="uploadOrario" accept=".html,.htm" style="display:none" onchange="importOrario(this)">
+                        </div>
+                        <!-- Editor orari di inizio slot -->
+                        <div id="orarioEditorBox" style="display:none;background:#f8f9ff;border:1px solid #e8eaf6;border-radius:10px;padding:12px 14px;margin-top:8px;">
+                            <div style="font-size:12px;font-weight:700;color:#5c6bc0;margin-bottom:10px;">⏰ Orari di inizio lezione — imposta l'ora esatta per ogni slot</div>
+                            <div id="orarioEditorSlots" style="display:flex;flex-direction:column;gap:8px;"></div>
+                            <button onclick="salvaOrarioInizio()" class="btn-primary" style="margin-top:10px;padding:6px 16px;font-size:13px;">💾 Salva orari</button>
                         </div>
                         <div class="piano-upload-zone" onclick="triggerUpload('uploadProg')">
                             <div class="upload-icon">📚</div>
@@ -3443,23 +3478,47 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
             }
             html += `</div>`;
 
-            // Colonna 3: Lezioni pianificate oggi
+            // Colonna 3: Prep Lezione
             html += `<div class="day-col">
-                <div class="day-col-title">📖 Lezioni ${isFuture ? 'pianificate' : 'del giorno'}</div>`;
-            if (!lezioniPianOggi.length) {
-                html += `<div class="day-empty-msg">${hasAnyOrario ? 'Nessuna lezione pianificata' : 'Carica gli orari'}</div>`;
+                <div class="day-col-title">🎯 Prep lezione</div>`;
+            if (!classiOggi.length && !lezioniPianOggi.length) {
+                html += `<div class="day-empty-msg">Nessuna lezione oggi</div>`;
             } else {
+                // Mostra tutte le classi in orario oggi con le info prep
+                const tutteClassiOggi = [...classiOggi];
+                // Aggiungi classi con lezioni pianificate ma senza orario
                 lezioniPianOggi.forEach(({ cl, idx, lz }) => {
-                    const isAI = lz.stato === 'ai-generata';
-                    const _TI2={verifica_scritta:'📝',verifica_orale:'🎤',ripasso:'🔄',lessico:'📚',grammatica:'📐',abilita_ascolto:'🎧',abilita_parlato:'🗣️',abilita_lettura:'📖',abilita_scrittura:'✍️',funzioni:'💬'};
-                    const tipoArr2=_tipoArr(lz.tipo); const tipoIcon = tipoArr2.length?tipoArr2.map(t=>_TI2[t]||'').filter(Boolean).join(''):'📖';
-                    html += `<div class="day-lezione-block ${isAI?'ai-gen':''}" onclick="showClassTab(${idx},'prossime')">
-                        <div class="dlb-header">
-                            <span class="dlb-classe">${cl.nome}</span>
-                            ${lz.unit ? `<span class="dlb-unit">${lz.unit}</span>` : ''}
-                            <span class="dlb-tipo">${tipoIcon}</span>
+                    if (!tutteClassiOggi.find(c => c.idx === idx)) {
+                        tutteClassiOggi.push({ cl, idx, lz, slots:[], lezioniGiorno:[lz], compiti:'' });
+                    }
+                });
+
+                tutteClassiOggi.forEach(({ cl, idx, lezioniGiorno }) => {
+                    const lz = lezioniGiorno[0];
+                    if (!lz) return;
+                    const pd = lz.pianoDettagliato;
+                    const hasPd = !!pd;
+                    const slotId = lzId(lz);
+                    const risorse = (lz.risorse||[]).map(id => {
+                        const r = (data.risorseLezioni||[]).find(x => x.id === id);
+                        return r ? `<a class="prep-risorsa-chip" href="${r.url}" target="_blank">${TIPO_ICONS_RISORSA[r.tipo]||'🔗'} ${r.titolo}</a>` : '';
+                    }).filter(Boolean).join('');
+                    const durataLabel = hasPd && pd.durata ? `<div class="prep-durata">⏱️ ${pd.durata} min totali</div>` : '';
+                    const _TI3={verifica_scritta:'📝',verifica_orale:'🎤',ripasso:'🔄',lessico:'📚',grammatica:'📐',abilita_ascolto:'🎧',abilita_parlato:'🗣️',abilita_lettura:'📖',abilita_scrittura:'✍️',funzioni:'💬'};
+                    const tipoIcon = _tipoArr(lz.tipo).map(t=>_TI3[t]||'').filter(Boolean).join('') || '📖';
+
+                    html += `<div class="prep-block ${hasPd?'has-piano':'no-piano'}">
+                        <div class="prep-header">
+                            <span class="prep-classe">${cl.nome}</span>
+                            <span style="font-size:13px;">${tipoIcon}</span>
                         </div>
-                        <div class="dlb-titolo">${lz.titolo||'Lezione pianificata'}</div>
+                        <div class="prep-titolo">${lz.titolo||'Lezione pianificata'}</div>
+                        ${durataLabel}
+                        ${risorse ? `<div class="prep-risorse">${risorse}</div>` : ''}
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
+                            <span class="${hasPd?'prep-piano-ok':'prep-no-piano'}">${hasPd?'📋 Piano pronto':'⚠️ Piano mancante'}</span>
+                            <button class="btn-live" onclick="apriLive(${idx},'${slotId}')" ${!hasPd?'disabled title="Crea prima il piano dettagliato"':''}>▶ LIVE</button>
+                        </div>
                     </div>`;
                 });
             }
@@ -7004,6 +7063,7 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
                     bO.className = 'upload-status ok';
                 } else { bO.textContent = 'Non caricato'; bO.className = 'upload-status'; }
             }
+            renderOrarioEditor(classe);
             const bP = document.getElementById('statusProg');
             if (bP) {
                 if (prog?.unita?.length) { bP.textContent = `✓ ${prog.unita.length} unità`; bP.className = 'upload-status ok'; }
@@ -7025,6 +7085,39 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
         }
 
         // ================================================================
+        // ── Editor orari di inizio slot ──────────────────────────────
+        function renderOrarioEditor(classe) {
+            const box  = document.getElementById('orarioEditorBox');
+            const cont = document.getElementById('orarioEditorSlots');
+            if (!box || !cont) return;
+            const orario = classe?.pianificazione?.orario || [];
+            if (!orario.length) { box.style.display = 'none'; return; }
+            box.style.display = 'block';
+            const GIORNI = ['','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato'];
+            cont.innerHTML = orario.map((slot, i) => {
+                const label = `${GIORNI[slot.giornoNum]||slot.giornoNome} — ${slot.ora}ª ora`;
+                const val   = slot.oraInizio || '';
+                return `<div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:13px;min-width:190px;">${label}</span>
+                    <input type="time" id="oi_${i}" value="${val}"
+                        style="padding:4px 8px;border:1px solid #c5cae9;border-radius:6px;font-size:13px;font-weight:600;color:#3949ab;">
+                </div>`;
+            }).join('');
+        }
+
+        function salvaOrarioInizio() {
+            const classe = data.classi[currentClass];
+            const orario = classe?.pianificazione?.orario || [];
+            orario.forEach((slot, i) => {
+                const inp = document.getElementById('oi_' + i);
+                if (inp && inp.value) slot.oraInizio = inp.value;
+                else if (inp) delete slot.oraInizio;
+            });
+            saveData();
+            const btn = document.querySelector('#orarioEditorBox .btn-primary');
+            if (btn) { btn.textContent = '✓ Salvato!'; setTimeout(() => btn.textContent = '💾 Salva orari', 1500); }
+        }
+
         // IMPORT: ORARIO
         // ================================================================
         function importOrario(input) {
@@ -10118,6 +10211,12 @@ Rispondi SOLO con JSON valido:
 
                 <!-- EDIT VIEW -->
                 <div class="pd-edit-view${hasPiano?' hidden':''}" id="pdEditView">
+                    <div class="piano-det-section" style="display:flex;gap:12px;align-items:center;background:#f8f9ff;border-radius:8px;padding:10px 12px;border:1px solid #e8eaf6;">
+                        <label style="margin:0;white-space:nowrap;">⏱️ Durata lezione</label>
+                        <input type="number" id="pd_durata" min="30" max="120" step="5" value="${pd.durata||50}"
+                            style="width:80px;padding:5px 8px;border:1px solid #c5cae9;border-radius:6px;font-size:14px;font-weight:700;text-align:center;">
+                        <span style="font-size:13px;color:#666;">minuti totali</span>
+                    </div>
                     <div class="piano-det-section"><label>🎯 Obiettivi della lezione</label>
                         <textarea id="pd_obiettivi" oninput="pdAutoResize(this)">${pd.obiettivi||''}</textarea></div>
                     <div class="piano-det-section"><label>🧰 Materiali e strumenti</label>
@@ -10136,6 +10235,7 @@ Rispondi SOLO con JSON valido:
 
                 <!-- READ VIEW -->
                 <div class="pd-read-view${hasPiano?' active':''}" id="pdReadView">
+                    <div id="pdR_durata_label" style="font-size:13px;font-weight:700;color:#667eea;background:#f0f2ff;border-radius:8px;padding:7px 14px;display:none;"></div>
                     <div class="pd-read-card pd-card-obiettivi">
                         <div class="pd-card-label">🎯 Obiettivi della lezione</div>
                         <div class="pd-items" id="pdR_obiettivi"></div>
@@ -10370,6 +10470,13 @@ Rispondi SOLO con JSON valido:
         function pdRenderReadView(pdData) {
             const fields = ['obiettivi','materiali','fase1','fase2','fase3','valutazione','note'];
             fields.forEach(k => pdParseText(pdData[k] || '', 'pdR_' + k));
+            // Mostra durata totale se presente
+            const durEl = document.getElementById('pdR_durata_label');
+            if (durEl) {
+                const min = pdData.durata || parseInt(document.getElementById('pd_durata')?.value || '50');
+                durEl.textContent = `⏱️ Durata totale: ${min} min`;
+                durEl.style.display = min ? '' : 'none';
+            }
         }
 
         function pdToggleReadMode(btn) {
@@ -10504,6 +10611,7 @@ Rispondi SOLO con JSON valido:
             const lz = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotId || (!p.ora && p.data===isoDate));
             if (!lz) return;
             lz.pianoDettagliato = {
+                durata:      parseInt(document.getElementById('pd_durata')?.value || '50'),
                 obiettivi:   document.getElementById('pd_obiettivi')?.value   || '',
                 materiali:   document.getElementById('pd_materiali')?.value   || '',
                 fase1:       document.getElementById('pd_fase1')?.value       || '',
@@ -11019,6 +11127,425 @@ Rispondi SOLO con JSON valido:
         // INIT (legacy - kept for compatibility)
         // ================================================================
         function initPianoView() { initDatiClasse(); }
+
+
+        // ================================================================
+        // MODALITÀ LIVE — Fase 2: implementazione completa
+        // ================================================================
+        function apriLive(classeIdx, slotId) {
+            const classe = data.classi[classeIdx];
+            const [isoDate] = slotId.split('_');
+            const lz = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotId || (!p.ora && p.data===isoDate));
+            if (!lz?.pianoDettagliato) { alert('Crea prima il piano dettagliato per questa lezione.'); return; }
+
+            const pd = lz.pianoDettagliato;
+            const durataTotale = pd.durata || 50;
+            const TIPO_ICONS = {video:'🎬',esercizio:'📝',gioco:'🎮',audio:'🔊',documento:'📄',altro:'🔗'};
+
+            // Estrai fasi con minuti
+            const FASI_DEF = [
+                { key:'fase1', label:'🔥 Warm up / Revisione',      color:'#ff8f00', bg:'#fff8e1' },
+                { key:'fase2', label:'📖 Attività principale',       color:'#1e88e5', bg:'#e3f2fd' },
+                { key:'fase3', label:'✅ Consolidamento / Chiusura', color:'#5c6bc0', bg:'#e8eaf6' },
+            ];
+            function estraiMinuti(t) {
+                const m=[...(t||'').matchAll(/[\(\[]([\d]+)\s*min[uti]*[\)\]]/gi)];
+                return m.length ? m.reduce((s,x)=>s+parseInt(x[1]),0) : null;
+            }
+            const fasi = FASI_DEF.map(f=>({...f,testo:pd[f.key]||'',minuti:estraiMinuti(pd[f.key])})).filter(f=>f.testo.trim());
+
+            // Risorse
+            const risorse = (lz.risorse||[]).map(id=>(data.risorseLezioni||[]).find(x=>x.id===id)).filter(Boolean);
+            const risorseHTML = risorse.map(r=>`<a href="${r.url}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.15);color:white;text-decoration:none;border-radius:20px;padding:6px 14px;font-size:13px;font-weight:600;border:1px solid rgba(255,255,255,0.3);">${TIPO_ICONS[r.tipo]||'🔗'} ${r.titolo}</a>`).join('');
+
+            // Tipo lezione
+            const tipiLez = _tipoArr(lz.tipo);
+            const isVerOrale   = tipiLez.includes('verifica_orale');
+            const isVerScritta = tipiLez.includes('verifica_scritta');
+
+            // Ora inizio — legge dall'orario della classe se impostato, altrimenti null
+            const oraNum   = lz.ora ? parseInt(lz.ora) : null;
+            const dow      = new Date(isoDate + 'T12:00:00').getDay();
+            const orario   = classe.pianificazione?.orario || [];
+            const slotOra  = orario.find(s => s.giornoNum === dow && parseInt(s.ora) === oraNum);
+            const oraInizio = slotOra?.oraInizio || null;
+
+            // Studenti
+            const studentiDati = (classe.studenti||[]).map(s=>{
+                const og = s.orale.filter(g=>!g.recupero||g.recupero==='media');
+                const sg = s.scritto.filter(g=>!g.recupero||g.recupero==='media');
+                const mo = og.length ? (og.reduce((a,b)=>a+b.voto,0)/og.length).toFixed(1) : null;
+                const ms = sg.length ? (sg.reduce((a,b)=>a+b.voto,0)/sg.length).toFixed(1) : null;
+                return {
+                    nome:s.nome, cognome:s.cognome,
+                    mediaOrale:mo, mediaScritto:ms,
+                    haRecupero:s.orale.some(g=>g.recupero)||s.scritto.some(g=>g.recupero),
+                    aiReport:s.aiReport?.text||null,
+                    ultimi3Orali:(s.orale||[]).slice(-3).map(g=>({voto:g.voto,titolo:g.titolo||''}))
+                };
+            }).sort((a,b)=>a.cognome.localeCompare(b.cognome));
+
+            // Coppie speaking
+            const con = [...studentiDati].filter(s=>s.mediaOrale!==null).sort((a,b)=>parseFloat(b.mediaOrale)-parseFloat(a.mediaOrale));
+            const n = Math.max(2,Math.floor(con.length*0.33));
+            const coppie = con.slice(0,n).map((t,i)=>({tutor:t,tutee:con.slice(-n)[i%n]}));
+
+            const fasiJ   = JSON.stringify(fasi);
+            const studJ   = JSON.stringify(studentiDati);
+            const coppieJ = JSON.stringify(coppie.map(c=>({
+                tutor:c.tutor.cognome+' '+c.tutor.nome, tutee:c.tutee.cognome+' '+c.tutee.nome,
+                mediaT:c.tutor.mediaOrale, mediaTe:c.tutee.mediaOrale
+            })));
+
+            const w = window.open('','MyClassLIVE',`width=${screen.width},height=${screen.height},left=0,top=0`);
+            if (!w) { alert('Abilita i popup per questa pagina per usare la modalità LIVE.'); return; }
+
+            const htmlContent = `<!DOCTYPE html>
+<html lang="it"><head><meta charset="UTF-8"><title>LIVE ${classe.nome}</title><style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#0f0f1a;color:#f0f0f0;font-family:-apple-system,'Segoe UI',Tahoma,Geneva,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden;font-size:17px;}
+#topbar{background:#1a1a2e;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #667eea;flex-shrink:0;}
+.tb-classe{font-size:20px;font-weight:800;color:#a78bfa;letter-spacing:0.02em;}.tb-titolo{font-size:14px;opacity:0.6;margin-top:2px;}
+.tb-right{display:flex;align-items:center;gap:16px;}
+#orologio{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums;color:#fbbf24;}
+#sincro{font-size:13px;padding:4px 12px;border-radius:12px;font-weight:700;background:#1e3a5f;color:#93c5fd;}
+#sincro.avanti{background:#064e3b;color:#6ee7b7;}#sincro.ritardo{background:#7f1d1d;color:#fca5a5;}
+#main{display:flex;flex:1;overflow:hidden;}
+#col-fasi{flex:1.8;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid rgba(255,255,255,0.1);}
+#col-right{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+#fase-current{padding:18px 24px;flex-shrink:0;}
+.fase-label{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;opacity:.7;margin-bottom:8px;}
+#timer-box{display:flex;align-items:center;gap:18px;margin:10px 0;}
+#timer-display{font-size:60px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;}
+#timer-display.warning{color:#fbbf24;animation:pulse 1s infinite;}
+#timer-display.danger{color:#f87171;animation:pulse .5s infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.5;}}
+#timer-bar-wrap{flex:1;background:rgba(255,255,255,.1);border-radius:8px;height:12px;overflow:hidden;}
+#timer-bar{height:100%;border-radius:8px;transition:width 1s linear,background .5s;}
+.ctrl{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+.btn{padding:7px 16px;border-radius:20px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.1);color:white;cursor:pointer;font-size:14px;font-weight:700;font-family:inherit;}
+.btn:hover{background:rgba(255,255,255,.2);}
+.btn.primary{background:#667eea;border-color:#667eea;}
+#fase-testo{padding:4px 24px 12px;overflow-y:auto;flex:1;font-size:17px;line-height:1.75;color:#e8eaf0;}
+.fitem{display:flex;gap:10px;margin-bottom:7px;}
+.fitem .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;margin-top:8px;}
+.fitem.sub{padding-left:20px;opacity:.8;font-size:15px;}
+.kw-t{font-weight:800;color:#60a5fa;}.kw-a{font-weight:800;color:#fb923c;}.kw-e{font-weight:800;color:#4ade80;}.kw-w{font-weight:800;color:#f87171;}
+.tbadge{background:#451a03;color:#fbbf24;border-radius:12px;padding:2px 9px;font-size:13px;font-weight:800;margin-left:5px;}
+#fasi-lista{padding:10px 24px;border-top:1px solid rgba(255,255,255,.1);display:flex;gap:8px;overflow-x:auto;flex-shrink:0;}
+.fchip{padding:5px 14px;border-radius:16px;font-size:13px;font-weight:700;cursor:pointer;border:2px solid transparent;white-space:nowrap;opacity:.55;transition:all .2s;font-family:inherit;}
+.fchip.active{opacity:1;border-color:white;}
+.fchip.done{opacity:.3;text-decoration:line-through;}
+#risorse-bar{padding:8px 24px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.1);flex-shrink:0;}
+#col-right-tabs{display:flex;border-bottom:1px solid rgba(255,255,255,.1);flex-shrink:0;}
+.rtab{flex:1;padding:9px 4px;text-align:center;font-size:12px;font-weight:700;cursor:pointer;opacity:.45;border-bottom:2px solid transparent;transition:all .2s;font-family:inherit;}
+.rtab.active{opacity:1;border-bottom-color:#667eea;color:#a78bfa;}
+.rp{display:none;flex:1;overflow-y:auto;padding:14px;}
+.rp.active{display:block;}
+.aitem{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05);}
+.abtn{padding:4px 12px;border-radius:10px;border:none;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;}
+.abtn.p{background:#064e3b;color:#6ee7b7;}.abtn.a{background:#7f1d1d;color:#fca5a5;}
+textarea{width:100%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.15);color:white;border-radius:8px;padding:10px;font-size:15px;line-height:1.6;resize:none;min-height:110px;font-family:inherit;}
+.sbtn{width:100%;padding:14px;border-radius:10px;border:none;cursor:pointer;font-size:16px;font-weight:800;margin-bottom:8px;font-family:inherit;}
+.sv{background:#065f46;color:#6ee7b7;}.sg{background:#78350f;color:#fcd34d;}.sr{background:#7f1d1d;color:#fca5a5;}
+.scard{background:rgba(255,255,255,.05);border-radius:10px;padding:10px 12px;margin-bottom:7px;cursor:pointer;border:1px solid rgba(255,255,255,.1);}
+.scard:hover{background:rgba(255,255,255,.1);}
+.scard.sel{border-color:#a78bfa;background:rgba(167,139,250,.15);}
+.copcard{background:rgba(255,255,255,.05);border-radius:10px;padding:10px;margin-bottom:7px;border-left:3px solid #667eea;}
+.fine-btn{width:100%;padding:14px;border-radius:10px;border:none;cursor:pointer;font-size:15px;font-weight:800;margin-bottom:8px;font-family:inherit;}
+.fb1{background:#1e3a5f;color:#93c5fd;}.fb2{background:#064e3b;color:#6ee7b7;}
+</style>
+</style></head><body>
+<div id="topbar">
+  <div><div class="tb-classe">🎯 ${classe.nome} — ${lz.titolo||'Lezione'}</div>
+  <div class="tb-titolo">${lz.unit||''} · ⏱️ ${durataTotale} min${oraInizio?' · Inizio previsto '+oraInizio:''}</div></div>
+  <div class="tb-right"><div id="sincro">—</div><div id="orologio">--:--</div>
+  <button onclick="window.close()" class="btn">✕ Chiudi</button></div>
+</div>
+<div id="main">
+  <div id="col-fasi">
+    <div id="fase-current">
+      <div class="fase-label" id="fl">Seleziona una fase per iniziare</div>
+      <div id="timer-box"><div id="timer-display">--:--</div>
+        <div style="flex:1"><div id="timer-bar-wrap"><div id="timer-bar" style="width:100%;background:#667eea"></div></div>
+        <div style="font-size:11px;opacity:.5;margin-top:3px" id="tinfo"></div></div></div>
+      <div class="ctrl">
+        <button class="btn primary" id="bsp" onclick="liveToggle()">▶ Avvia</button>
+        <button class="btn" onclick="liveAdj(-5)">−5 min</button>
+        <button class="btn" onclick="liveAdj(+5)">+5 min</button>
+        <button class="btn" onclick="liveNext()">⏭ Prossima</button>
+      </div>
+    </div>
+    <div id="fase-testo"></div>
+    <div id="fasi-lista"></div>
+    ${risorse.length ? `<div id="risorse-bar"><span style="font-size:10px;opacity:.4;margin-right:4px">RISORSE:</span>${risorseHTML}</div>` : ''}
+  </div>
+  <div id="col-right">
+    <div id="col-right-tabs">
+      <div class="rtab active" onclick="sRT(0)">📋 Appello</div>
+      <div class="rtab" onclick="sRT(1)">📝 Note</div>
+      <div class="rtab" onclick="sRT(2)">🚦 Classe</div>
+      <div class="rtab" onclick="sRT(3)">${isVerOrale?'🎤 Orale':isVerScritta?'✍️ Scritto':'👥 Coppie'}</div>
+      <div class="rtab" onclick="sRT(4)">🏁 Fine</div>
+    </div>
+    <div class="rp active" id="rp0">
+      <div style="font-size:11px;opacity:.5;margin-bottom:8px">Tocca per segnare assente</div>
+      <div id="appello-list"></div><div style="font-size:11px;opacity:.5;margin-top:8px" id="app-sum"></div>
+    </div>
+    <div class="rp" id="rp1">
+      <div style="font-size:11px;opacity:.5;margin-bottom:6px">Note al volo</div>
+      <textarea id="note-ta" placeholder="Osservazioni, appunti, studenti da tenere d'occhio..."></textarea>
+      <div style="font-size:10px;opacity:.4;margin-top:4px" id="note-t"></div>
+    </div>
+    <div class="rp" id="rp2">
+      <div style="font-size:11px;opacity:.5;margin-bottom:10px">Registra l'andamento</div>
+      <button class="sbtn sv" onclick="sem('verde')">🟢 Classe attenta e partecipe</button>
+      <button class="sbtn sg" onclick="sem('giallo')">🟡 Qualche distrazione</button>
+      <button class="sbtn sr" onclick="sem('rosso')">🔴 Intervento necessario</button>
+      <div style="font-size:11px;opacity:.5;margin-top:10px" id="sem-log"></div>
+    </div>
+    <div class="rp" id="rp3">
+      ${isVerOrale ? `<div style="font-size:11px;opacity:.5;margin-bottom:8px">Seleziona studente da interrogare</div><div id="sl"></div><div id="sd" style="display:none;margin-top:10px;"></div>` :
+        isVerScritta ? `<div style="font-size:11px;opacity:.5;margin-bottom:8px">Situazione scritto classe</div><div id="scr-list"></div>` :
+        `<div style="font-size:11px;opacity:.5;margin-bottom:8px">Coppie speaking (basate su media orale)</div><div id="cop-list"></div>`}
+    </div>
+    <div class="rp" id="rp4">
+      <div style="font-size:11px;opacity:.5;margin-bottom:10px">Fine lezione</div>
+      <button class="fine-btn fb1" onclick="fineSv()">✅ Segna lezione come svolta</button>
+      <button class="fine-btn fb2" onclick="fineArgo()">📋 Note per registro Argo</button>
+      <div id="fine-r" style="margin-top:10px;font-size:13px;"></div>
+    </div>
+  </div>
+</div>
+<script>
+const FASI=${fasiJ};
+const STUDENTI=${studJ};
+const COPPIE=${coppieJ};
+const IS_VO=${isVerOrale};
+const IS_VS=${isVerScritta};
+const ORA_IN=${oraInizio?`'${oraInizio}'`:'null'};
+const DUR=${durataTotale};
+
+let fc=0,tSec=0,tMax=0,tRun=false,tInt=null,fAdj={},semLog=[],minUsati=0;
+let appello={};
+STUDENTI.forEach(s=>{appello[s.cognome+' '+s.nome]='p';});
+
+function orologio(){
+  const n=new Date();
+  document.getElementById('orologio').textContent=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');
+  if(ORA_IN&&tRun){
+    const [oh,om]=ORA_IN.split(':').map(Number);
+    const ini=new Date(n);ini.setHours(oh,om,0,0);
+    const reali=Math.round((n-ini)/60000);
+    const timer=Math.ceil(tSec/60);
+    const diff=(minUsati+(tMax-tSec)/60)-reali;
+    const el=document.getElementById('sincro');
+    if(Math.abs(diff)<1){el.textContent='↔ In orario';el.className='';}
+    else if(diff>0){el.textContent='+'+Math.round(diff)+' min avanti';el.className='avanti';}
+    else{el.textContent=Math.abs(Math.round(diff))+' min ritardo';el.className='ritardo';}
+  }
+}
+setInterval(orologio,1000);orologio();
+
+function getMin(i){return(FASI[i].minuti||Math.round(DUR/FASI.length))+(fAdj[i]||0);}
+
+function hl(s){
+  s=s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  s=s.replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>');
+  s=s.replace(/[\\(\\[](\\d[\\d\\-]*?)\\s*min[uti]*[\\)\\]]/gi,'<span class="tbadge">$1 min</span>');
+  s=s.replace(/\\b(LIM|Wordwall|libro|pag\\.|Wayground|Kahoot|lavagna|YouTube)\\b/gi,'<span class="kw-t">$&</span>');
+  s=s.replace(/\\b(ascolta|leggi|scrivi|correggi|presenta|completa|abbina|spiega|gioca|proietta)\\w*/gi,'<span class="kw-a">$&</span>');
+  s=s.replace(/\\b(exit ticket|compiti|verifica|valutazione|workbook)\\b/gi,'<span class="kw-e">$&</span>');
+  s=s.replace(/\\b(BES|DSA|PEI|PDP)\\b/gi,'<span class="kw-w">$&</span>');
+  return s;
+}
+
+function parseTesto(raw,col){
+  if(!raw||!raw.trim())return'<span style="opacity:.35;font-style:italic">—</span>';
+  function splitN(l){const p=[],re=/\\s+(?=(?:\\(\\d{1,2}\\)|\\d{1,2}[.)][\\s]))/g;let last=0,m;while((m=re.exec(l))!==null){const pr=l.slice(0,m.index).trim();if(/[.:;,\\-–]$/.test(pr)){p.push(l.slice(last,m.index).trim());last=m.index+m[0].length;}}p.push(l.slice(last).trim());return p.filter(Boolean);}
+  let html='';
+  raw.split('\\n').forEach(rawL=>{
+    const l=rawL.trimEnd();if(!l.trim())return;
+    const ind=l.length-l.trimStart().length,tr=l.trimStart();
+    const hasN=/\\S\\s+(?:\\(\\d{1,2}\\)|\\d{1,2}[.)]\\s)/.test(tr);
+    const stM=/^[\\-•*(>\\d»→]/.test(tr);
+    if(hasN&&!stM){const pp=splitN(tr);if(pp.length>1){pp.forEach(p=>{const isN=/^\\(\\d+\\)/.test(p)||/^\\d+[.)\\s]/.test(p);if(isN){const mm=p.match(/^(?:\\((\\d+)\\)|\\d+[.)\\s]+)/);const num=mm?p.match(/^(?:\\(?(\\d+)\\)?)/)?.[1]||'':'';const cl=p.replace(/^(?:\\(\\d+\\)|\\d+[.)\\s]+)/,'');html+='<div class="fitem sub"><div style="width:19px;height:19px;border-radius:50%;background:#666;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:3px">'+num+'</div><span>'+hl(cl)+'</span></div>';}else{html+='<div class="fitem"><div class="dot" style="background:'+col+'"></div><span>'+hl(p)+'</span></div>';}});return;}}
+    const iB=/^[-•*]\\s+/.test(tr),isN2=/^\\d+[.)\\s]+/.test(tr),isA=/^[>»→]\\s+/.test(tr);
+    let cl=tr,num2='';
+    if(iB)cl=tr.replace(/^[-•*]\\s+/,'');
+    else if(isN2){const m3=tr.match(/^(\\d+)/);num2=m3?m3[1]:'';cl=tr.replace(/^\\d+[.)\\s]+/,'');}
+    else if(isA)cl=tr.replace(/^[>»→]\\s+/,'');
+    const h=hl(cl);
+    if(isN2)html+='<div class="fitem sub"><div style="width:19px;height:19px;border-radius:50%;background:#666;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:3px">'+num2+'</div><span>'+h+'</span></div>';
+    else if(isA||ind>=6)html+='<div class="fitem sub" style="padding-left:30px;opacity:.6;font-size:12px"><div class="dot" style="background:#555;width:5px;height:5px"></div><span>'+h+'</span></div>';
+    else if(ind>=2&&!iB)html+='<div class="fitem sub"><div class="dot" style="background:#666;width:5px;height:5px"></div><span>'+h+'</span></div>';
+    else html+='<div class="fitem"><div class="dot" style="background:'+col+'"></div><span>'+h+'</span></div>';
+  });
+  return html||'<span style="opacity:.35;font-style:italic">—</span>';
+}
+
+function renderFL(){
+  document.getElementById('fasi-lista').innerHTML=FASI.map((f,i)=>{
+    const m=getMin(i),cls=i===fc?'active':i<fc?'done':'';
+    return '<div class="fchip '+cls+'" onclick="goF('+i+')" style="background:'+f.color+'22;color:'+f.color+(i===fc?';border-color:white':'')+'">'+(i+1)+'. '+f.label.replace(/[🔥📖✅]/g,'').trim()+' ('+m+' min)</div>';
+  }).join('');
+}
+
+function goF(i){
+  if(tRun)liveToggle();
+  if(i>fc)minUsati+=Math.max(0,(tMax-tSec)/60);
+  fc=i;
+  const f=FASI[i];const m=getMin(i);
+  document.getElementById('fl').textContent=(i+1)+'/'+FASI.length+' — '+f.label;
+  document.getElementById('fl').style.color=f.color;
+  document.getElementById('fase-testo').innerHTML=parseTesto(f.testo,f.color);
+  tMax=m*60;tSec=tMax;
+  document.getElementById('timer-bar').style.background=f.color;
+  updT();renderFL();
+}
+
+function updT(){
+  const m=Math.floor(tSec/60),s=tSec%60;
+  const d=document.getElementById('timer-display');
+  d.textContent=String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+  document.getElementById('timer-bar').style.width=tMax>0?(tSec/tMax*100)+'%':'0%';
+  document.getElementById('tinfo').textContent=Math.ceil(tSec/60)+' min rimanenti';
+  d.className=tSec<=120&&tSec>0?'danger':tSec<=300&&tSec>0?'warning':'';
+  if(tSec===0){document.body.style.background='#7f1d1d';setTimeout(()=>document.body.style.background='#0f0f1a',1000);}
+}
+
+function liveToggle(){
+  if(!FASI.length)return;
+  if(tMax===0)goF(0);
+  tRun=!tRun;
+  document.getElementById('bsp').textContent=tRun?'⏸ Pausa':'▶ Riprendi';
+  if(tRun){tInt=setInterval(()=>{if(tSec>0){tSec--;updT();}else{clearInterval(tInt);tRun=false;document.getElementById('bsp').textContent='▶ Riprendi';}},1000);}
+  else clearInterval(tInt);
+}
+
+function liveAdj(d){
+  fAdj[fc]=(fAdj[fc]||0)+d;
+  if(fc+1<FASI.length)fAdj[fc+1]=(fAdj[fc+1]||0)-d;
+  tSec=Math.max(0,tSec+d*60);tMax=Math.max(60,tMax+d*60);
+  updT();renderFL();
+}
+
+function liveNext(){
+  if(fc+1<FASI.length)goF(fc+1);
+  else{if(tRun)liveToggle();document.getElementById('fl').textContent='✅ Lezione completata!';sRT(4);}
+}
+
+function sRT(n){
+  document.querySelectorAll('.rtab').forEach((t,i)=>t.classList.toggle('active',i===n));
+  document.querySelectorAll('.rp').forEach((p,i)=>p.classList.toggle('active',i===n));
+}
+
+// Appello
+function rendApp(){
+  document.getElementById('appello-list').innerHTML=STUDENTI.map(s=>{
+    const k=s.cognome+' '+s.nome,st=appello[k];
+    return '<div class="aitem"><span style="flex:1;font-size:13px">'+k+'</span><button class="abtn '+(st==='p'?'p':'a')+'" onclick="togApp(\\'' + k.replace(/'/g,"\\\\'") + '\\')">'+(st==='p'?'✓ Pres':'✗ Ass')+'</button></div>';
+  }).join('');
+  const na=Object.values(appello).filter(v=>v!=='p').length;
+  document.getElementById('app-sum').textContent=na?na+' assent'+(na===1?'e':'i'):'Tutti presenti ✓';
+}
+function togApp(k){appello[k]=appello[k]==='p'?'a':'p';rendApp();}
+
+// Semaforo
+function sem(c){
+  const n=new Date(),t=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');
+  const e={verde:'🟢',giallo:'🟡',rosso:'🔴'}[c];
+  semLog.push({t,e});
+  document.getElementById('sem-log').innerHTML='<strong>Log:</strong><br>'+semLog.slice(-6).reverse().map(l=>l.t+' '+l.e).join('<br>');
+}
+
+// Verifica orale
+function rendSL(){
+  const el=document.getElementById('sl');if(!el)return;
+  el.innerHTML=STUDENTI.map((s,i)=>{
+    const k=s.cognome+' '+s.nome,ass=appello[k]!=='p';
+    return '<div class="scard'+(ass?' done':'')+'" onclick="selS('+i+')">'+
+      '<div style="font-weight:700;font-size:13px">'+k+(ass?' <span style=\\'opacity:.4;font-size:10px\\'>assente</span>':'')+'</div>'+
+      '<div style="font-size:11px;opacity:.6">🗣️ '+(s.mediaOrale||'—')+' · ✍️ '+(s.mediaScritto||'—')+(s.haRecupero?' · 🔄':'')+'</div></div>';
+  }).join('');
+}
+function selS(i){
+  document.querySelectorAll('.scard').forEach((c,j)=>c.classList.toggle('sel',j===i));
+  const s=STUDENTI[i],el=document.getElementById('sd');if(!el)return;
+  el.style.display='block';
+  const u=s.ultimi3Orali.map(g=>'<span style="background:rgba(255,255,255,.1);border-radius:5px;padding:2px 7px;margin-right:3px;font-size:12px">'+g.voto+(g.titolo?' ('+g.titolo+')':'')+'</span>').join('');
+  el.innerHTML='<div style="font-size:14px;font-weight:700;margin-bottom:6px">'+s.cognome+' '+s.nome+'</div>'+
+    '<div style="font-size:11px;opacity:.5;margin-bottom:4px">Ultimi voti orali:</div>'+
+    '<div style="margin-bottom:8px">'+(u||'<span style="opacity:.4">nessun voto</span>')+'</div>'+
+    (s.aiReport?'<details><summary style="cursor:pointer;font-size:11px;opacity:.6;margin-bottom:4px">📋 Analisi AI speaking</summary><div style="font-size:11px;line-height:1.5;opacity:.75;background:rgba(255,255,255,.05);border-radius:6px;padding:8px;margin-top:4px">'+s.aiReport.substring(0,350)+'...</div></details>':'');
+}
+
+// Scritto
+function rendScr(){
+  const el=document.getElementById('scr-list');if(!el)return;
+  el.innerHTML=STUDENTI.map(s=>{
+    const k=s.cognome+' '+s.nome,ass=appello[k]!=='p';
+    return '<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.05)">'+
+      '<span style="flex:1;font-size:12px;'+(ass?'opacity:.3':'')+'">'+k+'</span>'+
+      (s.haRecupero?'<span style="font-size:10px;background:#064e3b;color:#6ee7b7;border-radius:6px;padding:1px 5px">🔄</span>':'')+
+      '<span style="font-size:13px;font-weight:700;'+(ass?'opacity:.3':'')+'">✍️ '+(s.mediaScritto||'—')+'</span></div>';
+  }).join('');
+}
+
+// Coppie
+function rendCop(){
+  const el=document.getElementById('cop-list');if(!el)return;
+  el.innerHTML=COPPIE.map((c,i)=>'<div class="copcard">'+
+    '<div style="font-size:10px;opacity:.4;margin-bottom:4px">Coppia '+(i+1)+'</div>'+
+    '<div style="display:flex;gap:8px;align-items:center">'+
+    '<div style="flex:1;background:rgba(52,211,153,.12);border-radius:6px;padding:5px 8px"><div style="font-size:9px;color:#6ee7b7;font-weight:700">TUTOR</div><div style="font-size:12px;font-weight:700">'+c.tutor+'</div><div style="font-size:10px;opacity:.6">🗣️ '+c.mediaT+'</div></div>'+
+    '<div style="font-size:14px;opacity:.3">→</div>'+
+    '<div style="flex:1;background:rgba(251,146,60,.12);border-radius:6px;padding:5px 8px"><div style="font-size:9px;color:#fb923c;font-weight:700">TUTEE</div><div style="font-size:12px;font-weight:700">'+c.tutee+'</div><div style="font-size:10px;opacity:.6">🗣️ '+c.mediaTe+'</div></div>'+
+    '</div></div>').join('');
+}
+
+// Fine
+function fineSv(){
+  const assenti=Object.entries(appello).filter(([k,v])=>v!=='p').map(([k])=>k);
+  const note=document.getElementById('note-ta').value.trim();
+  if(opener&&!opener.closed)opener.postMessage({type:'live_end',assenti,note,semLog},'*');
+  document.getElementById('fine-r').innerHTML='<span style="color:#6ee7b7">✅ Dati inviati all\\'app. Puoi chiudere questa finestra.</span>';
+}
+function fineArgo(){
+  const note=document.getElementById('note-ta').value.trim();
+  document.getElementById('fine-r').innerHTML='<textarea style="width:100%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.2);color:white;border-radius:6px;padding:8px;font-size:12px;min-height:70px" placeholder="Descrizione per registro Argo...">'+(note?'Note: '+note:'')+'</textarea>';
+}
+
+// Init
+rendApp();renderFL();
+if(IS_VO)rendSL();
+else if(IS_VS)rendScr();
+else rendCop();
+if(FASI.length>0)goF(0);
+document.getElementById('note-ta').addEventListener('input',()=>{
+  const n=new Date();document.getElementById('note-t').textContent='Ultima modifica: '+String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');
+});
+<\/script></body></html>`;
+
+            w.document.write(htmlContent);
+            w.document.close();
+
+            // Ascolta il messaggio di fine lezione
+            window.addEventListener('message', function onLiveEnd(evt) {
+                if (evt.data?.type !== 'live_end') return;
+                window.removeEventListener('message', onLiveEnd);
+                const { assenti, note, semLog } = evt.data;
+                // Proponi di segnare la lezione come svolta
+                if (confirm('✅ Fine lezione!\n\nVuoi segnare questa lezione come svolta?\n' +
+                    (assenti?.length ? 'Assenti: ' + assenti.join(', ') + '\n' : '') +
+                    (note ? 'Note: ' + note.substring(0,80) + (note.length>80?'...':'') : ''))) {
+                    const lzF = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotId || (!p.ora && p.data===isoDate));
+                    if (lzF) { lzF.stato = 'svolta'; saveData(); renderDayPanel(); }
+                    alert('✅ Lezione segnata come svolta!');
+                }
+            });
+        }
+
 
         // ================================================================
         // GOOGLE DRIVE SYNC
