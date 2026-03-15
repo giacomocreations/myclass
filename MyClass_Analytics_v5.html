@@ -3906,6 +3906,15 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
             // Il grafico distribuzione è ora gestito da renderClassCharts() con Chart.js
         }
         
+        function eliminaPromemoria(classeIdx, studIdx, ts) {
+            if (!confirm('Eliminare questo promemoria?')) return;
+            const s = data.classi[classeIdx]?.studenti[studIdx];
+            if (!s) return;
+            s.votiPromemoria = (s.votiPromemoria||[]).filter(p => (p.ts||0) !== ts);
+            saveData();
+            renderStudentDetail();
+        }
+
         function renderStudentDetail() {
             const studente = data.classi[currentClass].studenti[currentStudent];
             
@@ -4046,7 +4055,34 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
                     ${historyHtml || '<li class="history-item">Nessuna valutazione inserita</li>'}
                 </ul>
             `;
-            
+
+            // Voti promemoria da LIVE — in cima, prima delle annotazioni
+            if (studente.votiPromemoria && studente.votiPromemoria.length > 0) {
+                const vpHtml = studente.votiPromemoria.slice().reverse().map((p, idx) => {
+                    const tsKey = p.ts || idx;
+                    const righe = (p.punteggi||[]).map(r =>
+                        `<span style="font-size:11px;background:#f0f2ff;border-radius:5px;padding:2px 8px;margin-right:4px;margin-bottom:3px;display:inline-block;">${r.nome}: <strong>${r.voto}/${r.max}</strong></span>`
+                    ).join('');
+                    return `<li class="history-item" style="border-left-color:#667eea;">
+                        <div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+                            <div class="vote" style="color:#667eea;font-size:20px;">${p.voto10}</div>
+                            <div style="flex:1;">
+                                <div style="font-size:13px;font-weight:700;color:#3949ab;">📊 ${p.grigliaNome||'Griglia'}</div>
+                                <div style="font-size:12px;color:#666;">${formatDate(p.data)} — ${p.tot}/${p.totMax} pt</div>
+                                <div style="margin-top:4px;">${righe}</div>
+                            </div>
+                            <button onclick="eliminaPromemoria(${currentClass},${currentStudent},${tsKey})"
+                                style="padding:3px 8px;border-radius:5px;border:1px solid #e57373;background:white;color:#e57373;cursor:pointer;font-size:11px;flex-shrink:0;">🗑️</button>
+                        </div>
+                        <div style="margin-top:6px;padding:5px 8px;background:#fff8e1;border-radius:6px;font-size:11px;color:#a07000;">⚠️ Promemoria LIVE — inserisci il voto definitivo manualmente nel tab Inserisci</div>
+                    </li>`;
+                }).join('');
+                document.getElementById('studentHistory').innerHTML =
+                    `<h4 style="margin-bottom:12px;color:#3949ab;">📊 Voti promemoria (da LIVE)</h4>
+                    <ul class="history-list">${vpHtml}</ul>` +
+                    document.getElementById('studentHistory').innerHTML;
+            }
+
             // Mostra annotazioni se presenti
             if (studente.annotazioni && studente.annotazioni.length > 0) {
                 const annBehavior = studente.annotazioni.filter(a => a.tipo !== 'nota_disciplinare');
@@ -4082,27 +4118,6 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
                 }
             }
             
-            // Voti promemoria da LIVE
-            if (studente.votiPromemoria && studente.votiPromemoria.length > 0) {
-                const vpHtml = studente.votiPromemoria.slice().reverse().map(p => {
-                    const righe=(p.punteggi||[]).map(r=>`<span style="font-size:11px;background:#f0f2ff;border-radius:5px;padding:2px 8px;margin-right:4px;margin-bottom:3px;display:inline-block;">${r.nome}: <strong>${r.voto}/${r.max}</strong></span>`).join('');
-                    return `<li class="history-item" style="border-left-color:#667eea;">
-                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                            <div class="vote" style="color:#667eea;font-size:20px;">${p.voto10}</div>
-                            <div>
-                                <div style="font-size:13px;font-weight:700;color:#3949ab;">📊 ${p.grigliaNome||'Griglia'}</div>
-                                <div style="font-size:12px;color:#666;">${formatDate(p.data)} — ${p.tot}/${p.totMax} pt</div>
-                                <div style="margin-top:4px;">${righe}</div>
-                            </div>
-                        </div>
-                        <div style="margin-top:6px;padding:5px 8px;background:#fff8e1;border-radius:6px;font-size:11px;color:#a07000;">⚠️ Promemoria LIVE — inserisci il voto definitivo manualmente nel tab Inserisci</div>
-                    </li>`;
-                }).join('');
-                document.getElementById('studentHistory').innerHTML += `
-                    <h4 style="margin-top:30px;margin-bottom:12px;color:#3949ab;">📊 Voti promemoria (da LIVE)</h4>
-                    <ul class="history-list">${vpHtml}</ul>`;
-            }
-
             // Mostra resoconto AI salvato (se esiste)
             const aiContainer = document.getElementById('aiStudentReportContainer');
             const btnStudentAI = document.getElementById('btnStudentAI');
