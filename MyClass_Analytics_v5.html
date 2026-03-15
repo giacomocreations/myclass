@@ -11381,6 +11381,28 @@ Rispondi SOLO con JSON valido:
 
             // Studenti
             const unitLezione = lz.unit || null;
+
+            // Note specifiche per studente dal campo pd.valutazione
+            // Pattern: "Nome Cognome (testo)" separati da ";"
+            const _noteStudenti = {};
+            if (pd.valutazione) {
+                const matches = pd.valutazione.matchAll(/([A-ZÀ-Ö][a-zà-ö]+(?:\s+[A-ZÀ-Ö][a-zà-ö]+)+)\s*\(([^)]+)\)/g);
+                for (const m of matches) {
+                    const nomeKey = m[1].trim().toLowerCase();
+                    _noteStudenti[nomeKey] = m[2].trim();
+                }
+            }
+
+            // Studenti in sospeso — tutti quelli segnalati dalla dashboard,
+            // indipendentemente dall'unità della lezione corrente
+            const _sospesiMap = new Map(); // chiave -> {unit, tipo, motivo}
+            const _sospesiAll = _getStudentiDaRecuperare(classe);
+            _sospesiAll.forEach(r => {
+                const k = (r.cognome+' '+r.nome).toLowerCase();
+                if (!_sospesiMap.has(k)) _sospesiMap.set(k, []);
+                _sospesiMap.get(k).push({ unit: r.unit, tipo: r.tipo, motivo: r.motivo, voto: r.voto });
+            });
+
             const studentiDati = (classe.studenti||[]).map(s=>{
                 const og = s.orale.filter(g=>!g.recupero||g.recupero==='media');
                 const sg = s.scritto.filter(g=>!g.recupero||g.recupero==='media');
@@ -11392,6 +11414,11 @@ Rispondi SOLO con JSON valido:
                     const m=t.match(/fila\s+([a-e])/i);
                     return m?m[1].toUpperCase():null;
                 },null);
+                const chiave = (s.cognome+' '+s.nome).toLowerCase();
+                const chiaveInv = (s.nome+' '+s.cognome).toLowerCase();
+                const notaPiano = _noteStudenti[chiave] || _noteStudenti[chiaveInv] || null;
+                const isSospeso = _sospesiMap.has(chiave);
+                const infoSospeso = isSospeso ? _sospesiMap.get(chiave) : [];
                 return {
                     nome:s.nome, cognome:s.cognome,
                     mediaOrale:mo, mediaScritto:ms,
@@ -11400,9 +11427,17 @@ Rispondi SOLO con JSON valido:
                     aiReport:s.aiReport?.text||null,
                     ultimi3Orali:(s.orale||[]).slice(-3).map(g=>({voto:g.voto,titolo:g.titolo||''})),
                     votiUnitaCorrente:unitLezione?(s.scritto||[]).filter(g=>g.unit===unitLezione).map(g=>({voto:g.voto})):[],
-                    fila:filaMatch
+                    fila:filaMatch,
+                    notaPiano,
+                    isSospeso,
+                    infoSospeso
                 };
-            }).sort((a,b)=>a.cognome.localeCompare(b.cognome));
+            }).sort((a,b)=>{
+                // Sospesi in cima, poi ordine alfabetico
+                if(a.isSospeso && !b.isSospeso) return -1;
+                if(!a.isSospeso && b.isSospeso) return 1;
+                return a.cognome.localeCompare(b.cognome);
+            });
 
             // Coppie speaking
             const con = [...studentiDati].filter(s=>s.mediaOrale!==null).sort((a,b)=>parseFloat(b.mediaOrale)-parseFloat(a.mediaOrale));
@@ -11729,15 +11764,25 @@ function cambiaGriglia(id){
 
 function rendSL(){
   const el=document.getElementById('sl');if(!el)return;
-  el.innerHTML=STUDENTI.map(function(s,i){
+  const nSosp=STUDENTI.filter(s=>s.isSospeso).length;
+  let html='';
+  if(nSosp>0){
+    html+='<div style="font-size:10px;font-weight:700;color:#fb923c;letter-spacing:.06em;margin-bottom:6px;padding:4px 6px;background:rgba(251,146,60,.1);border-radius:5px;">'
+      +'\uD83D\uDD34 '+nSosp+' STUDENT'+(nSosp===1?'E':'I')+' IN SOSPESO</div>';
+  }
+  html+=STUDENTI.map(function(s,i){
     const k=s.cognome+' '+s.nome,ass=appello[k]!=='p';
-    return '<div class="scard'+(ass?' done':'')+'" onclick="selS('+i+')">'
-      +'<div style="font-weight:700;font-size:13px">'+k+(ass?' <span style="opacity:.4;font-size:10px">assente</span>':'')+'</div>'
-      +'<div style="font-size:11px;opacity:.6">\uD83D\uDDE3\uFE0F '+(s.mediaOrale||'\u2014')+' \u00B7 \u270D\uFE0F '+(s.mediaScritto||'\u2014')+(s.haRecupero?' \u00B7 \uD83D\uDD04':'')+'</div>'
+    const sosp=s.isSospeso;
+    return '<div class="scard'+(ass?' done':'')+(sosp?' sosp':'')+'" onclick="selS('+i+')" style="'+(sosp?'border-left:3px solid #fb923c;background:rgba(251,146,60,.07);':'')+'">'
+      +'<div style="display:flex;align-items:center;gap:6px;">'
+      +(sosp?'<span style="font-size:10px;color:#fb923c;">\uD83D\uDD34</span>':'')
+      +'<div style="font-weight:700;font-size:13px;">'+k+(ass?' <span style="opacity:.4;font-size:10px;">assente</span>':'')+'</div>'
+      +'</div>'
+      +'<div style="font-size:11px;opacity:.6;">\uD83D\uDDE3\uFE0F '+(s.mediaOrale||'\u2014')+' \u00B7 \u270D\uFE0F '+(s.mediaScritto||'\u2014')+(s.haRecupero?' \u00B7 \uD83D\uDD04':'')+'</div>'
       +'</div>';
   }).join('');
+  el.innerHTML=html;
 }
-
 function selS(i){
   document.querySelectorAll('.scard').forEach(function(c,j){c.classList.toggle('sel',j===i);});
   const s=STUDENTI[i],el=document.getElementById('sd');if(!el)return;
@@ -11794,17 +11839,25 @@ function selS(i){
   }
 
   // HTML base
-  let html='<div style="font-size:14px;font-weight:700;margin-bottom:8px;">\uD83D\uDC64 '+s.cognome+' '+s.nome+'</div>'
+  let html='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
+    +(s.isSospeso?'<span style="font-size:12px;color:#fb923c;">\uD83D\uDD34</span>':'')
+    +'<div style="font-size:14px;font-weight:700;">\uD83D\uDC64 '+s.cognome+' '+s.nome+'</div>'
+    +(s.isSospeso?'<span style="font-size:10px;background:rgba(251,146,60,.2);color:#fb923c;border-radius:4px;padding:2px 7px;font-weight:700;">IN SOSPESO</span>':'')
+    +'</div>'
+    +(s.isSospeso&&s.infoSospeso&&s.infoSospeso.length?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">'
+      +s.infoSospeso.map(function(r){return '<span style="font-size:10px;background:rgba(239,68,68,.15);color:#fca5a5;border-radius:4px;padding:2px 8px;">'+r.tipo+' '+r.unit+(r.voto?' ('+r.voto+')':' — mancante')+'</span>';}).join('')+'</div>':'')
     +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">'
     +'<span style="font-size:12px;background:rgba(255,255,255,.07);border-radius:5px;padding:3px 9px;">\uD83D\uDDE3\uFE0F <strong>'+(s.mediaOrale||'\u2014')+'</strong>'+trendHTML+'</span>'
     +'<span style="font-size:12px;background:rgba(255,255,255,.07);border-radius:5px;padding:3px 9px;">\u270D\uFE0F <strong>'+(s.mediaScritto||'\u2014')+'</strong></span>'
     +(s.haRecupero?'<span style="font-size:11px;background:#064e3b;color:#6ee7b7;border-radius:5px;padding:3px 7px;">\uD83D\uDD04 rec</span>':'')
     +'</div>'
+    +(s.notaPiano?'<div style="background:rgba(251,146,60,.1);border-left:3px solid #fb923c;border-radius:0 6px 6px 0;padding:6px 10px;margin-bottom:10px;font-size:11px;line-height:1.5;color:#fed7aa;">'
+      +'<span style="font-size:9px;font-weight:700;color:#fb923c;letter-spacing:.08em;display:block;margin-bottom:3px;">\uD83D\uDCCB NOTE PIANO</span>'
+      +s.notaPiano+'</div>':'')
     +'<div style="font-size:10px;opacity:.45;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Ultimi voti orali</div>'
     +'<div style="margin-bottom:10px;">'+(u||'<span style="opacity:.3;font-size:12px;">nessun voto</span>')+'</div>'
     +compHTML
     +grigliaSwitch;
-
   // Griglia interattiva
   if(GRIGLIA&&GRIGLIA.aree&&GRIGLIA.aree.length){
     const totMax=GRIGLIA.aree.reduce(function(s,a){return s+a.max;},0);
