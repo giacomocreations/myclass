@@ -1409,6 +1409,31 @@
                     <div id="driveLastSave" style="font-size:11px;color:#aaa;margin-top:8px;display:none;"></div>
                 </div>
 
+                <!-- SEZIONE GRIGLIE DI VALUTAZIONE -->
+                <div class="section" id="griglieSection" style="margin-top:16px;">
+                    <h3 style="margin-bottom:12px;color:#2c3e50;">📊 Griglie di valutazione orale</h3>
+                    <p style="font-size:13px;color:#666;margin-bottom:14px;">Crea griglie con macroaree personalizzabili da usare durante le verifiche orali in modalità LIVE.</p>
+                    <div id="griglieList" style="margin-bottom:14px;"></div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+                        <button class="btn-primary" onclick="grigliaNuova()">➕ Nuova griglia</button>
+                        <button onclick="document.getElementById('grigliaImportFile').click()" style="padding:7px 14px;border-radius:6px;border:2px solid #667eea;background:white;color:#667eea;cursor:pointer;font-size:13px;font-weight:700;">📂 Importa JSON</button>
+                        <input type="file" id="grigliaImportFile" accept=".json" style="display:none;" onchange="grigliaImportaJSON(this)">
+                    </div>
+                    <div id="grigliaEditor" style="display:none;margin-top:16px;background:#f8f9ff;border:1px solid #c5cae9;border-radius:10px;padding:16px;">
+                        <h4 style="margin-bottom:12px;color:#3949ab;">✏️ Modifica griglia</h4>
+                        <div class="form-group" style="margin-bottom:10px;">
+                            <label>Nome griglia</label>
+                            <input type="text" id="ge_nome" placeholder="es. Describe a Room" style="width:100%;">
+                        </div>
+                        <div id="ge_aree" style="margin-bottom:12px;"></div>
+                        <button onclick="grigliaAddArea()" style="padding:5px 12px;border-radius:6px;border:2px dashed #667eea;background:white;color:#667eea;cursor:pointer;font-size:13px;margin-bottom:10px;">+ Aggiungi macroarea</button>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+                            <button class="btn-primary" onclick="grigliaSalva()">💾 Salva griglia</button>
+                            <button onclick="document.getElementById('grigliaEditor').style.display='none';" style="padding:7px 14px;border-radius:6px;border:1px solid #ccc;background:white;color:#666;cursor:pointer;font-size:13px;">Annulla</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="section">
                     <h3 style="margin-bottom: 15px; color: #2c3e50;">📋 Codici Argo</h3>
                     <p style="color: #666; margin-bottom: 15px;">La gestione dei codici Argo (NHC, NdM, ecc.) si trova nella pagina Import.</p>
@@ -2369,6 +2394,8 @@
             if (!data.risorseLezioni) data.risorseLezioni = [];
             // Inizializza recuperatiDashboard (spunte manuali pannello giorno)
             if (!data.recuperatiDashboard) data.recuperatiDashboard = {};
+            // Inizializza griglie di valutazione orale
+            if (!data.griglie) data.griglie = [];
             
             if (savedApiKey) {
                 GEMINI_API_KEY = savedApiKey;
@@ -3073,10 +3100,171 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
             renderDashboard();
         }
         
+        // ================================================================
+        // GRIGLIE DI VALUTAZIONE ORALE
+        // ================================================================
+
+        let _grigliaEditId = null; // null = nuova, string = modifica
+
+        function renderGriglieSettings() {
+            const list = document.getElementById('griglieList');
+            if (!list) return;
+            const griglie = data.griglie || [];
+            if (!griglie.length) {
+                list.innerHTML = '<p style="font-size:13px;color:#999;font-style:italic;">Nessuna griglia creata. Crea la prima griglia qui sotto.</p>';
+                return;
+            }
+            list.innerHTML = griglie.map(g => {
+                const totMax = g.aree.reduce((s,a)=>s+a.max, 0);
+                const areeStr = g.aree.map(a=>`${a.nome} /${a.max}`).join(' · ');
+                return `<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;background:#f8f9ff;border:1px solid #e8eaf6;border-radius:8px;margin-bottom:8px;">
+                    <div style="flex:1;">
+                        <div style="font-weight:700;font-size:14px;color:#3949ab;">${g.nome}</div>
+                        <div style="font-size:12px;color:#666;margin-top:2px;">${areeStr} — tot. /${totMax}</div>
+                    </div>
+                    <button onclick="grigliaModifica('${g.id}')" style="padding:4px 10px;border-radius:6px;border:1px solid #667eea;background:white;color:#667eea;cursor:pointer;font-size:12px;">✏️ Modifica</button>
+                    <button onclick="grigliaElimina('${g.id}')" style="padding:4px 10px;border-radius:6px;border:1px solid #e57373;background:white;color:#e57373;cursor:pointer;font-size:12px;">🗑️</button>
+                </div>`;
+            }).join('');
+        }
+
+        function grigliaRenderAree() {
+            const container = document.getElementById('ge_aree');
+            if (!container) return;
+            // Leggi aree correnti dagli input esistenti
+            const inputs = container.querySelectorAll('.ge-area-row');
+            const aree = [];
+            inputs.forEach(row => {
+                aree.push({
+                    nome: row.querySelector('.ge-nome').value,
+                    max:  parseFloat(row.querySelector('.ge-max').value) || 5
+                });
+            });
+            // Se vuoto, usa array corrente salvato
+            const saved = _grigliaEditId ? (data.griglie||[]).find(g=>g.id===_grigliaEditId)?.aree || [] : [];
+            const finalAree = aree.length ? aree : saved;
+            _grigliaRenderRows(finalAree.length ? finalAree : []);
+        }
+
+        function _grigliaRenderRows(aree) {
+            const container = document.getElementById('ge_aree');
+            if (!container) return;
+            container.innerHTML = aree.map((a,i) => `
+                <div class="ge-area-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+                    <input class="ge-nome" type="text" value="${a.nome||''}" placeholder="Nome macroarea" style="flex:1;padding:6px 10px;border:1px solid #c5cae9;border-radius:6px;font-size:13px;">
+                    <input class="ge-max" type="number" value="${a.max||5}" min="1" max="20" step="0.5" style="width:65px;padding:6px 8px;border:1px solid #c5cae9;border-radius:6px;font-size:13px;text-align:center;">
+                    <span style="font-size:12px;color:#999;">pt max</span>
+                    <button onclick="grigliaRimuoviArea(${i})" style="padding:3px 8px;border-radius:5px;border:1px solid #e57373;background:white;color:#e57373;cursor:pointer;font-size:13px;">✕</button>
+                </div>
+            `).join('');
+        }
+
+        function grigliaRimuoviArea(i) {
+            const container = document.getElementById('ge_aree');
+            const rows = [...container.querySelectorAll('.ge-area-row')];
+            const aree = rows.map(row => ({
+                nome: row.querySelector('.ge-nome').value,
+                max:  parseFloat(row.querySelector('.ge-max').value) || 5
+            }));
+            aree.splice(i, 1);
+            _grigliaRenderRows(aree);
+        }
+
+        function grigliaAddArea() {
+            const container = document.getElementById('ge_aree');
+            const rows = [...container.querySelectorAll('.ge-area-row')];
+            const aree = rows.map(row => ({
+                nome: row.querySelector('.ge-nome').value,
+                max:  parseFloat(row.querySelector('.ge-max').value) || 5
+            }));
+            aree.push({ nome: '', max: 5 });
+            _grigliaRenderRows(aree);
+        }
+
+        function grigliaNuova() {
+            _grigliaEditId = null;
+            document.getElementById('ge_nome').value = '';
+            _grigliaRenderRows([{ nome: '', max: 5 }]);
+            document.getElementById('grigliaEditor').style.display = 'block';
+            document.getElementById('ge_nome').focus();
+        }
+
+        function grigliaModifica(id) {
+            const g = (data.griglie||[]).find(x=>x.id===id);
+            if (!g) return;
+            _grigliaEditId = id;
+            document.getElementById('ge_nome').value = g.nome;
+            _grigliaRenderRows(g.aree);
+            document.getElementById('grigliaEditor').style.display = 'block';
+            document.getElementById('ge_nome').focus();
+        }
+
+        function grigliaSalva() {
+            const nome = document.getElementById('ge_nome').value.trim();
+            if (!nome) { alert('Inserisci un nome per la griglia.'); return; }
+            const rows = document.querySelectorAll('.ge-area-row');
+            const aree = [...rows].map(row => ({
+                nome: row.querySelector('.ge-nome').value.trim(),
+                max:  parseFloat(row.querySelector('.ge-max').value) || 5
+            })).filter(a => a.nome);
+            if (!aree.length) { alert('Aggiungi almeno una macroarea.'); return; }
+            if (!data.griglie) data.griglie = [];
+            if (_grigliaEditId) {
+                const g = data.griglie.find(x=>x.id===_grigliaEditId);
+                if (g) { g.nome = nome; g.aree = aree; }
+            } else {
+                data.griglie.push({ id: 'g_' + Date.now(), nome, aree });
+            }
+            saveData();
+            document.getElementById('grigliaEditor').style.display = 'none';
+            renderGriglieSettings();
+        }
+
+        function grigliaElimina(id) {
+            if (!confirm('Eliminare questa griglia?')) return;
+            data.griglie = (data.griglie||[]).filter(g=>g.id!==id);
+            saveData();
+            renderGriglieSettings();
+        }
+
+        function grigliaImportaJSON(input) {
+            const file = input.files[0];
+            input.value = '';
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                try {
+                    const raw = JSON.parse(e.target.result);
+                    // Accetta sia oggetto singolo che array di griglie
+                    const lista = Array.isArray(raw) ? raw : [raw];
+                    let importate = 0;
+                    lista.forEach(g => {
+                        const nome = (g.nome || '').trim();
+                        const aree = (g.aree || []).filter(a => a.nome && a.max > 0);
+                        if (!nome || !aree.length) return;
+                        if (!data.griglie) data.griglie = [];
+                        data.griglie.push({ id: 'g_' + Date.now() + '_' + importate, nome, aree });
+                        importate++;
+                    });
+                    if (!importate) {
+                        alert('❌ Nessuna griglia valida trovata.\nFormato atteso:\n{ "nome": "...", "aree": [{ "nome": "...", "max": 5 }] }');
+                        return;
+                    }
+                    saveData();
+                    renderGriglieSettings();
+                    alert('✅ ' + importate + ' griglia' + (importate > 1 ? 'e importate' : ' importata') + ' con successo!');
+                } catch(err) {
+                    alert('❌ File JSON non valido:\n' + err.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
         function showSettings() {
             hideAllViews();
             document.getElementById('settingsView').classList.remove('hidden');
             renderArgoCodesTable();
+            renderGriglieSettings();
         }
         
         function showClass(index) {
@@ -3903,6 +4091,32 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
                 }
             }
             
+            // Voti promemoria da LIVE (griglia)
+            if (studente.votiPromemoria && studente.votiPromemoria.length > 0) {
+                const vpHtml = studente.votiPromemoria.slice().reverse().map(p => {
+                    const righe = (p.punteggi||[]).map(r =>
+                        `<span style="font-size:11px;background:#f0f2ff;border-radius:5px;padding:2px 8px;margin-right:4px;margin-bottom:3px;display:inline-block;">${r.nome}: <strong>${r.voto}/${r.max}</strong></span>`
+                    ).join('');
+                    return `<li class="history-item" style="border-left-color:#667eea;">
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                            <div class="vote" style="color:#667eea;font-size:20px;">${p.voto10}</div>
+                            <div>
+                                <div style="font-size:13px;font-weight:700;color:#3949ab;">📊 ${p.grigliaNome||'Griglia'}</div>
+                                <div style="font-size:12px;color:#666;">${formatDate(p.data)} — ${p.tot}/${p.totMax} pt</div>
+                                <div style="margin-top:4px;">${righe}</div>
+                            </div>
+                        </div>
+                        <div style="margin-top:6px;padding:5px 8px;background:#fff8e1;border-radius:6px;font-size:11px;color:#a07000;">
+                            ⚠️ Promemoria LIVE — inserisci il voto definitivo manualmente nel tab Inserisci
+                        </div>
+                    </li>`;
+                }).join('');
+                document.getElementById('studentHistory').innerHTML += `
+                    <h4 style="margin-top:30px;margin-bottom:12px;color:#3949ab;">📊 Voti promemoria (da LIVE)</h4>
+                    <ul class="history-list">${vpHtml}</ul>
+                `;
+            }
+
             // Mostra resoconto AI salvato (se esiste)
             const aiContainer = document.getElementById('aiStudentReportContainer');
             const btnStudentAI = document.getElementById('btnStudentAI');
@@ -10231,6 +10445,14 @@ Rispondi SOLO con JSON valido:
                         <textarea id="pd_valutazione" oninput="pdAutoResize(this)">${pd.valutazione||''}</textarea></div>
                     <div class="piano-det-section"><label>📝 Note personali</label>
                         <textarea id="pd_note" oninput="pdAutoResize(this)">${pd.note||''}</textarea></div>
+                    ${(data.griglie&&data.griglie.length) ? `<div class="piano-det-section" style="background:#fffde7;border:1px solid #ffe082;border-radius:8px;padding:10px 12px;">
+                        <label style="margin:0 0 6px;color:#f57f17;font-weight:700;">📊 Griglia di valutazione orale</label>
+                        <select id="pd_griglia" style="width:100%;padding:6px 10px;border:1px solid #ffe082;border-radius:6px;background:white;font-size:13px;">
+                            <option value="">— Nessuna griglia collegata —</option>
+                            ${(data.griglie||[]).map(g=>`<option value="${g.id}" ${pd.grigliaId===g.id?'selected':''}>${g.nome} — ${g.aree.map(a=>a.nome+' /'+a.max).join(', ')}</option>`).join('')}
+                        </select>
+                        <p style="font-size:11px;color:#a07000;margin-top:5px;">La griglia apparirà nella scheda studente durante la modalità LIVE.</p>
+                    </div>` : ''}
                 </div>
 
                 <!-- READ VIEW -->
@@ -10619,6 +10841,7 @@ Rispondi SOLO con JSON valido:
                 fase3:       document.getElementById('pd_fase3')?.value       || '',
                 valutazione: document.getElementById('pd_valutazione')?.value || '',
                 note:        document.getElementById('pd_note')?.value        || '',
+                grigliaId:   document.getElementById('pd_griglia')?.value     || null,
             };
             saveData();
             if (btn) { btn.textContent = '✓ Salvato!'; setTimeout(()=>{ btn.textContent='💾 Salva piano'; },1500); }
@@ -11197,6 +11420,19 @@ Rispondi SOLO con JSON valido:
                 mediaT:c.tutor.mediaOrale, mediaTe:c.tutee.mediaOrale
             })));
 
+            // Griglia collegata alla lezione (via postMessage, nessun escape inline)
+            const grigliaCollegata = (() => {
+                const griglie = data.griglie || [];
+                // 1. Griglia esplicitamente collegata al piano
+                if (pd.grigliaId) return griglie.find(g=>g.id===pd.grigliaId) || null;
+                // 2. Autoselect: se è verifica orale e c'è esattamente una griglia, usala
+                if (isVerOrale && griglie.length === 1) return griglie[0];
+                // 3. Autoselect: se è verifica orale e ce ne sono più, usa la prima
+                //    (l'utente può sempre collegarne una specifica dal piano)
+                if (isVerOrale && griglie.length > 1) return griglie[0];
+                return null;
+            })();
+
             const w = window.open('','MyClassLIVE',`width=${screen.width},height=${screen.height},left=0,top=0`);
             if (!w) { alert('Abilita i popup per questa pagina per usare la modalità LIVE.'); return; }
 
@@ -11459,25 +11695,101 @@ function sem(c){
   document.getElementById('sem-log').innerHTML='<strong>Log:</strong><br>'+semLog.slice(-6).reverse().map(l=>l.t+' '+l.e).join('<br>');
 }
 
+// Griglia ricevuta via postMessage
+let GRIGLIA = null;
+window.addEventListener('message', function(evt){
+  if(evt.data?.type==='griglia_init'){
+    GRIGLIA=evt.data.griglia;
+    // Se c'è uno studente selezionato, ri-renderizza per mostrare la griglia
+    const sel=document.querySelector('.scard.sel');
+    if(sel){const idx=[...document.querySelectorAll('.scard')].indexOf(sel);if(idx>=0)selS(idx);}
+  }
+});
+// Richiedi griglia all'app principale
+if(opener&&!opener.closed) opener.postMessage({type:'griglia_request'},'*');
+
 // Verifica orale
 function rendSL(){
   const el=document.getElementById('sl');if(!el)return;
   el.innerHTML=STUDENTI.map((s,i)=>{
     const k=s.cognome+' '+s.nome,ass=appello[k]!=='p';
-    return '<div class="scard'+(ass?' done':'')+'" onclick="selS('+i+')">'+
-      '<div style="font-weight:700;font-size:13px">'+k+(ass?' <span style=\\'opacity:.4;font-size:10px\\'>assente</span>':'')+'</div>'+
-      '<div style="font-size:11px;opacity:.6">🗣️ '+(s.mediaOrale||'—')+' · ✍️ '+(s.mediaScritto||'—')+(s.haRecupero?' · 🔄':'')+'</div></div>';
+    return '<div class="scard'+(ass?' done':'')+('" onclick="selS('+i+')">')+
+      '<div style="font-weight:700;font-size:13px">'+k+(ass?' <span style="opacity:.4;font-size:10px">assente</span>':'')+'</div>'+
+      '<div style="font-size:11px;opacity:.6">\ud83d\udde3\ufe0f '+(s.mediaOrale||'\u2014')+' \u00b7 \u270d\ufe0f '+(s.mediaScritto||'\u2014')+(s.haRecupero?' \u00b7 \ud83d\udd04':'')+'</div></div>';
   }).join('');
 }
+
 function selS(i){
   document.querySelectorAll('.scard').forEach((c,j)=>c.classList.toggle('sel',j===i));
   const s=STUDENTI[i],el=document.getElementById('sd');if(!el)return;
   el.style.display='block';
   const u=s.ultimi3Orali.map(g=>'<span style="background:rgba(255,255,255,.1);border-radius:5px;padding:2px 7px;margin-right:3px;font-size:12px">'+g.voto+(g.titolo?' ('+g.titolo+')':'')+'</span>').join('');
-  el.innerHTML='<div style="font-size:14px;font-weight:700;margin-bottom:6px">'+s.cognome+' '+s.nome+'</div>'+
+  // Info base studente
+  let html='<div style="font-size:14px;font-weight:700;margin-bottom:6px">'+s.cognome+' '+s.nome+'</div>'+
     '<div style="font-size:11px;opacity:.5;margin-bottom:4px">Ultimi voti orali:</div>'+
     '<div style="margin-bottom:8px">'+(u||'<span style="opacity:.4">nessun voto</span>')+'</div>'+
-    (s.aiReport?'<details><summary style="cursor:pointer;font-size:11px;opacity:.6;margin-bottom:4px">📋 Analisi AI speaking</summary><div style="font-size:11px;line-height:1.5;opacity:.75;background:rgba(255,255,255,.05);border-radius:6px;padding:8px;margin-top:4px">'+s.aiReport.substring(0,350)+'...</div></details>':'');
+    (s.aiReport?'<details><summary style="cursor:pointer;font-size:11px;opacity:.6;margin-bottom:4px">\ud83d\udccb Analisi AI speaking</summary><div style="font-size:11px;line-height:1.5;opacity:.75;background:rgba(255,255,255,.05);border-radius:6px;padding:8px;margin-top:4px">'+s.aiReport.substring(0,350)+'...</div></details>':'');
+  // Griglia interattiva
+  if(GRIGLIA&&GRIGLIA.aree&&GRIGLIA.aree.length){
+    const totMax=GRIGLIA.aree.reduce((s,a)=>s+a.max,0);
+    html+='<div style="margin-top:10px;background:rgba(255,255,255,.04);border-radius:8px;padding:10px;border:1px solid rgba(255,255,255,.1);">';
+    html+='<div style="font-size:11px;font-weight:700;color:#a78bfa;margin-bottom:8px;">\ud83d\udcca '+GRIGLIA.nome+'</div>';
+    GRIGLIA.aree.forEach(function(a,ai){
+      html+='<div style="margin-bottom:8px;">';
+      html+='<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;"><span>'+a.nome+'</span><span id="gval_'+i+'_'+ai+'" style="font-weight:700;color:#fbbf24;">0 / '+a.max+'</span></div>';
+      html+='<input type="range" min="0" max="'+a.max+'" step="0.5" value="0" style="width:100%;accent-color:#a78bfa;" id="gslide_'+i+'_'+ai+'" oninput="grigliaUpd('+i+','+totMax+')">';
+      html+='</div>';
+    });
+    html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;padding-top:8px;border-top:1px solid rgba(255,255,255,.1);">';
+    html+='<span style="font-size:12px;opacity:.6;">Totale: <strong id="gtot_'+i+'">0 / '+totMax+'</strong></span>';
+    html+='<span style="font-size:18px;font-weight:800;color:#6ee7b7;" id="gvoto_'+i+'">— /10</span>';
+    html+='</div>';
+    html+='<button onclick="grigliaRegistra('+i+','+totMax+')" style="width:100%;margin-top:8px;padding:7px;border-radius:7px;border:none;background:#4f46e5;color:white;font-weight:700;font-size:13px;cursor:pointer;">\ud83d\udcbe Registra promemoria</button>';
+    html+='<div id="greg_'+i+'" style="font-size:11px;color:#6ee7b7;margin-top:5px;display:none;">\u2713 Salvato!</div>';
+    html+='</div>';
+  }
+  el.innerHTML=html;
+}
+
+function grigliaUpd(si,totMax){
+  let tot=0;
+  GRIGLIA.aree.forEach(function(a,ai){
+    const sl=document.getElementById('gslide_'+si+'_'+ai);
+    const vl=document.getElementById('gval_'+si+'_'+ai);
+    const v=sl?parseFloat(sl.value):0;
+    if(vl)vl.textContent=v+' / '+a.max;
+    tot+=v;
+  });
+  const totEl=document.getElementById('gtot_'+si);
+  if(totEl)totEl.textContent=tot+' / '+totMax;
+  const pct=tot/totMax;
+  let v10;
+  if(pct>=1.0)v10=10;else if(pct>=0.93)v10=9.5;else if(pct>=0.87)v10=9;
+  else if(pct>=0.80)v10=8.5;else if(pct>=0.73)v10=8;else if(pct>=0.67)v10=7.5;
+  else if(pct>=0.60)v10=7;else if(pct>=0.53)v10=6.5;else if(pct>=0.40)v10=6;
+  else if(pct>=0.27)v10=5;else if(pct>=0.13)v10=4;else v10=3;
+  const vEl=document.getElementById('gvoto_'+si);
+  if(vEl)vEl.textContent=v10+' /10';
+}
+
+function grigliaRegistra(si,totMax){
+  const s=STUDENTI[si];
+  const punteggi=GRIGLIA.aree.map(function(a,ai){
+    const sl=document.getElementById('gslide_'+si+'_'+ai);
+    return{nome:a.nome,voto:sl?parseFloat(sl.value):0,max:a.max};
+  });
+  const tot=punteggi.reduce(function(s,p){return s+p.voto;},0);
+  const pct=tot/totMax;
+  let v10;
+  if(pct>=1.0)v10=10;else if(pct>=0.93)v10=9.5;else if(pct>=0.87)v10=9;
+  else if(pct>=0.80)v10=8.5;else if(pct>=0.73)v10=8;else if(pct>=0.67)v10=7.5;
+  else if(pct>=0.60)v10=7;else if(pct>=0.53)v10=6.5;else if(pct>=0.40)v10=6;
+  else if(pct>=0.27)v10=5;else if(pct>=0.13)v10=4;else v10=3;
+  if(opener&&!opener.closed){
+    opener.postMessage({type:'griglia_voto',studente:s.cognome+' '+s.nome,voto10:v10,tot:tot,totMax:totMax,punteggi:punteggi,grigliaId:GRIGLIA.id,grigliaNome:GRIGLIA.nome},'*');
+  }
+  const el=document.getElementById('greg_'+si);
+  if(el){el.style.display='block';el.textContent='\u2713 '+v10+'/10 inviato!';}
 }
 
 // Scritto
@@ -11530,20 +11842,57 @@ document.getElementById('note-ta').addEventListener('input',()=>{
             w.document.write(htmlContent);
             w.document.close();
 
-            // Ascolta il messaggio di fine lezione
-            window.addEventListener('message', function onLiveEnd(evt) {
-                if (evt.data?.type !== 'live_end') return;
-                window.removeEventListener('message', onLiveEnd);
-                const { assenti, note, semLog } = evt.data;
-                // Proponi di segnare la lezione come svolta
-                if (confirm('✅ Fine lezione!\n\nVuoi segnare questa lezione come svolta?\n' +
-                    (assenti?.length ? 'Assenti: ' + assenti.join(', ') + '\n' : '') +
-                    (note ? 'Note: ' + note.substring(0,80) + (note.length>80?'...':'') : ''))) {
-                    const lzF = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotId || (!p.ora && p.data===isoDate));
-                    if (lzF) { lzF.stato = 'svolta'; saveData(); renderDayPanel(); }
-                    alert('✅ Lezione segnata come svolta!');
+            // Invia griglia alla LIVE via postMessage appena pronta
+            if (grigliaCollegata) {
+                const sendGriglia = () => {
+                    w.postMessage({ type: 'griglia_init', griglia: grigliaCollegata }, '*');
+                };
+                // Aspetta che la finestra sia pronta
+                setTimeout(sendGriglia, 600);
+            }
+
+            // Ascolta messaggi dalla finestra LIVE
+            const onLiveMessage = (evt) => {
+                if (!evt.data?.type) return;
+
+                // Richiesta griglia (fallback se postMessage iniziale non arriva)
+                if (evt.data.type === 'griglia_request') {
+                    if (grigliaCollegata) w.postMessage({ type: 'griglia_init', griglia: grigliaCollegata }, '*');
+                    return;
                 }
-            });
+
+                // Voto promemoria dalla griglia LIVE
+                if (evt.data.type === 'griglia_voto') {
+                    const { studente, voto10, tot, totMax, punteggi, grigliaId, grigliaNome } = evt.data;
+                    const studs = classe?.studenti || [];
+                    const s = studs.find(x => (x.cognome+' '+x.nome) === studente);
+                    if (s) {
+                        if (!s.votiPromemoria) s.votiPromemoria = [];
+                        // Rimuovi eventuale promemoria precedente della stessa griglia nella stessa data
+                        s.votiPromemoria = s.votiPromemoria.filter(p => !(p.data === isoDate && p.grigliaId === grigliaId));
+                        s.votiPromemoria.push({ data: isoDate, grigliaId, grigliaNome, voto10, tot, totMax, punteggi, ts: Date.now() });
+                        saveData();
+                        if (currentStudent !== null && data.classi[currentClass]?.studenti[currentStudent] === s) {
+                            renderStudentDetail();
+                        }
+                    }
+                    return;
+                }
+
+                // Fine lezione
+                if (evt.data.type === 'live_end') {
+                    window.removeEventListener('message', onLiveMessage);
+                    const { assenti, note, semLog } = evt.data;
+                    if (confirm('✅ Fine lezione!\n\nVuoi segnare questa lezione come svolta?\n' +
+                        (assenti?.length ? 'Assenti: ' + assenti.join(', ') + '\n' : '') +
+                        (note ? 'Note: ' + note.substring(0,80) + (note.length>80?'...':'') : ''))) {
+                        const lzF = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotId || (!p.ora && p.data===isoDate));
+                        if (lzF) { lzF.stato = 'svolta'; saveData(); renderDayPanel(); }
+                        alert('✅ Lezione segnata come svolta!');
+                    }
+                }
+            };
+            window.addEventListener('message', onLiveMessage);
         }
 
 
