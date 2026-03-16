@@ -3679,33 +3679,50 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
                     }
                 });
 
-                tutteClassiOggi.forEach(({ cl, idx, lezioniGiorno }) => {
-                    const lz = lezioniGiorno[0];
-                    if (!lz) return;
-                    const pd = lz.pianoDettagliato;
-                    const hasPd = !!pd;
-                    const slotId = lzId(lz);
-                    const risorse = (lz.risorse||[]).map(id => {
-                        const r = (data.risorseLezioni||[]).find(x => x.id === id);
-                        return r ? `<a class="prep-risorsa-chip" href="${r.url}" target="_blank">${TIPO_ICONS_RISORSA[r.tipo]||'🔗'} ${r.titolo}</a>` : '';
-                    }).filter(Boolean).join('');
-                    const durataLabel = hasPd && pd.durata ? `<div class="prep-durata">⏱️ ${pd.durata} min totali</div>` : '';
+                tutteClassiOggi.forEach(({ cl, idx, lezioniGiorno, slots }) => {
+                    // Mostra un blocco per ogni lezione del giorno (una per ora)
+                    const lezioniDaMostrare = lezioniGiorno.length > 0 ? lezioniGiorno : [null];
+                    // Se non ci sono lezioni pianificate ma la classe ha slot orari oggi, mostra un blocco vuoto
+                    if (lezioniGiorno.length === 0 && slots && slots.length > 0) {
+                        slots.forEach(slot => {
+                            html += `<div class="prep-block no-piano">
+                                <div class="prep-header">
+                                    <span class="prep-classe">${cl.nome}</span>
+                                    <span style="font-size:12px;color:#888;">${slot.ora}ª ora</span>
+                                </div>
+                                <div class="prep-titolo" style="color:#bbb;font-style:italic;">Nessuna lezione pianificata</div>
+                            </div>`;
+                        });
+                        return;
+                    }
                     const _TI3={verifica_scritta:'📝',verifica_orale:'🎤',ripasso:'🔄',lessico:'📚',grammatica:'📐',abilita_ascolto:'🎧',abilita_parlato:'🗣️',abilita_lettura:'📖',abilita_scrittura:'✍️',funzioni:'💬'};
-                    const tipoIcon = _tipoArr(lz.tipo).map(t=>_TI3[t]||'').filter(Boolean).join('') || '📖';
+                    lezioniGiorno.forEach(lz => {
+                        if (!lz) return;
+                        const pd = lz.pianoDettagliato;
+                        const hasPd = !!pd;
+                        const slotId = lzId(lz);
+                        const risorse = (lz.risorse||[]).map(id => {
+                            const r = (data.risorseLezioni||[]).find(x => x.id === id);
+                            return r ? `<a class="prep-risorsa-chip" href="${r.url}" target="_blank">${TIPO_ICONS_RISORSA[r.tipo]||'🔗'} ${r.titolo}</a>` : '';
+                        }).filter(Boolean).join('');
+                        const durataLabel = hasPd && pd.durata ? `<div class="prep-durata">⏱️ ${pd.durata} min totali</div>` : '';
+                        const tipoIcon = _tipoArr(lz.tipo).map(t=>_TI3[t]||'').filter(Boolean).join('') || '📖';
+                        const oraLabel = lz.ora ? `<span style="font-size:11px;color:#667eea;background:#e0e4ff;border-radius:6px;padding:1px 6px;">${lz.ora}ª ora</span>` : '';
 
-                    html += `<div class="prep-block ${hasPd?'has-piano':'no-piano'}">
-                        <div class="prep-header">
-                            <span class="prep-classe">${cl.nome}</span>
-                            <span style="font-size:13px;">${tipoIcon}</span>
-                        </div>
-                        <div class="prep-titolo">${lz.titolo||'Lezione pianificata'}</div>
-                        ${durataLabel}
-                        ${risorse ? `<div class="prep-risorse">${risorse}</div>` : ''}
-                        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
-                            <span class="${hasPd?'prep-piano-ok':'prep-no-piano'}">${hasPd?'📋 Piano pronto':'⚠️ Piano mancante'}</span>
-                            <button class="btn-live" onclick="apriLive(${idx},'${slotId}')" ${!hasPd?'disabled title="Crea prima il piano dettagliato"':''}>▶ LIVE</button>
-                        </div>
-                    </div>`;
+                        html += `<div class="prep-block ${hasPd?'has-piano':'no-piano'}">
+                            <div class="prep-header">
+                                <span class="prep-classe">${cl.nome}</span>
+                                <span style="font-size:13px;display:flex;align-items:center;gap:4px;">${oraLabel}${tipoIcon}</span>
+                            </div>
+                            <div class="prep-titolo">${lz.titolo||'Lezione pianificata'}</div>
+                            ${durataLabel}
+                            ${risorse ? `<div class="prep-risorse">${risorse}</div>` : ''}
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
+                                <span class="${hasPd?'prep-piano-ok':'prep-no-piano'}">${hasPd?'📋 Piano pronto':'⚠️ Piano mancante'}</span>
+                                <button class="btn-live" onclick="apriLive(${idx},'${slotId}')" ${!hasPd?'disabled title="Crea prima il piano dettagliato"':''}>▶ LIVE</button>
+                            </div>
+                        </div>`;
+                    });
                 });
             }
             html += `</div></div>`;
@@ -10644,6 +10661,10 @@ Rispondi SOLO con JSON valido:
                         <div class="pd-card-label">📝 Note personali</div>
                         <div class="pd-items" id="pdR_note"></div>
                     </div>
+                    <div class="pd-read-card" style="background:#e8f5e9;border-left:5px solid #388e3c;">
+                        <div class="pd-card-label" style="color:#2e7d32;">📚 Compiti da assegnare</div>
+                        <div class="pd-items" id="pdR_compiti"></div>
+                    </div>
                 </div>
 
                 <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
@@ -10848,7 +10869,7 @@ Rispondi SOLO con JSON valido:
         }
 
         function pdRenderReadView(pdData) {
-            const fields = ['obiettivi','materiali','fase1','fase2','fase3','valutazione','note'];
+            const fields = ['obiettivi','materiali','fase1','fase2','fase3','valutazione','note','compiti'];
             fields.forEach(k => pdParseText(pdData[k] || '', 'pdR_' + k));
             // Mostra durata totale se presente
             const durEl = document.getElementById('pdR_durata_label');
@@ -10867,7 +10888,7 @@ Rispondi SOLO con JSON valido:
             if (goRead) {
                 // Leggi valori correnti e renderizza
                 const current = {};
-                ['obiettivi','materiali','fase1','fase2','fase3','valutazione','note'].forEach(k => {
+                ['obiettivi','materiali','fase1','fase2','fase3','valutazione','note','compiti'].forEach(k => {
                     const ta = document.getElementById('pd_' + k);
                     current[k] = ta ? ta.value : '';
                 });
@@ -11532,15 +11553,45 @@ Rispondi SOLO con JSON valido:
             ];
             function estraiMinuti(t) {
                 if (!t) return null;
-                // 1. Cerca tutti i valori (X min) o [X min] e sommali (tempo per ogni attività)
+                // Strategia 1: cerca righe "- Attività principale (X min)" o "Fase N (X min)"
+                // ovvero valori tra parentesi/parentesi quadre alla FINE di una riga
+                // e prende solo i valori di PRIMO LIVELLO (righe che iniziano con "-" senza indentazione)
+                // Questo evita di sommare le sotto-fasi (es. "  > Esercizio (5 min)")
+                const linee = t.split('\n');
+                const minutiPrimoLivello = [];
+                for (const linea of linee) {
+                    const trimmed = linea.trim();
+                    // Riga di primo livello: inizia con "-" o "•" (non indentata con spazi/tab multipli)
+                    const isPrimoLivello = /^[-•*]\s/.test(trimmed) && !/^\s{2,}/.test(linea);
+                    if (!isPrimoLivello) continue;
+                    // Cerca (X min) o [X min] alla fine della riga
+                    const m = trimmed.match(/[\(\[]([\d]+)\s*min[uti]*[\)\]]\s*$|[\(\[]([\d]+)\s*min[uti]*[\)\]][,;:]?\s*$|[\(\[]([\d]+)\s*min[uti]*[\)\]](?:\s*—.*)?$/i);
+                    if (m) {
+                        const val = parseInt(m[1] || m[2] || m[3]);
+                        if (!isNaN(val) && val > 0 && val <= 90) minutiPrimoLivello.push(val);
+                    }
+                }
+                if (minutiPrimoLivello.length > 0) return minutiPrimoLivello.reduce((s,x)=>s+x, 0);
+
+                // Strategia 2: cerca pattern "- X min" o "(X min)" senza sotto-righe
+                // Prende tutti i (X min) con max 60 per evitare valori assurdi da errori di digitazione
                 const mPar = [...t.matchAll(/[\(\[]([\d]+)\s*min[uti]*[\)\]]/gi)];
-                if (mPar.length) return mPar.reduce((s,x)=>s+parseInt(x[1]),0);
-                // 2. Fallback: cerca range "X-Y min" o "X–Y min" → prende la media
+                const validi = mPar.map(x => parseInt(x[1])).filter(v => v > 0 && v <= 90);
+                if (validi.length > 0) return validi.reduce((s,x)=>s+x, 0);
+
+                // Strategia 3: range "X-Y min" → media
                 const mRange = t.match(/(\d+)[\-–](\d+)\s*min[uti]*/i);
-                if (mRange) return Math.round((parseInt(mRange[1])+parseInt(mRange[2]))/2);
-                // 3. Fallback: cerca "X min" senza parentesi
-                const mPlain = [...t.matchAll(/(\d+)\s*min[uti]*/gi)];
-                if (mPlain.length) return mPlain.reduce((s,x)=>s+parseInt(x[1]),0);
+                if (mRange) {
+                    const v = Math.round((parseInt(mRange[1])+parseInt(mRange[2]))/2);
+                    if (v <= 90) return v;
+                }
+
+                // Strategia 4: primo "X min" trovato (senza parentesi) — NO somma, solo il primo
+                const mPlain = t.match(/\b(\d+)\s*min[uti]*/i);
+                if (mPlain) {
+                    const v = parseInt(mPlain[1]);
+                    if (v > 0 && v <= 90) return v;
+                }
                 return null;
             }
             const fasi = FASI_DEF.map(f=>({...f,testo:pd[f.key]||'',minuti:estraiMinuti(pd[f.key])})).filter(f=>f.testo.trim());
