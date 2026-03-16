@@ -9197,7 +9197,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         <textarea id="editCompiti" style="min-height:60px" autocomplete="off">${activity.compiti||''}</textarea>
                         <div class="ac-dropdown" id="acDropCompiti"></div>
                     </div>
-                    ${activity?.pianoDettagliato?.compiti ? `<button type="button" onclick="compilaCompitiDalPiano('${data_iso}')" style="margin-top:6px;padding:5px 14px;border-radius:14px;border:1.5px solid #388e3c;background:white;color:#388e3c;cursor:pointer;font-size:12px;font-weight:700;">📚 Compila compiti dal piano</button>` : ''}
+                    ${activity?.pianoDettagliato ? `<button type="button" onclick="compilaCompitiDalPiano('${data_iso}')" style="margin-top:6px;padding:5px 14px;border-radius:14px;border:1.5px solid #388e3c;background:white;color:#388e3c;cursor:pointer;font-size:12px;font-weight:700;">📚 Compila compiti dal piano</button>` : ''}
                 </div>
                 <div class="form-group" style="margin-top:12px;">
                     <label style="display:flex;align-items:center;gap:8px;">📎 Risorse allegate
@@ -9538,16 +9538,32 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             if (!document.getElementById('tabProssime').classList.contains('hidden')) renderLezFuture();
         }
 
+        function _estraiCompitiDaPiano(pd) {
+            // 1. Campo dedicato pd.compiti
+            if (pd.compiti && pd.compiti.trim()) return pd.compiti.trim();
+            // 2. Estrai dalle Note: cerca riga che inizia con "compiti:", "homework:", "assegna:"
+            //    o frasi del tipo "Per casa:", "For homework:" ecc.
+            const fonti = [pd.note||'', pd.fase3||'', pd.valutazione||''].join('\n');
+            const re = /(?:compiti|homework|per casa|for homework|assegna(?:re)?|da fare|home(?:work)?)\s*[:\-–]?\s*(.+?)(?:\n|$)/gi;
+            const matches = [...fonti.matchAll(re)];
+            if (matches.length) {
+                return matches.map(m => m[1].trim()).filter(Boolean).join('; ');
+            }
+            return null;
+        }
+
         function compilaCompitiDalPiano(data_iso) {
             const classe = data.classi[currentClass];
             const [isoDate] = data_iso.split('_');
             const lz = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===data_iso || (!p.ora && p.data===isoDate));
             const pd = lz?.pianoDettagliato;
-            if (!pd?.compiti) { alert('Nessun compito trovato nel piano dettagliato.'); return; }
+            if (!pd) { alert('Nessun piano dettagliato trovato.'); return; }
+            const compiti = _estraiCompitiDaPiano(pd);
+            if (!compiti) { alert('Nessun compito trovato nel piano.\n\nScrivi i compiti nel campo "📚 Compiti da assegnare" del piano, oppure nelle Note con il formato:\nCompiti: p.48 ex.3-4'); return; }
             const ta = document.getElementById('editCompiti');
             if (!ta) return;
             if (ta.value.trim() && !confirm('Il campo compiti contiene già del testo. Sovrascrivere?')) return;
-            ta.value = pd.compiti.trim();
+            ta.value = compiti;
             ta.dispatchEvent(new Event('input'));
         }
 
