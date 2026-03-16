@@ -9052,6 +9052,12 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         </div>
                         <div class="lesson-title">${activity.titolo||'—'}</div>
                         <div class="lesson-desc">${activity.descrizione||''}</div>
+                        ${isSvolta && (activity.liveNote||activity.liveAssenti?.length||activity.liveSemLog?.length) ? `<div style="margin-top:6px;background:#f0f4ff;border-left:3px solid #667eea;border-radius:0 6px 6px 0;padding:7px 10px;font-size:12px;">
+                            <div style="font-weight:700;color:#3949ab;margin-bottom:4px;">📋 Note LIVE</div>
+                            ${activity.liveAssenti?.length ? `<div style="color:#b45309;margin-bottom:3px;">🏠 Assenti: ${activity.liveAssenti.join(', ')}</div>` : ''}
+                            ${activity.liveNote ? `<div style="color:#374151;white-space:pre-wrap;">${activity.liveNote}</div>` : ''}
+                            ${activity.liveSemLog?.length ? `<div style="margin-top:4px;color:#666;">${activity.liveSemLog.slice(-3).map(l=>l.t+' '+l.e).join(' · ')}</div>` : ''}
+                        </div>` : ''}
                         ${activity.pagine?`<div class="lesson-homework" style="border-color:#667eea;background:#f0f2ff;color:#667eea;">📖 Pagine: ${activity.pagine}</div>`:''}
                         ${(()=>{
                             // Per lezioni non oggi: mostra compiti normalmente
@@ -9060,19 +9066,32 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                             }
                             // Per la lezione DI OGGI: mostra ENTRAMBI
                             let result = '';
-                            // 1) Compiti da portare oggi (dalla lezione precedente)
+                            // 1) Compiti da portare oggi — stessa logica della dashboard:
+                            //    risale slot per slot, si ferma alla prima lezione pianificata senza compiti
                             const _piano = classe.pianificazione.piano || [];
-                            const _prev = _piano.filter(lz=>lz.data<today&&lz.compiti).sort((a,b)=>b.data.localeCompare(a.data))[0];
-                            if (_prev) {
-                                const _d = new Date(_prev.data+'T12:00:00');
-                                const _lbl = String(_d.getDate()).padStart(2,'0')+'/'+String(_d.getMonth()+1).padStart(2,'0');
+                            const _orario = classe.pianificazione?.orario || [];
+                            let _compiti = '';
+                            try {
+                                const _allSlots = getLessonDates(_orario, new Date('2025-09-01'), new Date('2026-06-30'));
+                                const _prevSlots = _allSlots.filter(s=>s.data<today).sort((a,b)=>b.data.localeCompare(a.data)||b.ora-a.ora);
+                                for (const ps of _prevSlots) {
+                                    const _lz = _piano.find(l=>lzId(l)===ps.id||(!l.ora&&l.data===ps.data));
+                                    if (!_lz) continue;
+                                    if (_lz.compiti) { _compiti = _lz.compiti; break; }
+                                    break;
+                                }
+                            } catch(e) {
+                                const _fb = _piano.filter(lz=>lz.data<today&&lz.compiti).sort((a,b)=>b.data.localeCompare(a.data))[0];
+                                if (_fb) _compiti = _fb.compiti;
+                            }
+                            if (_compiti) {
                                 result += '<div class="lesson-homework" style="border-left:4px solid #f59e0b;background:#fffbeb;color:#92400e;font-size:14px;padding:10px 12px;margin-bottom:6px;">'
-                                    +'📋 <strong>Compiti per oggi</strong> <span style="font-size:12px;opacity:0.7;">(assegnati il '+_lbl+')</span><br>'
-                                    +'<span style="margin-top:4px;display:block;">'+_prev.compiti+'</span></div>';
+                                    +'📋 <strong>Compiti per oggi</strong><br>'
+                                    +'<span style="margin-top:4px;display:block;">'+_compiti+'</span></div>';
                             } else {
                                 result += '<div class="lesson-homework" style="border-left:4px solid #d1d5db;background:#f9fafb;color:#9ca3af;font-style:italic;">📋 Nessun compito nelle lezioni precedenti</div>';
                             }
-                            // 2) Compiti assegnati oggi (per la prossima volta)
+                                                        // 2) Compiti assegnati oggi (per la prossima volta)
                             if (activity.compiti) {
                                 result += '<div class="lesson-homework" style="border-left:4px solid #667eea;background:#f0f2ff;color:#3730a3;padding:8px 12px;">'
                                     +'📝 <strong>Assegnati oggi:</strong> '+activity.compiti+'</div>';
@@ -9177,7 +9196,9 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                     <div class="ac-wrapper">
                         <textarea id="editCompiti" style="min-height:60px" autocomplete="off">${activity.compiti||''}</textarea>
                         <div class="ac-dropdown" id="acDropCompiti"></div>
-                    </div></div>
+                    </div>
+                    ${lz?.pianoDettagliato?.compiti ? `<button type="button" onclick="compilaCompitiDalPiano('${data_iso}')" style="margin-top:6px;padding:5px 14px;border-radius:14px;border:1.5px solid #388e3c;background:white;color:#388e3c;cursor:pointer;font-size:12px;font-weight:700;">📚 Compila compiti dal piano</button>` : ''}
+                </div>
                 <div class="form-group" style="margin-top:12px;">
                     <label style="display:flex;align-items:center;gap:8px;">📎 Risorse allegate
                         <small style="color:#888;font-weight:400;">clicca per allegare/rimuovere dall'archivio</small>
@@ -9517,6 +9538,19 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             if (!document.getElementById('tabProssime').classList.contains('hidden')) renderLezFuture();
         }
 
+        function compilaCompitiDalPiano(data_iso) {
+            const classe = data.classi[currentClass];
+            const [isoDate] = data_iso.split('_');
+            const lz = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===data_iso || (!p.ora && p.data===isoDate));
+            const pd = lz?.pianoDettagliato;
+            if (!pd?.compiti) { alert('Nessun compito trovato nel piano dettagliato.'); return; }
+            const ta = document.getElementById('editCompiti');
+            if (!ta) return;
+            if (ta.value.trim() && !confirm('Il campo compiti contiene già del testo. Sovrascrivere?')) return;
+            ta.value = pd.compiti.trim();
+            ta.dispatchEvent(new Event('input'));
+        }
+
         // Genera descrizione breve per registro dal piano dettagliato (via Gemini)
         async function fillDescFromPiano(data_iso) {
             const classe = data.classi[currentClass];
@@ -9541,6 +9575,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                 pd.fase2     && `Fase 2: ${pd.fase2}`,
                 pd.fase3     && `Fase 3: ${pd.fase3}`,
                 pd.valutazione && `Valutazione: ${pd.valutazione}`,
+                pd.compiti   && `Compiti assegnati: ${pd.compiti}`,
             ].filter(Boolean).join('\n');
 
             if (!pianoParts.trim()) { alert('Il piano dettagliato è vuoto.'); if (btn) { btn.textContent = origText; btn.disabled = false; } return; }
@@ -10363,16 +10398,34 @@ Rispondi SOLO con JSON valido:
             }
             const allegateIds = new Set(lz?.risorse||[]);
 
-            container.innerHTML = data.risorseLezioni.map(r => {
-                const allegata = allegateIds.has(r.id);
-                return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #f0f0f0;">
-                    <span>${TIPO_ICONS_RISORSA[r.tipo]||'🔗'}</span>
-                    <a href="${r.url}" target="_blank" style="flex:1;color:#5c6bc0;font-size:13px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.url}">${r.titolo}</a>
-                    ${(r.tags||[]).map(t=>`<span class="risorsa-tag">${t}</span>`).join('')}
-                    <button class="btn-allega ${allegata?'allegata':''}" id="btnAllega_${r.id}"
-                        onclick="toggleAllegaRisorsa('${slotId}','${r.id}')">
-                        ${allegata?'✓ Allegata':'+ Allega'}
-                    </button>
+            // Ordina: allegati in cima, poi per tipo, poi alfabetico
+            const sorted = [...data.risorseLezioni].sort((a,b) => {
+                const aAll = allegateIds.has(a.id), bAll = allegateIds.has(b.id);
+                if (aAll && !bAll) return -1;
+                if (!aAll && bAll) return 1;
+                if (a.tipo !== b.tipo) return (a.tipo||'').localeCompare(b.tipo||'');
+                return a.titolo.localeCompare(b.titolo);
+            });
+            // Raggruppa per tipo
+            const gruppi = {};
+            sorted.forEach(r => { const k=r.tipo||'altro'; if(!gruppi[k]) gruppi[k]=[]; gruppi[k].push(r); });
+            container.innerHTML = Object.entries(gruppi).map(([tipo, risorse]) => {
+                const nAll = risorse.filter(r=>allegateIds.has(r.id)).length;
+                return `<div style="margin-bottom:10px;">
+                    <div style="font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#5c6bc0;padding:4px 0;border-bottom:1px solid #eef0ff;margin-bottom:6px;">
+                        ${TIPO_ICONS_RISORSA[tipo]||'🔗'} ${tipo}${nAll?' ('+nAll+' allegate)':''}
+                    </div>
+                    ${risorse.map(r => {
+                        const allegata = allegateIds.has(r.id);
+                        return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #f8f8f8;">
+                            <a href="${r.url}" target="_blank" style="flex:1;color:#5c6bc0;font-size:13px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.url}">${r.titolo}</a>
+                            ${(r.tags||[]).slice(0,2).map(t=>`<span class="risorsa-tag">${t}</span>`).join('')}
+                            <button class="btn-allega ${allegata?'allegata':''}" id="btnAllega_${r.id}"
+                                onclick="toggleAllegaRisorsa('${slotId}','${r.id}')">
+                                ${allegata?'✓ Allegata':'+ Allega'}
+                            </button>
+                        </div>`;
+                    }).join('')}
                 </div>`;
             }).join('');
         }
@@ -10446,6 +10499,11 @@ Rispondi SOLO con JSON valido:
                         <textarea id="pd_valutazione" oninput="pdAutoResize(this)">${pd.valutazione||''}</textarea></div>
                     <div class="piano-det-section"><label>📝 Note personali</label>
                         <textarea id="pd_note" oninput="pdAutoResize(this)">${pd.note||''}</textarea></div>
+                    <div class="piano-det-section" style="background:#e8f5e9;border:1px solid #a5d6a7;border-radius:8px;padding:10px 12px;">
+                        <label style="margin:0 0 6px;color:#2e7d32;font-weight:700;">📚 Compiti da assegnare</label>
+                        <textarea id="pd_compiti" oninput="pdAutoResize(this)" placeholder="es. p.48 ex.3-4 — completa il dialogo..." style="background:white;border:1px solid #a5d6a7;">${pd.compiti||''}</textarea>
+                        <p style="font-size:11px;color:#388e3c;margin-top:5px;">Usa "📋 Compila compiti dal piano" nel modal lezione per trasferirli allo slot.</p>
+                    </div>
                     ${(data.griglie&&data.griglie.length) ? `<div class="piano-det-section" style="background:#fffde7;border:1px solid #ffe082;border-radius:8px;padding:10px 12px;">
                         <label style="margin:0 0 6px;color:#f57f17;font-weight:700;">📊 Griglia di valutazione orale</label>
                         <select id="pd_griglia" style="width:100%;padding:6px 10px;border:1px solid #ffe082;border-radius:6px;background:white;font-size:13px;">
@@ -10842,6 +10900,7 @@ Rispondi SOLO con JSON valido:
                 valutazione: document.getElementById('pd_valutazione')?.value || '',
                 note:        document.getElementById('pd_note')?.value        || '',
                 grigliaId:   document.getElementById('pd_griglia')?.value     || null,
+                compiti:     document.getElementById('pd_compiti')?.value      || '',
             };
             saveData();
             if (btn) { btn.textContent = '✓ Salvato!'; setTimeout(()=>{ btn.textContent='💾 Salva piano'; },1500); }
@@ -12047,7 +12106,24 @@ document.getElementById('note-ta').addEventListener('input',()=>{
                         (assenti?.length ? 'Assenti: ' + assenti.join(', ') + '\n' : '') +
                         (note ? 'Note: ' + note.substring(0,80) + (note.length>80?'...':'') : ''))) {
                         const lzF = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotId || (!p.ora && p.data===isoDate));
-                        if (lzF) { lzF.stato = 'svolta'; saveData(); renderDayPanel(); }
+                        if (lzF) {
+                            lzF.stato = 'svolta';
+                            if (note)    lzF.liveNote    = note;
+                            if (assenti?.length) lzF.liveAssenti = assenti;
+                            if (semLog?.length)  lzF.liveSemLog  = semLog;
+                            // Trasferisci assenze ai dati reali degli studenti (+1 ora per ogni assente)
+                            if (assenti?.length) {
+                                assenti.forEach(nomeCompleto => {
+                                    const s = classe.studenti.find(x =>
+                                        (x.cognome+' '+x.nome).toLowerCase() === nomeCompleto.toLowerCase() ||
+                                        (x.nome+' '+x.cognome).toLowerCase() === nomeCompleto.toLowerCase()
+                                    );
+                                    if (s) s.assenze = (s.assenze || 0) + 1;
+                                });
+                            }
+                            saveData();
+                            renderDayPanel();
+                        }
                         alert('✅ Lezione segnata come svolta!');
                     }
                 }
