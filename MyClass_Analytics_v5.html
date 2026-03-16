@@ -11553,44 +11553,51 @@ Rispondi SOLO con JSON valido:
             ];
             function estraiMinuti(t) {
                 if (!t) return null;
-                // Strategia 1: cerca righe "- Attività principale (X min)" o "Fase N (X min)"
-                // ovvero valori tra parentesi/parentesi quadre alla FINE di una riga
-                // e prende solo i valori di PRIMO LIVELLO (righe che iniziano con "-" senza indentazione)
-                // Questo evita di sommare le sotto-fasi (es. "  > Esercizio (5 min)")
                 const linee = t.split('\n');
-                const minutiPrimoLivello = [];
-                for (const linea of linee) {
-                    const trimmed = linea.trim();
-                    // Riga di primo livello: inizia con "-" o "•" (non indentata con spazi/tab multipli)
-                    const isPrimoLivello = /^[-•*]\s/.test(trimmed) && !/^\s{2,}/.test(linea);
-                    if (!isPrimoLivello) continue;
-                    // Cerca (X min) o [X min] alla fine della riga
-                    const m = trimmed.match(/[\(\[]([\d]+)\s*min[uti]*[\)\]]\s*$|[\(\[]([\d]+)\s*min[uti]*[\)\]][,;:]?\s*$|[\(\[]([\d]+)\s*min[uti]*[\)\]](?:\s*—.*)?$/i);
-                    if (m) {
-                        const val = parseInt(m[1] || m[2] || m[3]);
-                        if (!isNaN(val) && val > 0 && val <= 90) minutiPrimoLivello.push(val);
+                const multiRiga = linee.length > 1;
+
+                if (multiRiga) {
+                    // ── TESTO MULTI-RIGA ──────────────────────────────────────
+                    // Strategia A: somma solo le righe di PRIMO LIVELLO
+                    // (iniziano con "- " o "• " senza indentazione iniziale)
+                    // Le sotto-righe indentate (>  ...) vengono ignorate.
+                    const minutiPrimoLivello = [];
+                    for (const linea of linee) {
+                        const trimmed = linea.trim();
+                        const isPrimoLivello = /^[-•*]\s/.test(trimmed) && !/^\s{2,}/.test(linea);
+                        if (!isPrimoLivello) continue;
+                        // Cerca (X min) o [X min] ovunque nella riga (non solo in fondo)
+                        const mm = [...trimmed.matchAll(/[\(\[]([\d]+)\s*min[uti]*[\)\]]/gi)];
+                        // Prende il PRIMO trovato nella riga (= durata dell'attività, non delle sotto-fasi)
+                        if (mm.length) {
+                            const val = parseInt(mm[0][1]);
+                            if (val > 0 && val <= 90) minutiPrimoLivello.push(val);
+                        }
                     }
-                }
-                if (minutiPrimoLivello.length > 0) return minutiPrimoLivello.reduce((s,x)=>s+x, 0);
+                    if (minutiPrimoLivello.length > 0) return minutiPrimoLivello.reduce((s,x)=>s+x, 0);
 
-                // Strategia 2: cerca pattern "- X min" o "(X min)" senza sotto-righe
-                // Prende tutti i (X min) con max 60 per evitare valori assurdi da errori di digitazione
-                const mPar = [...t.matchAll(/[\(\[]([\d]+)\s*min[uti]*[\)\]]/gi)];
-                const validi = mPar.map(x => parseInt(x[1])).filter(v => v > 0 && v <= 90);
-                if (validi.length > 0) return validi.reduce((s,x)=>s+x, 0);
+                    // Strategia B (multi-riga, fallback): primo (X min) dell'intero testo
+                    const mPar = t.match(/[\(\[]([\d]+)\s*min[uti]*[\)\]]/i);
+                    if (mPar) { const v = parseInt(mPar[1]); if (v > 0 && v <= 90) return v; }
 
-                // Strategia 3: range "X-Y min" → media
-                const mRange = t.match(/(\d+)[\-–](\d+)\s*min[uti]*/i);
-                if (mRange) {
-                    const v = Math.round((parseInt(mRange[1])+parseInt(mRange[2]))/2);
-                    if (v <= 90) return v;
-                }
+                } else {
+                    // ── TESTO SU UNA RIGA SOLA ───────────────────────────────
+                    // Formato tipico: "Titolo attività (45 min): 1. sub (10 min): ... 2. sub (5 min): ..."
+                    // Regola: il PRIMO (X min) è la durata complessiva dichiarata dal docente → usalo.
+                    // Tutti i (X min) successivi sono delle sotto-attività → ignorali.
+                    const mPar = t.match(/[\(\[]([\d]+)\s*min[uti]*[\)\]]/i);
+                    if (mPar) { const v = parseInt(mPar[1]); if (v > 0 && v <= 90) return v; }
 
-                // Strategia 4: primo "X min" trovato (senza parentesi) — NO somma, solo il primo
-                const mPlain = t.match(/\b(\d+)\s*min[uti]*/i);
-                if (mPlain) {
-                    const v = parseInt(mPlain[1]);
-                    if (v > 0 && v <= 90) return v;
+                    // Fallback riga singola: range "X-Y min" → media
+                    const mRange = t.match(/(\d+)[\-–](\d+)\s*min[uti]*/i);
+                    if (mRange) {
+                        const v = Math.round((parseInt(mRange[1])+parseInt(mRange[2]))/2);
+                        if (v <= 90) return v;
+                    }
+
+                    // Fallback riga singola: primo "X min" senza parentesi
+                    const mPlain = t.match(/\b(\d+)\s*min[uti]*/i);
+                    if (mPlain) { const v = parseInt(mPlain[1]); if (v > 0 && v <= 90) return v; }
                 }
                 return null;
             }
