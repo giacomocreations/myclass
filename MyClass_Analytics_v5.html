@@ -1901,7 +1901,14 @@
                 <!-- TAB: STORICO -->
                 <div id="tab-storico" class="student-tab-panel">
                     <div class="section">
-                        <h3 style="margin-bottom: 20px;">📈 Andamento e Storico</h3>
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px;">
+                            <h3 style="margin:0;">📈 Andamento e Storico</h3>
+                            <button onclick="document.getElementById('importRubricaFile').click()"
+                                style="padding:6px 14px;border-radius:14px;border:1.5px solid #3949ab;background:white;color:#3949ab;cursor:pointer;font-size:13px;font-weight:700;">
+                                📋 Importa rubrica JSON
+                            </button>
+                            <input type="file" id="importRubricaFile" accept=".json" style="display:none" onchange="importRubricaJSON(this)">
+                        </div>
                         <div id="studentStats"></div>
                         <div id="studentHistory"></div>
                     </div>
@@ -3906,6 +3913,83 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
             // Il grafico distribuzione è ora gestito da renderClassCharts() con Chart.js
         }
         
+        function importRubricaJSON(input) {
+            const file = input.files[0];
+            input.value = '';
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                try {
+                    const r = JSON.parse(e.target.result);
+
+                    // Validazione minima
+                    if (!r.voto_finale && r.voto_finale !== 0) {
+                        alert('❌ Campo obbligatorio mancante: voto_finale'); return;
+                    }
+
+                    const studente = data.classi[currentClass].studenti[currentStudent];
+                    if (!studente) return;
+
+                    // Determina tipo (orale/scritto) — default orale
+                    const tipoRaw = (r.tipo||r.verifica||'').toLowerCase();
+                    const tipoArr = studente.orale ? 'orale' : 'scritto';
+                    const isOrale = tipoRaw.includes('oral') || tipoRaw.includes('speaking') || tipoRaw.includes('parlat') || (!tipoRaw.includes('scritt') && !tipoRaw.includes('written'));
+                    const tipo = isOrale ? 'orale' : 'scritto';
+
+                    // Data: dal JSON o oggi
+                    const data_iso = r.data || new Date().toISOString().split('T')[0];
+                    const unit = r.unit || r.unita || r.verifica || '';
+
+                    // Costruisci nota discorsiva dalla rubrica
+                    const parti = [];
+                    if (r.aree?.length) {
+                        const righe = r.aree.map(a =>
+                            `${a.nome}: ${a.livello||''} (${a.punteggio}/${a.max})`
+                        ).join(' | ');
+                        parti.push('Aree: ' + righe);
+                    }
+                    if (r.punti_forza?.length)
+                        parti.push('Punti di forza: ' + r.punti_forza.join('; '));
+                    if (r.errori_principali?.length)
+                        parti.push('Da migliorare: ' + r.errori_principali.join('; '));
+                    if (r.verbi_corretti_autonomi?.length)
+                        parti.push('Verbi autonomi: ' + r.verbi_corretti_autonomi.join(', '));
+                    if (r.verbi_dopo_correzione?.length)
+                        parti.push('Con supporto: ' + r.verbi_dopo_correzione.join(', '));
+                    if (r.obiettivo_prossima_prova)
+                        parti.push('Obiettivo: ' + r.obiettivo_prossima_prova);
+                    const nota = parti.join('\n');
+
+                    // Controlla duplicati (stessa data + stesso voto)
+                    const arr = studente[tipo] || [];
+                    const dup = arr.find(g => g.data === data_iso && g.voto === r.voto_finale);
+                    if (dup) {
+                        if (!confirm(`Esiste già un voto ${tipo} del ${data_iso} con voto ${r.voto_finale}. Aggiungere comunque?`)) return;
+                    }
+
+                    // Inserisci voto
+                    studente[tipo].push({
+                        voto: r.voto_finale,
+                        data: data_iso,
+                        titolo: r.verifica || '',
+                        unit: unit,
+                        nota: nota,
+                        recupero: r.recupero || ''
+                    });
+
+                    saveData();
+                    renderStudentDetail();
+                    switchStudentTab('tab-storico');
+
+                    alert(`✅ Voto ${tipo} ${r.voto_finale}/10 inserito per ${studente.nome} ${studente.cognome}\n${r.verifica ? 'Verifica: ' + r.verifica : ''}`);
+
+                } catch(err) {
+                    alert('❌ JSON non valido: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
         function eliminaPromemoria(classeIdx, studIdx, ts) {
             if (!confirm('Eliminare questo promemoria?')) return;
             const s = data.classi[classeIdx]?.studenti[studIdx];
