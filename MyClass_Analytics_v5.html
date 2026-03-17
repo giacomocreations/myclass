@@ -2439,8 +2439,8 @@
                 testGeminiConnection(true);
             }
             renderDashboard();
-            // Inizializza Drive sync se già configurato
-            driveInit();
+            // Inizializza Drive sync — piccolo ritardo per permettere alla libreria Google di caricarsi
+            setTimeout(driveInit, 800);
         }
         
         function saveData() {
@@ -9041,16 +9041,22 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             };
 
             const tipi   = _tipoArr(lz.tipo);
-            const titolo = lz.titolo || '';
+            const titolo = (lz.titolo || '').trim();
             const unit   = lz.unit   || '';
-            const desc   = lz.descrizione || '';
+            const desc   = (lz.descrizione || '').trim();
             const pagine = lz.pagine  || '';
             const compiti = lz.compiti || '';
 
             let lines = [];
 
-            // Descrizione completa
-            if (desc) lines.push(desc.trim());
+            // Formato: "Titolo: Descrizione" oppure solo uno dei due se manca l'altro
+            if (titolo && desc) {
+                lines.push(titolo + ': ' + desc);
+            } else if (titolo) {
+                lines.push(titolo);
+            } else if (desc) {
+                lines.push(desc);
+            }
 
             // Pagine libro
             if (pagine) lines.push('Libro: ' + pagine);
@@ -11915,8 +11921,9 @@ Rispondi SOLO con JSON valido:
       <div style="font-size:11px;opacity:.5;margin-top:8px" id="lv-app-sum"></div>
     </div>
     <div class="lv-rp" id="lv-rp1">
-      <div style="font-size:11px;opacity:.5;margin-bottom:6px">Note al volo</div>
-      <textarea class="lv-ta" id="lv-note-ta" placeholder="Osservazioni, appunti, studenti da tenere d'occhio..."></textarea>
+      <div style="font-size:11px;opacity:.5;margin-bottom:6px">Note al volo — modifica liberamente durante la lezione</div>
+      ${pd.note ? '<div style="font-size:10px;color:#a78bfa;margin-bottom:5px;padding:4px 8px;background:rgba(167,139,250,.1);border-radius:5px;border-left:2px solid #a78bfa;">📋 Pre-caricate dal piano dettagliato</div>' : ''}
+      <textarea class="lv-ta" id="lv-note-ta" placeholder="Osservazioni, appunti, studenti da tenere d'occhio...">${pd.note ? pd.note.replace(/</g,'&lt;') : ''}</textarea>
       <div style="font-size:10px;opacity:.4;margin-top:4px" id="lv-note-t"></div>
     </div>
     <div class="lv-rp" id="lv-rp2">
@@ -12415,9 +12422,45 @@ Rispondi SOLO con JSON valido:
                 _driveAutoSave = localStorage.getItem(DRIVE_AUTO_KEY) === 'true';
                 _driveUpdateUI(true);
                 _driveStatusMsg('✅ Connesso a Google Drive', '#34a853');
-                // Controlla silenziosamente se Drive ha una versione più recente
                 _driveCheckNewerVersion();
+            } else if (savedId) {
+                // Token scaduto ma Client ID presente — mostra banner di riconnessione
+                _driveShowReconnectBanner();
             }
+        }
+
+        function _driveShowReconnectBanner() {
+            // Rimuovi eventuale banner precedente
+            document.getElementById('drive-reconnect-banner')?.remove();
+            const banner = document.createElement('div');
+            banner.id = 'drive-reconnect-banner';
+            banner.style.cssText = 'position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:8000;background:#1e3a5f;color:#93c5fd;border-radius:14px;padding:10px 18px;font-size:13px;font-weight:700;display:flex;align-items:center;gap:12px;box-shadow:0 4px 20px rgba(0,0,0,.3);white-space:nowrap;';
+            banner.innerHTML = '☁️ Google Drive non connesso — sessione scaduta'
+                + '<button onclick="driveAutoReconnect()" style="background:#3b82f6;border:none;color:white;padding:5px 14px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">🔗 Riconnetti</button>'
+                + '<button onclick="this.parentNode.remove()" style="background:none;border:none;color:#93c5fd;cursor:pointer;font-size:16px;padding:0 2px;">✕</button>';
+            document.body.appendChild(banner);
+        }
+
+        function driveAutoReconnect() {
+            document.getElementById('drive-reconnect-banner')?.remove();
+            const clientId = localStorage.getItem(DRIVE_CLIENT_ID_KEY);
+            if (!clientId) { showSettings(); return; }
+            if (!window.google?.accounts?.oauth2) {
+                // Libreria non ancora caricata, riprova tra un secondo
+                setTimeout(driveAutoReconnect, 1000);
+                return;
+            }
+            _driveStatusMsg('⏳ Riconnessione in corso...', '#667eea');
+            _driveInitTokenClient(clientId, (resp) => {
+                if (resp.error || !resp.access_token) {
+                    _driveStatusMsg('❌ Riconnessione fallita', '#e53935');
+                    _driveShowReconnectBanner();
+                    return;
+                }
+                _driveHandleToken(resp.access_token, resp.expires_in || 3600);
+            });
+            // Prova prima senza prompt (silent) — se ha già autorizzato l'app funziona senza popup
+            _driveTokenClient.requestAccessToken({ prompt: '' });
         }
 
         async function _driveCheckNewerVersion() {
