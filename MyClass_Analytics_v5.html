@@ -12497,9 +12497,7 @@ Rispondi SOLO con JSON valido:
         }
 
         function _driveShowUpdateBanner(driveTime, localTime) {
-            // Rimuovi eventuale banner precedente
             document.getElementById('driveBanner')?.remove();
-
             const banner = document.createElement('div');
             banner.id = 'driveBanner';
             banner.style.cssText = `
@@ -12510,9 +12508,9 @@ Rispondi SOLO con JSON valido:
                 gap:14px; flex-wrap:wrap; box-shadow:0 2px 8px rgba(0,0,0,0.3);
             `;
             banner.innerHTML = `
-                <span>☁️ Su Drive c'è una versione più recente (${driveTime}) — locale: ${localTime}</span>
-                <button onclick="driveLoadSilent()" style="background:white;color:#1565c0;border:none;border-radius:6px;padding:5px 14px;font-weight:700;cursor:pointer;font-size:13px;">📥 Carica</button>
-                <button onclick="document.getElementById('driveBanner').remove()" style="background:rgba(255,255,255,0.25);color:white;border:none;border-radius:6px;padding:5px 12px;font-weight:600;cursor:pointer;font-size:13px;">Ignora</button>
+                <span>☁️ Drive ha una versione più recente (${driveTime}) rispetto a questo dispositivo (${localTime}) — vuoi caricarla?</span>
+                <button onclick="driveLoadSilent()" style="background:white;color:#1565c0;border:none;border-radius:6px;padding:5px 14px;font-weight:700;cursor:pointer;font-size:13px;">📥 Sì, carica da Drive</button>
+                <button onclick="document.getElementById('driveBanner').remove()" style="background:rgba(255,255,255,0.25);color:white;border:none;border-radius:6px;padding:5px 12px;font-weight:600;cursor:pointer;font-size:13px;">No, tieni locale</button>
             `;
             document.body.prepend(banner);
         }
@@ -12667,9 +12665,17 @@ Rispondi SOLO con JSON valido:
             _driveFindFile().then(id => {
                 _driveFileId = id || null;
                 if (id) localStorage.setItem(DRIVE_FILE_ID_KEY, id);
-                _driveStatusMsg(id
-                    ? '✅ Connesso — backup trovato su Drive'
-                    : '✅ Connesso — nessun backup esistente', '#34a853');
+                if (id) {
+                    // Controlla se Drive ha dati più recenti di quelli locali
+                    _driveCheckNewerVersion().then(() => {
+                        // Se il banner non è apparso (Drive non è più recente), mostra solo stato OK
+                        if (!document.getElementById('driveBanner')) {
+                            _driveStatusMsg('✅ Connesso — dati locali aggiornati', '#34a853');
+                        }
+                    });
+                } else {
+                    _driveStatusMsg('✅ Connesso — nessun backup esistente su Drive', '#34a853');
+                }
             });
         }
 
