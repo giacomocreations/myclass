@@ -10628,6 +10628,33 @@ Rispondi SOLO con JSON valido:
                             ${(data.griglie||[]).map(g=>`<option value="${g.id}" ${pd.grigliaId===g.id?'selected':''}>${g.nome} — ${g.aree.map(a=>a.nome+' /'+a.max).join(', ')}</option>`).join('')}
                         </select>
                     </div>` : ''}
+                    <!-- PIANO B -->
+                    <details style="margin-top:4px;" ${(pd.pianoB&&(pd.pianoB.titolo||pd.pianoB.descrizione))?'open':''}>
+                        <summary style="cursor:pointer;padding:10px 14px;background:#fce4ec;border:1px solid #f48fb1;border-radius:8px;font-weight:700;color:#880e4f;font-size:13px;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;">
+                            <span>⚡ Piano B — Attività alternativa</span>
+                            <span style="font-size:11px;font-weight:400;color:#c2185b;margin-left:auto;">Opzionale · richiamabile in LIVE</span>
+                        </summary>
+                        <div style="background:#fff0f5;border:1px solid #f48fb1;border-top:none;border-radius:0 0 8px 8px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;">
+                            <div>
+                                <label style="display:block;font-size:12px;font-weight:700;color:#880e4f;margin-bottom:4px;">Titolo / Scenario d'uso</label>
+                                <input type="text" id="pdb_titolo" placeholder="es. LIM non disponibile — attività solo su libro" value="${(pd.pianoB?.titolo||'').replace(/"/g,'&quot;')}"
+                                    style="width:100%;padding:7px 10px;border:1px solid #f48fb1;border-radius:6px;font-size:13px;background:white;">
+                            </div>
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <label style="font-size:12px;font-weight:700;color:#880e4f;white-space:nowrap;">⏱️ Durata stimata</label>
+                                <input type="number" id="pdb_durata" min="10" max="120" step="5" value="${pd.pianoB?.durata||50}"
+                                    style="width:75px;padding:5px 8px;border:1px solid #f48fb1;border-radius:6px;font-size:14px;font-weight:700;text-align:center;background:white;">
+                                <span style="font-size:12px;color:#c2185b;">minuti</span>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:12px;font-weight:700;color:#880e4f;margin-bottom:4px;">📝 Descrizione attività</label>
+                                <textarea id="pdb_descrizione" oninput="pdAutoResize(this)"
+                                    placeholder="Descrivi cosa fare al posto del piano principale&#10;- Attività 1 (10 min): ...&#10;- Attività 2 (15 min): ..."
+                                    style="background:white;border:1px solid #f48fb1;min-height:80px;">${pd.pianoB?.descrizione||''}</textarea>
+                                <p style="font-size:11px;color:#c2185b;margin-top:4px;">Usa lo stesso formato del piano principale. Il Piano B appare in LIVE come pannello laterale attivabile al volo.</p>
+                            </div>
+                        </div>
+                    </details>
                 </div>
 
                 <!-- READ VIEW -->
@@ -10664,6 +10691,12 @@ Rispondi SOLO con JSON valido:
                     <div class="pd-read-card" style="background:#e8f5e9;border-left:5px solid #388e3c;">
                         <div class="pd-card-label" style="color:#2e7d32;">📚 Compiti da assegnare</div>
                         <div class="pd-items" id="pdR_compiti"></div>
+                    </div>
+                    <div id="pdR_pianoB_card" style="display:none;background:#fce4ec;border:1px solid #f48fb1;border-radius:10px;padding:12px 14px;margin-top:4px;">
+                        <div style="font-size:12px;font-weight:700;color:#880e4f;letter-spacing:.06em;margin-bottom:6px;">⚡ PIANO B</div>
+                        <div id="pdR_pianoB_titolo" style="font-weight:700;color:#880e4f;margin-bottom:4px;font-size:14px;"></div>
+                        <div style="font-size:12px;color:#c2185b;margin-bottom:8px;" id="pdR_pianoB_durata"></div>
+                        <div class="pd-items" id="pdR_pianoB_desc"></div>
                     </div>
                 </div>
 
@@ -10871,6 +10904,22 @@ Rispondi SOLO con JSON valido:
         function pdRenderReadView(pdData) {
             const fields = ['obiettivi','materiali','fase1','fase2','fase3','valutazione','note','compiti'];
             fields.forEach(k => pdParseText(pdData[k] || '', 'pdR_' + k));
+            // Piano B
+            const pb = pdData.pianoB;
+            const pbCard = document.getElementById('pdR_pianoB_card');
+            if (pbCard) {
+                if (pb && (pb.titolo || pb.descrizione)) {
+                    pbCard.style.display = '';
+                    const titEl = document.getElementById('pdR_pianoB_titolo');
+                    const durEl2 = document.getElementById('pdR_pianoB_durata');
+                    const descEl = document.getElementById('pdR_pianoB_desc');
+                    if (titEl) titEl.textContent = pb.titolo || 'Piano alternativo';
+                    if (durEl2) durEl2.textContent = pb.durata ? `⏱️ ${pb.durata} min stimati` : '';
+                    if (descEl) pdParseText(pb.descrizione || '', 'pdR_pianoB_desc');
+                } else {
+                    pbCard.style.display = 'none';
+                }
+            }
             // Mostra durata totale se presente
             const durEl = document.getElementById('pdR_durata_label');
             if (durEl) {
@@ -10892,6 +10941,14 @@ Rispondi SOLO con JSON valido:
                     const ta = document.getElementById('pd_' + k);
                     current[k] = ta ? ta.value : '';
                 });
+                // Leggi anche pianoB
+                const pdbT = document.getElementById('pdb_titolo')?.value?.trim() || '';
+                const pdbD = document.getElementById('pdb_descrizione')?.value?.trim() || '';
+                current.pianoB = (pdbT || pdbD) ? {
+                    titolo: pdbT,
+                    durata: parseInt(document.getElementById('pdb_durata')?.value || '50'),
+                    descrizione: pdbD,
+                } : null;
                 pdRenderReadView(current);
                 editView.classList.add('hidden');
                 readView.classList.add('active');
@@ -11022,6 +11079,16 @@ Rispondi SOLO con JSON valido:
                 note:        document.getElementById('pd_note')?.value        || '',
                 grigliaId:   document.getElementById('pd_griglia')?.value     || null,
                 compiti:     document.getElementById('pd_compiti')?.value      || '',
+                pianoB: (() => {
+                    const t = document.getElementById('pdb_titolo')?.value?.trim() || '';
+                    const d = document.getElementById('pdb_descrizione')?.value?.trim() || '';
+                    if (!t && !d) return null;
+                    return {
+                        titolo:      t,
+                        durata:      parseInt(document.getElementById('pdb_durata')?.value || '50'),
+                        descrizione: d,
+                    };
+                })(),
             };
             saveData();
             if (btn) { btn.textContent = '✓ Salvato!'; setTimeout(()=>{ btn.textContent='💾 Salva piano'; },1500); }
@@ -11704,6 +11771,8 @@ Rispondi SOLO con JSON valido:
             const tutteGrigJ = JSON.stringify(tutteGriglie);
             const unitLezJ   = JSON.stringify(unitLezione);
 
+            const pianoBJ = JSON.stringify(pd.pianoB || null);
+
             const w = window.open('','MyClassLIVE',`width=${screen.width},height=${screen.height},left=0,top=0`);
             if (!w) { alert('Abilita i popup per questa pagina per usare la modalità LIVE.'); return; }
 
@@ -11761,14 +11830,48 @@ textarea{width:100%;background:rgba(255,255,255,.05);border:1px solid rgba(255,2
 .copcard{background:rgba(255,255,255,.05);border-radius:10px;padding:10px;margin-bottom:7px;border-left:3px solid #667eea;}
 .fine-btn{width:100%;padding:14px;border-radius:10px;border:none;cursor:pointer;font-size:15px;font-weight:800;margin-bottom:8px;font-family:inherit;}
 .fb1{background:#1e3a5f;color:#93c5fd;}.fb2{background:#064e3b;color:#6ee7b7;}
+/* Piano B */
+#piano-b-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;align-items:stretch;justify-content:flex-end;}
+#piano-b-overlay.open{display:flex;}
+#piano-b-panel{width:min(520px,94vw);background:#1a0a12;border-left:3px solid #f48fb1;display:flex;flex-direction:column;animation:slideInR .22s ease;}
+@keyframes slideInR{from{transform:translateX(100%);}to{transform:translateX(0);}}
+#pb-header{background:#880e4f;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+#pb-header h2{font-size:16px;color:white;margin:0;}
+#pb-close{background:none;border:none;color:white;font-size:20px;cursor:pointer;padding:0 4px;line-height:1;}
+#pb-body{padding:18px;overflow-y:auto;flex:1;}
+#pb-titolo{font-size:17px;font-weight:800;color:#f48fb1;margin-bottom:4px;}
+#pb-durata{font-size:12px;color:#f8bbd0;margin-bottom:14px;}
+#pb-testo{font-size:16px;line-height:1.75;color:#fce4ec;}
+#pb-activate{width:100%;padding:13px;border-radius:10px;border:none;cursor:pointer;font-size:15px;font-weight:800;background:#880e4f;color:white;margin-top:14px;font-family:inherit;transition:background .2s;}
+#pb-activate:hover{background:#ad1457;}
+#pb-activate.active{background:#4a148c;color:#ce93d8;}
+.btn-pb{background:#880e4f;border-color:#f48fb1;color:#fce4ec;}
+.btn-pb:hover{background:#ad1457;}
 </style>
 </style></head><body>
 <div id="topbar">
   <div><div class="tb-classe">🎯 ${classe.nome} — ${lz.titolo||'Lezione'}</div>
   <div class="tb-titolo">${lz.unit||''} · ⏱️ ${durataTotale} min${oraInizio?' · Inizio previsto '+oraInizio:''}</div></div>
-  <div class="tb-right"><div id="sincro">—</div><div id="orologio">--:--</div>
+  <div class="tb-right">
+  ${pd.pianoB&&(pd.pianoB.titolo||pd.pianoB.descrizione)?`<button class="btn btn-pb" onclick="togglePianoB()">⚡ Piano B</button>`:''}
+  <div id="sincro">—</div><div id="orologio">--:--</div>
   <button onclick="window.close()" class="btn">✕ Chiudi</button></div>
 </div>
+${pd.pianoB&&(pd.pianoB.titolo||pd.pianoB.descrizione)?`
+<div id="piano-b-overlay" onclick="if(event.target===this)togglePianoB()">
+  <div id="piano-b-panel">
+    <div id="pb-header">
+      <h2>⚡ Piano B</h2>
+      <button id="pb-close" onclick="togglePianoB()">✕</button>
+    </div>
+    <div id="pb-body">
+      <div id="pb-titolo"></div>
+      <div id="pb-durata"></div>
+      <div id="pb-testo"></div>
+      <button id="pb-activate" onclick="activatePianoB()">🔄 Attiva Piano B — sostituisci le fasi</button>
+    </div>
+  </div>
+</div>`:''}
 <div id="main">
   <div id="col-fasi">
     <div id="fase-current">
@@ -11848,10 +11951,73 @@ const DUR=${durataTotale};
 const UNIT_LEZ=${unitLezJ};
 let GRIGLIA=${grigliaJ};
 const ALL_GRIGLIE=${tutteGrigJ};
+const PIANO_B=${pianoBJ};
 
 let fc=0,tSec=0,tMax=0,tRun=false,tInt=null,fAdj={},semLog=[],minUsati=0;
 let appello={};
+let pianoBAttivo=false;
+let fasiOriginali=null; // backup FASI per tornare al Piano A
 STUDENTI.forEach(s=>{appello[s.cognome+' '+s.nome]='p';});
+
+// Piano B
+function togglePianoB(){
+  const ov=document.getElementById('piano-b-overlay');
+  if(!ov)return;
+  const isOpen=ov.classList.toggle('open');
+  if(isOpen&&PIANO_B){
+    document.getElementById('pb-titolo').textContent=PIANO_B.titolo||'Piano alternativo';
+    document.getElementById('pb-durata').textContent=PIANO_B.durata?'⏱️ '+PIANO_B.durata+' min stimati':'';
+    document.getElementById('pb-testo').innerHTML=parseTesto(PIANO_B.descrizione||'','#f48fb1');
+    const btn=document.getElementById('pb-activate');
+    if(btn)btn.className='active'===btn.getAttribute('data-state')?'btn btn-pb active':'btn btn-pb'; // reset style
+    if(btn&&pianoBAttivo){btn.textContent='↩ Torna al Piano A';btn.classList.add('active');}
+    else if(btn){btn.textContent='🔄 Attiva Piano B — sostituisci le fasi';btn.classList.remove('active');}
+  }
+}
+
+function activatePianoB(){
+  if(!PIANO_B)return;
+  if(pianoBAttivo){
+    // Torna al Piano A
+    if(fasiOriginali){
+      FASI.length=0;
+      fasiOriginali.forEach(f=>FASI.push(f));
+    }
+    pianoBAttivo=false;
+    document.getElementById('pb-activate').textContent='🔄 Attiva Piano B — sostituisci le fasi';
+    document.getElementById('pb-activate').classList.remove('active');
+    document.getElementById('piano-b-overlay').classList.remove('open');
+    // Reset timer e fasi
+    if(tRun)liveToggle();
+    fc=0;tSec=0;tMax=0;fAdj={};minUsati=0;
+    document.getElementById('fl').textContent='Seleziona una fase per iniziare';
+    document.getElementById('fl').style.color='';
+    document.getElementById('fase-testo').innerHTML='';
+    document.getElementById('timer-display').textContent='--:--';
+    document.getElementById('tinfo').textContent='';
+    renderFL();
+    return;
+  }
+  // Attiva Piano B — crea una singola "fase" con il testo del piano B
+  fasiOriginali=FASI.map(f=>({...f}));
+  const fasePB={
+    key:'pianoB',
+    label:'⚡ Piano B — '+( PIANO_B.titolo||'Attività alternativa'),
+    color:'#f48fb1',
+    bg:'#fce4ec',
+    testo: PIANO_B.descrizione||'',
+    minuti: PIANO_B.durata||50,
+  };
+  FASI.length=0;
+  FASI.push(fasePB);
+  pianoBAttivo=true;
+  fAdj={};minUsati=0;
+  if(tRun)liveToggle();
+  document.getElementById('pb-activate').textContent='↩ Torna al Piano A';
+  document.getElementById('pb-activate').classList.add('active');
+  document.getElementById('piano-b-overlay').classList.remove('open');
+  goF(0);
+}
 
 function orologio(){
   const n=new Date();
