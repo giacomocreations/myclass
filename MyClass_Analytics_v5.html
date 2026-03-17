@@ -12296,16 +12296,26 @@ Rispondi SOLO con JSON valido:
                 if(confirm('✅ Fine lezione!\n\nVuoi segnare questa lezione come svolta?\n'
                     +(assenti.length?'Assenti: '+assenti.join(', ')+'\n':'')
                     +(note?'Note: '+note.substring(0,80)+(note.length>80?'...':''):''))) {
-                    const lzF=(classe?.pianificazione?.piano||[]).find(p=>lzId(p)===slotId||(!p.ora&&p.data===isoDate));
-                    if(lzF){
-                        lzF.stato='svolta';
-                        if(note)lzF.liveNote=note;
-                        if(assenti.length)lzF.liveAssenti=assenti;
-                        if(LV.semLog.length)lzF.liveSemLog=LV.semLog;
-                        if(assenti.length){assenti.forEach(nc=>{const s=classe.studenti.find(x=>(x.cognome+' '+x.nome).toLowerCase()===nc.toLowerCase()||(x.nome+' '+x.cognome).toLowerCase()===nc.toLowerCase());if(s)s.assenze=(s.assenze||0)+1;});}
-                        saveData();renderDayPanel();
+                    const piano = classe?.pianificazione?.piano||[];
+                    // Debug: mostra cosa cerca vs cosa c'è
+                    const ids = piano.map(p=>lzId(p)+' | testId='+p._testId+' | data='+p.data+' ora='+p.ora).join('\n');
+                    const lzF = piano.find(p=>
+                        p._testId===slotId ||
+                        lzId(p)===slotId ||
+                        (p.data===isoDate && (String(p.ora)===String(slotId.split('_')[1]) || !p.ora))
+                    );
+                    if(!lzF){
+                        const fr=q('lv-fine-r');
+                        if(fr)fr.innerHTML='<div style="color:#f87171;font-size:12px;white-space:pre-wrap;">⚠️ Lezione non trovata!\nCerco: '+slotId+'\nData: '+isoDate+'\n\nSlot nel piano:\n'+ids+'</div>';
+                        return;
                     }
-                    const fr=q('lv-fine-r');if(fr)fr.innerHTML='<span style="color:#6ee7b7">✅ Lezione segnata come svolta.</span>';
+                    lzF.stato='svolta';
+                    if(note)lzF.liveNote=note;
+                    if(assenti.length)lzF.liveAssenti=assenti;
+                    if(LV.semLog.length)lzF.liveSemLog=LV.semLog;
+                    if(assenti.length){assenti.forEach(nc=>{const s=classe.studenti.find(x=>(x.cognome+' '+x.nome).toLowerCase()===nc.toLowerCase()||(x.nome+' '+x.cognome).toLowerCase()===nc.toLowerCase());if(s)s.assenze=(s.assenze||0)+1;});}
+                    saveData();renderDayPanel();
+                    const fr=q('lv-fine-r');if(fr)fr.innerHTML='<span style="color:#6ee7b7">✅ Lezione segnata come svolta. Note e assenti salvati.</span>';
                 }
             };
             window.lvFineArgo=function(){
@@ -12318,6 +12328,19 @@ Rispondi SOLO con JSON valido:
             };
 
             // ── Minimizza / Mostra / Chiudi ──────────────────────────────────
+            // Autosalvataggio ogni 60 secondi in localStorage
+            const autoSaveKey = 'myclass_live_autosave_' + slotId;
+            const autoSaveInt = setInterval(()=>{
+                const note = q('lv-note-ta')?.value.trim()||'';
+                const assenti = Object.entries(LV.appello).filter(([k,v])=>v!=='p').map(([k])=>k);
+                localStorage.setItem(autoSaveKey, JSON.stringify({
+                    ts: Date.now(),
+                    slotId, isoDate,
+                    classeNome: classe.nome,
+                    note, assenti,
+                    semLog: LV.semLog,
+                }));
+            }, 60000);
             window.liveOverlayMinimize=function(){
                 ov.style.display='none';
                 const b=document.getElementById('lv-minimized-badge');if(b)b.style.display='block';
@@ -12331,7 +12354,8 @@ Rispondi SOLO con JSON valido:
                 liveOverlayDestroy();
             };
             window.liveOverlayDestroy=function(){
-                clearInterval(orologioInt);clearInterval(LV.tInt);
+                clearInterval(orologioInt);clearInterval(LV.tInt);clearInterval(autoSaveInt);
+                localStorage.removeItem(autoSaveKey);
                 ov.remove();
                 const b=document.getElementById('lv-minimized-badge');if(b)b.remove();
             };
