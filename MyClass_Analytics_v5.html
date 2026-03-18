@@ -12788,21 +12788,57 @@ Rispondi SOLO con JSON valido:
             }));
             _driveUpdateUI(true);
             _driveStatusMsg('🔍 Connesso — cerco file backup...', '#667eea');
-            _driveFindFile().then(id => {
-                _driveFileId = id || null;
-                if (id) localStorage.setItem(DRIVE_FILE_ID_KEY, id);
-                if (id) {
-                    // Controlla se Drive ha dati più recenti di quelli locali
-                    _driveCheckNewerVersion().then(() => {
-                        // Se il banner non è apparso (Drive non è più recente), mostra solo stato OK
-                        if (!document.getElementById('driveBanner')) {
-                            _driveStatusMsg('✅ Connesso — dati locali aggiornati', '#34a853');
-                        }
-                    });
-                } else {
-                    _driveStatusMsg('✅ Connesso — nessun backup esistente su Drive', '#34a853');
+            // Un'unica chiamata che trova il file E controlla la versione
+            _driveCheckAndCompare();
+        }
+
+        async function _driveCheckAndCompare() {
+            if (!_driveToken) return;
+            try {
+                const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+                const res = await fetch(
+                    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,modifiedTime,name)`,
+                    { headers: { Authorization: `Bearer ${_driveToken}` } }
+                );
+                if (!res.ok) {
+                    _driveStatusMsg('⚠️ Errore ricerca file Drive: ' + res.status, '#e65100');
+                    return;
                 }
-            });
+                const json = await res.json();
+                const file = json.files?.[0];
+
+                if (!file) {
+                    _driveStatusMsg('✅ Connesso — nessun backup su Drive', '#34a853');
+                    return;
+                }
+
+                _driveFileId = file.id;
+                localStorage.setItem(DRIVE_FILE_ID_KEY, file.id);
+
+                const driveModified = new Date(file.modifiedTime).getTime();
+                const localSaved    = parseInt(localStorage.getItem('myclass_last_save') || '0');
+
+                const driveTime = new Date(file.modifiedTime).toLocaleString('it-IT', {
+                    day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'
+                });
+                const localTime = localSaved
+                    ? new Date(localSaved).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+                    : 'mai salvato su questo dispositivo';
+
+                // Soglia 30 secondi per evitare falsi positivi da piccoli disallineamenti
+                if (driveModified > localSaved + 30000) {
+                    _driveShowUpdateBanner(driveTime, localTime);
+                } else {
+                    _driveStatusMsg(`✅ Connesso — backup Drive del ${driveTime} (locale: ${localTime})`, '#34a853');
+                }
+            } catch(e) {
+                _driveStatusMsg('⚠️ Verifica Drive fallita: ' + e.message, '#e65100');
+            }
+        }
+
+        // Mantieni _driveCheckNewerVersion come alias per compatibilità
+        async function _driveCheckNewerVersion() {
+            return _driveCheckAndCompare();
         }
 
         function driveDisconnect() {
