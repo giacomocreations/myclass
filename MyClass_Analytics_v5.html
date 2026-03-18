@@ -11851,6 +11851,8 @@ Rispondi SOLO con JSON valido:
 .lv-aitem{display:flex;align-items:center;gap:7px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05);}
 .lv-abtn{padding:3px 10px;border-radius:8px;border:none;cursor:pointer;font-size:11px;font-weight:700;font-family:inherit;}
 .lv-abtn.p{background:#064e3b;color:#6ee7b7;}.lv-abtn.a{background:#7f1d1d;color:#fca5a5;}
+.lv-ann-btn{padding:2px 7px;border-radius:6px;border:1.5px solid rgba(255,255,255,.2);background:transparent;color:rgba(255,255,255,.4);cursor:pointer;font-size:10px;font-weight:800;font-family:inherit;transition:all .15s;white-space:nowrap;}
+.lv-ann-btn.on{border-color:#fbbf24;background:rgba(251,191,36,.15);color:#fbbf24;}
 .lv-ta{width:100%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.15);color:white;border-radius:7px;padding:9px;font-size:14px;line-height:1.6;resize:none;min-height:100px;font-family:inherit;}
 .lv-sbtn{width:100%;padding:12px;border-radius:9px;border:none;cursor:pointer;font-size:15px;font-weight:800;margin-bottom:7px;font-family:inherit;}
 .sv{background:#065f46;color:#6ee7b7;}.sg{background:#78350f;color:#fcd34d;}.sr{background:#7f1d1d;color:#fca5a5;}
@@ -11919,7 +11921,12 @@ Rispondi SOLO con JSON valido:
       <button class="lv-rtab" onclick="lvSRT(4)">🏁 Fine</button>
     </div>
     <div class="lv-rp active" id="lv-rp0">
-      <div style="font-size:11px;opacity:.5;margin-bottom:8px">Tocca per segnare assente</div>
+      <div style="display:flex;align-items:center;gap:7px;padding:3px 0 6px;border-bottom:1px solid rgba(255,255,255,.1);margin-bottom:4px;">
+        <span style="flex:1;font-size:10px;opacity:.4;text-transform:uppercase;letter-spacing:.06em;">Studente</span>
+        <span style="font-size:10px;opacity:.4;text-transform:uppercase;letter-spacing:.06em;width:46px;text-align:center;">Pres.</span>
+        <span style="font-size:10px;color:#fbbf24;opacity:.7;width:36px;text-align:center;">NHC</span>
+        <span style="font-size:10px;color:#fbbf24;opacity:.7;width:36px;text-align:center;">NHM</span>
+      </div>
       <div id="lv-appello-list"></div>
       <div style="font-size:11px;opacity:.5;margin-top:8px" id="lv-app-sum"></div>
     </div>
@@ -11989,6 +11996,8 @@ Rispondi SOLO con JSON valido:
                 fAdj: {},
                 semLog: [], minUsati: 0,
                 appello: {},
+                nhc: new Set(), // indici studenti che non hanno fatto i compiti
+                nhm: new Set(), // indici studenti che non hanno il materiale
                 grigliaAttiva: grigliaCollegata ? {...grigliaCollegata} : null,
                 pianoBAttivo: false,
                 fasiOriginali: null,
@@ -12137,20 +12146,43 @@ Rispondi SOLO con JSON valido:
                 qa('.lv-rp').forEach((p,i)=>p.classList.toggle('active',i===n));
             }
 
-            // ── Appello ─────────────────────────────────────────────────────
+            // ── Appello + NHC/NHM ────────────────────────────────────────────
             function lvRendApp(){
                 const el=q('lv-appello-list');if(!el)return;
                 el.innerHTML=studentiDati.map((s,i)=>{
                     const k=s.cognome+' '+s.nome, st=LV.appello[k];
-                    return `<div class="lv-aitem"><span style="flex:1;font-size:13px">${k}</span><button class="lv-abtn ${st==='p'?'p':'a'}" onclick="lvTogApp(${i})">${st==='p'?'✓ Pres':'✗ Ass'}</button></div>`;
+                    const ass=st!=='p';
+                    const nhc=LV.nhc.has(i), nhm=LV.nhm.has(i);
+                    return '<div class="lv-aitem">'
+                        +'<span style="flex:1;font-size:13px;'+(ass?'opacity:.45;text-decoration:line-through;':'')+'">'+k+'</span>'
+                        +'<button class="lv-abtn '+(st==='p'?'p':'a')+'" onclick="lvTogApp('+i+')">'+(st==='p'?'✓ Pres':'✗ Ass')+'</button>'
+                        +'<button class="lv-ann-btn'+(nhc?' on':'')+'" onclick="lvTogNHC('+i+')" title="Non ha fatto i compiti">NHC</button>'
+                        +'<button class="lv-ann-btn'+(nhm?' on':'')+'" onclick="lvTogNHM('+i+')" title="Non ha il materiale">NHM</button>'
+                        +'</div>';
                 }).join('');
                 const na=Object.values(LV.appello).filter(v=>v!=='p').length;
-                const sum=q('lv-app-sum');if(sum)sum.textContent=na?na+' assent'+(na===1?'e':'i'):'Tutti presenti ✓';
+                const nnhc=LV.nhc.size, nnhm=LV.nhm.size;
+                const sum=q('lv-app-sum');
+                if(sum){
+                    let parts=[];
+                    if(na)parts.push(na+' assent'+(na===1?'e':'i'));
+                    if(nnhc)parts.push(nnhc+' NHC');
+                    if(nnhm)parts.push(nnhm+' NHM');
+                    sum.textContent=parts.length?parts.join(' · '):'Tutti presenti ✓';
+                }
             }
             window.lvTogApp=function(i){
                 const k=studentiDati[i]?.cognome+' '+studentiDati[i]?.nome;
                 if(!k||k==='undefined undefined')return;
                 LV.appello[k]=LV.appello[k]==='p'?'a':'p';
+                lvRendApp();
+            };
+            window.lvTogNHC=function(i){
+                if(LV.nhc.has(i))LV.nhc.delete(i);else LV.nhc.add(i);
+                lvRendApp();
+            };
+            window.lvTogNHM=function(i){
+                if(LV.nhm.has(i))LV.nhm.delete(i);else LV.nhm.add(i);
                 lvRendApp();
             };
 
@@ -12308,11 +12340,14 @@ Rispondi SOLO con JSON valido:
             window.lvFineSv=function(){
                 const assenti=Object.entries(LV.appello).filter(([k,v])=>v!=='p').map(([k])=>k);
                 const note=q('lv-note-ta')?.value.trim()||'';
+                const nhcNomi=[...LV.nhc].map(i=>studentiDati[i]?.cognome+' '+studentiDati[i]?.nome).filter(Boolean);
+                const nhmNomi=[...LV.nhm].map(i=>studentiDati[i]?.cognome+' '+studentiDati[i]?.nome).filter(Boolean);
                 if(confirm('✅ Fine lezione!\n\nVuoi segnare questa lezione come svolta?\n'
                     +(assenti.length?'Assenti: '+assenti.join(', ')+'\n':'')
+                    +(nhcNomi.length?'NHC: '+nhcNomi.join(', ')+'\n':'')
+                    +(nhmNomi.length?'NHM: '+nhmNomi.join(', ')+'\n':'')
                     +(note?'Note: '+note.substring(0,80)+(note.length>80?'...':''):''))) {
                     const piano = classe?.pianificazione?.piano||[];
-                    // Debug: mostra cosa cerca vs cosa c'è
                     const ids = piano.map(p=>lzId(p)+' | testId='+p._testId+' | data='+p.data+' ora='+p.ora).join('\n');
                     const lzF = piano.find(p=>
                         p._testId===slotId ||
@@ -12328,9 +12363,42 @@ Rispondi SOLO con JSON valido:
                     if(note)lzF.liveNote=note;
                     if(assenti.length)lzF.liveAssenti=assenti;
                     if(LV.semLog.length)lzF.liveSemLog=LV.semLog;
-                    if(assenti.length){assenti.forEach(nc=>{const s=classe.studenti.find(x=>(x.cognome+' '+x.nome).toLowerCase()===nc.toLowerCase()||(x.nome+' '+x.cognome).toLowerCase()===nc.toLowerCase());if(s)s.assenze=(s.assenze||0)+1;});}
+                    // Assenze → contatore studente
+                    if(assenti.length){assenti.forEach(nc=>{
+                        const s=classe.studenti.find(x=>(x.cognome+' '+x.nome).toLowerCase()===nc.toLowerCase()||(x.nome+' '+x.cognome).toLowerCase()===nc.toLowerCase());
+                        if(s)s.assenze=(s.assenze||0)+1;
+                    });}
+                    // NHC → annotazione in storico
+                    [...LV.nhc].forEach(i=>{
+                        const sd=studentiDati[i];if(!sd)return;
+                        const s=classe.studenti.find(x=>x.nome===sd.nome&&x.cognome===sd.cognome);
+                        if(!s)return;
+                        if(!s.annotazioni)s.annotazioni=[];
+                        s.annotazioni.push({
+                            data: new Date(isoDate+'T12:00:00').toISOString(),
+                            codice: 'NHC',
+                            descrizione: 'Non ha fatto i compiti',
+                            tipo: 'live',
+                        });
+                    });
+                    // NHM → annotazione in storico
+                    [...LV.nhm].forEach(i=>{
+                        const sd=studentiDati[i];if(!sd)return;
+                        const s=classe.studenti.find(x=>x.nome===sd.nome&&x.cognome===sd.cognome);
+                        if(!s)return;
+                        if(!s.annotazioni)s.annotazioni=[];
+                        s.annotazioni.push({
+                            data: new Date(isoDate+'T12:00:00').toISOString(),
+                            codice: 'NHM',
+                            descrizione: 'Non ha il materiale',
+                            tipo: 'live',
+                        });
+                    });
                     saveData();renderDayPanel();
-                    const fr=q('lv-fine-r');if(fr)fr.innerHTML='<span style="color:#6ee7b7">✅ Lezione segnata come svolta. Note e assenti salvati.</span>';
+                    const fr=q('lv-fine-r');if(fr)fr.innerHTML='<span style="color:#6ee7b7">✅ Salvato.'
+                        +(nhcNomi.length?' NHC: '+nhcNomi.join(', ')+'.':'')
+                        +(nhmNomi.length?' NHM: '+nhmNomi.join(', ')+'.':'')
+                        +'</span>';
                 }
             };
             window.lvFineArgo=function(){
