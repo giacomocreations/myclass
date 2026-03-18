@@ -1835,7 +1835,6 @@
                     <div class="student-tab" onclick="switchStudentTab('tab-ai')">🤖 Analisi AI</div>
                     <div class="student-tab" onclick="switchStudentTab('tab-recupero')">📋 Piano Recupero</div>
                     <div class="student-tab" onclick="switchStudentTab('tab-colloquio')">👨‍👩‍👧 Colloquio</div>
-                    <div class="student-tab" onclick="switchStudentTab('tab-risorse')">🔗 Risorse</div>
                     <div class="student-tab" onclick="switchStudentTab('tab-dati')">⚙️ Dati</div>
                 </div>
                 
@@ -3532,12 +3531,17 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
             const classiOggi = data.classi.map((cl, idx) => {
                 const orario = cl.pianificazione?.orario || [];
                 const slots = orario.filter(s => s.giornoNum === dow)
-                    .sort((a,b) => a.ora - b.ora); // ← ordine crescente
+                    .sort((a,b) => a.ora - b.ora);
                 if (!slots.length) return null;
                 if (GIORNI_SOSPESI.has(isoDate)) return null;
-                // Trova lezione pianificata per questa data
+                // Controlla assenza per questa specifica classe (giorno saltato)
+                if (cl.pianificazione?.giorniSaltati?.[isoDate]) return null;
+                // Trova lezione pianificata per questa data (escludi stati non rilevanti)
                 const piano = cl.pianificazione?.piano || [];
-                const lezioniGiorno = piano.filter(lz => lz.data === isoDate);
+                const lezioniGiorno = piano.filter(lz =>
+                    lz.data === isoDate &&
+                    (!lz.stato || lz.stato === 'pianificata' || lz.stato === 'ai-generata' || lz.stato === 'svolta')
+                );
                 // Compiti assegnati nella lezione IMMEDIATAMENTE precedente (da fare per oggi).
                 // Mostra solo se quella era l'ultima lezione prima di oggi:
                 // scorre indietro slot per slot — se trova una lezione senza compiti, si ferma (non risale oltre).
@@ -4190,14 +4194,23 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
                 const annDisc = studente.annotazioni.filter(a => a.tipo === 'nota_disciplinare');
                 
                 if (annBehavior.length > 0) {
-                    const annotationsHtml = annBehavior.slice().reverse().map(ann => `
+                    const annotationsHtml = annBehavior.slice().reverse().map((ann, ri) => {
+                        // Calcola indice reale nell'array originale (non invertito)
+                        const realIdx = studente.annotazioni.indexOf(ann);
+                        return `
                         <li class="history-item" style="border-left-color: ${ann.codice === 'NdM' ? '#34a853' : '#f5576c'};">
-                            <div class="vote" style="color: #666; font-size: 16px;">${ann.codice === 'NdM' ? '⭐' : '📋'} ${ann.codice}</div>
-                            <div style="font-size: 13px; color: #666; margin-top: 4px;">
-                                ${formatDate(ann.data)} — ${ann.descrizione}
+                            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+                                <div style="flex:1;">
+                                    <div class="vote" style="color: #666; font-size: 16px;">${ann.codice === 'NdM' ? '⭐' : '📋'} ${ann.codice}</div>
+                                    <div style="font-size: 13px; color: #666; margin-top: 4px;">
+                                        ${formatDate(ann.data)} — ${ann.descrizione}
+                                    </div>
+                                </div>
+                                <button onclick="deleteAnnotazione(${currentClass},${currentStudent},${realIdx})" title="Elimina annotazione"
+                                    style="background:none;border:1px solid #fca5a5;color:#f87171;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:12px;flex-shrink:0;margin-top:2px;">🗑️</button>
                             </div>
-                        </li>
-                    `).join('');
+                        </li>`;
+                    }).join('');
                     document.getElementById('studentHistory').innerHTML += `
                         <h4 style="margin-top: 30px; margin-bottom: 15px; color: #2c3e50;">📋 Annotazioni</h4>
                         <ul class="history-list">${annotationsHtml}</ul>
@@ -4205,13 +4218,21 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
                 }
                 
                 if (annDisc.length > 0) {
-                    const discHtml = annDisc.slice().reverse().map(ann => `
+                    const discHtml = annDisc.slice().reverse().map(ann => {
+                        const realIdx = studente.annotazioni.indexOf(ann);
+                        return `
                         <li class="history-item" style="border-left-color: #dc3545;">
-                            <div class="vote" style="color: #dc3545; font-size: 14px;">⚠️ Nota disciplinare</div>
-                            <div style="font-size: 13px; color: #666; margin-top: 4px;">${formatDate(ann.data)}</div>
-                            <div style="margin-top: 6px; font-size: 13px;">${ann.descrizione}</div>
-                        </li>
-                    `).join('');
+                            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+                                <div style="flex:1;">
+                                    <div class="vote" style="color: #dc3545; font-size: 14px;">⚠️ Nota disciplinare</div>
+                                    <div style="font-size: 13px; color: #666; margin-top: 4px;">${formatDate(ann.data)}</div>
+                                    <div style="margin-top: 6px; font-size: 13px;">${ann.descrizione}</div>
+                                </div>
+                                <button onclick="deleteAnnotazione(${currentClass},${currentStudent},${realIdx})" title="Elimina annotazione"
+                                    style="background:none;border:1px solid #fca5a5;color:#f87171;border-radius:6px;padding:3px 8px;cursor:pointer;font-size:12px;flex-shrink:0;margin-top:2px;">🗑️</button>
+                            </div>
+                        </li>`;
+                    }).join('');
                     document.getElementById('studentHistory').innerHTML += `
                         <h4 style="margin-top: 30px; margin-bottom: 15px; color: #dc3545;">⚠️ Note Disciplinari (Consiglio di Classe)</h4>
                         <ul class="history-list">${discHtml}</ul>
@@ -4691,6 +4712,15 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
         }
         
         // ============================================
+        function deleteAnnotazione(classeIdx, studenteIdx, annIdx) {
+            if (!confirm('Eliminare questa annotazione?')) return;
+            const studente = data.classi[classeIdx]?.studenti[studenteIdx];
+            if (!studente?.annotazioni) return;
+            studente.annotazioni.splice(annIdx, 1);
+            saveData();
+            renderStudentDetail();
+        }
+
         // TAB SCHEDA STUDENTE
         // ============================================
         let studentChartInstances = {};
@@ -4700,7 +4730,7 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
             document.querySelectorAll('.student-tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.student-tab-panel').forEach(p => p.classList.remove('active'));
             document.getElementById(tabId).classList.add('active');
-            const tabs = ['tab-voti','tab-storico','tab-grafici','tab-ai','tab-recupero','tab-colloquio','tab-risorse','tab-dati'];
+            const tabs = ['tab-voti','tab-storico','tab-grafici','tab-ai','tab-recupero','tab-colloquio','tab-dati'];
             const idx = tabs.indexOf(tabId);
             if (idx >= 0) document.querySelectorAll('.student-tab')[idx].classList.add('active');
             
@@ -9176,9 +9206,11 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         </div>
                         <div class="lesson-title">${activity.titolo||'—'}</div>
                         <div class="lesson-desc">${activity.descrizione||''}</div>
-                        ${isSvolta && (activity.liveNote||activity.liveAssenti?.length||activity.liveSemLog?.length) ? `<div style="margin-top:6px;background:#f0f4ff;border-left:3px solid #667eea;border-radius:0 6px 6px 0;padding:7px 10px;font-size:12px;">
+                        ${isSvolta && (activity.liveNote||activity.liveAssenti?.length||activity.liveSemLog?.length||activity.liveNHC?.length||activity.liveNHM?.length) ? `<div style="margin-top:6px;background:#f0f4ff;border-left:3px solid #667eea;border-radius:0 6px 6px 0;padding:7px 10px;font-size:12px;">
                             <div style="font-weight:700;color:#3949ab;margin-bottom:4px;">📋 Note LIVE</div>
                             ${activity.liveAssenti?.length ? `<div style="color:#b45309;margin-bottom:3px;">🏠 Assenti: ${activity.liveAssenti.join(', ')}</div>` : ''}
+                            ${activity.liveNHC?.length ? `<div style="color:#b45309;margin-bottom:3px;">📋 NHC (compiti): ${activity.liveNHC.join(', ')}</div>` : ''}
+                            ${activity.liveNHM?.length ? `<div style="color:#b45309;margin-bottom:3px;">📋 NHM (materiale): ${activity.liveNHM.join(', ')}</div>` : ''}
                             ${activity.liveNote ? `<div style="color:#374151;white-space:pre-wrap;">${activity.liveNote}</div>` : ''}
                             ${activity.liveSemLog?.length ? `<div style="margin-top:4px;color:#666;">${activity.liveSemLog.slice(-3).map(l=>l.t+' '+l.e).join(' · ')}</div>` : ''}
                         </div>` : ''}
@@ -12363,6 +12395,8 @@ Rispondi SOLO con JSON valido:
                     if(note)lzF.liveNote=note;
                     if(assenti.length)lzF.liveAssenti=assenti;
                     if(LV.semLog.length)lzF.liveSemLog=LV.semLog;
+                    if(nhcNomi.length)lzF.liveNHC=nhcNomi;
+                    if(nhmNomi.length)lzF.liveNHM=nhmNomi;
                     // Assenze → contatore studente
                     if(assenti.length){assenti.forEach(nc=>{
                         const s=classe.studenti.find(x=>(x.cognome+' '+x.nome).toLowerCase()===nc.toLowerCase()||(x.nome+' '+x.cognome).toLowerCase()===nc.toLowerCase());
