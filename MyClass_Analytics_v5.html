@@ -9275,7 +9275,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                     <div class="lesson-actions">
                         <button class="btn-edit" onclick="editLessonCard('${slot.id}')">✏️ Modifica</button>
                         <button class="btn-ai-improve" onclick="aiImproveLesson('${slot.id}')" title="Migliora con AI: ottimizza titolo, estrai pagine e compiti">✨ AI</button>
-                        <button class="btn-piano ${activity.pianoDettagliato?'has-piano':''}" onclick="openPianoDettagliato('${slot.id}')" title="${activity.pianoDettagliato?'Piano dettagliato presente — clicca per modificare':'Crea piano dettagliato della lezione'}">📋${activity.pianoDettagliato?' Piano':' Piano'}</button>
+                        <button class="btn-piano ${activity.pianoDettagliato?'has-piano':''}" onclick="openPianoDettagliato('${slot.id}')" title="${activity.pianoDettagliato?'Piano dettagliato presente — clicca per modificare':'Crea piano dettagliato della lezione'}">📋${activity.pianoDettagliato?' Piano':' Piano'}</button>${activity.pianoDettagliato?.pianoB?'<span title="Piano B presente" style="font-size:11px;background:#fce4ec;color:#880e4f;border-radius:8px;padding:1px 6px;font-weight:700;margin-left:2px;">⚡B</span>':''}
                         <button onclick="showArgoTextModal('${slot.id}', false)" style="padding:4px 10px;border-radius:12px;border:1.5px solid #00897b;background:white;color:#00897b;cursor:pointer;font-size:12px;font-weight:700;" title="Genera testo da copiare su Argo">📋 Argo</button>
                         <button class="btn-copy" onclick="copySingleLesson('${slot.id}')" title="Copia questa lezione negli appunti">📋 Copia</button>
                         ${!isSvolta?`<button class="btn-swap" onclick="swapLesson('${slot.id}','prev')" title="Scambia con lezione precedente">↑</button>
@@ -10722,7 +10722,7 @@ Rispondi SOLO con JSON valido:
                             <div class="piano-det-section" style="border-color:#f48fb1;background:#fce4ec22;">
                                 <label style="color:#880e4f;">🔥 Fase 1 — Warm up / Avvio</label>
                                 <textarea id="pdb_fase1" oninput="pdAutoResize(this)" style="background:white;border:1px solid #f48fb1;"
-                                    placeholder="- Attività warm up (5 min)&#10;- Revisione rapida...">${pd.pianoB?.fase1||''}</textarea>
+                                    placeholder="- Attività warm up (5 min)&#10;- Revisione rapida...">${pd.pianoB?.fase1||pd.pianoB?.descrizione||''}</textarea>
                             </div>
                             <div class="piano-det-section" style="border-color:#f48fb1;background:#fce4ec22;">
                                 <label style="color:#880e4f;">📖 Fase 2 — Attività principale</label>
@@ -11041,13 +11041,25 @@ Rispondi SOLO con JSON valido:
                 const pdbF1 = document.getElementById('pdb_fase1')?.value?.trim() || '';
                 const pdbF2 = document.getElementById('pdb_fase2')?.value?.trim() || '';
                 const pdbF3 = document.getElementById('pdb_fase3')?.value?.trim() || '';
-                current.pianoB = (pdbT || pdbF1 || pdbF2 || pdbF3) ? {
-                    titolo: pdbT,
-                    durata: parseInt(document.getElementById('pdb_durata')?.value || '50'),
-                    fase1:  pdbF1,
-                    fase2:  pdbF2,
-                    fase3:  pdbF3,
-                } : null;
+                if (pdbT || pdbF1 || pdbF2 || pdbF3) {
+                    current.pianoB = {
+                        titolo: pdbT,
+                        durata: parseInt(document.getElementById('pdb_durata')?.value || '50'),
+                        fase1:  pdbF1,
+                        fase2:  pdbF2,
+                        fase3:  pdbF3,
+                    };
+                } else {
+                    // Nessun campo Piano B in DOM: prova a recuperare dal dato salvato
+                    // (es. apertura read view prima di aver toccato Piano B)
+                    const [_isoDateTR] = (typeof slotId !== 'undefined' ? slotId : '').split('_');
+                    const _classTR = data?.classi?.[currentClass];
+                    const _lzTR = _classTR?.pianificazione?.piano?.find(p =>
+                        lzId(p) === (typeof slotId !== 'undefined' ? slotId : '') ||
+                        (!p.ora && p.data === _isoDateTR)
+                    );
+                    current.pianoB = _lzTR?.pianoDettagliato?.pianoB || null;
+                }
                 pdRenderReadView(current);
                 editView.classList.add('hidden');
                 readView.classList.add('active');
@@ -11217,6 +11229,7 @@ Rispondi SOLO con JSON valido:
                     const f1 = document.getElementById('pdb_fase1')?.value?.trim() || '';
                     const f2 = document.getElementById('pdb_fase2')?.value?.trim() || '';
                     const f3 = document.getElementById('pdb_fase3')?.value?.trim() || '';
+                    // Nessun contenuto → niente Piano B
                     if (!t && !f1 && !f2 && !f3) return null;
                     return {
                         titolo: t,
@@ -11986,7 +11999,7 @@ Rispondi SOLO con JSON valido:
     </div>
     <div class="lv-plan-tabs" id="lv-plan-tabs">
       <button class="lv-plan-tab active" id="lv-tab-a" onclick="lvSwitchPlan('a')">📋 Piano A</button>
-      ${pianoB&&(pianoB.titolo||pianoB.fase1||pianoB.fase2||pianoB.fase3)?'<button class="lv-plan-tab pb-tab" id="lv-tab-b" onclick="lvSwitchPlan(\'b\')">⚡ Piano B</button>':''}
+      ${pianoB&&(pianoB.titolo||pianoB.fase1||pianoB.fase2||pianoB.fase3||pianoB.descrizione)?'<button class="lv-plan-tab pb-tab" id="lv-tab-b" onclick="lvSwitchPlan(\'b\')">⚡ Piano B</button>':''}
     </div>
     <div id="lv-fasi-scroll"></div>
     ${risorse.length ? '<div id="lv-risorse-bar"><span style="font-size:10px;opacity:.4;margin-right:4px">RISORSE:</span>'+risorseHTML+'</div>' : ''}
