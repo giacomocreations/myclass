@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LiveLearn</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f0ede8; color: #1c1c1a; min-height: 100vh; line-height: 1.5; }
+
+/* === VIEWS === */
+.view { display: none; }
+.view.active { display: flex; flex-direction: column; min-height: 100vh; }
+
+/* === TOPBAR === */
+.topbar { background: white; border-bottom: 1px solid #e8e5e0; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; flex-shrink: 0; }
+.logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; letter-spacing: -0.5px; color: #1c1c1a; }
+.logo-dot { width: 9px; height: 9px; border-radius: 50%; background: #16a37f; }
+
+/* === CONTENT WRAPPERS === */
+.content { flex: 1; padding: 40px 24px; max-width: 500px; margin: 0 auto; width: 100%; }
+.content-wide { flex: 1; padding: 28px 32px; max-width: 1100px; margin: 0 auto; width: 100%; }
+
+/* === CARDS === */
+.card { background: white; border-radius: 12px; border: 1px solid #e8e5e0; padding: 28px; }
+.card + .card { margin-top: 16px; }
+
+/* === FORM ELEMENTS === */
+.form-group { margin-bottom: 18px; }
+.form-group label { display: block; font-size: 13px; font-weight: 600; color: #444; margin-bottom: 6px; }
+input[type=text], input[type=password], textarea, select {
+  width: 100%; padding: 10px 13px; border: 1px solid #ddd; border-radius: 8px;
+  font-family: inherit; font-size: 14px; color: #1c1c1a; background: white;
+  outline: none; transition: border-color 0.15s;
+}
+input[type=file] { font-size: 13px; padding: 6px 0; width: 100%; }
+input:focus, textarea:focus, select:focus { border-color: #16a37f; box-shadow: 0 0 0 3px rgba(22,163,127,0.1); }
+textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
+
+/* === BUTTONS === */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 18px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s; background: white; color: #1c1c1a; font-family: inherit; }
+.btn:hover { background: #f5f5f3; border-color: #ccc; }
+.btn:active { transform: scale(0.98); }
+.btn-primary { background: #16a37f; color: white; border-color: #16a37f; }
+.btn-primary:hover { background: #138a6c; border-color: #138a6c; }
+.btn-danger { background: #e53e3e; color: white; border-color: #e53e3e; }
+.btn-danger:hover { background: #c0392b; }
+.btn-ghost { border-color: transparent; background: transparent; }
+.btn-ghost:hover { background: #f0ede8; border-color: transparent; }
+.btn-sm { padding: 6px 12px; font-size: 13px; border-radius: 6px; }
+.btn-block { width: 100%; }
+
+/* === BADGES === */
+.badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 20px; letter-spacing: 0.3px; }
+.badge-green { background: #d1fae5; color: #065f46; }
+.badge-blue { background: #dbeafe; color: #1e3a8a; }
+.badge-amber { background: #fef3c7; color: #92400e; }
+.badge-gray { background: #f1f0ee; color: #555; }
+.badge-red { background: #fee2e2; color: #7f1d1d; }
+.badge-live { background: #16a37f; color: white; animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
+
+/* === ALERTS === */
+.alert { padding: 11px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; }
+.alert-info { background: #dbeafe; color: #1e3a8a; }
+.alert-danger { background: #fee2e2; color: #7f1d1d; border: 1px solid #fca5a5; }
+.alert-success { background: #d1fae5; color: #065f46; }
+
+/* === UTILS === */
+.flex { display: flex; }
+.flex-center { display: flex; align-items: center; }
+.gap-8 { gap: 8px; }
+.gap-12 { gap: 12px; }
+.gap-16 { gap: 16px; }
+.mt-8 { margin-top: 8px; }
+.mt-16 { margin-top: 16px; }
+.mt-24 { margin-top: 24px; }
+.mb-8 { margin-bottom: 8px; }
+.mb-12 { margin-bottom: 12px; }
+.mb-16 { margin-bottom: 16px; }
+.mb-24 { margin-bottom: 24px; }
+.text-muted { color: #888; font-size: 13px; }
+.text-center { text-align: center; }
+.empty-state { text-align: center; padding: 60px 24px; color: #aaa; }
+.empty-state .es-icon { font-size: 42px; margin-bottom: 12px; }
+.divider { height: 1px; background: #e8e5e0; margin: 20px 0; }
+.tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; background: #f0ede8; font-size: 12px; color: #555; margin-right: 4px; }
+.correct-mark { color: #16a37f; font-weight: 700; }
+.wrong-mark { color: #e53e3e; font-weight: 700; }
+
+/* ============================================================
+   HOME
+   ============================================================ */
+.home-hero { text-align: center; padding: 72px 24px 40px; }
+.home-hero h1 { font-size: 40px; font-weight: 800; letter-spacing: -1px; color: #1c1c1a; margin-bottom: 8px; }
+.home-hero h1 span { color: #16a37f; }
+.home-hero p { color: #666; font-size: 16px; margin-bottom: 48px; }
+.home-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 560px; margin: 0 auto; }
+.home-card { background: white; border: 2px solid #e8e5e0; border-radius: 16px; padding: 36px 24px; text-align: center; cursor: pointer; transition: all 0.2s; }
+.home-card:hover { border-color: #16a37f; transform: translateY(-3px); box-shadow: 0 10px 30px rgba(22,163,127,0.12); }
+.home-card .hc-icon { font-size: 40px; margin-bottom: 12px; }
+.home-card h2 { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+.home-card p { font-size: 13px; color: #777; line-height: 1.5; }
+.home-card .hc-hint { display: inline-block; margin-top: 12px; font-size: 11px; font-weight: 600; color: #16a37f; background: #e8fdf5; padding: 3px 10px; border-radius: 20px; }
+
+/* ============================================================
+   DASHBOARD
+   ============================================================ */
+.dash-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px; }
+.stat-card { background: white; border-radius: 10px; border: 1px solid #e8e5e0; padding: 18px 20px; }
+.stat-label { font-size: 12px; color: #888; margin-bottom: 4px; font-weight: 500; }
+.stat-value { font-size: 30px; font-weight: 700; color: #1c1c1a; }
+
+.tabs-row { display: flex; border-bottom: 1px solid #e8e5e0; margin-bottom: 24px; }
+.tab { padding: 10px 20px; font-size: 14px; font-weight: 600; color: #888; border-bottom: 2px solid transparent; cursor: pointer; transition: all 0.15s; margin-bottom: -1px; }
+.tab.active { color: #16a37f; border-bottom-color: #16a37f; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.activity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 16px; }
+.activity-card { background: white; border-radius: 12px; border: 1px solid #e8e5e0; padding: 20px; }
+.activity-card h3 { font-size: 15px; font-weight: 600; margin: 8px 0 4px; }
+.activity-card .ac-meta { font-size: 12px; color: #888; margin-bottom: 14px; }
+.activity-card .ac-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.session-list { display: flex; flex-direction: column; gap: 12px; }
+.session-row { background: white; border-radius: 10px; border: 1px solid #e8e5e0; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.session-info h3 { font-size: 14px; font-weight: 600; }
+.session-info p { font-size: 12px; color: #888; }
+.session-code-big { font-size: 24px; font-weight: 800; letter-spacing: 4px; color: #16a37f; font-family: 'Courier New', monospace; }
+
+/* ============================================================
+   ACTIVITY BUILDER
+   ============================================================ */
+.builder-layout { display: grid; grid-template-columns: 1fr 310px; gap: 24px; align-items: start; }
+.builder-title-input { font-size: 22px; font-weight: 700; border: none; border-bottom: 2px solid #e8e5e0; border-radius: 0; padding: 8px 0; outline: none; transition: border-color 0.15s; }
+.builder-title-input:focus { border-bottom-color: #16a37f; box-shadow: none; }
+.question-list-container { display: flex; flex-direction: column; gap: 12px; }
+.q-item { background: white; border-radius: 10px; border: 1px solid #e8e5e0; padding: 16px 18px; }
+.q-item-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.q-item-preview { font-size: 13px; color: #555; line-height: 1.4; }
+
+.panel { background: white; border-radius: 12px; border: 1px solid #e8e5e0; padding: 20px; position: sticky; top: 76px; }
+.panel h3 { font-size: 14px; font-weight: 700; margin-bottom: 14px; color: #333; }
+.q-type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.q-type-btn { padding: 10px 6px; border-radius: 8px; border: 1px solid #e8e5e0; background: white; font-size: 12px; font-weight: 600; cursor: pointer; text-align: center; transition: all 0.15s; color: #444; }
+.q-type-btn:hover { border-color: #16a37f; background: #f0fdf8; color: #16a37f; }
+.q-type-btn.selected { border-color: #16a37f; background: #e8fdf5; color: #16a37f; }
+.q-type-btn.wide { grid-column: span 2; }
+.add-form-container { border-top: 1px solid #f0ede8; padding-top: 16px; }
+
+/* ============================================================
+   LIVE SESSION
+   ============================================================ */
+.live-layout { display: grid; grid-template-columns: 230px 1fr; flex: 1; }
+.live-sidebar { background: white; border-right: 1px solid #e8e5e0; display: flex; flex-direction: column; overflow-y: auto; }
+.live-sidebar-header { padding: 16px 16px 10px; font-size: 11px; font-weight: 700; color: #888; letter-spacing: 0.5px; border-bottom: 1px solid #f0ede8; flex-shrink: 0; }
+.live-sidebar-body { flex: 1; overflow-y: auto; padding: 8px; }
+.live-main { padding: 28px; overflow-y: auto; }
+.student-pill { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; border-radius: 8px; cursor: pointer; transition: background 0.1s; }
+.student-pill:hover { background: #f5f5f3; }
+.student-pill.active { background: #e8fdf5; }
+.student-pill-name { font-size: 13px; font-weight: 500; color: #1c1c1a; }
+.student-pill-count { font-size: 11px; color: #888; }
+.sdot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; flex-shrink: 0; margin-right: 7px; }
+.sdot.waiting { background: #f59e0b; }
+.code-box-live { background: #e8fdf5; border: 2px solid #16a37f; border-radius: 10px; padding: 10px 18px; display: flex; align-items: center; gap: 12px; }
+.code-box-live .code-label { font-size: 12px; color: #555; }
+.code-box-live .code-val { font-size: 22px; font-weight: 800; letter-spacing: 5px; color: #16a37f; font-family: 'Courier New', monospace; }
+
+.answer-card { background: white; border-radius: 10px; border: 1px solid #e8e5e0; padding: 18px 20px; margin-bottom: 14px; }
+.answer-card-header { font-size: 12px; font-weight: 700; color: #888; letter-spacing: 0.3px; margin-bottom: 10px; }
+.answer-card-body { font-size: 14px; line-height: 1.6; }
+
+/* ============================================================
+   STUDENT ACTIVITY
+   ============================================================ */
+.student-content { flex: 1; padding: 28px 24px; max-width: 700px; margin: 0 auto; width: 100%; }
+.progress-bar { height: 5px; background: #e8e5e0; border-radius: 3px; margin-bottom: 24px; overflow: hidden; }
+.progress-fill { height: 100%; background: #16a37f; border-radius: 3px; transition: width 0.3s ease; }
+
+.question-card { background: white; border-radius: 14px; border: 1px solid #e8e5e0; padding: 32px; }
+.q-label { font-size: 11px; font-weight: 700; color: #16a37f; letter-spacing: 0.5px; margin-bottom: 10px; }
+.q-text { font-size: 17px; font-weight: 500; line-height: 1.5; margin-bottom: 22px; color: #1c1c1a; }
+
+/* Multiple choice */
+.options-list { display: flex; flex-direction: column; gap: 10px; }
+.option-btn { padding: 13px 18px; border-radius: 10px; border: 1.5px solid #e8e5e0; background: white; text-align: left; font-size: 15px; cursor: pointer; transition: all 0.15s; font-family: inherit; color: #1c1c1a; }
+.option-btn:hover { border-color: #16a37f; background: #f0fdf8; }
+.option-btn.selected { border-color: #16a37f; background: #e8fdf5; color: #16a37f; font-weight: 600; }
+
+/* Cloze */
+.cloze-text { font-size: 16px; line-height: 2.2; }
+.blank-input { border: none; border-bottom: 2.5px solid #16a37f; outline: none; font-size: 16px; width: 110px; text-align: center; background: transparent; color: #1c1c1a; font-family: inherit; padding: 0 4px; margin: 0 2px; }
+
+/* Matching */
+.matching-area { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; }
+.matching-col-label { font-size: 12px; font-weight: 700; color: #888; margin-bottom: 4px; letter-spacing: 0.3px; }
+.match-item { padding: 12px 16px; border-radius: 9px; border: 1.5px solid #e8e5e0; font-size: 14px; cursor: pointer; transition: all 0.15s; min-height: 44px; display: flex; align-items: center; font-weight: 500; }
+.match-item:hover { border-color: #16a37f; }
+.match-item.selected { border-color: #16a37f; background: #e8fdf5; color: #16a37f; }
+.match-item.matched { border-color: #16a37f; background: #16a37f; color: white; cursor: default; }
+.match-item.matched:hover { border-color: #16a37f; }
+
+/* Audio player */
+.audio-player { background: #f5f5f3; border-radius: 10px; padding: 16px 20px; margin-bottom: 22px; display: flex; align-items: center; gap: 14px; }
+.play-btn { width: 44px; height: 44px; border-radius: 50%; background: #16a37f; border: none; color: white; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.15s; }
+.play-btn:hover { background: #138a6c; }
+.audio-info { flex: 1; }
+.audio-info .audio-title { font-size: 14px; font-weight: 600; }
+.audio-info .audio-hint { font-size: 12px; color: #888; }
+
+/* Nav */
+.student-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; }
+
+/* Done screen */
+.done-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; text-align: center; padding: 60px 24px; }
+.done-screen .done-icon { font-size: 72px; margin-bottom: 20px; }
+.done-screen h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+
+/* ============================================================
+   MODAL
+   ============================================================ */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.modal-overlay.hidden { display: none; }
+.modal-box { background: white; border-radius: 16px; padding: 32px; max-width: 520px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.2); }
+.modal-box h2 { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+.modal-box .modal-sub { font-size: 13px; color: #888; margin-bottom: 24px; }
+.import-option { border: 1.5px solid #e8e5e0; border-radius: 12px; padding: 18px 20px; cursor: pointer; transition: all 0.15s; margin-bottom: 12px; }
+.import-option:hover { border-color: #16a37f; background: #f0fdf8; }
+.import-option h3 { font-size: 14px; font-weight: 700; margin-bottom: 3px; }
+.import-option p { font-size: 12px; color: #777; }
+.import-option .io-icon { font-size: 24px; margin-bottom: 8px; }
+
+/* Classes tab */
+.classes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+.class-card { background: white; border-radius: 12px; border: 1px solid #e8e5e0; padding: 20px; }
+.class-card h3 { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+.class-card .cc-meta { font-size: 12px; color: #888; margin-bottom: 12px; }
+.student-chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.student-chip { font-size: 11px; background: #f0ede8; color: #555; padding: 3px 8px; border-radius: 20px; }
+.sdot.absent { background: #e8e5e0; }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════
+     ⚙️  CONFIGURAZIONE — modifica qui prima di usare l'app
+     ════════════════════════════════════════════════════════ -->
+<script>
+const CONFIG = {
+  teacherPassword: 'livelearn2024',   // ← cambia questa password!
+  firebase: {
+    apiKey:            "YOUR_API_KEY",
+    authDomain:        "YOUR_PROJECT.firebaseapp.com",
+    databaseURL:       "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+    projectId:         "YOUR_PROJECT",
+    storageBucket:     "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId:             "YOUR_APP_ID"
+  }
+};
+</script>
+
+<!-- ════════════════════
+     VIEW: HOME
+     ════════════════════ -->
+<div id="view-home" class="view active">
+  <div class="topbar">
+    <div class="logo"><div class="logo-dot"></div> LiveLearn</div>
+  </div>
+  <div class="home-hero">
+    <h1>Live<span>Learn</span></h1>
+    <p>Attività interattive per la classe — quiz, ascolti, cloze e molto altro</p>
+    <div class="home-cards">
+      <div class="home-card" onclick="goTeacherLogin()">
+        <div class="hc-icon">👨‍🏫</div>
+        <h2>Sono il docente</h2>
+        <p>Crea attività, avvia sessioni e vedi i risultati in tempo reale</p>
+        <span class="hc-hint">Accesso con password</span>
+      </div>
+      <div class="home-card" onclick="showView('student-enter')">
+        <div class="hc-icon">🎒</div>
+        <h2>Sono uno studente</h2>
+        <p>Inserisci il codice sessione per partecipare all'attività</p>
+        <span class="hc-hint">Solo il codice dalla lavagna</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════
+     VIEW: TEACHER LOGIN
+     ════════════════════ -->
+<div id="view-teacher-login" class="view">
+  <div class="topbar">
+    <div class="logo"><div class="logo-dot"></div> LiveLearn</div>
+    <button class="btn btn-ghost btn-sm" onclick="showView('home')">← Torna alla home</button>
+  </div>
+  <div class="content" style="display:flex; flex-direction:column; justify-content:center;">
+    <div class="card">
+      <h2 style="font-size:20px; font-weight:700; margin-bottom:6px;">Accesso docente</h2>
+      <p class="text-muted mb-24">Inserisci la tua password per continuare</p>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="teacher-pwd" placeholder="Password" onkeydown="if(event.key==='Enter')teacherLogin()">
+      </div>
+      <div id="login-error" class="alert alert-danger" style="display:none;">Password errata. Riprova.</div>
+      <button class="btn btn-primary btn-block" onclick="teacherLogin()">Accedi →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════
+     VIEW: TEACHER DASHBOARD
+     ════════════════════ -->
+<div id="view-teacher-dashboard" class="view">
+  <div class="topbar">
+    <div class="logo"><div class="logo-dot"></div> LiveLearn</div>
+    <div class="flex gap-8">
+      <button class="btn btn-sm" onclick="switchDashTabById('classes')">📥 Importa classi</button>
+      <button class="btn btn-primary btn-sm" onclick="openBuilder()">+ Nuova attività</button>
+      <button class="btn btn-ghost btn-sm" onclick="logout()">Esci</button>
+    </div>
+  </div>
+  <div class="content-wide">
+    <div class="dash-stats">
+      <div class="stat-card">
+        <div class="stat-label">Attività create</div>
+        <div class="stat-value" id="stat-activities">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Sessioni avviate</div>
+        <div class="stat-value" id="stat-sessions">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Risposte raccolte</div>
+        <div class="stat-value" id="stat-responses">—</div>
+      </div>
+    </div>
+    <div class="tabs-row">
+      <div class="tab active" onclick="switchDashTab('activities', this)">📝 Attività</div>
+      <div class="tab" onclick="switchDashTab('sessions', this)">📡 Sessioni</div>
+      <div class="tab" onclick="switchDashTab('classes', this)">👥 Classi</div>
+    </div>
+    <div id="tab-activities" class="tab-panel active">
+      <div id="activity-grid" class="activity-grid"></div>
+    </div>
+    <div id="tab-sessions" class="tab-panel">
+      <div id="session-list" class="session-list"></div>
+    </div>
+    <div id="tab-classes" class="tab-panel">
+      <!-- Pannello importazione inline -->
+      <div style="background:white; border:1px solid #e8e5e0; border-radius:12px; padding:24px; margin-bottom:20px;">
+        <h3 style="font-size:15px; font-weight:700; margin-bottom:4px;">📥 Importa classi da MyClass Analytics</h3>
+        <p class="text-muted mb-16">Scegli un metodo:</p>
+        <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+          <button class="btn btn-primary btn-sm" onclick="importFromLocalStorage()">⚡ Lettura automatica (stesso browser)</button>
+          <label style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:6px; border:1px solid #ddd; font-size:13px; font-weight:500; cursor:pointer; background:white; transition:all 0.15s;" onmouseover="this.style.background='#f5f5f3'" onmouseout="this.style.background='white'">
+            📂 Carica file JSON
+            <input type="file" id="myclass-json-file" accept=".json" style="display:none" onchange="importFromFile(event)">
+          </label>
+        </div>
+        <div id="import-result" style="display:none; margin-top:14px;"></div>
+      </div>
+      <div id="classes-grid" class="classes-grid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════
+     VIEW: ACTIVITY BUILDER
+     ════════════════════ -->
+<div id="view-teacher-builder" class="view">
+  <div class="topbar">
+    <div class="logo"><div class="logo-dot"></div> LiveLearn</div>
+    <div class="flex gap-8">
+      <button class="btn btn-ghost btn-sm" onclick="showView('teacher-dashboard')">← Dashboard</button>
+      <button class="btn btn-primary btn-sm" onclick="saveActivity()">💾 Salva attività</button>
+    </div>
+  </div>
+  <div class="content-wide">
+    <div class="form-group mb-24">
+      <input type="text" id="activity-title" class="builder-title-input" placeholder="Titolo dell'attività (es. Quiz Past Simple – 2E)" style="font-size:22px; width:100%;">
+    </div>
+    <div class="builder-layout">
+      <!-- QUESTION LIST -->
+      <div>
+        <div id="question-list" class="question-list-container"></div>
+      </div>
+      <!-- SIDE PANEL -->
+      <div class="panel">
+        <h3>Aggiungi domanda</h3>
+        <div class="q-type-grid">
+          <div class="q-type-btn" onclick="selectQType('multiple-choice', this)">📋 Scelta multipla</div>
+          <div class="q-type-btn" onclick="selectQType('cloze', this)">✏️ Cloze / Fill</div>
+          <div class="q-type-btn" onclick="selectQType('matching', this)">🔗 Matching</div>
+          <div class="q-type-btn" onclick="selectQType('free-response', this)">💬 Risposta libera</div>
+          <div class="q-type-btn wide" onclick="selectQType('listening', this)">🎧 Listening</div>
+        </div>
+        <div id="add-form" class="add-form-container"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════
+     VIEW: LIVE SESSION
+     ════════════════════ -->
+<div id="view-teacher-live" class="view">
+  <div class="topbar">
+    <div class="logo">
+      <div class="logo-dot"></div> LiveLearn
+      <span class="badge badge-live" style="margin-left:10px; font-size:10px;">● LIVE</span>
+    </div>
+    <div class="flex gap-12 flex-center">
+      <div class="code-box-live">
+        <span class="code-label">Codice sessione:</span>
+        <span id="live-code-val" class="code-val"></span>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="closeSession()">Chiudi sessione</button>
+      <button class="btn btn-ghost btn-sm" onclick="goBackFromLive()">← Dashboard</button>
+    </div>
+  </div>
+  <div class="live-layout">
+    <div class="live-sidebar">
+      <div class="live-sidebar-header">STUDENTI (<span id="live-count">0</span>)</div>
+      <div class="live-sidebar-body" id="live-student-list"></div>
+    </div>
+    <div class="live-main" id="live-main-content">
+      <div class="empty-state">
+        <div class="es-icon">📡</div>
+        <p style="font-size:15px; font-weight:600;">In attesa degli studenti…</p>
+        <p class="text-muted mt-8">Scrivi il codice alla lavagna e aspetta.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════
+     VIEW: STUDENT ENTER
+     ════════════════════ -->
+<div id="view-student-enter" class="view">
+  <div class="topbar">
+    <div class="logo"><div class="logo-dot"></div> LiveLearn</div>
+    <button class="btn btn-ghost btn-sm" onclick="showView('home')">← Torna</button>
+  </div>
+  <div class="content" style="display:flex; flex-direction:column; justify-content:center;">
+    <div class="card">
+      <h2 style="font-size:20px; font-weight:700; margin-bottom:6px;">Entra nella sessione</h2>
+      <p class="text-muted mb-24">Inserisci il tuo nome e il codice scritto alla lavagna</p>
+      <div class="form-group">
+        <label>Nome e cognome</label>
+        <input type="text" id="student-name" placeholder="Mario Rossi" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label>Codice sessione</label>
+        <input type="text" id="session-code-input" placeholder="es. A7F3"
+          style="font-size:26px; font-weight:800; letter-spacing:6px; text-transform:uppercase; text-align:center;"
+          maxlength="4"
+          oninput="this.value=this.value.toUpperCase()"
+          onkeydown="if(event.key==='Enter')studentEnter()">
+      </div>
+      <div id="enter-error" class="alert alert-danger" style="display:none;"></div>
+      <button class="btn btn-primary btn-block" onclick="studentEnter()">Entra nell'attività →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════
+     VIEW: STUDENT ACTIVITY
+     ════════════════════ -->
+<div id="view-student-activity" class="view">
+  <div class="topbar">
+    <div class="logo"><div class="logo-dot"></div> LiveLearn</div>
+    <div class="text-muted" style="font-size:13px;" id="s-progress-label"></div>
+  </div>
+  <div class="student-content">
+    <div class="progress-bar"><div class="progress-fill" id="s-progress-fill" style="width:0%"></div></div>
+    <div id="s-question-area"></div>
+    <div class="student-nav">
+      <button class="btn" id="btn-prev" onclick="prevQ()" style="display:none;">← Precedente</button>
+      <div></div>
+      <button class="btn btn-primary" id="btn-next" onclick="nextQ()">Successiva →</button>
+      <button class="btn btn-primary" id="btn-submit" onclick="submitAnswers()" style="display:none;">✓ Consegna</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════
+     VIEW: STUDENT DONE
+     ════════════════════ -->
+<div id="view-student-done" class="view">
+  <div class="topbar"><div class="logo"><div class="logo-dot"></div> LiveLearn</div></div>
+  <div class="done-screen">
+    <div class="done-icon">✅</div>
+    <h1>Consegnato!</h1>
+    <p class="text-muted mt-8">Il tuo compito è stato inviato al professore.<br>Puoi chiudere questa pagina.</p>
+  </div>
+</div>
+
+
+<!-- ════════════════════
+     MODAL: IMPORTA CLASSI (rimosso - ora inline nella dashboard)
+     ════════════════════ -->
+
+<!-- ════════════════════
+     MODAL: AVVIA SESSIONE
+     ════════════════════ -->
+<div id="modal-start-session" class="modal-overlay hidden">
+  <div class="modal-box">
+    <h2>▶ Avvia sessione</h2>
+    <p class="modal-sub" id="start-session-activity-name"></p>
+    <div class="form-group">
+      <label>Collega a una classe (opzionale)</label>
+      <select id="start-session-class">
+        <option value="">— Nessuna classe —</option>
+      </select>
+      <p class="text-muted mt-8" style="font-size:12px;">Se selezioni una classe, nella sidebar live vedrai tutti gli studenti del registro e saprai chi manca.</p>
+    </div>
+    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:8px;">
+      <button class="btn btn-ghost btn-sm" onclick="closeStartModal()">Annulla</button>
+      <button class="btn btn-primary btn-sm" onclick="confirmStartSession()">Avvia →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     JAVASCRIPT
+     ════════════════════════════════════════════════════════════ -->
+<script>
+// ── Firebase init ──────────────────────────────────────────
+let db;
+try {
+  firebase.initializeApp(CONFIG.firebase);
+  db = firebase.database();
+} catch(e) {
+  console.warn('Firebase non configurato:', e.message);
+}
+
+// ── Global state ───────────────────────────────────────────
+const S = {
+  // builder
+  questions: [],
+  currentQType: null,
+  editingId: null,
+  // student
+  studentName: '',
+  sessionCode: '',
+  activity: null,
+  qIndex: 0,
+  answers: [],
+  matchLeftSel: null,
+  shuffledRight: [],
+  // live
+  liveCode: '',
+  liveActivityId: '',
+  liveListener: null,
+  liveActivity: null,
+  selectedStudent: null,
+  liveRoster: [],       // studenti del registro per la sessione
+  // pending session start
+  pendingActivityId: '',
+  pendingActivityTitle: '',
+};
+
+// ── Views ──────────────────────────────────────────────────
+function showView(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-' + id).classList.add('active');
+}
+
+function goTeacherLogin() {
+  document.getElementById('teacher-pwd').value = '';
+  document.getElementById('login-error').style.display = 'none';
+  showView('teacher-login');
+}
+
+function teacherLogin() {
+  const pwd = document.getElementById('teacher-pwd').value;
+  if (pwd === CONFIG.teacherPassword) {
+    loadDashboard();
+    showView('teacher-dashboard');
+  } else {
+    document.getElementById('login-error').style.display = 'block';
+  }
+}
+
+function logout() {
+  if (S.liveListener) { S.liveListener(); S.liveListener = null; }
+  showView('home');
+}
+
+// ── Dashboard tabs ─────────────────────────────────────────
+function switchDashTab(id, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('tab-' + id).classList.add('active');
+  if (id === 'classes') renderClassesTab();
+}
+
+// ── Dashboard ──────────────────────────────────────────────
+async function loadDashboard() {
+  if (!db) {
+    ['activity-grid','session-list'].forEach(id => {
+      document.getElementById(id).innerHTML = '<div class="alert alert-danger">⚠️ Firebase non configurato. Modifica la sezione CONFIG nel file HTML.</div>';
+    });
+    return;
+  }
+
+  // Activities
+  const aSnap = await db.ref('livelearn/activities').get();
+  const acts = aSnap.val() || {};
+  const actArr = Object.entries(acts).reverse();
+  document.getElementById('stat-activities').textContent = actArr.length;
+
+  const grid = document.getElementById('activity-grid');
+  if (actArr.length === 0) {
+    grid.innerHTML = `<div class="empty-state"><div class="es-icon">📝</div><p>Nessuna attività ancora.<br><small>Crea la prima con il pulsante in alto.</small></p></div>`;
+  } else {
+    grid.innerHTML = actArr.map(([id, a]) => `
+      <div class="activity-card">
+        <div>${typeTags(a.questions)}</div>
+        <h3>${esc(a.title)}</h3>
+        <div class="ac-meta">${a.questions ? a.questions.length : 0} domande · ${fmtDate(a.createdAt)}</div>
+        <div class="ac-actions">
+          <button class="btn btn-primary btn-sm" onclick="startSession('${id}', '${esc(a.title).replace(/'/g,"\\'")}')">▶ Avvia</button>
+          <button class="btn btn-sm" onclick="editActivity('${id}')">Modifica</button>
+          <button class="btn btn-sm" style="color:#e53e3e" onclick="deleteActivity('${id}')">Elimina</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // Sessions
+  const sSnap = await db.ref('livelearn/sessions').get();
+  const sess = sSnap.val() || {};
+  const sessArr = Object.entries(sess).reverse();
+  document.getElementById('stat-sessions').textContent = sessArr.length;
+
+  let totalResp = 0;
+  const sl = document.getElementById('session-list');
+  sl.innerHTML = '';
+  if (sessArr.length === 0) {
+    sl.innerHTML = `<div class="empty-state"><div class="es-icon">📡</div><p>Nessuna sessione ancora.<br><small>Avvia un'attività per creare una sessione.</small></p></div>`;
+  } else {
+    for (const [code, s] of sessArr) {
+      const rSnap = await db.ref('livelearn/responses/' + code).get();
+      const rc = rSnap.val() ? Object.keys(rSnap.val()).length : 0;
+      totalResp += rc;
+      const row = document.createElement('div');
+      row.className = 'session-row';
+      row.innerHTML = `
+        <div class="session-info">
+          <h3>${esc(s.title || 'Sessione')}</h3>
+          <p>${fmtDate(s.createdAt)} · ${rc} risposte</p>
+        </div>
+        <div class="flex gap-12 flex-center">
+          <span class="session-code-big">${code}</span>
+          <span class="badge ${s.status === 'active' ? 'badge-green' : 'badge-gray'}">${s.status === 'active' ? 'Attiva' : 'Chiusa'}</span>
+          <button class="btn btn-sm" onclick="openLive('${code}', '${s.activityId}')">📊 Risultati</button>
+        </div>
+      `;
+      sl.appendChild(row);
+    }
+  }
+  document.getElementById('stat-responses').textContent = totalResp;
+}
+
+function typeTags(questions) {
+  if (!questions || !questions.length) return '';
+  const types = [...new Set(questions.map(q => q.type))];
+  const icons = { 'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧' };
+  return types.map(t => `<span class="tag">${icons[t]||'❓'} ${typeLabel(t)}</span>`).join('');
+}
+
+// ── Activity Builder ───────────────────────────────────────
+function openBuilder() {
+  S.questions = [];
+  S.editingId = null;
+  S.currentQType = null;
+  document.getElementById('activity-title').value = '';
+  document.getElementById('add-form').innerHTML = '';
+  document.querySelectorAll('.q-type-btn').forEach(b => b.classList.remove('selected'));
+  renderQList();
+  showView('teacher-builder');
+}
+
+async function editActivity(id) {
+  const snap = await db.ref('livelearn/activities/' + id).get();
+  const a = snap.val();
+  S.questions = a.questions || [];
+  S.editingId = id;
+  S.currentQType = null;
+  document.getElementById('activity-title').value = a.title;
+  document.getElementById('add-form').innerHTML = '';
+  document.querySelectorAll('.q-type-btn').forEach(b => b.classList.remove('selected'));
+  renderQList();
+  showView('teacher-builder');
+}
+
+async function deleteActivity(id) {
+  if (!confirm('Eliminare questa attività?')) return;
+  await db.ref('livelearn/activities/' + id).remove();
+  loadDashboard();
+}
+
+function selectQType(type, btn) {
+  S.currentQType = type;
+  document.querySelectorAll('.q-type-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  renderAddForm(type);
+}
+
+function renderAddForm(type) {
+  const el = document.getElementById('add-form');
+  if (type === 'multiple-choice') {
+    el.innerHTML = `
+      <div class="form-group"><label>Domanda</label><textarea id="qf-text" rows="2" placeholder="Testo della domanda…"></textarea></div>
+      <div class="form-group"><label>Opzione A</label><input type="text" id="qf-a"></div>
+      <div class="form-group"><label>Opzione B</label><input type="text" id="qf-b"></div>
+      <div class="form-group"><label>Opzione C (opzionale)</label><input type="text" id="qf-c"></div>
+      <div class="form-group"><label>Opzione D (opzionale)</label><input type="text" id="qf-d"></div>
+      <div class="form-group"><label>Risposta corretta</label>
+        <select id="qf-correct"><option value="0">A</option><option value="1">B</option><option value="2">C</option><option value="3">D</option></select>
+      </div>
+      <button class="btn btn-primary btn-block" onclick="addQuestion()">+ Aggiungi</button>`;
+  } else if (type === 'cloze') {
+    el.innerHTML = `
+      <div class="form-group">
+        <label>Testo (usa ___ per ogni spazio)</label>
+        <textarea id="qf-text" rows="4" placeholder="Yesterday I ___ to school and I ___ my friend."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Risposte corrette (una per riga, nell'ordine degli spazi)</label>
+        <textarea id="qf-answers" rows="3" placeholder="went\nmet"></textarea>
+      </div>
+      <button class="btn btn-primary btn-block" onclick="addQuestion()">+ Aggiungi</button>`;
+  } else if (type === 'matching') {
+    el.innerHTML = `
+      <div class="form-group"><label>Istruzione (opzionale)</label><input type="text" id="qf-text" placeholder="Match the verbs with their past simple form"></div>
+      <div class="form-group"><label>Colonna A (una per riga)</label><textarea id="qf-left" rows="4" placeholder="go\nhave\nbe\ndo"></textarea></div>
+      <div class="form-group"><label>Colonna B — corrispondenze (stessa riga)</label><textarea id="qf-right" rows="4" placeholder="went\nhad\nwas\ndid"></textarea></div>
+      <button class="btn btn-primary btn-block" onclick="addQuestion()">+ Aggiungi</button>`;
+  } else if (type === 'free-response') {
+    el.innerHTML = `
+      <div class="form-group"><label>Domanda</label><textarea id="qf-text" rows="3" placeholder="Describe your last holiday in 4-5 sentences."></textarea></div>
+      <div class="form-group"><label>Suggerimento per lo studente (opzionale)</label><input type="text" id="qf-hint" placeholder="Usa il Past Simple…"></div>
+      <button class="btn btn-primary btn-block" onclick="addQuestion()">+ Aggiungi</button>`;
+  } else if (type === 'listening') {
+    el.innerHTML = `
+      <div class="form-group"><label>Testo per sintesi vocale (TTS)</label><textarea id="qf-tts" rows="4" placeholder="The text the browser will read aloud in English…"></textarea></div>
+      <p class="text-muted mb-12" style="font-size:12px;">— oppure carica un file audio —</p>
+      <div class="form-group"><label>File audio (mp3/wav, max 5MB)</label><input type="file" id="qf-audio" accept="audio/*"></div>
+      <div class="divider"></div>
+      <div class="form-group"><label>Domanda di comprensione</label><textarea id="qf-text" rows="2" placeholder="What did the speaker do last summer?"></textarea></div>
+      <div class="form-group"><label>Tipo di risposta</label>
+        <select id="qf-ltype" onchange="document.getElementById('qf-mc-opts').style.display=this.value==='mc'?'block':'none'">
+          <option value="free">Risposta libera</option>
+          <option value="mc">Scelta multipla</option>
+        </select>
+      </div>
+      <div id="qf-mc-opts" style="display:none">
+        <div class="form-group"><label>Opzione A</label><input type="text" id="qf-la"></div>
+        <div class="form-group"><label>Opzione B</label><input type="text" id="qf-lb"></div>
+        <div class="form-group"><label>Opzione C</label><input type="text" id="qf-lc"></div>
+        <div class="form-group"><label>Corretta</label><select id="qf-lcorr"><option value="0">A</option><option value="1">B</option><option value="2">C</option></select></div>
+      </div>
+      <button class="btn btn-primary btn-block" onclick="addQuestion()">+ Aggiungi</button>`;
+  }
+}
+
+async function addQuestion() {
+  const type = S.currentQType;
+  if (!type) return;
+  let q = { type };
+
+  if (type === 'multiple-choice') {
+    const text = v('qf-text');
+    if (!text) return alert('Inserisci il testo della domanda');
+    const opts = ['qf-a','qf-b','qf-c','qf-d'].map(id => v(id)).filter(Boolean);
+    if (opts.length < 2) return alert('Inserisci almeno 2 opzioni');
+    q = { type, text, options: opts, correct: parseInt(v('qf-correct')) };
+
+  } else if (type === 'cloze') {
+    const text = v('qf-text');
+    const answers = v('qf-answers').split('\n').map(s => s.trim()).filter(Boolean);
+    if (!text) return alert('Inserisci il testo');
+    q = { type, text, answers };
+
+  } else if (type === 'matching') {
+    const text = v('qf-text');
+    const left = v('qf-left').split('\n').map(s => s.trim()).filter(Boolean);
+    const right = v('qf-right').split('\n').map(s => s.trim()).filter(Boolean);
+    if (left.length < 2 || right.length < left.length) return alert('Inserisci almeno 2 coppie, stessa quantità per colonna A e B');
+    q = { type, text, left, right };
+
+  } else if (type === 'free-response') {
+    const text = v('qf-text');
+    if (!text) return alert('Inserisci la domanda');
+    q = { type, text, hint: v('qf-hint') };
+
+  } else if (type === 'listening') {
+    const ttsText = v('qf-tts');
+    const audioFile = document.getElementById('qf-audio').files[0];
+    const qText = v('qf-text');
+    const ltype = v('qf-ltype') || 'free';
+    let audioData = null;
+    if (audioFile) {
+      if (audioFile.size > 5 * 1024 * 1024) return alert('File troppo grande. Massimo 5MB.');
+      audioData = await fileToBase64(audioFile);
+    }
+    let subQ = { type: ltype, text: qText };
+    if (ltype === 'mc') {
+      subQ.options = ['qf-la','qf-lb','qf-lc'].map(id => v(id)).filter(Boolean);
+      subQ.correct = parseInt(v('qf-lcorr') || '0');
+    }
+    q = { type, ttsText, audioData, question: subQ };
+  }
+
+  S.questions.push(q);
+  renderQList();
+  document.getElementById('add-form').innerHTML = '';
+  document.querySelectorAll('.q-type-btn').forEach(b => b.classList.remove('selected'));
+  S.currentQType = null;
+}
+
+function renderQList() {
+  const c = document.getElementById('question-list');
+  if (S.questions.length === 0) {
+    c.innerHTML = `<div class="empty-state"><div class="es-icon">📝</div><p>Nessuna domanda ancora.<br><small>Aggiungine una dal pannello a destra.</small></p></div>`;
+    return;
+  }
+  const icons = { 'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧' };
+  c.innerHTML = S.questions.map((q, i) => `
+    <div class="q-item">
+      <div class="q-item-header">
+        <div class="flex gap-8 flex-center">
+          <span>${icons[q.type]||'❓'}</span>
+          <strong style="font-size:14px;">${i+1}. ${typeLabel(q.type)}</strong>
+        </div>
+        <div class="flex gap-8">
+          ${i > 0 ? `<button class="btn btn-ghost btn-sm" onclick="moveQ(${i},-1)" title="Sposta su">↑</button>` : ''}
+          ${i < S.questions.length-1 ? `<button class="btn btn-ghost btn-sm" onclick="moveQ(${i},1)" title="Sposta giù">↓</button>` : ''}
+          <button class="btn btn-ghost btn-sm" style="color:#e53e3e" onclick="removeQ(${i})" title="Rimuovi">✕</button>
+        </div>
+      </div>
+      <div class="q-item-preview">${qPreview(q)}</div>
+    </div>
+  `).join('');
+}
+
+function qPreview(q) {
+  if (q.type === 'multiple-choice') return esc(q.text) + (q.options ? ' → [' + q.options.map(esc).join(', ') + ']' : '');
+  if (q.type === 'cloze') return esc(q.text);
+  if (q.type === 'matching') return 'Coppie: ' + (q.left || []).map(esc).join(', ');
+  if (q.type === 'free-response') return esc(q.text);
+  if (q.type === 'listening') return '🎧 ' + (q.question?.text ? esc(q.question.text) : 'Listening');
+  return '';
+}
+
+function moveQ(i, dir) {
+  const arr = S.questions;
+  const ni = i + dir;
+  if (ni < 0 || ni >= arr.length) return;
+  [arr[i], arr[ni]] = [arr[ni], arr[i]];
+  renderQList();
+}
+
+function removeQ(i) {
+  S.questions.splice(i, 1);
+  renderQList();
+}
+
+async function saveActivity() {
+  const title = document.getElementById('activity-title').value.trim();
+  if (!title) return alert('Dai un titolo all\'attività');
+  if (S.questions.length === 0) return alert('Aggiungi almeno una domanda');
+  const data = { title, questions: S.questions, createdAt: Date.now() };
+  if (S.editingId) {
+    await db.ref('livelearn/activities/' + S.editingId).update(data);
+  } else {
+    await db.ref('livelearn/activities').push(data);
+  }
+  alert('✅ Attività salvata!');
+  loadDashboard();
+  showView('teacher-dashboard');
+}
+
+// ── Session Management ─────────────────────────────────────
+function genCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let c = '';
+  for (let i = 0; i < 4; i++) c += chars[Math.floor(Math.random() * chars.length)];
+  return c;
+}
+
+async function startSession(activityId, title) {
+  S.pendingActivityId = activityId;
+  S.pendingActivityTitle = title;
+  // Popola selettore classi — prova Firebase poi localStorage
+  const sel = document.getElementById('start-session-class');
+  sel.innerHTML = '<option value="">— Nessuna classe —</option>';
+  let classes = {};
+  if (db) {
+    try {
+      const snap = await db.ref('livelearn/classes').get();
+      if (snap.val()) classes = snap.val();
+    } catch(e) {}
+  }
+  if (!Object.keys(classes).length) {
+    const local = localStorage.getItem('livelearn_classes');
+    if (local) classes = JSON.parse(local);
+  }
+  Object.entries(classes).forEach(([id, c]) => {
+    sel.innerHTML += `<option value="${id}">${esc(c.nome)} (${c.studenti.length} studenti)</option>`;
+  });
+  document.getElementById('start-session-activity-name').textContent = title;
+  document.getElementById('modal-start-session').classList.remove('hidden');
+}
+
+function closeStartModal() {
+  document.getElementById('modal-start-session').classList.add('hidden');
+}
+
+async function confirmStartSession() {
+  closeStartModal();
+  const classId = document.getElementById('start-session-class').value;
+  let roster = [];
+  if (classId) {
+    let classes = {};
+    if (db) {
+      try {
+        const snap = await db.ref('livelearn/classes/' + classId).get();
+        if (snap.val()) { roster = snap.val().studenti || []; }
+      } catch(e) {}
+    }
+    if (!roster.length) {
+      const local = localStorage.getItem('livelearn_classes');
+      if (local) {
+        classes = JSON.parse(local);
+        roster = classes[classId]?.studenti || [];
+      }
+    }
+  }
+  const code = genCode();
+  await db.ref('livelearn/sessions/' + code).set({
+    activityId: S.pendingActivityId,
+    title: S.pendingActivityTitle,
+    status: 'active',
+    classId: classId || null,
+    createdAt: Date.now()
+  });
+  openLive(code, S.pendingActivityId, roster);
+}
+
+async function openLive(code, activityId, roster) {
+  S.liveCode = code;
+  S.liveActivityId = activityId;
+  S.selectedStudent = null;
+  S.liveRoster = roster || [];
+  document.getElementById('live-code-val').textContent = code;
+  document.getElementById('live-main-content').innerHTML = `<div class="empty-state"><div class="es-icon">📡</div><p style="font-size:15px; font-weight:600;">In attesa degli studenti…</p><p class="text-muted mt-8">Scrivi il codice <strong>${code}</strong> alla lavagna.</p></div>`;
+  showView('teacher-live');
+
+  // Detach old listener
+  if (S.liveListener) { S.liveListener(); S.liveListener = null; }
+
+  // Load activity
+  const aSnap = await db.ref('livelearn/activities/' + activityId).get();
+  S.liveActivity = aSnap.val();
+
+  // If no roster passed, try to load from session record
+  if (!S.liveRoster.length) {
+    const sSnap = await db.ref('livelearn/sessions/' + code).get();
+    const sess = sSnap.val() || {};
+    if (sess.classId) {
+      const cSnap = await db.ref('livelearn/classes/' + sess.classId).get();
+      S.liveRoster = cSnap.val()?.studenti || [];
+    }
+  }
+
+  // Real-time listener for responses
+  const ref = db.ref('livelearn/responses/' + code);
+  const handler = ref.on('value', snap => {
+    const responses = snap.val() || {};
+    renderLiveSidebar(responses);
+    if (S.selectedStudent && responses[S.selectedStudent]) {
+      renderStudentResults(S.selectedStudent, responses[S.selectedStudent]);
+    } else if (Object.keys(responses).length > 0 && !S.selectedStudent) {
+      const first = Object.keys(responses)[0];
+      S.selectedStudent = first;
+      renderStudentResults(first, responses[first]);
+    }
+  });
+  S.liveListener = () => ref.off('value', handler);
+}
+
+function renderLiveSidebar(responses) {
+  const entries = Object.entries(responses);
+  const connectedNames = entries.map(([n]) => n.toLowerCase());
+  document.getElementById('live-count').textContent = entries.length;
+  const list = document.getElementById('live-student-list');
+
+  // Build roster: connected + absent from register
+  let html = '';
+
+  // Connected students
+  if (entries.length > 0) {
+    if (S.liveRoster.length) html += `<div style="font-size:10px;font-weight:700;color:#aaa;padding:8px 12px 2px;letter-spacing:0.5px;">CONNESSI</div>`;
+    html += entries.map(([name, r]) => {
+      const ac = r.answers ? r.answers.filter(a => a !== undefined && a !== null).length : 0;
+      const tot = S.liveActivity?.questions?.length || '?';
+      const done = r.submittedAt;
+      return `<div class="student-pill ${S.selectedStudent === name ? 'active' : ''}" onclick="selectStudent('${name.replace(/'/g,"\\'")}')">
+        <div class="flex-center gap-8" style="flex:1; min-width:0;">
+          <span class="sdot ${done ? '' : 'waiting'}"></span>
+          <span class="student-pill-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(name)}</span>
+        </div>
+        <span class="student-pill-count">${ac}/${tot}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Absent from roster
+  const absentStudents = S.liveRoster.filter(nome => !connectedNames.includes(nome.toLowerCase()));
+  if (absentStudents.length > 0) {
+    html += `<div style="font-size:10px;font-weight:700;color:#aaa;padding:8px 12px 2px;letter-spacing:0.5px;">NON CONNESSI (${absentStudents.length})</div>`;
+    html += absentStudents.map(nome => `
+      <div class="student-pill" style="opacity:0.5; cursor:default;">
+        <div class="flex-center gap-8" style="flex:1; min-width:0;">
+          <span class="sdot absent"></span>
+          <span class="student-pill-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(nome)}</span>
+        </div>
+      </div>`).join('');
+  }
+
+  if (!html) {
+    list.innerHTML = '<p class="text-muted" style="font-size:13px; padding:12px;">Nessuno ancora…</p>';
+    return;
+  }
+  list.innerHTML = html;
+}
+
+async function selectStudent(name) {
+  S.selectedStudent = name;
+  const snap = await db.ref('livelearn/responses/' + S.liveCode + '/' + name).get();
+  renderStudentResults(name, snap.val() || {});
+  // Refresh sidebar highlight
+  document.querySelectorAll('.student-pill').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.student-pill').forEach(el => {
+    if (el.querySelector('.student-pill-name')?.textContent === name) el.classList.add('active');
+  });
+}
+
+function renderStudentResults(name, response) {
+  const answers = response.answers || [];
+  const questions = S.liveActivity?.questions || [];
+  const submitted = response.submittedAt;
+  const main = document.getElementById('live-main-content');
+  main.innerHTML = `
+    <div class="flex-center gap-12 mb-24">
+      <h2 style="font-size:20px; font-weight:700;">${esc(name)}</h2>
+      <span class="badge badge-green">${answers.filter(a=>a!==undefined&&a!==null).length}/${questions.length} risposte</span>
+      ${submitted ? `<span class="badge badge-blue">Consegnato ${new Date(submitted).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})}</span>` : '<span class="badge badge-amber">In corso…</span>'}
+    </div>
+    ${questions.map((q, i) => renderAnswerCard(q, i, answers[i])).join('')}
+  `;
+}
+
+function renderAnswerCard(q, i, answer) {
+  let body = '';
+  if (q.type === 'multiple-choice') {
+    const given = answer !== undefined ? q.options[answer] : null;
+    const correct = q.options[q.correct];
+    const ok = answer === q.correct;
+    body = given ? `${esc(given)} <span class="${ok ? 'correct-mark' : 'wrong-mark'}">${ok ? '✓' : '✗'}</span>${!ok ? ` <span class="text-muted">(corretta: ${esc(correct)})</span>` : ''}` : '<em style="color:#aaa">—</em>';
+  } else if (q.type === 'cloze') {
+    const arr = Array.isArray(answer) ? answer : [];
+    body = (q.answers || []).map((correct, bi) => {
+      const given = arr[bi] || '';
+      const ok = given.toLowerCase() === correct.toLowerCase();
+      return `Spazio ${bi+1}: <strong>${esc(given)||'—'}</strong> <span class="${ok ? 'correct-mark' : 'wrong-mark'}">${given ? (ok ? '✓' : `✗ (corr: ${esc(correct)})`) : ''}</span>`;
+    }).join('<br>');
+  } else if (q.type === 'matching') {
+    const arr = Array.isArray(answer) ? answer : [];
+    body = (q.left || []).map((l, li) => {
+      const studentRightIdx = arr[li];
+      const studentRight = studentRightIdx !== undefined ? (q.right[studentRightIdx] || '—') : '—';
+      const ok = studentRightIdx === li;
+      return `${esc(l)} → <strong>${esc(studentRight)}</strong> <span class="${ok ? 'correct-mark' : 'wrong-mark'}">${studentRightIdx !== undefined ? (ok ? '✓' : `✗ (corr: ${esc(q.right[li])})`) : ''}</span>`;
+    }).join('<br>');
+  } else if (q.type === 'free-response') {
+    body = answer ? `<em>${esc(answer)}</em>` : '<em style="color:#aaa">—</em>';
+  } else if (q.type === 'listening') {
+    const subQ = q.question || {};
+    if (subQ.type === 'mc') {
+      const given = answer !== undefined ? (subQ.options||[])[answer] : null;
+      const correct = (subQ.options||[])[subQ.correct];
+      const ok = answer === subQ.correct;
+      body = given ? `${esc(given)} <span class="${ok?'correct-mark':'wrong-mark'}">${ok?'✓':'✗'}</span>${!ok?` <span class="text-muted">(corretta: ${esc(correct)})</span>`:''}` : '<em style="color:#aaa">—</em>';
+    } else {
+      body = answer ? `<em>${esc(answer)}</em>` : '<em style="color:#aaa">—</em>';
+    }
+  }
+  return `<div class="answer-card">
+    <div class="answer-card-header">${i+1}. ${typeLabel(q.type).toUpperCase()} — ${qPreview(q).substring(0,70)}${qPreview(q).length>70?'…':''}</div>
+    <div class="answer-card-body">${body}</div>
+  </div>`;
+}
+
+async function closeSession() {
+  if (!confirm('Chiudere la sessione? Gli studenti non potranno più accedere con questo codice.')) return;
+  await db.ref('livelearn/sessions/' + S.liveCode + '/status').set('closed');
+  if (S.liveListener) { S.liveListener(); S.liveListener = null; }
+  loadDashboard();
+  showView('teacher-dashboard');
+}
+
+function goBackFromLive() {
+  if (S.liveListener) { S.liveListener(); S.liveListener = null; }
+  loadDashboard();
+  showView('teacher-dashboard');
+}
+
+// ── Student Flow ───────────────────────────────────────────
+async function studentEnter() {
+  const name = document.getElementById('student-name').value.trim();
+  const code = document.getElementById('session-code-input').value.trim().toUpperCase();
+  const errEl = document.getElementById('enter-error');
+  errEl.style.display = 'none';
+
+  if (!name) return showErr(errEl, 'Inserisci il tuo nome e cognome.');
+  if (code.length !== 4) return showErr(errEl, 'Il codice deve essere di 4 caratteri.');
+
+  const snap = await db.ref('livelearn/sessions/' + code).get();
+  if (!snap.val()) return showErr(errEl, 'Codice non trovato. Ricontrolla e riprova.');
+  const session = snap.val();
+  if (session.status !== 'active') return showErr(errEl, 'Questa sessione è stata chiusa dal professore.');
+
+  const aSnap = await db.ref('livelearn/activities/' + session.activityId).get();
+  if (!aSnap.val()) return showErr(errEl, 'Errore interno: attività non trovata.');
+
+  S.studentName = name;
+  S.sessionCode = code;
+  S.activity = aSnap.val();
+  S.qIndex = 0;
+  S.answers = new Array(S.activity.questions.length).fill(undefined);
+  S.matchLeftSel = null;
+
+  renderQuestion();
+  showView('student-activity');
+}
+
+function showErr(el, msg) { el.textContent = msg; el.style.display = 'block'; }
+
+function renderQuestion() {
+  const questions = S.activity.questions;
+  const i = S.qIndex;
+  const total = questions.length;
+  const q = questions[i];
+
+  document.getElementById('s-progress-label').textContent = `Domanda ${i+1} di ${total}`;
+  document.getElementById('s-progress-fill').style.width = ((i+1)/total*100) + '%';
+  document.getElementById('btn-prev').style.display = i > 0 ? 'inline-flex' : 'none';
+  document.getElementById('btn-next').style.display = i < total-1 ? 'inline-flex' : 'none';
+  document.getElementById('btn-submit').style.display = i === total-1 ? 'inline-flex' : 'none';
+
+  const area = document.getElementById('s-question-area');
+  area.innerHTML = buildQuestionHTML(q, i);
+  restoreAnswer(i);
+}
+
+function buildQuestionHTML(q, i) {
+  const qLabel = `<div class="q-label">Domanda ${i+1}</div>`;
+  if (q.type === 'multiple-choice') {
+    return `<div class="question-card">${qLabel}<div class="q-text">${esc(q.text)}</div>
+      <div class="options-list">
+        ${(q.options||[]).map((o, oi) => `<button class="option-btn" id="opt-${oi}" onclick="pickOption(${oi})">${esc(o)}</button>`).join('')}
+      </div></div>`;
+  }
+  if (q.type === 'cloze') {
+    let idx = 0;
+    const html = esc(q.text).replace(/___/g, () => `<input class="blank-input" id="blank-${idx++}" type="text" autocomplete="off" placeholder="…">`);
+    return `<div class="question-card">${qLabel}<div class="cloze-text">${html}</div></div>`;
+  }
+  if (q.type === 'matching') {
+    // Shuffle right column
+    const right = (q.right || []).map((r, ri) => ({ r, ri }));
+    for (let x = right.length - 1; x > 0; x--) {
+      const j = Math.floor(Math.random() * (x+1));
+      [right[x], right[j]] = [right[j], right[x]];
+    }
+    S.shuffledRight = right;
+    S.matchLeftSel = null;
+    return `<div class="question-card">${qLabel}
+      ${q.text ? `<div class="q-text">${esc(q.text)}</div>` : ''}
+      <div class="matching-area">
+        <div><div class="matching-col-label">COLONNA A</div>
+          ${(q.left||[]).map((l, li) => `<div class="match-item" id="left-${li}" style="margin-bottom:10px;" onclick="matchLeft(${li})">${esc(l)}</div>`).join('')}
+        </div>
+        <div><div class="matching-col-label">COLONNA B</div>
+          ${right.map((item, di) => `<div class="match-item" id="right-${di}" style="margin-bottom:10px;" onclick="matchRight(${di}, ${item.ri})">${esc(item.r)}</div>`).join('')}
+        </div>
+      </div></div>`;
+  }
+  if (q.type === 'free-response') {
+    return `<div class="question-card">${qLabel}<div class="q-text">${esc(q.text)}</div>
+      ${q.hint ? `<p class="text-muted mb-16">💡 ${esc(q.hint)}</p>` : ''}
+      <textarea id="free-ans" rows="6" placeholder="Scrivi qui la tua risposta…" style="width:100%;"></textarea></div>`;
+  }
+  if (q.type === 'listening') {
+    const audio = q.audioData
+      ? `<audio src="${q.audioData}" controls style="width:100%; margin-bottom:20px; border-radius:8px;"></audio>`
+      : q.ttsText
+      ? `<div class="audio-player">
+           <button class="play-btn" onclick="speakTTS(${i})">▶</button>
+           <div class="audio-info"><div class="audio-title">Clicca per ascoltare</div><div class="audio-hint">Puoi ascoltare più volte</div></div>
+         </div>`
+      : '';
+    const subQ = q.question || {};
+    const qPart = subQ.type === 'mc'
+      ? `<div class="q-text">${esc(subQ.text)}</div><div class="options-list">
+           ${(subQ.options||[]).map((o,oi)=>`<button class="option-btn" id="opt-${oi}" onclick="pickOption(${oi})">${esc(o)}</button>`).join('')}
+         </div>`
+      : `<div class="q-text">${esc(subQ.text)}</div><textarea id="free-ans" rows="4" placeholder="Scrivi la tua risposta…" style="width:100%;"></textarea>`;
+    return `<div class="question-card">${qLabel}${audio}${qPart}</div>`;
+  }
+  return '';
+}
+
+function speakTTS(qi) {
+  const q = S.activity.questions[qi];
+  if (!q.ttsText) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(q.ttsText);
+  u.lang = 'en-GB'; u.rate = 0.85;
+  speechSynthesis.speak(u);
+}
+
+function pickOption(idx) {
+  document.querySelectorAll('.option-btn').forEach(b => b.classList.remove('selected'));
+  const btn = document.getElementById('opt-' + idx);
+  if (btn) btn.classList.add('selected');
+  S.answers[S.qIndex] = idx;
+}
+
+function matchLeft(li) {
+  // Check if already matched
+  if (document.getElementById('left-' + li)?.classList.contains('matched')) return;
+  document.querySelectorAll('.match-item').forEach(el => {
+    if (!el.classList.contains('matched')) el.classList.remove('selected');
+  });
+  S.matchLeftSel = li;
+  document.getElementById('left-' + li)?.classList.add('selected');
+}
+
+function matchRight(di, ri) {
+  if (S.matchLeftSel === null) return;
+  const li = S.matchLeftSel;
+  if (document.getElementById('left-' + li)?.classList.contains('matched')) { S.matchLeftSel = null; return; }
+  
+  let pairs = Array.isArray(S.answers[S.qIndex]) ? [...S.answers[S.qIndex]] : new Array(S.activity.questions[S.qIndex].left.length).fill(null);
+  pairs[li] = ri;
+  S.answers[S.qIndex] = pairs;
+  
+  document.getElementById('left-' + li)?.classList.remove('selected');
+  document.getElementById('left-' + li)?.classList.add('matched');
+  document.getElementById('right-' + di)?.classList.add('matched');
+  S.matchLeftSel = null;
+}
+
+function saveCurrentAnswer() {
+  const q = S.activity.questions[S.qIndex];
+  if (q.type === 'cloze') {
+    const count = (q.text.match(/___/g) || []).length;
+    S.answers[S.qIndex] = Array.from({length: count}, (_, b) => {
+      return document.getElementById('blank-' + b)?.value.trim() || '';
+    });
+  } else if (q.type === 'free-response' || (q.type === 'listening' && q.question?.type === 'free')) {
+    const el = document.getElementById('free-ans');
+    if (el) S.answers[S.qIndex] = el.value.trim();
+  }
+}
+
+function restoreAnswer(i) {
+  const q = S.activity.questions[i];
+  const a = S.answers[i];
+  if (a === undefined || a === null) return;
+  if (q.type === 'multiple-choice' || (q.type === 'listening' && q.question?.type === 'mc')) {
+    if (typeof a === 'number') {
+      const btn = document.getElementById('opt-' + a);
+      if (btn) btn.classList.add('selected');
+    }
+  } else if (q.type === 'cloze') {
+    if (Array.isArray(a)) a.forEach((val, bi) => { const el = document.getElementById('blank-' + bi); if (el) el.value = val; });
+  } else if (q.type === 'free-response' || (q.type === 'listening' && q.question?.type === 'free')) {
+    const el = document.getElementById('free-ans'); if (el && a) el.value = a;
+  }
+}
+
+function nextQ() { saveCurrentAnswer(); S.qIndex++; renderQuestion(); }
+function prevQ() { saveCurrentAnswer(); S.qIndex--; renderQuestion(); }
+
+async function submitAnswers() {
+  saveCurrentAnswer();
+  await db.ref('livelearn/responses/' + S.sessionCode + '/' + S.studentName).set({
+    answers: S.answers,
+    submittedAt: Date.now()
+  });
+  showView('student-done');
+}
+
+function switchDashTabById(id) {
+  const tabs = document.querySelectorAll('.tabs-row .tab');
+  const panels = document.querySelectorAll('.tab-panel');
+  tabs.forEach(t => t.classList.remove('active'));
+  panels.forEach(p => p.classList.remove('active'));
+  // Find matching tab by onclick
+  tabs.forEach(t => {
+    if (t.getAttribute('onclick') && t.getAttribute('onclick').includes("'" + id + "'")) {
+      t.classList.add('active');
+    }
+  });
+  const panel = document.getElementById('tab-' + id);
+  if (panel) panel.classList.add('active');
+  if (id === 'classes') renderClassesTab();
+}
+
+// ── Import MyClass ─────────────────────────────────────────
+
+function importFromLocalStorage() {
+  showImportResult('info', '⏳ Ricerca dati MyClass in corso…');
+  setTimeout(() => {
+    const raw = localStorage.getItem('myclass_gemini_data');
+    if (!raw) {
+      showImportResult('danger', '⚠️ Nessun dato MyClass trovato in questo browser. Prova a caricare il file JSON.');
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      processMyClassData(parsed);
+    } catch(e) {
+      showImportResult('danger', 'Errore nel leggere i dati: ' + e.message);
+    }
+  }, 100);
+}
+
+function importFromFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      processMyClassData(parsed);
+    } catch(err) {
+      showImportResult('danger', 'File non valido: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+async function processMyClassData(parsed) {
+  if (!parsed.classi || !Array.isArray(parsed.classi)) {
+    showImportResult('danger', '⚠️ Il file non sembra un backup valido di MyClass Analytics.');
+    return;
+  }
+
+  // Prepara i dati
+  const classesData = {};
+  for (const classe of parsed.classi) {
+    if (!classe.nome || !classe.studenti) continue;
+    const studenti = classe.studenti.map(s => `${s.cognome} ${s.nome}`.trim()).filter(Boolean);
+    const id = classe.nome.replace(/\s+/g, '_').toLowerCase();
+    classesData[id] = { nome: classe.nome, studenti, updatedAt: Date.now() };
+  }
+  const count = Object.keys(classesData).length;
+  if (count === 0) {
+    showImportResult('danger', '⚠️ Nessuna classe trovata nel file.');
+    return;
+  }
+
+  // Salva sempre in localStorage come fallback
+  localStorage.setItem('livelearn_classes', JSON.stringify(classesData));
+
+  // Prova a salvare su Firebase
+  if (db) {
+    try {
+      await db.ref('livelearn/classes').set(classesData);
+      showImportResult('success', `✅ Importate ${count} classi su Firebase! Vai al tab "Classi" per vederle.`);
+    } catch(err) {
+      // Firebase ha fallito ma abbiamo il localStorage
+      showImportResult('success', `✅ Importate ${count} classi (salvate localmente).\n⚠️ Firebase ha dato errore: ${err.message}\nSuggerimento: controlla le Regole del database su Firebase Console e impostale su .read/.write = true.`);
+    }
+  } else {
+    showImportResult('success', `✅ Importate ${count} classi (salvate localmente). Firebase non è ancora configurato.`);
+  }
+  loadDashboard();
+}
+
+function showImportResult(type, msg) {
+  const el = document.getElementById('import-result');
+  const map = { success: 'alert-success', danger: 'alert-danger', info: 'alert-info' };
+  el.className = 'alert ' + (map[type] || 'alert-info');
+  el.textContent = msg;
+  el.style.display = 'block';
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function renderClassesTab() {
+  const grid = document.getElementById('classes-grid');
+  grid.innerHTML = '<p class="text-muted" style="padding:12px;">Caricamento…</p>';
+
+  let classes = {};
+  // Prova Firebase prima
+  if (db) {
+    try {
+      const snap = await db.ref('livelearn/classes').get();
+      if (snap.val()) classes = snap.val();
+    } catch(e) {}
+  }
+  // Fallback localStorage
+  if (!Object.keys(classes).length) {
+    const local = localStorage.getItem('livelearn_classes');
+    if (local) classes = JSON.parse(local);
+  }
+
+  const entries = Object.entries(classes);
+  if (entries.length === 0) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><div class="es-icon">👥</div><p>Nessuna classe importata.<br><small>Usa il pulsante "Importa classi" in alto.</small></p></div>`;
+    return;
+  }
+  grid.innerHTML = entries.map(([id, c]) => `
+    <div class="class-card">
+      <h3>${esc(c.nome)}</h3>
+      <div class="cc-meta">${c.studenti.length} studenti · Aggiornato ${fmtDate(c.updatedAt)}</div>
+      <div class="student-chip-list">
+        ${c.studenti.slice(0, 8).map(n => `<span class="student-chip">${esc(n)}</span>`).join('')}
+        ${c.studenti.length > 8 ? `<span class="student-chip" style="background:#e8fdf5;color:#16a37f;">+${c.studenti.length - 8} altri</span>` : ''}
+      </div>
+      <button class="btn btn-sm btn-danger" style="font-size:12px;" onclick="deleteClass('${id}')">Elimina</button>
+    </div>
+  `).join('');
+}
+
+async function deleteClass(id) {
+  if (!confirm('Eliminare questa classe da LiveLearn? Non verrà eliminata da MyClass.')) return;
+  await db.ref('livelearn/classes/' + id).remove();
+  renderClassesTab();
+}
+
+// ── Helpers ────────────────────────────────────────────────
+function v(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
+function esc(s) { if (!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtDate(ts) { if (!ts) return ''; return new Date(ts).toLocaleDateString('it-IT', {day:'2-digit', month:'short', year:'numeric'}); }
+function fileToBase64(file) { return new Promise((res,rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }); }
+function typeLabel(t) {
+  return { 'multiple-choice':'Scelta multipla','cloze':'Cloze','matching':'Matching','free-response':'Risposta libera','listening':'Listening' }[t] || t;
+}
+</script>
+</body>
+</html>
