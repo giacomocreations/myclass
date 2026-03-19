@@ -3299,6 +3299,49 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
             renderClass();
         }
 
+        // Apre la classe e scrolla alla lezione di una data specifica
+        function showClassLezione(index, isoDate) {
+            const cl = data.classi[index];
+            if (!cl) return;
+            const today = new Date().toISOString().split('T')[0];
+            // Determina il tab corretto: svolte se la data è oggi o passata, prossime se futura
+            const lz = (cl.pianificazione?.piano || []).find(p => p.data === isoDate);
+            const isSvolta = lz?.stato === 'svolta' || isoDate <= today;
+            const tab = isSvolta ? 'lez-svolte' : 'prossime';
+            currentClass = index;
+            currentCompetence = tab;
+            hideAllViews();
+            document.getElementById('classView').classList.remove('hidden');
+            _resetClassContainers();
+            switchCompetence(tab);
+            renderClass();
+            // Scrolla alla card della lezione dopo un breve delay (rendering asincrono)
+            setTimeout(() => {
+                // Cerca una card con data corrispondente
+                const cards = document.querySelectorAll('.lesson-card');
+                let target = null;
+                cards.forEach(card => {
+                    // Le card hanno la data come attributo data-date o nel testo
+                    if (card.dataset.date === isoDate) { target = card; }
+                });
+                // Fallback: cerca per testo data (gg/mm/yyyy)
+                if (!target) {
+                    const d = new Date(isoDate + 'T12:00:00');
+                    const ddmm = String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
+                    cards.forEach(card => {
+                        if (!target && card.textContent.includes(ddmm)) target = card;
+                    });
+                }
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    // Evidenzia brevemente la card
+                    target.style.transition = 'box-shadow .3s';
+                    target.style.boxShadow = '0 0 0 3px #667eea';
+                    setTimeout(() => { target.style.boxShadow = ''; }, 1800);
+                }
+            }, 120);
+        }
+
         // Apre uno studente direttamente su un tab specifico
         function showStudentTab(classIndex, studentIndex, tab) {
             currentClass = classIndex;
@@ -3623,7 +3666,7 @@ LUNGHEZZA: Massimo 250 parole totali. Conciso e diretto.`;
                 classiOggi.forEach(({ cl, idx, slots, lezioniGiorno, compiti }) => {
                     const oreLabel = slots.map(s => `${s.ora}ª ora`).join(', ');
                     const lezioneOggi = lezioniGiorno[0];
-                    html += `<div class="day-class-block" onclick="showClassTab(${idx},'lez-svolte')">
+                    html += `<div class="day-class-block" onclick="showClassLezione(${idx},'${isoDate}')">
                         <div class="dcb-header">
                             <span class="dcb-nome">${cl.nome}</span>
                             <span class="dcb-ora">${oreLabel}</span>
@@ -9208,7 +9251,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                 const _TIPO_ICONS = {verifica_scritta:'📝',verifica_orale:'🎤',ripasso:'🔄',lessico:'📚',grammatica:'📐',abilita_ascolto:'🎧',abilita_parlato:'🗣️',abilita_lettura:'📖',abilita_scrittura:'✍️',funzioni:'💬'};
                 const tipoIcon = _tipoArr(activity.tipo).map(t=>_TIPO_ICONS[t]||'').filter(Boolean).join(' ');
                 const cardCls = isSvolta?'svolta':isAI?'ai-generata':'pianificata';
-                return `<div class="lesson-card ${cardCls}${isToday?' oggi':''}">
+                return `<div class="lesson-card ${cardCls}${isToday?' oggi':''}" data-date="${slot.data}">
                     <div class="lesson-date-col">
                         <div class="day-num">${String(d.getDate()).padStart(2,'0')}</div>
                         <div class="day-name">${GIORNI_IT[d.getDay()]}</div>
