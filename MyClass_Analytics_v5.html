@@ -11976,6 +11976,7 @@ Rispondi SOLO con JSON valido:
 .lv-fase-block{border-top:1px solid rgba(255,255,255,.07);cursor:pointer;transition:background .15s;}
 .lv-fase-block:hover{background:rgba(255,255,255,.04);}
 .lv-fase-block.lv-fb-active{background:rgba(255,255,255,.06);cursor:default;}
+.lv-fase-block.lv-fb-preview{background:rgba(167,139,250,.08);border-left:3px solid #a78bfa;}
 .lv-fase-block.lv-fb-done{opacity:.35;}
 .lv-fb-header{display:flex;align-items:center;gap:10px;padding:11px 20px 9px;}
 .lv-fb-num{width:25px;height:25px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;flex-shrink:0;}
@@ -12122,6 +12123,7 @@ Rispondi SOLO con JSON valido:
             const LV = {
                 fasi: fasi.map(f=>({...f})),
                 fc: 0,
+                fPreview: null,     // indice step visualizzato in anteprima (null = mostra fc)
                 tSec: 0, tMax: 0, tRun: false, tInt: null,
                 fAdj: {},
                 semLog: [], minUsati: 0,
@@ -12195,24 +12197,31 @@ Rispondi SOLO con JSON valido:
 
             function lvRenderFL(){
                 const el=q('lv-fasi-scroll');if(!el)return;
+                const fv=LV.fPreview!==null?LV.fPreview:LV.fc;
                 el.innerHTML=LV.fasi.map((f,i)=>{
+                    const isDone=i<LV.fc;
+                    const isActive=i===LV.fc;
+                    const isPreviewing=i===fv&&fv!==LV.fc;
+                    const isShown=i===fv;
+                    let cls='lv-fase-block';
+                    if(isActive&&!isPreviewing)cls+=' lv-fb-active';
+                    else if(isPreviewing)cls+=' lv-fb-preview';
+                    else if(isDone)cls+=' lv-fb-done';
+                    else cls+=' lv-fb-next';
                     const m=getMin(i);
-                    const isDone=i<LV.fc, isActive=i===LV.fc, isNext=i>LV.fc;
-                    const cls='lv-fase-block'+(isActive?' lv-fb-active':isDone?' lv-fb-done':' lv-fb-next');
-                    const checkmark=isDone?'✓ ':'';
-                    const bodyStyle=isActive?'':''; // always show body
-                    return '<div class="'+cls+'" onclick="lvGoF('+i+')">'
+                    return '<div class="'+cls+'" onclick="lvPreview('+i+')">'
                         +'<div class="lv-fb-header">'
-                        +'<div class="lv-fb-num" style="background:'+f.color+'33;color:'+f.color+';">'+(isDone?'✓':(i+1))+'</div>'
-                        +'<div class="lv-fb-label" style="color:'+f.color+';">'+f.label+'</div>'
+                        +'<div class="lv-fb-num" style="background:'+f.color+'33;color:'+f.color+';">'+(isDone&&!isActive?'✓':(i+1))+'</div>'
+                        +'<div class="lv-fb-label" style="color:'+f.color+(isActive?';font-weight:900':'')+';">'+f.label
+                        +(isActive&&fv!==LV.fc?' <span style="font-size:12px;opacity:.6;font-weight:400;">▶ in corso</span>':'')
+                        +'</div>'
                         +'<div class="lv-fb-min">'+m+' min</div>'
                         +'</div>'
-                        +'<div class="lv-fb-body">'+lvParseTesto(f.testo,f.color)+'</div>'
+                        +(isShown?'<div class="lv-fb-body">'+lvParseTesto(f.testo,f.color)+'</div>':'')
                         +'</div>';
                 }).join('');
-                // Scroll la fase attiva in vista
-                const activeEl=el.querySelector('.lv-fb-active');
-                if(activeEl)activeEl.scrollIntoView({block:'nearest',behavior:'smooth'});
+                const shownEl=el.querySelectorAll('.lv-fase-block')[fv];
+                if(shownEl)shownEl.scrollIntoView({block:'nearest',behavior:'smooth'});
             }
 
             function lvUpdT(){
@@ -12226,14 +12235,37 @@ Rispondi SOLO con JSON valido:
                 if(LV.tSec===0){ov.style.background='#7f1d1d';setTimeout(()=>ov.style.background='#0f0f1a',1000);}
             }
 
+            // lvPreview: sbircia uno step senza toccare il timer
+            function lvPreview(i){
+                if(i===LV.fc){
+                    LV.fPreview=null; // torna alla vista normale
+                } else {
+                    LV.fPreview=i;
+                }
+                const fc=LV.fasi[LV.fc];
+                const fl=q('lv-fl');
+                if(fl){
+                    if(LV.fPreview!==null){
+                        const fp=LV.fasi[LV.fPreview];
+                        fl.textContent='👁 Anteprima: '+(LV.fPreview+1)+'/'+LV.fasi.length+' — '+fp.label;
+                        fl.style.color='rgba(255,255,255,.5)';
+                    } else {
+                        fl.textContent=(LV.fc+1)+'/'+LV.fasi.length+' — '+fc.label;
+                        fl.style.color=fc.color;
+                    }
+                }
+                lvRenderFL();
+            }
+
+            // lvGoF: cambia lo step ATTIVO (usata da Prossima e switch Piano B)
             function lvGoF(i){
-                if(LV.tRun)lvToggle(); // ferma timer corrente
+                LV.fPreview=null;
+                if(LV.tRun)lvToggle();
                 if(i>LV.fc)LV.minUsati+=Math.max(0,(LV.tMax-LV.tSec)/60);
                 LV.fc=i;
                 const f=LV.fasi[i];
                 const fl=q('lv-fl');
                 if(fl){fl.textContent=(i+1)+'/'+LV.fasi.length+' — '+f.label;fl.style.color=f.color;}
-                // Sempre reset al tempo pieno della fase
                 const m=getMin(i);LV.tMax=m*60;LV.tSec=LV.tMax;
                 const bar=q('lv-timer-bar');if(bar)bar.style.background=f.color;
                 lvUpdT();lvRenderFL();
@@ -12597,6 +12629,7 @@ Rispondi SOLO con JSON valido:
             window.lvRenderFL   = lvRenderFL;
             window.lvUpdT       = lvUpdT;
             window.lvGoF        = lvGoF;
+            window.lvPreview    = lvPreview;
             window.lvToggle     = lvToggle;
             window.lvAdj        = lvAdj;
             window.lvNext       = lvNext;
