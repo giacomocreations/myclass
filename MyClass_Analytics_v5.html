@@ -10704,7 +10704,7 @@ Rispondi SOLO con JSON valido:
             ov.innerHTML = `<div class="piano-edit-modal" style="max-width:800px;width:90vw;max-height:88vh;overflow-y:auto;">
                 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px;">
                     <h3 style="margin:0;">📋 Piano dettagliato — ${lz.titolo||dateLabel}</h3>
-                    <button class="btn-pd-toggle${hasPiano?' read-active':''}" id="pdToggleBtn" onclick="pdToggleReadMode(this)" title="Passa alla vista lettura">👁️ ${hasPiano?'Leggi':'Leggi'}</button>
+                    <button class="btn-pd-toggle${hasPiano?' read-active':''}" id="pdToggleBtn" data-piano-slotid="${slotId}" onclick="pdToggleReadMode(this)" title="Passa alla vista lettura">👁️ ${hasPiano?'Leggi':'Leggi'}</button>
                 </div>
                 <p style="color:#666;font-size:13px;margin-bottom:16px;">Struttura della lezione per la tua preparazione personale. Non appare nel registro.</p>
 
@@ -11093,15 +11093,20 @@ Rispondi SOLO con JSON valido:
                         fase3:  pdbF3,
                     };
                 } else {
-                    // Nessun campo Piano B in DOM: prova a recuperare dal dato salvato
-                    // (es. apertura read view prima di aver toccato Piano B)
-                    const [_isoDateTR] = (typeof slotId !== 'undefined' ? slotId : '').split('_');
-                    const _classTR = data?.classi?.[currentClass];
-                    const _lzTR = _classTR?.pianificazione?.piano?.find(p =>
-                        lzId(p) === (typeof slotId !== 'undefined' ? slotId : '') ||
-                        (!p.ora && p.data === _isoDateTR)
-                    );
-                    current.pianoB = _lzTR?.pianoDettagliato?.pianoB || null;
+                    // Nessun campo Piano B compilato nel DOM:
+                    // recupera pianoB dal modal stesso (ha data-slot-id impostato all'apertura)
+                    const modalOv = document.querySelector('.piano-edit-modal-overlay');
+                    const savedSlotId = modalOv?.querySelector('[data-piano-slotid]')?.dataset?.pianoSlotid || '';
+                    if (savedSlotId) {
+                        const [_isoD] = savedSlotId.split('_');
+                        const _cl = data?.classi?.[currentClass];
+                        const _lz = _cl?.pianificazione?.piano?.find(p =>
+                            lzId(p) === savedSlotId || (!p.ora && p.data === _isoD)
+                        );
+                        current.pianoB = _lz?.pianoDettagliato?.pianoB || null;
+                    } else {
+                        current.pianoB = null;
+                    }
                 }
                 pdRenderReadView(current);
                 editView.classList.add('hidden');
