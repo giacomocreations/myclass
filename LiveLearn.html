@@ -1223,29 +1223,35 @@ async function saveEditQ(i) {
 }
 
 function getEditFormHTML(q) {
-  const type = q.type;
-  if (type === 'multiple-choice') return `
-    <div class="form-group"><label>Domanda</label><textarea id="qf-text" rows="2">${esc(q.text||'')}</textarea></div>
-    <div class="form-group"><label>Opzione A</label><input type="text" id="qf-a" value="${esc(q.options?.[0]||'')}"></div>
-    <div class="form-group"><label>Opzione B</label><input type="text" id="qf-b" value="${esc(q.options?.[1]||'')}"></div>
-    <div class="form-group"><label>Opzione C</label><input type="text" id="qf-c" value="${esc(q.options?.[2]||'')}"></div>
-    <div class="form-group"><label>Opzione D</label><input type="text" id="qf-d" value="${esc(q.options?.[3]||'')}"></div>
-    <div class="form-group"><label>Risposta corretta</label>
-      <select id="qf-correct">${['A','B','C','D'].map((l,i)=>`<option value="${i}"${q.correct===i?' selected':''}>${l}</option>`).join('')}</select>
-    </div>`;
-  if (type === 'cloze') return `
-    <div class="form-group"><label>Testo (usa ___ per ogni spazio)</label><textarea id="qf-text" rows="4">${esc(q.text||'')}</textarea></div>
-    <div class="form-group"><label>Risposte corrette (una per riga)</label><textarea id="qf-answers" rows="3">${(q.answers||[]).join('\n')}</textarea></div>`;
-  if (type === 'matching') return `
-    <div class="form-group"><label>Istruzione</label><input type="text" id="qf-text" value="${esc(q.text||'')}"></div>
-    <div class="form-group"><label>Colonna A (una per riga)</label><textarea id="qf-left" rows="4">${(q.left||[]).join('\n')}</textarea></div>
-    <div class="form-group"><label>Colonna B (una per riga)</label><textarea id="qf-right" rows="4">${(q.right||[]).join('\n')}</textarea></div>`;
-  if (type === 'free-response') return `
-    <div class="form-group"><label>Domanda</label><textarea id="qf-text" rows="3">${esc(q.text||'')}</textarea></div>
-    <div class="form-group"><label>Suggerimento</label><input type="text" id="qf-hint" value="${esc(q.hint||'')}"></div>`;
-  if (type === 'listening') return `
-    <div class="form-group"><label>Testo TTS</label><textarea id="qf-tts" rows="3">${esc(q.ttsText||'')}</textarea></div>
-    <div class="form-group"><label>Domanda di comprensione</label><textarea id="qf-text" rows="2">${esc(q.question?.text||'')}</textarea></div>`;
+  var type = q.type;
+  var fg = '<div class="form-group">';
+  if (type === 'multiple-choice') {
+    var opts = ['A','B','C','D'];
+    var sel = opts.map(function(l,i){ return '<option value="'+i+'"'+(q.correct===i?' selected':'')+'>'+l+'</option>'; }).join('');
+    return fg+'<label>Domanda</label><textarea id="qf-text" rows="2">'+esc(q.text||'')+'</textarea></div>'+
+      fg+'<label>Opzione A</label><input type="text" id="qf-a" value="'+esc(q.options&&q.options[0]||'')+'"></div>'+
+      fg+'<label>Opzione B</label><input type="text" id="qf-b" value="'+esc(q.options&&q.options[1]||'')+'"></div>'+
+      fg+'<label>Opzione C</label><input type="text" id="qf-c" value="'+esc(q.options&&q.options[2]||'')+'"></div>'+
+      fg+'<label>Opzione D</label><input type="text" id="qf-d" value="'+esc(q.options&&q.options[3]||'')+'"></div>'+
+      fg+'<label>Risposta corretta</label><select id="qf-correct">'+sel+'</select></div>';
+  }
+  if (type === 'cloze') {
+    return fg+'<label>Testo (usa ___ per ogni spazio)</label><textarea id="qf-text" rows="4">'+esc(q.text||'')+'</textarea></div>'+
+      fg+'<label>Risposte corrette (una per riga)</label><textarea id="qf-answers" rows="3">'+(q.answers||[]).join('\n')+'</textarea></div>';
+  }
+  if (type === 'matching') {
+    return fg+'<label>Istruzione</label><input type="text" id="qf-text" value="'+esc(q.text||'')+'"></div>'+
+      fg+'<label>Colonna A (una per riga)</label><textarea id="qf-left" rows="4">'+(q.left||[]).join('\n')+'</textarea></div>'+
+      fg+'<label>Colonna B (una per riga)</label><textarea id="qf-right" rows="4">'+(q.right||[]).join('\n')+'</textarea></div>';
+  }
+  if (type === 'free-response') {
+    return fg+'<label>Domanda</label><textarea id="qf-text" rows="3">'+esc(q.text||'')+'</textarea></div>'+
+      fg+'<label>Suggerimento</label><input type="text" id="qf-hint" value="'+esc(q.hint||'')+'"></div>';
+  }
+  if (type === 'listening') {
+    return fg+'<label>Testo TTS</label><textarea id="qf-tts" rows="3">'+esc(q.ttsText||'')+'</textarea></div>'+
+      fg+'<label>Domanda di comprensione</label><textarea id="qf-text" rows="2">'+esc((q.question&&q.question.text)||'')+'</textarea></div>';
+  }
   return '';
 }
 
@@ -1426,6 +1432,7 @@ function showCodeScreen() {
 function hideCodeScreen() {
   showView('teacher-live');
 }
+function updateTeacherControlBar() {
   const total = S.liveActivity?.questions?.length || 0;
   const cur = S.teacherCurrentQ;
   const pill = document.getElementById('teacher-q-pill');
