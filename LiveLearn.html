@@ -1402,19 +1402,16 @@ async function openLive(code, activityId, roster) {
   document.getElementById('live-code-val').textContent = code;
   document.getElementById('live-main-content').innerHTML = `<div class="empty-state"><div class="es-icon">📡</div><p style="font-size:15px;font-weight:600;">In attesa degli studenti…</p><p class="text-muted mt-8">Scrivi il codice <strong>${code}</strong> alla lavagna.</p></div>`;
 
-  // Auto-show code screen for students to see
-  document.getElementById('code-screen-val').textContent = code;
-  document.getElementById('code-screen-url').textContent = window.location.href.split('?')[0];
-  showView('code-screen');
   if (S.liveListener) { S.liveListener(); S.liveListener = null; }
 
   const aSnap = await db.ref('livelearn/activities/' + activityId).get();
   S.liveActivity = aSnap.val();
 
-  // Load session info (mode, roster)
+  // Load session info (mode, roster, status)
   const sSnap = await db.ref('livelearn/sessions/' + code).get();
   const sess = sSnap.val() || {};
   S.liveMode = sess.mode || 'test';
+  const isActive = sess.status === 'active';
 
   if (!S.liveRoster.length && sess.classId) {
     let cl = {};
@@ -1427,13 +1424,22 @@ async function openLive(code, activityId, roster) {
   const badges = { test:'<span class="mode-test">📝 Test</span>', practice:'<span class="mode-practice">🎮 Esercitazione</span>', teacher:'<span class="mode-teacher">🎓 Controllo docente</span>' };
   document.getElementById('live-mode-badge').innerHTML = badges[S.liveMode] || '';
 
-  // Teacher control bar
+  // Teacher control bar — only for active teacher-mode sessions
   const ctrlBar = document.getElementById('teacher-control-bar');
-  if (S.liveMode === 'teacher') {
+  if (S.liveMode === 'teacher' && isActive) {
     ctrlBar.style.display = 'flex';
     await db.ref('livelearn/control/' + code).set({ currentQ: -1 });
     updateTeacherControlBar();
   } else { ctrlBar.style.display = 'none'; }
+
+  // Show code screen only for NEW active sessions (not when viewing results)
+  if (isActive && roster !== undefined) {
+    document.getElementById('code-screen-val').textContent = code;
+    document.getElementById('code-screen-url').textContent = window.location.href.split('?')[0];
+    showView('code-screen');
+  } else {
+    showView('teacher-live');
+  }
 
   // Real-time listener
   const ref = db.ref('livelearn/responses/' + code);
