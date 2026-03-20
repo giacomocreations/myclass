@@ -479,6 +479,7 @@ const CONFIG = {
         <span class="code-label">Codice:</span>
         <span id="live-code-val" class="code-val"></span>
       </div>
+      <button class="btn btn-sm" id="btn-show-code" onclick="showCodeScreen()" title="Mostra codice a schermo intero">🖥️ Mostra codice</button>
       <button class="btn btn-danger btn-sm" onclick="closeSession()">Chiudi sessione</button>
       <button class="btn btn-ghost btn-sm" onclick="goBackFromLive()">← Dashboard</button>
     </div>
@@ -492,12 +493,12 @@ const CONFIG = {
       <div class="empty-state">
         <div class="es-icon">📡</div>
         <p style="font-size:15px; font-weight:600;">In attesa degli studenti…</p>
-        <p class="text-muted mt-8">Scrivi il codice alla lavagna e aspetta.</p>
+        <p class="text-muted mt-8">Scrivi il codice alla lavagna o clicca 🖥️ Mostra codice.</p>
       </div>
     </div>
   </div>
   <!-- Teacher control bar (teacher mode only) -->
-  <div id="teacher-control-bar" style="display:none; background:white; border-top:1px solid #e8e5e0; padding:14px 24px; display:none; align-items:center; justify-content:space-between; flex-shrink:0;">
+  <div id="teacher-control-bar" style="display:none; background:white; border-top:1px solid #e8e5e0; padding:14px 24px; align-items:center; justify-content:space-between; flex-shrink:0;">
     <div class="flex-center gap-12">
       <span id="teacher-q-pill" style="background:#f0ede8;border-radius:20px;padding:5px 14px;font-size:13px;font-weight:600;color:#555;">Premi per iniziare</span>
       <div class="progress-bar" style="width:160px;margin-bottom:0;height:7px;"><div class="progress-fill" id="teacher-q-progress" style="width:0%"></div></div>
@@ -506,6 +507,18 @@ const CONFIG = {
       <button class="btn btn-sm" id="btn-prev-tq" onclick="teacherPrevQ()" style="display:none;">← Prec.</button>
       <button class="btn btn-primary btn-sm" id="btn-next-tq" onclick="teacherNextQ()">▶ Prima domanda</button>
     </div>
+  </div>
+</div>
+
+<!-- ════════════════════
+     VIEW: CODE SCREEN (proiettore)
+     ════════════════════ -->
+<div id="view-code-screen" class="view" style="background:#16a37f;">
+  <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;text-align:center;padding:40px;">
+    <div style="color:rgba(255,255,255,0.7);font-size:18px;font-weight:600;letter-spacing:2px;margin-bottom:20px;">CODICE SESSIONE</div>
+    <div id="code-screen-val" style="font-size:120px;font-weight:900;color:white;letter-spacing:20px;font-family:'Courier New',monospace;line-height:1;">----</div>
+    <div style="color:rgba(255,255,255,0.7);font-size:16px;margin-top:24px;">Vai su <strong style="color:white;" id="code-screen-url"></strong> e inserisci questo codice</div>
+    <button onclick="hideCodeScreen()" style="margin-top:40px;background:rgba(255,255,255,0.2);border:2px solid white;color:white;padding:10px 24px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">← Torna alla sessione</button>
   </div>
 </div>
 
@@ -1265,19 +1278,24 @@ async function saveActivity() {
   const title = document.getElementById('activity-title').value.trim();
   if (!title) return alert('Dai un titolo all\'attività');
   if (S.questions.length === 0) return alert('Aggiungi almeno una domanda');
-  if (!db) return alert('⚠️ Firebase non configurato. Controlla il file HTML.');
-  const data = { title, questions: S.questions, createdAt: Date.now() };
+  if (!db) return alert('⚠️ Firebase non configurato.');
   try {
     if (S.editingId) {
-      data.createdAt = undefined; // preserve original createdAt on edit
-      await db.ref('livelearn/activities/' + S.editingId).update(data);
+      await db.ref('livelearn/activities/' + S.editingId).update({
+        title,
+        questions: S.questions
+      });
     } else {
-      await db.ref('livelearn/activities').push(data);
+      await db.ref('livelearn/activities').push({
+        title,
+        questions: S.questions,
+        createdAt: Date.now()
+      });
     }
     loadDashboard();
     showView('teacher-dashboard');
   } catch(err) {
-    alert('❌ Errore salvataggio Firebase:\n' + err.message + '\n\nControlla le Regole del database su Firebase Console (devono essere .read/.write = true).');
+    alert('❌ Errore Firebase:\n' + err.message + '\n\nVerifica le Regole del database: .read e .write devono essere true.');
   }
 }
 
@@ -1352,7 +1370,11 @@ async function openLive(code, activityId, roster) {
   S.teacherCurrentQ = -1;
   document.getElementById('live-code-val').textContent = code;
   document.getElementById('live-main-content').innerHTML = `<div class="empty-state"><div class="es-icon">📡</div><p style="font-size:15px;font-weight:600;">In attesa degli studenti…</p><p class="text-muted mt-8">Scrivi il codice <strong>${code}</strong> alla lavagna.</p></div>`;
-  showView('teacher-live');
+
+  // Auto-show code screen for students to see
+  document.getElementById('code-screen-val').textContent = code;
+  document.getElementById('code-screen-url').textContent = window.location.href.split('?')[0];
+  showView('code-screen');
   if (S.liveListener) { S.liveListener(); S.liveListener = null; }
 
   const aSnap = await db.ref('livelearn/activities/' + activityId).get();
@@ -1396,8 +1418,14 @@ async function openLive(code, activityId, roster) {
   S.liveListener = () => ref.off('value', handler);
 }
 
-// Teacher control
-function updateTeacherControlBar() {
+function showCodeScreen() {
+  document.getElementById('code-screen-val').textContent = S.liveCode;
+  document.getElementById('code-screen-url').textContent = window.location.href.split('?')[0];
+  showView('code-screen');
+}
+function hideCodeScreen() {
+  showView('teacher-live');
+}
   const total = S.liveActivity?.questions?.length || 0;
   const cur = S.teacherCurrentQ;
   const pill = document.getElementById('teacher-q-pill');
