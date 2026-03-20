@@ -445,7 +445,7 @@ function renderBuild(){
   if(buildIndex>=buildData.length){showPhase(3);return;}
   const d=buildData[buildIndex];
   document.getElementById('build-answer').textContent=d.context;
-  document.getElementById('build-display').innerHTML='<span style="color:var(--muted);font-size:13px">Click words below...</span>';
+  document.getElementById('build-display').innerHTML='<span style="color:var(--muted);font-size:13px">Click or drag words here...</span>';
   document.getElementById('build-progress').style.width=(buildIndex/buildData.length*100)+'%';
   document.getElementById('build-feedback').textContent='';
   document.getElementById('build-feedback').className='feedback-msg';
@@ -453,14 +453,40 @@ function renderBuild(){
   currentBuilt=[];usedChips={};
   const allWords=[...d.sentence,...d.extra].sort(()=>Math.random()-0.5);
   const bank=document.getElementById('word-bank');bank.innerHTML='';
-  allWords.forEach((w,i)=>{const chip=document.createElement('div');chip.className='word-chip';chip.textContent=w;chip.dataset.idx=i;chip.onclick=()=>addWord(chip,w,i);bank.appendChild(chip);});
+  allWords.forEach((w,i)=>{
+    const chip=document.createElement('div');chip.className='word-chip';chip.textContent=w;chip.dataset.idx=i;chip.draggable=true;
+    chip.onclick=()=>addWord(chip,w,i);
+    chip.addEventListener('dragstart',e=>{if(chip.classList.contains('used')){e.preventDefault();return;}e.dataTransfer.setData('chipIdx',i);e.dataTransfer.setData('word',w);e.dataTransfer.effectAllowed='move';chip.style.opacity='0.4';});
+    chip.addEventListener('dragend',()=>{chip.style.opacity='';});
+    bank.appendChild(chip);
+  });
 }
 function addWord(chip,word,idx){if(chip.classList.contains('used'))return;chip.classList.add('used');currentBuilt.push({word,idx});renderBuiltSentence();}
 function renderBuiltSentence(){
   const display=document.getElementById('build-display');
-  if(currentBuilt.length===0){display.innerHTML='<span style="color:var(--muted);font-size:13px">Click words below...</span>';return;}
+  display.ondragover=e=>{e.preventDefault();e.dataTransfer.dropEffect='move';display.style.borderColor='var(--accent)';};
+  display.ondragleave=()=>{display.style.borderColor='';};
+  display.ondrop=e=>{
+    e.preventDefault();display.style.borderColor='';
+    const idx=parseInt(e.dataTransfer.getData('chipIdx'));const word=e.dataTransfer.getData('word');
+    if(!isNaN(idx)&&word){const chip=[...document.querySelectorAll('.word-chip')].find(c=>parseInt(c.dataset.idx)===idx);
+      if(chip&&!chip.classList.contains('used')){chip.classList.add('used');currentBuilt.push({word,idx});renderBuiltSentence();}}
+  };
+  if(currentBuilt.length===0){display.innerHTML='<span style="color:var(--muted);font-size:13px">Click or drag words here...</span>';return;}
   display.innerHTML='';
-  currentBuilt.forEach((item,i)=>{const tok=document.createElement('span');tok.className='word-token';tok.textContent=item.word;tok.title='Click to remove';tok.onclick=()=>removeWord(i,item.idx);display.appendChild(tok);});
+  currentBuilt.forEach((item,i)=>{
+    const tok=document.createElement('span');tok.className='word-token';tok.textContent=item.word;tok.title='Click to remove / drag to reorder';tok.draggable=true;tok.dataset.pos=i;
+    tok.onclick=()=>removeWord(i,item.idx);
+    tok.addEventListener('dragstart',e=>{e.dataTransfer.setData('tokenPos',i);e.dataTransfer.effectAllowed='move';tok.style.opacity='0.4';});
+    tok.addEventListener('dragend',()=>{tok.style.opacity='';});
+    tok.addEventListener('dragover',e=>{e.preventDefault();tok.style.outline='2px solid var(--gold)';});
+    tok.addEventListener('dragleave',()=>{tok.style.outline='';});
+    tok.addEventListener('drop',e=>{e.preventDefault();e.stopPropagation();tok.style.outline='';
+      const fromPos=parseInt(e.dataTransfer.getData('tokenPos'));const toPos=i;
+      if(!isNaN(fromPos)&&fromPos!==toPos){const moved=currentBuilt.splice(fromPos,1)[0];currentBuilt.splice(toPos,0,moved);renderBuiltSentence();}
+    });
+    display.appendChild(tok);
+  });
 }
 function removeWord(pos,chipIdx){currentBuilt.splice(pos,1);document.querySelectorAll('.word-chip').forEach(c=>{if(parseInt(c.dataset.idx)===chipIdx)c.classList.remove('used');});renderBuiltSentence();}
 function clearBuild(){currentBuilt=[];document.querySelectorAll('.word-chip').forEach(c=>c.classList.remove('used'));renderBuiltSentence();document.getElementById('build-feedback').textContent='';document.getElementById('build-next').classList.remove('visible');}
