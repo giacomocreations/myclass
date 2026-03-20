@@ -946,7 +946,7 @@ function renderBuild() {
   }
   const d = buildData[buildIndex];
   document.getElementById('build-answer').textContent = d.answer;
-  document.getElementById('build-display').innerHTML = '<span style="color:var(--muted);font-size:14px;font-family:DM Sans">Click words below...</span>';
+  document.getElementById('build-display').innerHTML = '<span style="color:var(--muted);font-size:14px;font-family:DM Sans">Click or drag words here...</span>';
   document.getElementById('build-progress').style.width = (buildIndex / buildData.length * 100) + '%';
   document.getElementById('build-feedback').textContent = '';
   document.getElementById('build-feedback').className = 'feedback-msg';
@@ -963,7 +963,16 @@ function renderBuild() {
     chip.className = 'word-chip';
     chip.textContent = w;
     chip.dataset.idx = i;
+    chip.draggable = true;
     chip.onclick = () => addWord(chip, w, i);
+    chip.addEventListener('dragstart', e => {
+      if (chip.classList.contains('used')) { e.preventDefault(); return; }
+      e.dataTransfer.setData('chipIdx', i);
+      e.dataTransfer.setData('word', w);
+      e.dataTransfer.effectAllowed = 'move';
+      chip.style.opacity = '0.4';
+    });
+    chip.addEventListener('dragend', () => { chip.style.opacity = ''; });
     bank.appendChild(chip);
   });
 }
@@ -977,8 +986,25 @@ function addWord(chip, word, idx) {
 
 function renderBuiltSentence() {
   const display = document.getElementById('build-display');
+  // Drop zone on display
+  display.ondragover = e => { e.preventDefault(); e.dataTransfer.dropEffect='move'; display.style.borderColor='var(--accent2)'; };
+  display.ondragleave = () => { display.style.borderColor=''; };
+  display.ondrop = e => {
+    e.preventDefault();
+    display.style.borderColor='';
+    const idx = parseInt(e.dataTransfer.getData('chipIdx'));
+    const word = e.dataTransfer.getData('word');
+    if (!isNaN(idx) && word) {
+      const chip = [...document.querySelectorAll('.word-chip')].find(c => parseInt(c.dataset.idx)===idx);
+      if (chip && !chip.classList.contains('used')) {
+        chip.classList.add('used');
+        currentBuilt.push({word, idx});
+        renderBuiltSentence();
+      }
+    }
+  };
   if (currentBuilt.length === 0) {
-    display.innerHTML = '<span style="color:var(--muted);font-size:14px;font-family:DM Sans">Click words below...</span>';
+    display.innerHTML = '<span style="color:var(--muted);font-size:14px;font-family:DM Sans">Click or drag words here...</span>';
     return;
   }
   display.innerHTML = '';
@@ -986,8 +1012,29 @@ function renderBuiltSentence() {
     const tok = document.createElement('span');
     tok.className = 'word-token';
     tok.textContent = item.word;
-    tok.title = 'Click to remove';
+    tok.title = 'Click to remove / drag to reorder';
+    tok.draggable = true;
+    tok.dataset.pos = i;
     tok.onclick = () => removeWord(i, item.idx);
+    tok.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('tokenPos', i);
+      e.dataTransfer.effectAllowed = 'move';
+      tok.style.opacity = '0.4';
+    });
+    tok.addEventListener('dragend', () => { tok.style.opacity=''; });
+    tok.addEventListener('dragover', e => { e.preventDefault(); tok.style.outline='2px solid var(--gold)'; });
+    tok.addEventListener('dragleave', () => { tok.style.outline=''; });
+    tok.addEventListener('drop', e => {
+      e.preventDefault(); e.stopPropagation();
+      tok.style.outline='';
+      const fromPos = parseInt(e.dataTransfer.getData('tokenPos'));
+      const toPos = i;
+      if (!isNaN(fromPos) && fromPos !== toPos) {
+        const moved = currentBuilt.splice(fromPos, 1)[0];
+        currentBuilt.splice(toPos, 0, moved);
+        renderBuiltSentence();
+      }
+    });
     display.appendChild(tok);
   });
 }
