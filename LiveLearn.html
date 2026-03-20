@@ -304,15 +304,15 @@ textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
      ════════════════════════════════════════════════════════ -->
 <script>
 const CONFIG = {
-  teacherPassword: 'livelearn2024',   // ← cambia questa password!
+  teacherPassword: 'livelearn2024',
   firebase: {
-    apiKey:            "YOUR_API_KEY",
-    authDomain:        "YOUR_PROJECT.firebaseapp.com",
-    databaseURL:       "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
-    projectId:         "YOUR_PROJECT",
-    storageBucket:     "YOUR_PROJECT.appspot.com",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId:             "YOUR_APP_ID"
+    apiKey:            "AIzaSyBC63JFyINndsbCysIDg3DzkOlyo4kO6NU",
+    authDomain:        "livelearn-5d30a.firebaseapp.com",
+    databaseURL:       "https://livelearn-5d30a-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId:         "livelearn-5d30a",
+    storageBucket:     "livelearn-5d30a.firebasestorage.app",
+    messagingSenderId: "858581840539",
+    appId:             "1:858581840539:web:81c68ddde0615d03eccc3e"
   }
 };
 </script>
@@ -1297,28 +1297,36 @@ async function saveActivity() {
   const btn = document.querySelector('#view-teacher-builder .btn-primary');
   if (btn) { btn.textContent = '⏳ Salvataggio…'; btn.disabled = true; }
 
-  // Sanitize: JSON round-trip removes undefined/functions that Firebase rejects
+  const reset = () => { if (btn) { btn.textContent = '💾 Salva attività'; btn.disabled = false; } };
+
   let cleanQuestions;
   try {
     cleanQuestions = JSON.parse(JSON.stringify(S.questions));
   } catch(e) {
-    if (btn) { btn.textContent = '💾 Salva attività'; btn.disabled = false; }
-    return alert('❌ Dati domande non validi: ' + e.message);
+    reset();
+    return alert('❌ Dati non validi: ' + e.message);
   }
 
+  const payload = { title, questions: cleanQuestions, createdAt: Date.now() };
+
+  // Wrap Firebase in a timeout
+  const withTimeout = (promise, ms) => Promise.race([
+    promise,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout — Firebase non risponde dopo ' + ms/1000 + 's')), ms))
+  ]);
+
   try {
-    const payload = { title, questions: cleanQuestions, createdAt: Date.now() };
     if (S.editingId) {
-      await db.ref('livelearn/activities/' + S.editingId).set(payload);
+      await withTimeout(db.ref('livelearn/activities/' + S.editingId).set(payload), 8000);
     } else {
-      await db.ref('livelearn/activities').push(payload);
+      await withTimeout(db.ref('livelearn/activities').push(payload), 8000);
     }
-    if (btn) { btn.textContent = '✅ Salvato!'; }
+    if (btn) btn.textContent = '✅ Salvato!';
     setTimeout(() => { loadDashboard(); showView('teacher-dashboard'); }, 500);
   } catch(err) {
-    if (btn) { btn.textContent = '💾 Salva attività'; btn.disabled = false; }
-    console.error('saveActivity error:', err);
-    alert('❌ Errore Firebase: ' + err.message);
+    reset();
+    console.error('saveActivity:', err);
+    alert('❌ ' + err.message + '\n\nVerifica:\n1. Connessione internet attiva\n2. Firebase Console → Realtime Database → Regole → .read e .write = true → Pubblica');
   }
 }
 
