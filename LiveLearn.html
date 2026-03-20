@@ -751,14 +751,35 @@ function goTeacherLogin() {
   showView('teacher-login');
 }
 
-function teacherLogin() {
+async function teacherLogin() {
   const pwd = document.getElementById('teacher-pwd').value;
-  if (pwd === CONFIG.teacherPassword) {
-    loadDashboard();
-    showView('teacher-dashboard');
-  } else {
-    document.getElementById('login-error').style.display = 'block';
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+  if (pwd !== CONFIG.teacherPassword) {
+    errEl.textContent = 'Password errata. Riprova.';
+    errEl.style.display = 'block';
+    return;
   }
+  if (!db) {
+    errEl.textContent = '⚠️ Firebase non configurato. Controlla le credenziali nel file HTML.';
+    errEl.style.display = 'block';
+    return;
+  }
+  // Test write access
+  try {
+    await db.ref('livelearn/.ping').set(Date.now());
+    const snap = await db.ref('livelearn/.ping').get();
+    if (!snap.val()) throw new Error('Scrittura non confermata');
+  } catch(err) {
+    errEl.innerHTML = '⚠️ Firebase non scrive: <strong>' + err.message + '</strong><br><br>' +
+      'Vai su Firebase Console → Realtime Database → Regole e imposta:<br>' +
+      '<code style="font-size:12px;">{ "rules": { ".read": true, ".write": true } }</code>' +
+      '<br>poi clicca Pubblica.';
+    errEl.style.display = 'block';
+    return;
+  }
+  loadDashboard();
+  showView('teacher-dashboard');
 }
 
 function logout() {
@@ -1285,23 +1306,32 @@ async function saveActivity() {
   if (!title) return alert('Dai un titolo all\'attività');
   if (S.questions.length === 0) return alert('Aggiungi almeno una domanda');
   if (!db) return alert('⚠️ Firebase non configurato.');
+
+  const btn = document.querySelector('#view-teacher-builder .btn-primary');
+  if (btn) { btn.textContent = '⏳ Salvataggio…'; btn.disabled = true; }
+
+  // Sanitize: JSON round-trip removes undefined/functions that Firebase rejects
+  let cleanQuestions;
   try {
+    cleanQuestions = JSON.parse(JSON.stringify(S.questions));
+  } catch(e) {
+    if (btn) { btn.textContent = '💾 Salva attività'; btn.disabled = false; }
+    return alert('❌ Dati domande non validi: ' + e.message);
+  }
+
+  try {
+    const payload = { title, questions: cleanQuestions, createdAt: Date.now() };
     if (S.editingId) {
-      await db.ref('livelearn/activities/' + S.editingId).update({
-        title,
-        questions: S.questions
-      });
+      await db.ref('livelearn/activities/' + S.editingId).set(payload);
     } else {
-      await db.ref('livelearn/activities').push({
-        title,
-        questions: S.questions,
-        createdAt: Date.now()
-      });
+      await db.ref('livelearn/activities').push(payload);
     }
-    loadDashboard();
-    showView('teacher-dashboard');
+    if (btn) { btn.textContent = '✅ Salvato!'; }
+    setTimeout(() => { loadDashboard(); showView('teacher-dashboard'); }, 500);
   } catch(err) {
-    alert('❌ Errore Firebase:\n' + err.message + '\n\nVerifica le Regole del database: .read e .write devono essere true.');
+    if (btn) { btn.textContent = '💾 Salva attività'; btn.disabled = false; }
+    console.error('saveActivity error:', err);
+    alert('❌ Errore Firebase: ' + err.message);
   }
 }
 
