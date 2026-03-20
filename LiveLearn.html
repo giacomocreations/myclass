@@ -108,7 +108,7 @@ textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
 /* ============================================================
    DASHBOARD
    ============================================================ */
-.dash-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px; }
+.dash-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
 .stat-card { background: white; border-radius: 10px; border: 1px solid #e8e5e0; padding: 18px 20px; }
 .stat-label { font-size: 12px; color: #888; margin-bottom: 4px; font-weight: 500; }
 .stat-value { font-size: 30px; font-weight: 700; color: #1c1c1a; }
@@ -336,6 +336,10 @@ const CONFIG = {
         <div class="stat-value" id="stat-sessions">—</div>
       </div>
       <div class="stat-card">
+        <div class="stat-label">Classi importate</div>
+        <div class="stat-value" id="stat-classes">—</div>
+      </div>
+      <div class="stat-card">
         <div class="stat-label">Risposte raccolte</div>
         <div class="stat-value" id="stat-responses">—</div>
       </div>
@@ -399,6 +403,7 @@ const CONFIG = {
           <div class="q-type-btn" onclick="selectQType('matching', this)">🔗 Matching</div>
           <div class="q-type-btn" onclick="selectQType('free-response', this)">💬 Risposta libera</div>
           <div class="q-type-btn wide" onclick="selectQType('listening', this)">🎧 Listening</div>
+          <div class="q-type-btn wide" style="background:#e8fdf5; border-color:#16a37f; color:#16a37f;" onclick="selectQType('ai-generate', this)">🤖 Genera con AI da testo/PDF</div>
         </div>
         <div id="add-form" class="add-form-container"></div>
       </div>
@@ -490,16 +495,45 @@ const CONFIG = {
 </div>
 
 <!-- ════════════════════
-     VIEW: STUDENT DONE
+     VIEW: STUDENT DONE / RESULTS
      ════════════════════ -->
 <div id="view-student-done" class="view">
   <div class="topbar"><div class="logo"><div class="logo-dot"></div> LiveLearn</div></div>
-  <div class="done-screen">
-    <div class="done-icon">✅</div>
-    <h1>Consegnato!</h1>
-    <p class="text-muted mt-8">Il tuo compito è stato inviato al professore.<br>Puoi chiudere questa pagina.</p>
+  <div class="student-content" style="max-width:700px;">
+    <div style="text-align:center; margin-bottom:32px;">
+      <div style="font-size:56px; margin-bottom:12px;">✅</div>
+      <h1 style="font-size:24px; font-weight:700;">Consegnato!</h1>
+      <p class="text-muted mt-8">Il tuo lavoro è stato inviato al professore.</p>
+    </div>
+    <div id="student-score-card" style="background:white; border-radius:14px; border:1px solid #e8e5e0; padding:24px; margin-bottom:20px; display:none;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px;">
+        <div style="text-align:center; background:#f0fdf8; border-radius:10px; padding:16px;">
+          <div style="font-size:36px; font-weight:800; color:#16a37f;" id="score-num">—</div>
+          <div style="font-size:12px; color:#555; margin-top:4px;">Risposte corrette</div>
+        </div>
+        <div style="text-align:center; background:#f0ede8; border-radius:10px; padding:16px;">
+          <div style="font-size:36px; font-weight:800; color:#888;" id="score-tot">—</div>
+          <div style="font-size:12px; color:#555; margin-top:4px;">Domande totali</div>
+        </div>
+      </div>
+      <div id="student-results-detail"></div>
+    </div>
   </div>
 </div>
+
+<!-- ════════════════════
+     VIEW: STUDENT WAITING
+     ════════════════════ -->
+<div id="view-student-waiting" class="view">
+  <div class="topbar"><div class="logo"><div class="logo-dot"></div> LiveLearn</div></div>
+  <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; flex:1; text-align:center; padding:60px 24px;">
+    <div style="font-size:52px; margin-bottom:16px; animation: spin 3s linear infinite;">⏳</div>
+    <h2 style="font-size:20px; font-weight:700; margin-bottom:8px;">In attesa del professore…</h2>
+    <p class="text-muted">La sessione si aprirà automaticamente quando il professore avvierà l'attività.</p>
+    <p class="text-muted mt-8" style="font-size:12px;">Codice: <strong id="waiting-code"></strong> — <strong id="waiting-name"></strong></p>
+  </div>
+</div>
+<style>@keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }</style>
 
 
 <!-- ════════════════════
@@ -634,6 +668,18 @@ async function loadDashboard() {
       </div>
     `).join('');
   }
+
+  // Classes count (from Firebase or localStorage)
+  let classesCount = 0;
+  try {
+    const cSnap = await db.ref('livelearn/classes').get();
+    classesCount = cSnap.val() ? Object.keys(cSnap.val()).length : 0;
+  } catch(e) {}
+  if (!classesCount) {
+    const local = localStorage.getItem('livelearn_classes');
+    if (local) classesCount = Object.keys(JSON.parse(local)).length;
+  }
+  document.getElementById('stat-classes').textContent = classesCount;
 
   // Sessions
   const sSnap = await db.ref('livelearn/sessions').get();
@@ -770,12 +816,125 @@ function renderAddForm(type) {
         <div class="form-group"><label>Corretta</label><select id="qf-lcorr"><option value="0">A</option><option value="1">B</option><option value="2">C</option></select></div>
       </div>
       <button class="btn btn-primary btn-block" onclick="addQuestion()">+ Aggiungi</button>`;
+  } else if (type === 'ai-generate') {
+    const savedKey = localStorage.getItem('gemini_api_key') || '';
+    el.innerHTML = `
+      <div class="form-group">
+        <label>Chiave API Gemini ${savedKey ? '<span style="color:#16a37f">✓ trovata da MyClass</span>' : ''}</label>
+        <input type="password" id="qf-apikey" value="${esc(savedKey)}" placeholder="AIzaSy…">
+        <p class="text-muted mt-8" style="font-size:11px;">Stessa chiave di MyClass Analytics.</p>
+      </div>
+      <div class="form-group">
+        <label>Testo sorgente</label>
+        <textarea id="qf-ai-text" rows="5" placeholder="Incolla qui testo, paragrafo, istruzioni… L'AI creerà domande da questo contenuto."></textarea>
+        <label style="display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:6px 10px;border:1px solid #ddd;border-radius:6px;cursor:pointer;font-size:12px;background:white;">
+          📄 Oppure carica file TXT/PDF
+          <input type="file" id="qf-ai-file" accept=".txt,.pdf" style="display:none" onchange="loadAIFile(event)">
+        </label>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+        <div class="form-group">
+          <label>Numero domande</label>
+          <select id="qf-ai-count"><option value="3">3</option><option value="5" selected>5</option><option value="8">8</option><option value="10">10</option></select>
+        </div>
+        <div class="form-group">
+          <label>Tipo domande</label>
+          <select id="qf-ai-types">
+            <option value="mixed">Misto</option>
+            <option value="multiple-choice">Scelta multipla</option>
+            <option value="cloze">Cloze</option>
+            <option value="free-response">Risposta libera</option>
+          </select>
+        </div>
+      </div>
+      <div id="qf-ai-status" style="display:none;" class="alert alert-info"></div>
+      <button class="btn btn-primary btn-block" onclick="generateWithAI()">🤖 Genera domande</button>`;
+  }
+}
+
+function loadAIFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('qf-ai-text').value = e.target.result.substring(0, 4000);
+  };
+  reader.readAsText(file);
+}
+
+async function generateWithAI() {
+  const apiKey = document.getElementById('qf-apikey')?.value.trim();
+  const text = document.getElementById('qf-ai-text')?.value.trim();
+  const count = document.getElementById('qf-ai-count')?.value || '5';
+  const types = document.getElementById('qf-ai-types')?.value || 'mixed';
+
+  if (!apiKey) return alert('Inserisci la chiave API Gemini.');
+  if (!text || text.length < 20) return alert('Inserisci un testo sorgente (almeno 20 caratteri).');
+
+  localStorage.setItem('gemini_api_key', apiKey);
+
+  const statusEl = document.getElementById('qf-ai-status');
+  statusEl.style.display = 'block';
+  statusEl.textContent = '⏳ Generazione in corso… (10-20 secondi)';
+
+  const typeInstr = {
+    'mixed': 'a mix of multiple choice and free response questions',
+    'multiple-choice': 'multiple choice questions (4 options each)',
+    'cloze': 'fill-in-the-blank (cloze) questions using ___ for blanks',
+    'free-response': 'open-ended questions requiring short written answers'
+  }[types];
+
+  const prompt = `You are helping an English language teacher create quiz questions for middle school students.
+Based on the following text, create exactly ${count} ${typeInstr} in English (unless the text is in Italian, in which case use Italian).
+
+Text:
+"""
+${text.substring(0, 3000)}
+"""
+
+Respond ONLY with a valid JSON array. No explanation, no markdown, no extra text.
+Each question object must have this structure:
+- For multiple-choice: {"type":"multiple-choice","text":"...","options":["A","B","C","D"],"correct":0}  (correct = index 0-3)
+- For cloze: {"type":"cloze","text":"The ___ went to ___","answers":["dog","school"]}
+- For free-response: {"type":"free-response","text":"...","hint":"..."}
+
+Return ONLY the JSON array, starting with [ and ending with ].`;
+
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) throw new Error('Risposta AI non valida. Riprova.');
+
+    const generated = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(generated) || generated.length === 0) throw new Error('Nessuna domanda generata.');
+
+    generated.forEach(q => { if (q.type) S.questions.push(q); });
+    renderQList();
+
+    statusEl.className = 'alert alert-success';
+    statusEl.textContent = `✅ ${generated.length} domande aggiunte! Controlla la lista a sinistra.`;
+
+    document.querySelectorAll('.q-type-btn').forEach(b => b.classList.remove('selected'));
+    S.currentQType = null;
+    setTimeout(() => { document.getElementById('add-form').innerHTML = ''; }, 2000);
+
+  } catch(err) {
+    statusEl.className = 'alert alert-danger';
+    statusEl.textContent = '❌ Errore: ' + err.message;
   }
 }
 
 async function addQuestion() {
   const type = S.currentQType;
-  if (!type) return;
+  if (!type || type === 'ai-generate') return;
   let q = { type };
 
   if (type === 'multiple-choice') {
@@ -1311,7 +1470,96 @@ async function submitAnswers() {
     answers: S.answers,
     submittedAt: Date.now()
   });
+  showStudentResults();
+}
+
+function showStudentResults() {
   showView('student-done');
+  const questions = S.activity.questions;
+  const answers = S.answers;
+
+  // Calcola punteggio solo per domande autovalutabili
+  let correct = 0, scorable = 0;
+  questions.forEach((q, i) => {
+    const a = answers[i];
+    if (q.type === 'multiple-choice') {
+      scorable++;
+      if (a === q.correct) correct++;
+    } else if (q.type === 'cloze') {
+      scorable++;
+      const allRight = (q.answers || []).every((ans, bi) =>
+        (Array.isArray(a) && a[bi] && a[bi].toLowerCase() === ans.toLowerCase())
+      );
+      if (allRight) correct++;
+    } else if (q.type === 'matching') {
+      scorable++;
+      const allRight = (q.left || []).every((_, li) => Array.isArray(a) && a[li] === li);
+      if (allRight) correct++;
+    } else if (q.type === 'listening' && q.question?.type === 'mc') {
+      scorable++;
+      if (a === q.question.correct) correct++;
+    }
+  });
+
+  const card = document.getElementById('student-score-card');
+  card.style.display = 'block';
+  if (scorable > 0) {
+    document.getElementById('score-num').textContent = correct;
+    document.getElementById('score-tot').textContent = scorable;
+  } else {
+    document.getElementById('score-num').textContent = '—';
+    document.getElementById('score-tot').textContent = '—';
+    document.getElementById('score-num').closest('div').querySelector('div:last-child').textContent = 'Valutazione docente';
+  }
+
+  // Dettaglio per domanda
+  const icons = { 'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧' };
+  document.getElementById('student-results-detail').innerHTML = questions.map((q, i) => {
+    const a = answers[i];
+    let status = '', detail = '';
+
+    if (q.type === 'multiple-choice') {
+      const ok = a === q.correct;
+      status = ok ? '✅' : '❌';
+      detail = ok ? `<em>${esc(q.options[a])}</em>` : `La tua risposta: <em>${a !== undefined ? esc(q.options[a]) : '—'}</em> · Corretta: <strong>${esc(q.options[q.correct])}</strong>`;
+    } else if (q.type === 'cloze') {
+      const wrongs = (q.answers || []).filter((ans, bi) => !(Array.isArray(a) && a[bi]?.toLowerCase() === ans.toLowerCase()));
+      status = wrongs.length === 0 ? '✅' : '⚠️';
+      detail = (q.answers || []).map((ans, bi) => {
+        const given = Array.isArray(a) ? (a[bi] || '—') : '—';
+        const ok2 = given.toLowerCase() === ans.toLowerCase();
+        return `Spazio ${bi+1}: <em>${esc(given)}</em> ${ok2 ? '✓' : `✗ (corr: <strong>${esc(ans)}</strong>)`}`;
+      }).join(' · ');
+    } else if (q.type === 'free-response') {
+      status = a ? '📝' : '—';
+      detail = a ? `<em>"${esc(a)}"</em>` : 'Nessuna risposta';
+    } else if (q.type === 'listening') {
+      const subQ = q.question || {};
+      if (subQ.type === 'mc') {
+        const ok = a === subQ.correct;
+        status = ok ? '✅' : '❌';
+        detail = ok ? '' : `Corretta: <strong>${esc((subQ.options||[])[subQ.correct])}</strong>`;
+      } else {
+        status = a ? '📝' : '—';
+        detail = a ? `<em>"${esc(a)}"</em>` : '';
+      }
+    } else if (q.type === 'matching') {
+      const allRight = (q.left||[]).every((_, li) => Array.isArray(a) && a[li] === li);
+      status = allRight ? '✅' : '⚠️';
+      detail = 'Controlla con il professore';
+    }
+
+    return `<div style="padding:12px 0; border-top:1px solid #f0ede8;">
+      <div style="display:flex; gap:10px; align-items:flex-start;">
+        <span style="font-size:16px; flex-shrink:0;">${status || '—'}</span>
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:12px; color:#888; margin-bottom:2px;">${icons[q.type]||''} Dom. ${i+1} · ${typeLabel(q.type)}</div>
+          <div style="font-size:13px; font-weight:500; margin-bottom:4px;">${esc(q.text || q.question?.text || '').substring(0,80)}${(q.text||'').length>80?'…':''}</div>
+          ${detail ? `<div style="font-size:12px; color:#666;">${detail}</div>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function switchDashTabById(id) {
