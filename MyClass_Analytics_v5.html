@@ -12753,25 +12753,41 @@ Rispondi SOLO con JSON valido:
 
         function _driveShowUpdateBanner(driveTime, localTime) {
             document.getElementById('driveBanner')?.remove();
+            document.getElementById('drive-reconnect-banner')?.remove();
             const banner = document.createElement('div');
             banner.id = 'driveBanner';
             banner.style.cssText = `
-                position:fixed; top:0; left:0; right:0; z-index:99999;
-                background:#1565c0; color:white;
-                padding:10px 20px; font-size:13px; font-weight:600;
-                display:flex; align-items:center; justify-content:center;
-                gap:14px; flex-wrap:wrap; box-shadow:0 2px 8px rgba(0,0,0,0.3);
+                position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+                z-index:99999; background:#1565c0; color:white;
+                padding:24px 28px; font-size:15px; font-weight:600;
+                border-radius:16px; max-width:90vw; width:480px;
+                box-shadow:0 8px 40px rgba(0,0,0,0.5);
+                display:flex; flex-direction:column; gap:16px; align-items:center;
+                text-align:center;
             `;
             banner.innerHTML = `
-                <span>☁️ Drive ha una versione più recente (${driveTime}) rispetto a questo dispositivo (${localTime}) — vuoi caricarla?</span>
-                <button onclick="driveLoadSilent()" style="background:white;color:#1565c0;border:none;border-radius:6px;padding:5px 14px;font-weight:700;cursor:pointer;font-size:13px;">📥 Sì, carica da Drive</button>
-                <button onclick="document.getElementById('driveBanner').remove()" style="background:rgba(255,255,255,0.25);color:white;border:none;border-radius:6px;padding:5px 12px;font-weight:600;cursor:pointer;font-size:13px;">No, tieni locale</button>
+                <div style="font-size:32px;">☁️</div>
+                <div>
+                    <strong>Backup più recente su Drive</strong><br>
+                    <span style="opacity:.85;font-size:13px;">Drive: ${driveTime} &nbsp;·&nbsp; Questo dispositivo: ${localTime}</span>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+                    <button onclick="driveLoadSilent()" style="background:white;color:#1565c0;border:none;border-radius:8px;padding:10px 22px;font-weight:800;cursor:pointer;font-size:15px;">📥 Carica da Drive</button>
+                    <button onclick="document.getElementById('driveBanner').remove()" style="background:rgba(255,255,255,0.2);color:white;border:1.5px solid rgba(255,255,255,.5);border-radius:8px;padding:10px 18px;font-weight:600;cursor:pointer;font-size:14px;">Continua locale</button>
+                </div>
             `;
-            document.body.prepend(banner);
+            // Sfondo semi-trasparente cliccabile
+            const backdrop = document.createElement('div');
+            backdrop.id = 'driveBannerBg';
+            backdrop.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,.45);';
+            backdrop.onclick = () => { banner.remove(); backdrop.remove(); };
+            document.body.appendChild(backdrop);
+            document.body.appendChild(banner);
         }
 
         async function driveLoadSilent() {
             document.getElementById('driveBanner')?.remove();
+            document.getElementById('driveBannerBg')?.remove();
             await driveLoad();
         }
 
@@ -12954,9 +12970,18 @@ Rispondi SOLO con JSON valido:
                     ? new Date(localSaved).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
                     : 'mai salvato su questo dispositivo';
 
-                // Soglia 30 secondi per evitare falsi positivi da piccoli disallineamenti
                 if (driveModified > localSaved + 30000) {
-                    _driveShowUpdateBanner(driveTime, localTime);
+                    // Rimuovi eventuali banner di riconnessione ancora presenti
+                    document.getElementById('drive-reconnect-banner')?.remove();
+
+                    if (!localSaved) {
+                        // Primo accesso su questo dispositivo: carica automaticamente
+                        _driveStatusMsg('📥 Primo accesso — carico dati da Drive...', '#1565c0');
+                        await driveLoad();
+                    } else {
+                        // Dati locali esistono ma Drive è più aggiornato: chiedi
+                        _driveShowUpdateBanner(driveTime, localTime);
+                    }
                 } else {
                     _driveStatusMsg(`✅ Connesso — backup Drive del ${driveTime} (locale: ${localTime})`, '#34a853');
                 }
