@@ -295,6 +295,21 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--primary); 
 .class-card .cc-meta { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
 .student-chip-list { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
 .student-chip { font-size: 11px; background: var(--primary-light); color: var(--primary); padding: 3px 8px; border-radius: 20px; font-weight: 700; }
+
+/* DRAG & DROP */
+.dd-word-bank { display:flex; flex-wrap:wrap; gap:8px; padding:14px; background:var(--primary-light); border-radius:12px; margin-bottom:16px; min-height:52px; border:2px dashed var(--primary); }
+.dd-chip { padding:6px 14px; background:white; border:2px solid var(--primary); border-radius:20px; font-size:14px; font-weight:700; cursor:grab; color:var(--primary); transition:all 0.15s; user-select:none; display:inline-block; }
+.dd-chip:hover { background:var(--primary); color:white; }
+.dd-chip.used { opacity:0.3; pointer-events:none; }
+.dd-blank { display:inline-flex; min-width:110px; border-bottom:3px solid var(--primary); padding:2px 8px; margin:0 4px; text-align:center; font-weight:700; color:var(--primary); vertical-align:bottom; cursor:pointer; background:var(--primary-light); border-radius:6px 6px 0 0; font-size:15px; min-height:28px; align-items:center; justify-content:center; font-family:inherit; }
+.dd-blank.dragover { background:var(--primary); color:white; }
+.dd-sentence { font-size:16px; line-height:3; margin-bottom:4px; }
+.ro-chip { padding:8px 16px; background:white; border:2px solid var(--primary); border-radius:20px; font-size:14px; font-weight:700; cursor:grab; color:var(--primary); transition:all 0.15s; user-select:none; display:inline-block; }
+.ro-chip:hover, .ro-chip.placed { background:var(--primary-light); }
+.ro-chip.dragging { opacity:0.4; }
+.ro-drop-zone { min-height:52px; border:2.5px dashed var(--border); border-radius:12px; padding:10px 14px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; background:white; transition:all 0.15s; }
+.ro-drop-zone.dragover { border-color:var(--primary); background:var(--primary-light); }
+.ro-word-bank { display:flex; flex-wrap:wrap; gap:8px; padding:14px; background:var(--primary-light); border-radius:12px; margin-bottom:14px; border:2px dashed var(--primary); min-height:52px; }
 </style>
 </head>
 <body>
@@ -435,7 +450,7 @@ const CONFIG = {
     <div class="logo"><div class="logo-dot"></div> LiveLearn</div>
     <div class="flex gap-8">
       <button class="btn btn-ghost btn-sm" onclick="showView('teacher-dashboard')">← Dashboard</button>
-      <button class="btn btn-primary btn-sm" onclick="saveActivity()">💾 Salva attività</button>
+      <button class="btn btn-primary btn-sm" id="btn-save-activity" onclick="saveActivity()">💾 Salva attività</button>
     </div>
   </div>
   <div class="content-wide">
@@ -455,6 +470,8 @@ const CONFIG = {
           <div class="q-type-btn" onclick="selectQType('cloze', this)">✏️ Cloze / Fill</div>
           <div class="q-type-btn" onclick="selectQType('matching', this)">🔗 Matching</div>
           <div class="q-type-btn" onclick="selectQType('free-response', this)">💬 Risposta libera</div>
+          <div class="q-type-btn" onclick="selectQType('drag-drop', this)">🎯 Drag & Drop</div>
+          <div class="q-type-btn" onclick="selectQType('reorder', this)">🔀 Riordina frasi</div>
           <div class="q-type-btn wide" onclick="selectQType('listening', this)">🎧 Listening (audio + domande)</div>
           <div class="q-type-btn wide" style="background:#e8fdf5; border-color:#16a37f; color:#16a37f;" onclick="selectQType('ai-generate', this)">🤖 Genera con AI da testo/PDF</div>
         </div>
@@ -1006,7 +1023,32 @@ function renderAddForm(type) {
       <div class="form-group"><label>⭐ Punti</label><input type="number" id="qf-points" value="10" min="1" max="100" style="width:80px;"></div>
       <button class="btn btn-primary btn-block" onclick="addQuestion()">+ Aggiungi</button>`;
     renderListeningSubForm();
-  } else if (type === 'ai-generate') {
+  } else if (type === 'drag-drop') {
+    el.innerHTML = `
+      <div class="form-group"><label>Istruzione</label><input type="text" id="qf-text" placeholder="Choose the correct word to complete each sentence."></div>
+      <div class="form-group">
+        <label>Frasi con spazi (usa ___ per ogni spazio, una per riga)</label>
+        <textarea id="qf-dd-sentences" rows="5" placeholder="The temperature in Adelaide is ___.\nThere have been ___ in Queensland.\nExperts say it is an effect of ___."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Parole da trascinare (una per riga — includi anche distrattori)</label>
+        <textarea id="qf-dd-words" rows="4" placeholder="47 degrees Celsius\nfloods\nglobal warming\nhottest January\ndroughts"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Risposte corrette per ogni spazio (una per riga, in ordine)</label>
+        <textarea id="qf-answers" rows="4" placeholder="47 degrees Celsius\nfloods\nglobal warming"></textarea>
+      </div>
+      <div class="form-group"><label>⭐ Punti</label><input type="number" id="qf-points" value="10" min="1" max="100" style="width:80px;"></div>
+      <button class="btn btn-primary btn-block" onclick="addQuestion()">+ Aggiungi</button>`;
+  } else if (type === 'reorder') {
+    el.innerHTML = `
+      <div class="form-group"><label>Istruzione</label><input type="text" id="qf-text" placeholder="Put the words in the correct order to make a sentence."></div>
+      <div class="form-group">
+        <label>Frasi da riordinare (una per riga — scrivi la frase corretta)</label>
+        <textarea id="qf-reorder-sentences" rows="5" placeholder="She has just bought a new car.\nHave you ever been to London?\nI haven't seen him since Monday."></textarea>
+      </div>
+      <div class="form-group"><label>⭐ Punti</label><input type="number" id="qf-points" value="10" min="1" max="100" style="width:80px;"></div>
+      <button class="btn btn-primary btn-block" onclick="addQuestion()">+ Aggiungi</button>`;
     const savedKey = localStorage.getItem('gemini_api_key') || '';
     el.innerHTML = `
       <div class="form-group">
@@ -1025,7 +1067,7 @@ function renderAddForm(type) {
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
         <div class="form-group">
           <label>Numero domande</label>
-          <select id="qf-ai-count"><option value="3">3</option><option value="5" selected>5</option><option value="8">8</option><option value="10">10</option><option value="15">15</option><option value="20">20</option></select>
+          <select id="qf-ai-count"><option value="auto" selected>Auto (dal contenuto)</option><option value="5">5</option><option value="10">10</option><option value="15">15</option><option value="20">20</option><option value="30">30</option></select>
         </div>
         <div class="form-group">
           <label>Tipo domande</label>
@@ -1034,6 +1076,8 @@ function renderAddForm(type) {
             <option value="multiple-choice">Scelta multipla</option>
             <option value="cloze">Cloze / Fill in the blanks</option>
             <option value="matching">Matching</option>
+            <option value="drag-drop">Drag & Drop</option>
+            <option value="reorder">Riordina frasi</option>
             <option value="free-response">Risposta libera</option>
           </select>
         </div>
@@ -1056,43 +1100,55 @@ function loadAIFile(event) {
 async function generateWithAI() {
   const apiKey = document.getElementById('qf-apikey')?.value.trim();
   const text = document.getElementById('qf-ai-text')?.value.trim();
-  const count = document.getElementById('qf-ai-count')?.value || '5';
+  const countEl = document.getElementById('qf-ai-count');
+  const countVal = countEl?.value || 'auto';
   const types = document.getElementById('qf-ai-types')?.value || 'mixed';
   if (!apiKey) return alert('Inserisci la chiave API Gemini.');
   if (!text || text.length < 10) return alert('Inserisci un testo sorgente.');
   localStorage.setItem('gemini_api_key', apiKey);
   const statusEl = document.getElementById('qf-ai-status');
-  statusEl.style.display = 'block'; statusEl.className = 'alert alert-info'; statusEl.textContent = '⏳ Generazione in corso…';
+  statusEl.style.display = 'block'; statusEl.className = 'alert alert-info';
+  statusEl.textContent = '⏳ Generazione in corso…';
 
   const typeInstr = {
     'mixed': 'a mix of multiple-choice, cloze, matching, and free-response',
-    'multiple-choice': 'multiple-choice (4 options each)',
+    'multiple-choice': 'multiple-choice (3-4 options each)',
     'cloze': 'fill-in-the-blank / cloze using ___ for each blank',
-    'matching': 'matching (colonna A + colonna B)',
-    'free-response': 'open-ended short answer'
+    'matching': 'matching (colonna A + colonna B, 5-7 pairs)',
+    'free-response': 'open-ended short answer',
+    'drag-drop': 'drag-and-drop word bank (sentences with ___ blanks + word bank including distractors)',
+    'reorder': 'sentence reorder (complete correct sentences to be scrambled by the app)'
   }[types] || 'a mix of types';
 
+  const countInstr = countVal === 'auto'
+    ? 'Generate AS MANY questions as the content naturally allows — if the content has 30 items, make 30 questions. Do not artificially limit the count.'
+    : `Generate exactly ${countVal} questions.`;
+
   const prompt = `You are an experienced English teacher for Italian middle school students (scuola media, ages 11-14).
-Create exactly ${count} quiz questions of type: ${typeInstr}.
-Base the questions on this content/topic:
+${countInstr}
+Question type: ${typeInstr}.
+Base the questions on this content:
 """
-${text.substring(0, 3000)}
+${text.substring(0, 6000)}
 """
 
-IMPORTANT rules:
-- Questions must be appropriate for middle school English learners (A2-B1 level)
-- For cloze: use complete sentences with ___ for blanks (like "I can't call you — my phone has no ___.")
-- For matching: provide 5-7 pairs, colonna A has incomplete phrases, colonna B has completions
-- For multiple-choice: 3-4 options, only one correct, mark correct as index 0-3
-- Each question should have a default points value of 10
-- No limits on total number of questions
+RULES:
+- Level: A2-B1
+- For cloze: use ___ for blanks in complete sentences
+- For matching: colonna A = incomplete phrases, colonna B = completions (same count)
+- For drag-drop: sentences with ___ blanks + a words array (answers + 2-3 distractors) + answers array (correct answers in order)
+- For reorder: sentences array with complete correct sentences (the app will scramble the words)
+- Each question gets "points": 10 by default
+- No limit on total questions — generate as many as the content allows
 
-Respond ONLY with a valid JSON array. No markdown, no explanation, no backticks.
+Respond ONLY with a valid JSON array. No markdown, no backticks, no explanation.
 Formats:
-- multiple-choice: {"type":"multiple-choice","text":"Choose the correct answer:...","options":["a","b","c","d"],"correct":0,"points":10}
-- cloze: {"type":"cloze","text":"I can't call you — my phone has no ___.","answers":["battery"],"points":10}
-- matching: {"type":"matching","text":"Match the verbs with their completions.","left":["click","connect","charge"],"right":["on a link","to the wi-fi","the battery"],"points":10}
-- free-response: {"type":"free-response","text":"...","hint":"...","points":10}
+- {"type":"multiple-choice","text":"...","options":["a","b","c","d"],"correct":0,"points":10}
+- {"type":"cloze","text":"My phone has no ___.","answers":["battery"],"points":10}
+- {"type":"matching","text":"Match...","left":["click","connect"],"right":["on a link","to the wi-fi"],"points":10}
+- {"type":"free-response","text":"...","hint":"...","points":10}
+- {"type":"drag-drop","text":"Choose the correct word.","sentences":["The temperature is ___.","There have been ___."],"words":["47 degrees","floods","droughts","hot"],"answers":["47 degrees","floods"],"points":10}
+- {"type":"reorder","text":"Put the words in order.","sentences":["She has just bought a new car.","Have you ever been to London?"],"points":10}
 
 Return ONLY the JSON array starting with [ and ending with ].`;
 
@@ -1120,7 +1176,6 @@ Return ONLY the JSON array starting with [ and ending with ].`;
     statusEl.textContent = '❌ ' + err.message;
   }
 }
-
 function renderListeningSubForm() {
   const sub = document.getElementById('qf-lsubtype')?.value || 'multiple-choice';
   const el = document.getElementById('qf-listening-subform');
@@ -1178,8 +1233,21 @@ async function addQuestion() {
     if (!text) return alert('Inserisci la domanda');
     q = { type, text, hint: v('qf-hint'), points: parseInt(v('qf-points'))||10 };
 
+  } else if (type === 'drag-drop') {
+    const text = v('qf-text');
+    const sentences = v('qf-dd-sentences').split('\n').map(s=>s.trim()).filter(Boolean);
+    const words = v('qf-dd-words').split('\n').map(s=>s.trim()).filter(Boolean);
+    const answers = v('qf-answers').split('\n').map(s=>s.trim()).filter(Boolean);
+    if (!sentences.length || !words.length || !answers.length) return alert('Compila frasi, parole e risposte.');
+    q = { type, text, sentences, words, answers, points: parseInt(v('qf-points'))||10 };
+
+  } else if (type === 'reorder') {
+    const text = v('qf-text');
+    const sentences = v('qf-reorder-sentences').split('\n').map(s=>s.trim()).filter(Boolean);
+    if (!sentences.length) return alert('Inserisci almeno una frase.');
+    q = { type, text, sentences, points: parseInt(v('qf-points'))||10 };
+
   } else if (type === 'listening') {
-    const ttsText = v('qf-tts');
     const audioFile = document.getElementById('qf-audio')?.files[0];
     const subtype = v('qf-lsubtype') || 'multiple-choice';
     let audioData = null;
@@ -1263,6 +1331,8 @@ function qPreview(q) {
   if (q.type === 'matching') return 'Coppie: ' + (q.left || []).map(esc).join(', ');
   if (q.type === 'free-response') return esc(q.text);
   if (q.type === 'listening') return '🎧 ' + (q.question?.text ? esc(q.question.text) : 'Listening');
+  if (q.type === 'drag-drop') return '🎯 ' + (q.sentences||[]).length + ' frase/i · parole: ' + (q.words||[]).join(', ');
+  if (q.type === 'reorder') return '🔀 ' + (q.sentences||[]).length + ' frase/i da riordinare';
   return '';
 }
 
@@ -1375,7 +1445,7 @@ async function saveActivity() {
   if (S.questions.length === 0) return alert('Aggiungi almeno una domanda');
   if (!db) return alert('⚠️ Firebase non configurato.');
 
-  const btn = document.querySelector('#view-teacher-builder .btn-primary');
+  const btn = document.getElementById('btn-save-activity');
   if (btn) { btn.textContent = '⏳ Salvataggio…'; btn.disabled = true; }
 
   const reset = () => { if (btn) { btn.textContent = '💾 Salva attività'; btn.disabled = false; } };
@@ -1873,6 +1943,18 @@ function evaluateAnswer(q, a) {
     if (sub === 'matching') { const ok=(inner.left||[]).every((_,li)=>Array.isArray(a)&&a[li]===li); return {scorable:true,correct:ok,points:pts,detail:ok?'':'Alcune coppie non erano corrette.'}; }
     return {scorable:false,correct:false,points:0,detail:''};
   }
+  if (q.type === 'drag-drop') {
+    if (!Array.isArray(a)) return {scorable:true,correct:false,points:pts,detail:'Nessuna risposta.'};
+    const ok = (q.answers||[]).every((ans,i) => (a[i]||'').toLowerCase() === ans.toLowerCase());
+    const detail = ok ? '' : (q.answers||[]).map((ans,i) => 'Sp.'+(i+1)+': '+esc(a[i]||'—')+' → <strong>'+esc(ans)+'</strong>').join(' · ');
+    return {scorable:true,correct:ok,points:pts,detail};
+  }
+  if (q.type === 'reorder') {
+    if (!Array.isArray(a)) return {scorable:true,correct:false,points:pts,detail:'Nessuna risposta.'};
+    const ok = (q.sentences||[]).every((s,i) => (a[i]||'').trim().toLowerCase() === s.trim().toLowerCase());
+    const detail = ok ? '' : (q.sentences||[]).map((s,i) => 'Fr.'+(i+1)+': <strong>'+esc(s)+'</strong>').join(' · ');
+    return {scorable:true,correct:ok,points:pts,detail};
+  }
   return {scorable:false,correct:false,points:0,detail:''};
 }
 
@@ -2027,6 +2109,49 @@ function buildQuestionHTML(q, i) {
     }
     return `<div class="question-card">${qLabel}${audio}${qPart}</div>`;
   }
+  if (q.type === 'drag-drop') {
+    const shuffledWords = [...q.words].sort(() => Math.random() - 0.5);
+    S['ddState_' + i] = { filled: new Array(q.sentences.reduce((n,s) => n + (s.match(/___/g)||[]).length, 0)).fill(null), words: shuffledWords };
+    let blankIdx = 0;
+    const sentencesHTML = q.sentences.map(s => {
+      const html = esc(s).replace(/___/g, () => {
+        const bi = blankIdx++;
+        return `<span class="dd-blank" id="ddblank-${i}-${bi}" data-qi="${i}" data-bi="${bi}" onclick="ddBlankClick(${i},${bi})" ondragover="event.preventDefault();this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')" ondrop="ddDrop(event,${i},${bi})">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>`;
+      });
+      return `<div class="dd-sentence">${html}</div>`;
+    }).join('');
+    const wordsHTML = shuffledWords.map((w,wi) =>
+      `<span class="dd-chip" id="ddchip-${i}-${wi}" draggable="true" ondragstart="ddDragStart(event,${i},${wi})" onclick="ddChipClick(${i},${wi})">${esc(w)}</span>`
+    ).join('');
+    return `<div class="question-card">${qLabel}
+      ${q.text ? `<div class="q-text">${esc(q.text)}</div>` : ''}
+      <div class="dd-word-bank" id="dd-bank-${i}">${wordsHTML}</div>
+      <div>${sentencesHTML}</div>
+    </div>`;
+  }
+
+  if (q.type === 'reorder') {
+    S['roState_' + i] = q.sentences.map(() => []);
+    const html = q.sentences.map((s, si) => {
+      const words = s.split(' ').filter(Boolean).sort(() => Math.random() - 0.5);
+      S['roState_' + i][si] = { pool: words, placed: [] };
+      const chips = words.map((w, wi) =>
+        `<span class="ro-chip" id="rochip-${i}-${si}-${wi}" draggable="true" ondragstart="roDragStart(event,${i},${si},${wi},'pool')" onclick="roChipClick(${i},${si},${wi},'pool')">${esc(w)}</span>`
+      ).join('');
+      return `<div style="margin-bottom:20px;">
+        <div class="ro-word-bank" id="ro-bank-${i}-${si}">${chips}</div>
+        <div style="font-size:11px;font-weight:800;color:var(--muted);margin-bottom:6px;">LA TUA RISPOSTA:</div>
+        <div class="ro-drop-zone" id="ro-zone-${i}-${si}" ondragover="event.preventDefault();this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')" ondrop="roDrop(event,${i},${si})">
+          <span style="color:var(--muted);font-size:13px;" id="ro-placeholder-${i}-${si}">Trascina le parole qui…</span>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="question-card">${qLabel}
+      ${q.text ? `<div class="q-text">${esc(q.text)}</div>` : ''}
+      ${html}
+    </div>`;
+  }
+
   return '';
 }
 
@@ -2037,6 +2162,115 @@ function speakTTS(qi) {
   const u = new SpeechSynthesisUtterance(q.ttsText);
   u.lang = 'en-GB'; u.rate = 0.85;
   speechSynthesis.speak(u);
+}
+
+// ── Drag & Drop ─────────────────────────────────────────────
+let _ddDragging = null;
+
+function ddDragStart(e, qi, wi) { _ddDragging = {qi, wi}; e.dataTransfer.effectAllowed = 'move'; }
+
+function ddDrop(e, qi, bi) {
+  e.preventDefault();
+  e.target.classList.remove('dragover');
+  if (!_ddDragging || _ddDragging.qi !== qi) return;
+  ddPlace(qi, _ddDragging.wi, bi); _ddDragging = null;
+}
+
+function ddChipClick(qi, wi) {
+  const state = S['ddState_' + qi]; if (!state) return;
+  if (state.selectedChip === wi) {
+    state.selectedChip = null;
+    document.querySelectorAll('.dd-chip').forEach(c => c.style.outline = '');
+    return;
+  }
+  state.selectedChip = wi;
+  document.querySelectorAll('.dd-chip').forEach(c => c.style.outline = '');
+  const chip = document.getElementById('ddchip-'+qi+'-'+wi);
+  if (chip) chip.style.outline = '3px solid var(--warning)';
+}
+
+function ddBlankClick(qi, bi) {
+  const state = S['ddState_' + qi]; if (!state) return;
+  if (state.filled[bi]) {
+    const word = state.filled[bi]; state.filled[bi] = null;
+    const wi = state.words.indexOf(word);
+    if (wi >= 0) { const c = document.getElementById('ddchip-'+qi+'-'+wi); if(c){c.classList.remove('used');c.style.outline='';} }
+    const blank = document.getElementById('ddblank-'+qi+'-'+bi);
+    if (blank) { blank.innerHTML = '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'; blank.classList.remove('filled'); }
+    updateDDAnswer(qi); return;
+  }
+  if (state.selectedChip != null) {
+    ddPlace(qi, state.selectedChip, bi);
+    state.selectedChip = null;
+    document.querySelectorAll('.dd-chip').forEach(c => c.style.outline = '');
+  }
+}
+
+function ddPlace(qi, wi, bi) {
+  const state = S['ddState_' + qi]; if (!state) return;
+  const word = state.words[wi];
+  const prevBi = state.filled.indexOf(word);
+  if (prevBi >= 0 && prevBi !== bi) {
+    state.filled[prevBi] = null;
+    const pb = document.getElementById('ddblank-'+qi+'-'+prevBi);
+    if (pb) { pb.innerHTML = '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'; pb.classList.remove('filled'); }
+  }
+  if (state.filled[bi]) {
+    const old = state.filled[bi]; const oldWi = state.words.indexOf(old);
+    if (oldWi >= 0) { const c = document.getElementById('ddchip-'+qi+'-'+oldWi); if(c) c.classList.remove('used'); }
+  }
+  state.filled[bi] = word;
+  const chip = document.getElementById('ddchip-'+qi+'-'+wi); if (chip) chip.classList.add('used');
+  const blank = document.getElementById('ddblank-'+qi+'-'+bi);
+  if (blank) { blank.textContent = word; blank.classList.add('filled'); }
+  updateDDAnswer(qi);
+}
+
+function updateDDAnswer(qi) {
+  const state = S['ddState_' + qi]; if (!state) return;
+  S.answers[qi] = [...state.filled];
+}
+
+// ── Reorder ─────────────────────────────────────────────────
+let _roDragging = null;
+
+function roDragStart(e, qi, si, wi, zone) { _roDragging = {qi, si, wi, zone}; e.dataTransfer.effectAllowed = 'move'; }
+
+function roDrop(e, qi, si) {
+  e.preventDefault();
+  const z = document.getElementById('ro-zone-'+qi+'-'+si); if(z) z.classList.remove('dragover');
+  if (!_roDragging || _roDragging.qi !== qi || _roDragging.si !== si) return;
+  if (_roDragging.zone === 'pool') roPoolToZone(qi, si, _roDragging.wi);
+  _roDragging = null;
+}
+
+function roPoolToZone(qi, si, wi) {
+  const st = S['roState_'+qi]; if (!st) return;
+  const word = st[si].pool.splice(wi, 1)[0]; if (!word) return;
+  st[si].placed.push(word); roRender(qi, si); updateROAnswer(qi);
+}
+
+function roRemoveFromZone(qi, si, wi) {
+  const st = S['roState_'+qi]; if (!st) return;
+  const word = st[si].placed.splice(wi, 1)[0]; if (!word) return;
+  st[si].pool.push(word); roRender(qi, si); updateROAnswer(qi);
+}
+
+function roRender(qi, si) {
+  const st = S['roState_'+qi][si];
+  const bank = document.getElementById('ro-bank-'+qi+'-'+si);
+  const zone = document.getElementById('ro-zone-'+qi+'-'+si);
+  if (bank) bank.innerHTML = st.pool.map((w,wi) =>
+    '<span class="ro-chip" draggable="true" ondragstart="roDragStart(event,'+qi+','+si+','+wi+',\'pool\')" onclick="roPoolToZone('+qi+','+si+','+wi+')">'+esc(w)+'</span>'
+  ).join('') || '<span style="color:var(--muted);font-size:13px;">✓ Tutte usate</span>';
+  if (zone) zone.innerHTML = st.placed.map((w,wi) =>
+    '<span class="ro-chip placed" onclick="roRemoveFromZone('+qi+','+si+','+wi+')">'+esc(w)+'</span>'
+  ).join('') || '<span style="color:var(--muted);font-size:13px;">Trascina o clicca le parole qui…</span>';
+}
+
+function updateROAnswer(qi) {
+  const st = S['roState_'+qi]; if (!st) return;
+  S.answers[qi] = st.map(s => s.placed.join(' '));
 }
 
 function pickOption(idx) {
@@ -2383,7 +2617,7 @@ function esc(s) { if (!s) return ''; return String(s).replace(/&/g,'&amp;').repl
 function fmtDate(ts) { if (!ts) return ''; return new Date(ts).toLocaleDateString('it-IT', {day:'2-digit', month:'short', year:'numeric'}); }
 function fileToBase64(file) { return new Promise((res,rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); }); }
 function typeLabel(t) {
-  return { 'multiple-choice':'Scelta multipla','cloze':'Cloze','matching':'Matching','free-response':'Risposta libera','listening':'Listening' }[t] || t;
+  return { 'multiple-choice':'Scelta multipla','cloze':'Cloze','matching':'Matching','free-response':'Risposta libera','listening':'Listening','drag-drop':'Drag & Drop','reorder':'Riordina' }[t] || t;
 }
 </script>
 </body>
