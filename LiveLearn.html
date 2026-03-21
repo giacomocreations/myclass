@@ -455,7 +455,7 @@ const CONFIG = {
           <div class="q-type-btn" onclick="selectQType('cloze', this)">✏️ Cloze / Fill</div>
           <div class="q-type-btn" onclick="selectQType('matching', this)">🔗 Matching</div>
           <div class="q-type-btn" onclick="selectQType('free-response', this)">💬 Risposta libera</div>
-          <div class="q-type-btn wide" onclick="selectQType('listening', this)">🎧 Listening</div>
+          <div class="q-type-btn wide" onclick="selectQType('listening', this)">🎧 Listening (audio + domande)</div>
           <div class="q-type-btn wide" style="background:#e8fdf5; border-color:#16a37f; color:#16a37f;" onclick="selectQType('ai-generate', this)">🤖 Genera con AI da testo/PDF</div>
         </div>
         <div id="add-form" class="add-form-container"></div>
@@ -983,25 +983,29 @@ function renderAddForm(type) {
       <button class="btn btn-primary btn-block" onclick="addQuestion()">+ Aggiungi</button>`;
   } else if (type === 'listening') {
     el.innerHTML = `
-      <div class="form-group"><label>Testo per sintesi vocale (TTS)</label><textarea id="qf-tts" rows="4" placeholder="The text the browser will read aloud in English…"></textarea></div>
-      <p class="text-muted mb-12" style="font-size:12px;">— oppure carica un file audio —</p>
-      <div class="form-group"><label>File audio (mp3/wav, max 5MB)</label><input type="file" id="qf-audio" accept="audio/*"></div>
-      <div class="divider"></div>
-      <div class="form-group"><label>Domanda di comprensione</label><textarea id="qf-text" rows="2" placeholder="What did the speaker do last summer?"></textarea></div>
-      <div class="form-group"><label>Tipo di risposta</label>
-        <select id="qf-ltype" onchange="document.getElementById('qf-mc-opts').style.display=this.value==='mc'?'block':'none'">
-          <option value="free">Risposta libera</option>
-          <option value="mc">Scelta multipla</option>
+      <div style="background:var(--primary-light);border-radius:10px;padding:14px;margin-bottom:14px;border:2px solid var(--primary);">
+        <div style="font-size:12px;font-weight:800;color:var(--primary);margin-bottom:10px;">🎧 AUDIO</div>
+        <div class="form-group"><label>Testo per sintesi vocale (TTS — verrà letto ad alta voce)</label>
+          <textarea id="qf-tts" rows="4" placeholder="The text the browser will read aloud… Gli studenti possono riascoltarlo più volte."></textarea>
+        </div>
+        <p class="text-muted" style="font-size:12px;margin:-8px 0 10px;">— oppure carica un file audio —</p>
+        <div class="form-group" style="margin-bottom:0;"><label>File audio (mp3/wav, max 5MB)</label>
+          <input type="file" id="qf-audio" accept="audio/*">
+        </div>
+      </div>
+      <div style="font-size:12px;font-weight:800;color:var(--muted);margin-bottom:10px;">TIPO DI DOMANDA</div>
+      <div class="form-group"><label>Tipo</label>
+        <select id="qf-lsubtype" onchange="renderListeningSubForm()">
+          <option value="multiple-choice">Scelta multipla</option>
+          <option value="cloze">Cloze / Fill in the blanks</option>
+          <option value="matching">Matching</option>
+          <option value="free-response">Risposta libera</option>
         </select>
       </div>
-      <div id="qf-mc-opts" style="display:none">
-        <div class="form-group"><label>Opzione A</label><input type="text" id="qf-la"></div>
-        <div class="form-group"><label>Opzione B</label><input type="text" id="qf-lb"></div>
-        <div class="form-group"><label>Opzione C</label><input type="text" id="qf-lc"></div>
-        <div class="form-group"><label>Corretta</label><select id="qf-lcorr"><option value="0">A</option><option value="1">B</option><option value="2">C</option></select></div>
-      </div>
+      <div id="qf-listening-subform"></div>
       <div class="form-group"><label>⭐ Punti</label><input type="number" id="qf-points" value="10" min="1" max="100" style="width:80px;"></div>
       <button class="btn btn-primary btn-block" onclick="addQuestion()">+ Aggiungi</button>`;
+    renderListeningSubForm();
   } else if (type === 'ai-generate') {
     const savedKey = localStorage.getItem('gemini_api_key') || '';
     el.innerHTML = `
@@ -1021,14 +1025,15 @@ function renderAddForm(type) {
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
         <div class="form-group">
           <label>Numero domande</label>
-          <select id="qf-ai-count"><option value="3">3</option><option value="5" selected>5</option><option value="8">8</option><option value="10">10</option></select>
+          <select id="qf-ai-count"><option value="3">3</option><option value="5" selected>5</option><option value="8">8</option><option value="10">10</option><option value="15">15</option><option value="20">20</option></select>
         </div>
         <div class="form-group">
           <label>Tipo domande</label>
           <select id="qf-ai-types">
-            <option value="mixed">Misto</option>
+            <option value="mixed">Misto (consigliato)</option>
             <option value="multiple-choice">Scelta multipla</option>
-            <option value="cloze">Cloze</option>
+            <option value="cloze">Cloze / Fill in the blanks</option>
+            <option value="matching">Matching</option>
             <option value="free-response">Risposta libera</option>
           </select>
         </div>
@@ -1053,68 +1058,93 @@ async function generateWithAI() {
   const text = document.getElementById('qf-ai-text')?.value.trim();
   const count = document.getElementById('qf-ai-count')?.value || '5';
   const types = document.getElementById('qf-ai-types')?.value || 'mixed';
-
   if (!apiKey) return alert('Inserisci la chiave API Gemini.');
-  if (!text || text.length < 20) return alert('Inserisci un testo sorgente (almeno 20 caratteri).');
-
+  if (!text || text.length < 10) return alert('Inserisci un testo sorgente.');
   localStorage.setItem('gemini_api_key', apiKey);
-
   const statusEl = document.getElementById('qf-ai-status');
-  statusEl.style.display = 'block';
-  statusEl.textContent = '⏳ Generazione in corso… (10-20 secondi)';
+  statusEl.style.display = 'block'; statusEl.className = 'alert alert-info'; statusEl.textContent = '⏳ Generazione in corso…';
 
   const typeInstr = {
-    'mixed': 'a mix of multiple choice and free response questions',
-    'multiple-choice': 'multiple choice questions (4 options each)',
-    'cloze': 'fill-in-the-blank (cloze) questions using ___ for blanks',
-    'free-response': 'open-ended questions requiring short written answers'
-  }[types];
+    'mixed': 'a mix of multiple-choice, cloze, matching, and free-response',
+    'multiple-choice': 'multiple-choice (4 options each)',
+    'cloze': 'fill-in-the-blank / cloze using ___ for each blank',
+    'matching': 'matching (colonna A + colonna B)',
+    'free-response': 'open-ended short answer'
+  }[types] || 'a mix of types';
 
-  const prompt = `You are helping an English language teacher create quiz questions for middle school students.
-Based on the following text, create exactly ${count} ${typeInstr} in English (unless the text is in Italian, in which case use Italian).
-
-Text:
+  const prompt = `You are an experienced English teacher for Italian middle school students (scuola media, ages 11-14).
+Create exactly ${count} quiz questions of type: ${typeInstr}.
+Base the questions on this content/topic:
 """
 ${text.substring(0, 3000)}
 """
 
-Respond ONLY with a valid JSON array. No explanation, no markdown, no extra text.
-Each question object must have this structure:
-- For multiple-choice: {"type":"multiple-choice","text":"...","options":["A","B","C","D"],"correct":0}  (correct = index 0-3)
-- For cloze: {"type":"cloze","text":"The ___ went to ___","answers":["dog","school"]}
-- For free-response: {"type":"free-response","text":"...","hint":"..."}
+IMPORTANT rules:
+- Questions must be appropriate for middle school English learners (A2-B1 level)
+- For cloze: use complete sentences with ___ for blanks (like "I can't call you — my phone has no ___.")
+- For matching: provide 5-7 pairs, colonna A has incomplete phrases, colonna B has completions
+- For multiple-choice: 3-4 options, only one correct, mark correct as index 0-3
+- Each question should have a default points value of 10
+- No limits on total number of questions
 
-Return ONLY the JSON array, starting with [ and ending with ].`;
+Respond ONLY with a valid JSON array. No markdown, no explanation, no backticks.
+Formats:
+- multiple-choice: {"type":"multiple-choice","text":"Choose the correct answer:...","options":["a","b","c","d"],"correct":0,"points":10}
+- cloze: {"type":"cloze","text":"I can't call you — my phone has no ___.","answers":["battery"],"points":10}
+- matching: {"type":"matching","text":"Match the verbs with their completions.","left":["click","connect","charge"],"right":["on a link","to the wi-fi","the battery"],"points":10}
+- free-response: {"type":"free-response","text":"...","hint":"...","points":10}
+
+Return ONLY the JSON array starting with [ and ending with ].`;
 
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({contents:[{parts:[{text:prompt}]}]})
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const jsonMatch = raw.match(/\[[\s\S]*\]/);
     if (!jsonMatch) throw new Error('Risposta AI non valida. Riprova.');
-
     const generated = JSON.parse(jsonMatch[0]);
-    if (!Array.isArray(generated) || generated.length === 0) throw new Error('Nessuna domanda generata.');
-
-    generated.forEach(q => { if (q.type) S.questions.push(q); });
+    if (!Array.isArray(generated) || !generated.length) throw new Error('Nessuna domanda generata.');
+    generated.forEach(q => { if (q.type) { if (!q.points) q.points = 10; S.questions.push(q); } });
     renderQList();
-
     statusEl.className = 'alert alert-success';
-    statusEl.textContent = `✅ ${generated.length} domande aggiunte! Controlla la lista a sinistra.`;
-
+    statusEl.textContent = '✅ ' + generated.length + ' domande aggiunte!';
     document.querySelectorAll('.q-type-btn').forEach(b => b.classList.remove('selected'));
     S.currentQType = null;
     setTimeout(() => { document.getElementById('add-form').innerHTML = ''; }, 2000);
-
   } catch(err) {
     statusEl.className = 'alert alert-danger';
-    statusEl.textContent = '❌ Errore: ' + err.message;
+    statusEl.textContent = '❌ ' + err.message;
+  }
+}
+
+function renderListeningSubForm() {
+  const sub = document.getElementById('qf-lsubtype')?.value || 'multiple-choice';
+  const el = document.getElementById('qf-listening-subform');
+  if (!el) return;
+  if (sub === 'multiple-choice') {
+    el.innerHTML = `
+      <div class="form-group"><label>Domanda</label><textarea id="qf-text" rows="2" placeholder="What did the speaker say about…?"></textarea></div>
+      <div class="form-group"><label>Opzione A</label><input type="text" id="qf-a"></div>
+      <div class="form-group"><label>Opzione B</label><input type="text" id="qf-b"></div>
+      <div class="form-group"><label>Opzione C (opz.)</label><input type="text" id="qf-c"></div>
+      <div class="form-group"><label>Corretta</label><select id="qf-correct"><option value="0">A</option><option value="1">B</option><option value="2">C</option></select></div>`;
+  } else if (sub === 'cloze') {
+    el.innerHTML = `
+      <div class="form-group"><label>Testo con spazi (usa ___ per ogni spazio)</label><textarea id="qf-text" rows="4" placeholder="Ben's dad has a problem with his ___. He doesn't want to watch a ___."></textarea></div>
+      <div class="form-group"><label>Risposte corrette (una per riga)</label><textarea id="qf-answers" rows="3" placeholder="laptop\nhorror film"></textarea></div>`;
+  } else if (sub === 'matching') {
+    el.innerHTML = `
+      <div class="form-group"><label>Istruzione</label><input type="text" id="qf-text" placeholder="Match the sentences (1-6) with the words (a-g)"></div>
+      <div class="form-group"><label>Colonna A (una per riga)</label><textarea id="qf-left" rows="5" placeholder="Ben's dad has a problem with his\nIt's got a fully charged"></textarea></div>
+      <div class="form-group"><label>Colonna B — completamenti (stessa riga)</label><textarea id="qf-right" rows="5" placeholder="laptop\nbattery"></textarea></div>`;
+  } else {
+    el.innerHTML = `
+      <div class="form-group"><label>Domanda</label><textarea id="qf-text" rows="2" placeholder="What does Ben decide to do if it rains?"></textarea></div>
+      <div class="form-group"><label>Suggerimento (opz.)</label><input type="text" id="qf-hint" placeholder="Answer in a complete sentence…"></div>`;
   }
 }
 
@@ -1150,20 +1180,32 @@ async function addQuestion() {
 
   } else if (type === 'listening') {
     const ttsText = v('qf-tts');
-    const audioFile = document.getElementById('qf-audio').files[0];
-    const qText = v('qf-text');
-    const ltype = v('qf-ltype') || 'free';
+    const audioFile = document.getElementById('qf-audio')?.files[0];
+    const subtype = v('qf-lsubtype') || 'multiple-choice';
     let audioData = null;
     if (audioFile) {
       if (audioFile.size > 5 * 1024 * 1024) return alert('File troppo grande. Massimo 5MB.');
       audioData = await fileToBase64(audioFile);
     }
-    let subQ = { type: ltype, text: qText };
-    if (ltype === 'mc') {
-      subQ.options = ['qf-la','qf-lb','qf-lc'].map(id => v(id)).filter(Boolean);
-      subQ.correct = parseInt(v('qf-lcorr') || '0');
+    const pts = parseInt(v('qf-points')) || 10;
+    // Build inner question based on subtype
+    let inner = { type: subtype };
+    if (subtype === 'multiple-choice') {
+      inner.text = v('qf-text');
+      inner.options = ['qf-a','qf-b','qf-c'].map(id => v(id)).filter(Boolean);
+      inner.correct = parseInt(v('qf-correct') || '0');
+    } else if (subtype === 'cloze') {
+      inner.text = v('qf-text');
+      inner.answers = v('qf-answers').split('\n').map(s => s.trim()).filter(Boolean);
+    } else if (subtype === 'matching') {
+      inner.text = v('qf-text');
+      inner.left = v('qf-left').split('\n').map(s => s.trim()).filter(Boolean);
+      inner.right = v('qf-right').split('\n').map(s => s.trim()).filter(Boolean);
+    } else {
+      inner.text = v('qf-text');
+      inner.hint = v('qf-hint');
     }
-    q = { type, ttsText, audioData, question: subQ };
+    q = { type: 'listening', ttsText, audioData, subtype, question: inner, points: pts };
   }
 
   S.questions.push(q);
@@ -1272,24 +1314,29 @@ function getEditFormHTML(q) {
       fg+'<label>Opzione B</label><input type="text" id="qf-b" value="'+esc(q.options&&q.options[1]||'')+'"></div>'+
       fg+'<label>Opzione C</label><input type="text" id="qf-c" value="'+esc(q.options&&q.options[2]||'')+'"></div>'+
       fg+'<label>Opzione D</label><input type="text" id="qf-d" value="'+esc(q.options&&q.options[3]||'')+'"></div>'+
-      fg+'<label>Risposta corretta</label><select id="qf-correct">'+sel+'</select></div>';
+      fg+'<label>Risposta corretta</label><select id="qf-correct">'+sel+'</select></div>'+
+      fg+'<label>⭐ Punti</label><input type="number" id="qf-points" value="'+(q.points||10)+'" min="1" max="100" style="width:80px;"></div>';
   }
   if (type === 'cloze') {
     return fg+'<label>Testo (usa ___ per ogni spazio)</label><textarea id="qf-text" rows="4">'+esc(q.text||'')+'</textarea></div>'+
-      fg+'<label>Risposte corrette (una per riga)</label><textarea id="qf-answers" rows="3">'+(q.answers||[]).join('\n')+'</textarea></div>';
+      fg+'<label>Risposte corrette (una per riga)</label><textarea id="qf-answers" rows="3">'+(q.answers||[]).join('\n')+'</textarea></div>'+
+      fg+'<label>⭐ Punti</label><input type="number" id="qf-points" value="'+(q.points||10)+'" min="1" max="100" style="width:80px;"></div>';
   }
   if (type === 'matching') {
     return fg+'<label>Istruzione</label><input type="text" id="qf-text" value="'+esc(q.text||'')+'"></div>'+
       fg+'<label>Colonna A (una per riga)</label><textarea id="qf-left" rows="4">'+(q.left||[]).join('\n')+'</textarea></div>'+
-      fg+'<label>Colonna B (una per riga)</label><textarea id="qf-right" rows="4">'+(q.right||[]).join('\n')+'</textarea></div>';
+      fg+'<label>Colonna B (una per riga)</label><textarea id="qf-right" rows="4">'+(q.right||[]).join('\n')+'</textarea></div>'+
+      fg+'<label>⭐ Punti</label><input type="number" id="qf-points" value="'+(q.points||10)+'" min="1" max="100" style="width:80px;"></div>';
   }
   if (type === 'free-response') {
     return fg+'<label>Domanda</label><textarea id="qf-text" rows="3">'+esc(q.text||'')+'</textarea></div>'+
-      fg+'<label>Suggerimento</label><input type="text" id="qf-hint" value="'+esc(q.hint||'')+'"></div>';
+      fg+'<label>Suggerimento</label><input type="text" id="qf-hint" value="'+esc(q.hint||'')+'"></div>'+
+      fg+'<label>⭐ Punti</label><input type="number" id="qf-points" value="'+(q.points||10)+'" min="1" max="100" style="width:80px;"></div>';
   }
   if (type === 'listening') {
     return fg+'<label>Testo TTS</label><textarea id="qf-tts" rows="3">'+esc(q.ttsText||'')+'</textarea></div>'+
-      fg+'<label>Domanda di comprensione</label><textarea id="qf-text" rows="2">'+esc((q.question&&q.question.text)||'')+'</textarea></div>';
+      fg+'<label>Domanda di comprensione</label><textarea id="qf-text" rows="2">'+esc((q.question&&q.question.text)||'')+'</textarea></div>'+
+      fg+'<label>⭐ Punti</label><input type="number" id="qf-points" value="'+(q.points||10)+'" min="1" max="100" style="width:80px;"></div>';
   }
   return '';
 }
@@ -1314,7 +1361,10 @@ async function buildQFromCurrentForm(type) {
     q = { type, text, hint: v('qf-hint') };
   } else if (type === 'listening') {
     const existing = S.questions[S.editingQIndex];
-    q = { type, ttsText: v('qf-tts'), audioData: existing?.audioData || null, question: { ...existing?.question, text: v('qf-text') } };
+    q = { type, ttsText: v('qf-tts'), audioData: existing?.audioData||null,
+      subtype: existing?.subtype||'free-response',
+      question: { ...(existing?.question||{}), text: v('qf-text') },
+      points: parseInt(v('qf-points'))||10 };
   }
   return q;
 }
@@ -1815,7 +1865,14 @@ function evaluateAnswer(q, a) {
   if (q.type === 'multiple-choice') { const ok=a===q.correct; return {scorable:true,correct:ok,points:pts,detail:ok?'':'Corretta: <strong>'+esc(q.options[q.correct])+'</strong>'}; }
   if (q.type === 'cloze') { const ok=(q.answers||[]).every((ans,bi)=>Array.isArray(a)&&(a[bi]||'').toLowerCase()===ans.toLowerCase()); return {scorable:true,correct:ok,points:pts,detail:ok?'':(q.answers||[]).map((ans,bi)=>`Sp.${bi+1}: ${esc(Array.isArray(a)?a[bi]||'—':'—')} → <strong>${esc(ans)}</strong>`).join(' · ')}; }
   if (q.type === 'matching') { const ok=(q.left||[]).every((_,li)=>Array.isArray(a)&&a[li]===li); return {scorable:true,correct:ok,points:pts,detail:ok?'':'Alcune coppie non erano corrette.'}; }
-  if (q.type === 'listening' && q.question?.type==='mc') { const ok=a===q.question.correct; return {scorable:true,correct:ok,points:pts,detail:ok?'':'Corretta: <strong>'+esc((q.question.options||[])[q.question.correct])+'</strong>'}; }
+  if (q.type === 'listening') {
+    const sub = q.subtype || q.question?.type || 'free-response';
+    const inner = q.question || {};
+    if (sub === 'multiple-choice') { const ok=a===inner.correct; return {scorable:true,correct:ok,points:pts,detail:ok?'':'Corretta: <strong>'+esc((inner.options||[])[inner.correct])+'</strong>'}; }
+    if (sub === 'cloze') { const ok=(inner.answers||[]).every((ans,bi)=>Array.isArray(a)&&(a[bi]||'').toLowerCase()===ans.toLowerCase()); return {scorable:true,correct:ok,points:pts,detail:ok?'':(inner.answers||[]).map((ans,bi)=>`Sp.${bi+1}: ${esc(Array.isArray(a)?a[bi]||'—':'—')} → <strong>${esc(ans)}</strong>`).join(' · ')}; }
+    if (sub === 'matching') { const ok=(inner.left||[]).every((_,li)=>Array.isArray(a)&&a[li]===li); return {scorable:true,correct:ok,points:pts,detail:ok?'':'Alcune coppie non erano corrette.'}; }
+    return {scorable:false,correct:false,points:0,detail:''};
+  }
   return {scorable:false,correct:false,points:0,detail:''};
 }
 
@@ -1872,9 +1929,12 @@ function continueFromLeaderboard() { S.qIndex++; showView('student-activity'); r
 async function submitAnswers(auto) {
   if (!auto) saveCurrentAnswer();
   if (S.timerInterval) { clearInterval(S.timerInterval); S.timerInterval = null; }
+  // Remove from skipped if answered
+  S.skipped = S.skipped.filter(i => S.answers[i] === undefined || S.answers[i] === null);
+  const payload = { answers: S.answers, score: S.studentScore, submittedAt: Date.now() };
   try {
-    await db.ref('livelearn/responses/'+S.sessionCode+'/'+S.studentName).set({answers:S.answers,score:S.studentScore,submittedAt:Date.now()});
-  } catch(e) {}
+    await db.ref('livelearn/responses/' + S.sessionCode + '/' + S.studentName).set(payload);
+  } catch(e) { console.warn('submitAnswers Firebase error:', e.message); }
   showStudentDone();
 }
 
@@ -1925,19 +1985,46 @@ function buildQuestionHTML(q, i) {
   }
   if (q.type === 'listening') {
     const audio = q.audioData
-      ? `<audio src="${q.audioData}" controls style="width:100%; margin-bottom:20px; border-radius:8px;"></audio>`
+      ? `<audio id="audio-${i}" src="${q.audioData}" style="width:100%;margin-bottom:16px;border-radius:8px;" controls></audio>`
       : q.ttsText
       ? `<div class="audio-player">
-           <button class="play-btn" onclick="speakTTS(${i})">▶</button>
-           <div class="audio-info"><div class="audio-title">Clicca per ascoltare</div><div class="audio-hint">Puoi ascoltare più volte</div></div>
+           <button class="play-btn" onclick="speakTTS(${i})" id="tts-btn-${i}">▶</button>
+           <div class="audio-info">
+             <div class="audio-title">🎧 Clicca per ascoltare</div>
+             <div class="audio-hint">Puoi ascoltare più volte — clicca di nuovo per riascoltare</div>
+           </div>
+           <button onclick="speechSynthesis.cancel()" style="background:none;border:none;cursor:pointer;font-size:18px;padding:4px;" title="Stop">⏹</button>
          </div>`
       : '';
-    const subQ = q.question || {};
-    const qPart = subQ.type === 'mc'
-      ? `<div class="q-text">${esc(subQ.text)}</div><div class="options-list">
-           ${(subQ.options||[]).map((o,oi)=>`<button class="option-btn" id="opt-${oi}" onclick="pickOption(${oi})">${esc(o)}</button>`).join('')}
-         </div>`
-      : `<div class="q-text">${esc(subQ.text)}</div><textarea id="free-ans" rows="4" placeholder="Scrivi la tua risposta…" style="width:100%;"></textarea>`;
+    const inner = q.question || {};
+    const subtype = q.subtype || inner.type || 'free-response';
+    let qPart = '';
+    if (subtype === 'multiple-choice') {
+      qPart = `<div class="q-text">${esc(inner.text||'')}</div><div class="options-list">
+        ${(inner.options||[]).map((o,oi)=>`<button class="option-btn" id="opt-${oi}" onclick="pickOption(${oi})">${esc(o)}</button>`).join('')}
+      </div>`;
+    } else if (subtype === 'cloze') {
+      let idx = 0;
+      const html = esc(inner.text||'').replace(/___/g, () => `<input class="blank-input" id="blank-${idx++}" type="text" autocomplete="off" placeholder="…">`);
+      qPart = `<div class="cloze-text">${html}</div>`;
+    } else if (subtype === 'matching') {
+      const right = (inner.right||[]).map((r,ri)=>({r,ri}));
+      for(let x=right.length-1;x>0;x--){const j=Math.floor(Math.random()*(x+1));[right[x],right[j]]=[right[j],right[x]];}
+      S.shuffledRight = right; S.matchLeftSel = null;
+      qPart = `${inner.text?`<div class="q-text">${esc(inner.text)}</div>`:''}
+      <div class="matching-area">
+        <div><div class="matching-col-label">COLONNA A</div>
+          ${(inner.left||[]).map((l,li)=>`<div class="match-item" id="left-${li}" style="margin-bottom:8px;" onclick="matchLeft(${li})">${esc(l)}</div>`).join('')}
+        </div>
+        <div><div class="matching-col-label">COLONNA B</div>
+          ${right.map((item,di)=>`<div class="match-item" id="right-${di}" style="margin-bottom:8px;" onclick="matchRight(${di},${item.ri})">${esc(item.r)}</div>`).join('')}
+        </div>
+      </div>`;
+    } else {
+      qPart = `${inner.text?`<div class="q-text">${esc(inner.text)}</div>`:''}
+        ${inner.hint?`<p class="text-muted mb-16">💡 ${esc(inner.hint)}</p>`:''}
+        <textarea id="free-ans" rows="4" placeholder="Scrivi la tua risposta…" style="width:100%;"></textarea>`;
+    }
     return `<div class="question-card">${qLabel}${audio}${qPart}</div>`;
   }
   return '';
@@ -1986,12 +2073,12 @@ function matchRight(di, ri) {
 
 function saveCurrentAnswer() {
   const q = S.activity.questions[S.qIndex];
-  if (q.type === 'cloze') {
-    const count = (q.text.match(/___/g) || []).length;
-    S.answers[S.qIndex] = Array.from({length: count}, (_, b) => {
-      return document.getElementById('blank-' + b)?.value.trim() || '';
-    });
-  } else if (q.type === 'free-response' || (q.type === 'listening' && q.question?.type === 'free')) {
+  const sub = q.subtype || q.question?.type || '';
+  if (q.type === 'cloze' || (q.type === 'listening' && sub === 'cloze')) {
+    const text = q.type === 'cloze' ? q.text : q.question?.text || '';
+    const count = (text.match(/___/g) || []).length;
+    S.answers[S.qIndex] = Array.from({length: count}, (_, b) => document.getElementById('blank-' + b)?.value.trim() || '');
+  } else if (q.type === 'free-response' || (q.type === 'listening' && (sub === 'free-response' || sub === 'free'))) {
     const el = document.getElementById('free-ans');
     if (el) S.answers[S.qIndex] = el.value.trim();
   }
@@ -2001,16 +2088,13 @@ function restoreAnswer(i) {
   const q = S.activity.questions[i];
   const a = S.answers[i];
   if (a === undefined || a === null) return;
-  if (q.type === 'multiple-choice' || (q.type === 'listening' && q.question?.type === 'mc')) {
-    if (typeof a === 'number') {
-      const btn = document.getElementById('opt-' + a);
-      if (btn) btn.classList.add('selected');
-    }
-  } else if (q.type === 'cloze') {
-    if (Array.isArray(a)) a.forEach((val, bi) => { const el = document.getElementById('blank-' + bi); if (el) el.value = val; });
-  } else if (q.type === 'free-response' || (q.type === 'listening' && q.question?.type === 'free')) {
-    const el = document.getElementById('free-ans'); if (el && a) el.value = a;
-  }
+  const sub = q.subtype || q.question?.type || '';
+  const isMC = q.type === 'multiple-choice' || (q.type === 'listening' && sub === 'multiple-choice');
+  const isCloze = q.type === 'cloze' || (q.type === 'listening' && sub === 'cloze');
+  const isFree = q.type === 'free-response' || (q.type === 'listening' && (sub === 'free-response' || sub === 'free'));
+  if (isMC && typeof a === 'number') { const btn = document.getElementById('opt-' + a); if (btn) btn.classList.add('selected'); }
+  else if (isCloze && Array.isArray(a)) a.forEach((val, bi) => { const el = document.getElementById('blank-' + bi); if (el) el.value = val; });
+  else if (isFree) { const el = document.getElementById('free-ans'); if (el && a) el.value = a; }
 }
 
 function nextQ() {
@@ -2085,15 +2169,6 @@ function renderReviewList() {
       ${ansText ? `<div style="font-size:12px;color:var(--muted);">→ ${esc(ansText)}</div>` : ''}
     </div>`;
   }).join('');
-}
-
-async function submitAnswers(auto) {
-  if (!auto) saveCurrentAnswer();
-  if (S.timerInterval) { clearInterval(S.timerInterval); S.timerInterval = null; }
-  try {
-    await db.ref('livelearn/responses/'+S.sessionCode+'/'+S.studentName).set({answers:S.answers,score:S.studentScore,submittedAt:Date.now()});
-  } catch(e) {}
-  showStudentDone();
 }
 
 
