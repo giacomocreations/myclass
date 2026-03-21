@@ -2172,6 +2172,49 @@ function renderReviewList() {
 }
 
 
+function showStudentDone() {
+  showView('student-done');
+  const questions = S.activity.questions;
+  const answers = S.answers;
+  const mode = S.sessionMode;
+  let earnedPts = 0, totalPts = 0, scorableCount = 0;
+  questions.forEach((q, i) => {
+    const r = evaluateAnswer(q, answers[i]);
+    if (r.scorable) { scorableCount++; totalPts += r.points; if (r.correct) earnedPts += r.points; }
+  });
+  const pct = totalPts > 0 ? Math.round(earnedPts / totalPts * 100) : null;
+  document.getElementById('done-pct').textContent = pct !== null ? pct + '%' : '—';
+  document.getElementById('done-title').textContent = mode === 'practice' ? '🎮 Fine esercitazione!' : '✅ Consegnato!';
+  document.getElementById('done-subtitle').textContent = totalPts > 0
+    ? earnedPts + ' / ' + totalPts + ' punti (' + pct + '% accuracy)'
+    : 'Il professore valuterà le tue risposte.';
+  const icons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧'};
+  document.getElementById('student-results-detail').innerHTML = questions.map((q, i) => {
+    const a = answers[i]; const r = evaluateAnswer(q, a); const pts = q.points || 10;
+    let ans = '—';
+    if (q.type === 'multiple-choice') ans = a !== undefined ? esc(q.options[a]) : '—';
+    else if (q.type === 'cloze') ans = Array.isArray(a) ? a.map(esc).join(', ') : '—';
+    else if (q.type === 'free-response') ans = a ? '"' + esc(a) + '"' : '—';
+    else if (q.type === 'matching') ans = 'Collegamento effettuato';
+    else if (q.type === 'listening') { const sub = q.subtype||q.question?.type; if(sub==='multiple-choice'&&typeof a==='number') ans=esc((q.question?.options||[])[a]||'—'); else if(sub==='cloze'&&Array.isArray(a)) ans=a.map(esc).join(', '); else if(a) ans=esc(String(a)); }
+    const si = r.scorable ? (r.correct ? '✅' : '❌') : '📝';
+    const ptsLabel = r.scorable ? (r.correct ? '+'+pts+' pt' : '0/'+pts+' pt') : '';
+    const bg = r.scorable ? (r.correct ? 'var(--success-light)' : 'var(--danger-light)') : 'var(--surface2)';
+    const bdr = r.scorable ? (r.correct ? 'var(--success)' : 'var(--danger)') : 'var(--border)';
+    return '<div style="padding:14px;border-radius:12px;border:2px solid '+bdr+';background:'+bg+';margin-bottom:10px;">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">' +
+      '<span style="font-size:16px;">'+si+'</span>' +
+      '<span style="flex:1;font-size:11px;font-weight:800;color:var(--muted);">'+(icons[q.type]||'')+' Dom.'+(i+1)+' · '+typeLabel(q.type)+'</span>' +
+      (ptsLabel?'<span style="font-size:11px;font-weight:800;color:'+(r.correct?'var(--success)':'var(--danger)')+';">'+ptsLabel+'</span>':'') +
+      '</div>' +
+      '<div style="font-size:14px;font-weight:700;margin-bottom:3px;color:var(--text);">'+esc((q.text||q.question?.text||'').substring(0,80))+'</div>' +
+      '<div style="font-size:12px;color:var(--muted);">Risposta: <em>'+ans+'</em>'+(r.scorable&&!r.correct?' · '+r.detail:'')+'</div>' +
+      '</div>';
+  }).join('');
+  const apiKey = localStorage.getItem('gemini_api_key');
+  if (apiKey && scorableCount > 0) runAIAnalysis(apiKey, questions, answers, pct, mode);
+}
+
 async function runAIAnalysis(apiKey, questions, answers, pct, mode) {
   const el = document.getElementById('done-ai-analysis');
   const textEl = document.getElementById('ai-analysis-text');
