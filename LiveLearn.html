@@ -1090,11 +1090,16 @@ function renderAddForm(type) {
 function loadAIFile(event) {
   const file = event.target.files[0];
   if (!file) return;
+  if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+    alert('⚠️ I PDF non possono essere letti direttamente.\nApri il PDF, seleziona tutto il testo (Ctrl+A), copialo e incollalo nella casella sopra.');
+    event.target.value = '';
+    return;
+  }
   const reader = new FileReader();
   reader.onload = e => {
-    document.getElementById('qf-ai-text').value = e.target.result.substring(0, 4000);
+    document.getElementById('qf-ai-text').value = e.target.result.substring(0, 6000);
   };
-  reader.readAsText(file);
+  reader.readAsText(file, 'UTF-8');
 }
 
 async function generateWithAI() {
@@ -1153,7 +1158,7 @@ Formats:
 Return ONLY the JSON array starting with [ and ending with ].`;
 
   try {
-    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey, {
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + apiKey, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({contents:[{parts:[{text:prompt}]}]})
     });
@@ -2463,7 +2468,7 @@ async function runAIAnalysis(apiKey, questions, answers, pct, mode) {
   }).join('\n');
   const prompt = 'Sei un insegnante di inglese. Valuta questo ' + (mode==='test'?'compito':'esercizio') + ' di un alunno di scuola media italiana.\nPunteggio: ' + pct + '%.\nRisposte:\n' + summary + '\nScrivi 4-5 frasi in italiano: commenta il risultato, indica cosa sa fare bene, cosa deve migliorare. Tono incoraggiante, diretto. Solo paragrafo, niente elenchi.';
   try {
-    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey,
+    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + apiKey,
       {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
