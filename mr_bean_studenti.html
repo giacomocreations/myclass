@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mr. Bean – Studenti</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; display: flex; flex-direction: column; }
+
+  header { padding: 13px 28px; display: flex; align-items: center; gap: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); flex-shrink: 0; }
+  header .bean-icon { font-size: 1.9rem; }
+  header h1 { font-size: 1.35rem; font-weight: 700; }
+  header p { font-size: 0.78rem; opacity: 0.85; }
+
+  .phase-bar { background: #16213e; display: flex; border-bottom: 2px solid #0f3460; flex-shrink: 0; }
+  .phase-btn { flex: 1; padding: 10px 6px; background: transparent; border: none; color: #aaa; font-size: 0.79rem; font-weight: 600; cursor: pointer; transition: all 0.2s; border-bottom: 3px solid transparent; text-transform: uppercase; letter-spacing: 0.4px; }
+  .phase-btn.active { color: #fff; border-bottom-color: #e63946; background: rgba(230,57,70,0.1); }
+  .phase-btn:hover:not(.active):not(.locked) { background: rgba(255,255,255,0.05); color: #ddd; }
+  .phase-btn.locked { color: #3a3a5a !important; cursor: not-allowed; }
+  .phase-btn.locked::after { content: ' 🔒'; font-size: 0.65rem; }
+  .solutions-btn { color: #3a3a5a !important; font-size: 0.72rem !important; flex: 0 0 105px; max-width: 105px; }
+  .solutions-btn.ready { color: #777 !important; }
+  .solutions-btn.ready:hover { color: #bbb !important; }
+
+  .screen { display: none; flex: 1; padding: 18px 26px; overflow-y: auto; flex-direction: column; gap: 14px; }
+  .screen.active { display: flex; }
+
+  /* WORDWALL */
+  .ww-box { width: 100%; max-width: 820px; margin: 0 auto; border-radius: 12px; box-shadow: 0 6px 28px rgba(0,0,0,0.5); background: linear-gradient(135deg, #0a2a0a, #1a1a2e); border: 2px solid #1a4a1a; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; padding: 28px 22px; gap: 14px; text-align: center; }
+  .ww-box .ww-icon { font-size: 3rem; }
+  .ww-box .ww-title { font-size: 1rem; font-weight: 700; color: #eee; }
+  .ww-box .ww-sub { font-size: 0.8rem; color: #666; }
+  .ww-box a { display: inline-flex; align-items: center; gap: 9px; background: #27ae60; color: white; text-decoration: none; border-radius: 10px; padding: 12px 28px; font-weight: 700; font-size: 0.97rem; transition: background 0.2s, transform 0.14s; box-shadow: 0 4px 12px rgba(39,174,96,0.4); }
+  .ww-box a:hover { background: #1e8449; transform: translateY(-2px); }
+  .ww-instruction { background: #16213e; border-left: 3px solid #27ae60; border-radius: 0 9px 9px 0; padding: 10px 15px; font-size: 0.84rem; color: #bbb; flex-shrink: 0; }
+
+  /* VIDEO */
+  .video-link-box { width: 100%; max-width: 820px; margin: 0 auto; border-radius: 12px; box-shadow: 0 6px 28px rgba(0,0,0,0.5); background: linear-gradient(135deg, #0f0f0f, #1a1a2e); border: 2px solid #2a2a4a; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; padding: 28px 22px; gap: 14px; text-align: center; }
+  .video-link-box .yt-icon { font-size: 3rem; }
+  .video-link-box .yt-title { font-size: 1rem; font-weight: 700; color: #eee; }
+  .video-link-box .yt-sub { font-size: 0.8rem; color: #666; }
+  .video-link-box a { display: inline-flex; align-items: center; gap: 9px; background: #e63946; color: white; text-decoration: none; border-radius: 10px; padding: 12px 28px; font-weight: 700; font-size: 0.97rem; transition: background 0.2s, transform 0.14s; box-shadow: 0 4px 12px rgba(230,57,70,0.4); }
+  .video-link-box a:hover { background: #c1121f; transform: translateY(-2px); }
+
+  .watch-steps { display: flex; gap: 9px; flex-wrap: wrap; flex-shrink: 0; }
+  .watch-step { background: #0f3460; border-radius: 9px; padding: 8px 13px; display: flex; align-items: center; gap: 8px; font-size: 0.85rem; flex: 1; min-width: 160px; }
+  .step-num { background: #e63946; color: white; border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.76rem; flex-shrink: 0; }
+
+  .rules-box { background: #16213e; border-left: 4px solid #e63946; border-radius: 0 10px 10px 0; padding: 12px 16px; flex-shrink: 0; }
+  .rules-box h3 { color: #e63946; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .rules-box table { border-collapse: collapse; width: 100%; }
+  .rules-box td { padding: 4px 9px; font-size: 0.83rem; border-bottom: 1px solid #0f3460; }
+  .rules-box td:first-child { color: #aaa; width: 36%; }
+  .rules-box td:last-child { color: #fff; font-weight: 600; }
+  .rules-box .rule-note { font-size: 0.75rem; color: #e63946; margin-top: 5px; }
+
+  /* DRAG */
+  .drag-container { display: flex; gap: 13px; flex: 1; min-height: 360px; }
+  .word-bank { background: #16213e; border: 1px solid #0f3460; border-radius: 12px; padding: 12px; width: 230px; flex-shrink: 0; overflow-y: auto; }
+  .word-bank h3 { font-size: 0.68rem; text-transform: uppercase; color: #e63946; letter-spacing: 1px; margin-bottom: 8px; }
+  .word-bank-grid { display: flex; flex-direction: column; gap: 5px; }
+  .verb-card { background: #0f3460; border: 2px solid #1a4a8a; border-radius: 7px; padding: 7px 10px; font-size: 0.83rem; cursor: grab; transition: all 0.13s; display: flex; align-items: center; gap: 7px; user-select: none; }
+  .verb-card:hover { border-color: #e63946; background: #1a4a8a; transform: translateX(3px); }
+  .verb-card.dragging { opacity: 0.35; }
+  .verb-card.used { opacity: 0.2; cursor: default; pointer-events: none; }
+  .drag-icon { opacity: 0.4; font-size: 0.68rem; }
+  .timeline { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
+  .timeline h3 { font-size: 0.68rem; text-transform: uppercase; color: #e63946; letter-spacing: 1px; margin-bottom: 2px; }
+  .time-slot { background: #16213e; border: 2px dashed #2a4a7f; border-radius: 9px; padding: 7px 10px; min-height: 40px; display: flex; align-items: center; gap: 8px; transition: all 0.17s; }
+  .time-slot.drag-over { border-color: #e63946; background: rgba(230,57,70,0.09); }
+  .time-slot.filled { border-style: solid; border-color: #2ecc71; background: rgba(46,204,113,0.06); }
+  .time-slot.wrong { border-color: #e74c3c; background: rgba(231,76,60,0.08); }
+  .slot-num { background: #e63946; color: white; border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.74rem; flex-shrink: 0; }
+  .slot-content { flex: 1; font-size: 0.84rem; color: #ccc; }
+  .slot-content.placed { color: #fff; font-weight: 600; }
+  .slot-placeholder { color: #3d3d60; font-style: italic; font-size: 0.78rem; }
+  .slot-feedback { font-size: 0.88rem; }
+
+  /* CONJ */
+  .conj-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+  .conj-card { background: #16213e; border: 1px solid #0f3460; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .conj-card .infinitive { font-size: 0.74rem; color: #e63946; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  .conj-card .ctx { font-size: 0.77rem; color: #666; font-style: italic; }
+  .conj-input { background: #0f3460; border: 2px solid #1a4a8a; border-radius: 6px; color: white; padding: 6px 9px; font-size: 0.91rem; font-family: inherit; transition: border-color 0.2s; width: 100%; }
+  .conj-input:focus { outline: none; border-color: #e63946; }
+  .conj-input.correct { border-color: #2ecc71; background: rgba(46,204,113,0.09); color: #2ecc71; }
+  .conj-input.wrong { border-color: #e74c3c; background: rgba(231,76,60,0.07); }
+
+  /* STORY */
+  .story-grid { display: flex; flex-direction: column; gap: 7px; }
+  .story-line { background: #16213e; border: 1px solid #0f3460; border-radius: 9px; padding: 9px 13px; display: flex; align-items: center; gap: 11px; font-size: 0.89rem; }
+  .story-num { color: #e63946; font-weight: 700; width: 19px; flex-shrink: 0; text-align: center; }
+  .story-line .he { color: #aaa; }
+  .story-line .verb { color: #f0c040; font-weight: 700; }
+  .story-line .rest { color: #ddd; }
+
+  /* BUTTONS */
+  .btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 0.86rem; font-weight: 700; cursor: pointer; transition: all 0.17s; letter-spacing: 0.3px; }
+  .btn-red { background: #e63946; color: white; } .btn-red:hover { background: #c1121f; transform: translateY(-1px); }
+  .btn-green { background: #2ecc71; color: #111; } .btn-green:hover { background: #27ae60; transform: translateY(-1px); }
+  .btn-blue { background: #0f3460; color: white; border: 1px solid #1a4a8a; } .btn-blue:hover { background: #1a4a8a; }
+  .action-row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; flex-shrink: 0; }
+  .score-badge { background: rgba(230,57,70,0.13); border: 1px solid #e63946; border-radius: 8px; padding: 6px 12px; font-size: 0.85rem; font-weight: 600; color: #e63946; margin-left: auto; }
+  .score-badge.all-correct { background: rgba(46,204,113,0.13); border-color: #2ecc71; color: #2ecc71; }
+  .notice { background: rgba(230,57,70,0.09); border: 1px solid rgba(230,57,70,0.26); border-radius: 8px; padding: 8px 13px; font-size: 0.82rem; color: #ccc; flex-shrink: 0; }
+  .notice.success { background: rgba(46,204,113,0.09); border-color: rgba(46,204,113,0.28); color: #aaffcc; }
+
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(70px); background: #2ecc71; color: #111; border-radius: 10px; padding: 10px 24px; font-weight: 700; font-size: 0.95rem; box-shadow: 0 4px 20px rgba(0,0,0,0.45); z-index: 999; transition: transform 0.36s cubic-bezier(.175,.885,.32,1.275), opacity 0.26s; opacity: 0; pointer-events: none; white-space: nowrap; }
+  #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+  #toast.warn { background: #e67e22; }
+
+  header { background: linear-gradient(135deg, #e63946, #c1121f); }
+  .badge { display: inline-block; background: rgba(255,255,255,0.18); border-radius: 6px; padding: 2px 9px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; margin-left: 10px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bean-icon">🫘</div>
+  <div>
+    <h1>Mr. Bean – Going to the Dentist <span class="badge">Studenti</span></h1>
+    <p>Daily Routines · Present Simple 3rd Person Singular</p>
+  </div>
+</header>
+<div class="phase-bar">
+  <button class="phase-btn active" id="btn0" onclick="showPhase(0)">0 · Wordwall</button>
+  <button class="phase-btn" id="btn1" onclick="showPhase(1)">1 · Watch</button>
+  <button class="phase-btn" id="btn2" onclick="showPhase(2)">2 · Put in Order</button>
+  <button class="phase-btn locked" id="btn3" onclick="tryPhase(3)">3 · Conjugate</button>
+  <button class="phase-btn solutions-btn locked" id="btnSol" onclick="teacherUnlock()">🔑 Soluzioni</button>
+</div>
+
+<div id="toast"></div>
+
+<!-- PHASE 0: WORDWALL -->
+<div id="phase0" class="screen active">
+  <div class="ww-box">
+    <div class="ww-icon">🧩</div>
+    <div class="ww-title">Warm-up: Daily Routines Vocabulary</div>
+    <div class="ww-sub">Complete the Wordwall activity before watching the video</div>
+    <a href="https://wordwall.net/resource/55558082/daily-routines-mrbean-to-the-dentist" target="_blank">
+      🧩 &nbsp;Open Wordwall Activity
+    </a>
+  </div>
+  <div class="ww-instruction">👉 After the Wordwall activity, click <strong>Watch →</strong> to continue.</div>
+  <div class="action-row">
+    <button class="btn btn-red" onclick="showPhase(1)">Watch →</button>
+  </div>
+</div>
+
+<!-- PHASE 1: WATCH -->
+<div id="phase1" class="screen">
+  <div class="video-link-box">
+    <div class="yt-icon">▶️</div>
+    <div class="yt-title">Mr. Bean – Going to the Dentist</div>
+    <div class="yt-sub">Open the video on YouTube, then come back here</div>
+    <a href="https://www.youtube.com/watch?v=VumrpkL6RS0" target="_blank">▶ &nbsp;Open video on YouTube</a>
+  </div>
+  <div class="watch-steps">
+    <div class="watch-step"><span class="step-num">1</span> Watch the video carefully.</div>
+    <div class="watch-step"><span class="step-num">2</span> What does Mr. Bean do this morning?</div>
+    <div class="watch-step"><span class="step-num">3</span> Try to remember the order.</div>
+    <div class="watch-step"><span class="step-num">4</span> Then go to <strong>Put in Order →</strong></div>
+  </div>
+  <div class="rules-box">
+    <h3>📌 Grammar Reminder – Present Simple: He / She / It</h3>
+    <table>
+      <tr><td>Most verbs</td><td>add <strong>-s</strong> &nbsp;→ get<strong>s</strong>, drive<strong>s</strong>, park<strong>s</strong></td></tr>
+      <tr><td>-sh / -ch / -x / -o</td><td>add <strong>-es</strong> &nbsp;→ brush → brush<strong>es</strong></td></tr>
+      <tr><td>consonant + y</td><td>-y → <strong>-ies</strong> &nbsp;→ carry → carr<strong>ies</strong></td></tr>
+      <tr><td>irregular</td><td>have → <strong>has</strong> &nbsp;/&nbsp; do → <strong>does</strong></td></tr>
+    </table>
+    <div class="rule-note">⚠️ He brush<strong>es</strong> his teeth — not "brushs"!</div>
+  </div>
+  <div class="action-row">
+    <button class="btn btn-red" onclick="showPhase(2)">Go to Put in Order →</button>
+  </div>
+</div>
+
+<!-- PHASE 2: DRAG & DROP -->
+<div id="phase2" class="screen">
+  <div class="drag-container">
+    <div class="word-bank">
+      <h3>🎯 Action Cards</h3>
+      <div class="word-bank-grid" id="wordBank"></div>
+    </div>
+    <div class="timeline">
+      <h3>📋 Mr. Bean's morning – drag in the correct order (1 = first)</h3>
+      <div id="timeline"></div>
+    </div>
+  </div>
+  <div class="action-row">
+    <button class="btn btn-green" onclick="checkOrder()">Check Order ✓</button>
+    <button class="btn btn-blue" onclick="resetOrder()">Reset</button>
+    <div id="orderScore" class="score-badge" style="display:none"></div>
+  </div>
+</div>
+
+<!-- PHASE 3: CONJUGATION -->
+<div id="phase3" class="screen">
+  <div class="notice">Write the correct <strong>3rd person singular</strong> form. Example: (brush) → <strong>brushes</strong></div>
+  <div class="conj-grid" id="conjGrid"></div>
+  <div class="action-row">
+    <button class="btn btn-green" onclick="checkConjugation()">Check ✓</button>
+    <button class="btn btn-blue" onclick="resetConjugation()">Reset</button>
+    <div id="conjScore" class="score-badge" style="display:none"></div>
+  </div>
+</div>
+
+<!-- PHASE 4: SOLUTIONS -->
+<div id="phase4" class="screen">
+  <div class="notice success">✅ Complete story – correct order and verb forms</div>
+  <div class="story-grid" id="storyGrid"></div>
+</div>
+
+<script>
+
+const ACTIONS = [
+  { infinitive: "get up",   form: "gets up",   rest: "at ten to nine" },
+  { infinitive: "make",     form: "makes",     rest: "his bed" },
+  { infinitive: "open",     form: "opens",     rest: "the curtains" },
+  { infinitive: "do",       form: "does",      rest: "some exercise" },
+  { infinitive: "shave",    form: "shaves",    rest: "his beard" },
+  { infinitive: "leave",    form: "leaves",    rest: "home" },
+  { infinitive: "get into", form: "gets into", rest: "the car" },
+  { infinitive: "drive",    form: "drives",    rest: "the car" },
+  { infinitive: "put on",   form: "puts on",   rest: "his shirt" },
+  { infinitive: "put on",   form: "puts on",   rest: "his trousers" },
+  { infinitive: "put on",   form: "puts on",   rest: "his jacket" },
+  { infinitive: "put on",   form: "puts on",   rest: "his shoes" },
+  { infinitive: "brush",    form: "brushes",   rest: "his teeth" },
+  { infinitive: "park",     form: "parks",     rest: "the car" },
+  { infinitive: "take off", form: "takes off", rest: "his pyjamas" },
+];
+const CONJ_VERBS = [
+  { inf: "get up",   form: "gets up",   note: "he ___ at ten to nine" },
+  { inf: "make",     form: "makes",     note: "he ___ his bed" },
+  { inf: "open",     form: "opens",     note: "he ___ the curtains" },
+  { inf: "do",       form: "does",      note: "he ___ exercise — irregular!" },
+  { inf: "shave",    form: "shaves",    note: "he ___ his beard" },
+  { inf: "leave",    form: "leaves",    note: "he ___ home" },
+  { inf: "drive",    form: "drives",    note: "he ___ the car" },
+  { inf: "put on",   form: "puts on",   note: "he ___ his shirt / jacket..." },
+  { inf: "brush",    form: "brushes",   note: "he ___ his teeth — add -es!" },
+  { inf: "park",     form: "parks",     note: "he ___ the car" },
+  { inf: "take off", form: "takes off", note: "he ___ his pyjamas" },
+  { inf: "get into", form: "gets into", note: "he ___ the car" },
+];
+
+
+let toastTimer = null;
+function showToast(msg, warn) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show' + (warn ? ' warn' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+let shuffled = [], slotContents = new Array(15).fill(null), dragItem = null, dragFromSlot = null;
+
+function initDrag() {
+  shuffled = [...ACTIONS.keys()].sort(() => Math.random() - 0.5);
+  renderWordBank(); renderTimeline();
+}
+function renderWordBank() {
+  const wb = document.getElementById('wordBank'); wb.innerHTML = '';
+  shuffled.forEach(idx => {
+    const a = ACTIONS[idx], inSlot = slotContents.includes(idx);
+    const card = document.createElement('div');
+    card.className = 'verb-card' + (inSlot ? ' used' : '');
+    card.id = 'card-' + idx; card.draggable = !inSlot;
+    card.innerHTML = '<span class="drag-icon">⠿</span>' + a.infinitive + ' ' + a.rest;
+    card.addEventListener('dragstart', () => { dragItem = idx; dragFromSlot = null; card.classList.add('dragging'); });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+    wb.appendChild(card);
+  });
+}
+function renderTimeline() {
+  const tl = document.getElementById('timeline'); tl.innerHTML = '';
+  for (let i = 0; i < 15; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'time-slot' + (slotContents[i] !== null ? ' filled' : '');
+    slot.dataset.slot = i;
+    const num = document.createElement('div'); num.className = 'slot-num'; num.textContent = i + 1;
+    const content = document.createElement('div'); content.className = 'slot-content';
+    if (slotContents[i] !== null) {
+      const a = ACTIONS[slotContents[i]]; content.classList.add('placed');
+      content.textContent = a.infinitive + ' ' + a.rest; content.draggable = true;
+      content.addEventListener('dragstart', () => { dragItem = slotContents[i]; dragFromSlot = i; });
+    } else { content.innerHTML = '<span class="slot-placeholder">drag here…</span>'; }
+    const fb = document.createElement('span'); fb.className = 'slot-feedback'; fb.id = 'fb-' + i;
+    slot.appendChild(num); slot.appendChild(content); slot.appendChild(fb);
+    slot.addEventListener('dragover', e => { e.preventDefault(); slot.classList.add('drag-over'); });
+    slot.addEventListener('dragleave', () => slot.classList.remove('drag-over'));
+    slot.addEventListener('drop', e => {
+      e.preventDefault(); slot.classList.remove('drag-over');
+      if (dragItem === null) return;
+      const target = parseInt(slot.dataset.slot), existing = slotContents[target];
+      if (dragFromSlot !== null) { slotContents[dragFromSlot] = existing; slotContents[target] = dragItem; }
+      else {
+        if (existing !== null) { const old = document.getElementById('card-' + existing); if (old) old.classList.remove('used'); }
+        slotContents[target] = dragItem;
+        const card = document.getElementById('card-' + dragItem); if (card) card.classList.add('used');
+      }
+      dragItem = null; dragFromSlot = null; clearOrderFeedback(); renderTimeline();
+    });
+    tl.appendChild(slot);
+  }
+}
+function clearOrderFeedback() {
+  for (let i = 0; i < 15; i++) {
+    const fb = document.getElementById('fb-' + i), slot = document.querySelector('[data-slot="' + i + '"]');
+    if (fb) fb.textContent = ''; if (slot) slot.classList.remove('wrong');
+  }
+  const badge = document.getElementById('orderScore'); badge.style.display = 'none'; badge.classList.remove('all-correct');
+}
+function resetOrder() { slotContents = new Array(15).fill(null); clearOrderFeedback(); renderWordBank(); renderTimeline(); }
+
+function buildConjGrid() {
+  const grid = document.getElementById('conjGrid');
+  CONJ_VERBS.forEach((v, i) => {
+    const card = document.createElement('div'); card.className = 'conj-card';
+    card.innerHTML = '<div class="infinitive">📌 to ' + v.inf + '</div><div class="ctx">' + v.note + '</div>' +
+      '<input class="conj-input" id="conj-' + i + '" type="text" placeholder="He ___" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>';
+    grid.appendChild(card);
+  });
+}
+function resetConjugation() {
+  CONJ_VERBS.forEach((v, i) => { const inp = document.getElementById('conj-' + i); inp.value = ''; inp.classList.remove('correct','wrong'); });
+  const badge = document.getElementById('conjScore'); badge.style.display = 'none'; badge.classList.remove('all-correct');
+}
+function buildStory() {
+  const grid = document.getElementById('storyGrid');
+  ACTIONS.forEach((a, i) => {
+    const line = document.createElement('div'); line.className = 'story-line';
+    line.innerHTML = '<div class="story-num">' + (i+1) + '</div><div><span class="he">He </span><span class="verb">' + a.form + '</span><span class="rest"> ' + a.rest + '.</span></div>';
+    grid.appendChild(line);
+  });
+}
+
+
+let orderComplete = false, conjComplete = false;
+
+function showPhase(n) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  ['btn0','btn1','btn2','btn3'].forEach(id => { const b = document.getElementById(id); if(b) b.classList.remove('active'); });
+  document.getElementById('phase' + n).classList.add('active');
+  if (n >= 0 && n <= 3) { const b = document.getElementById('btn' + n); if(b) b.classList.add('active'); }
+}
+function tryPhase(n) {
+  if (n === 3 && !orderComplete) { showToast('⚠️  Get at least 10/15 in "Put in Order" first!', true); return; }
+  showPhase(n);
+}
+function checkOrder() {
+  let correct = 0;
+  for (let i = 0; i < 15; i++) {
+    const fb = document.getElementById('fb-' + i), slot = document.querySelector('[data-slot="' + i + '"]');
+    if (slotContents[i] === null) { if(fb) fb.textContent = ''; continue; }
+    if (slotContents[i] === i) { correct++; if(fb) fb.textContent = '✅'; if(slot){slot.classList.remove('wrong');slot.classList.add('filled');} }
+    else { if(fb) fb.textContent = '❌'; if(slot){slot.classList.remove('filled');slot.classList.add('wrong');} }
+  }
+  const badge = document.getElementById('orderScore'); badge.style.display = 'block';
+  badge.textContent = correct + ' / 15 correct';
+  if (correct >= 10) {
+    badge.classList.add('all-correct');
+    if (!orderComplete) { orderComplete = true; document.getElementById('btn3').classList.remove('locked'); showToast('🎉 ' + correct + '/15 — "Conjugate" is now unlocked →'); }
+  } else { badge.classList.remove('all-correct'); }
+}
+function checkConjugation() {
+  let correct = 0;
+  CONJ_VERBS.forEach((v, i) => {
+    const inp = document.getElementById('conj-' + i), val = inp.value.trim().toLowerCase(), ans = v.form.toLowerCase();
+    if (val === ans || val === 'he ' + ans) { inp.classList.add('correct'); inp.classList.remove('wrong'); correct++; }
+    else { inp.classList.add('wrong'); inp.classList.remove('correct'); }
+  });
+  const badge = document.getElementById('conjScore'); badge.style.display = 'block';
+  badge.textContent = correct + ' / ' + CONJ_VERBS.length + ' correct';
+  if (correct >= 8) {
+    badge.classList.add('all-correct');
+    if (!conjComplete) { conjComplete = true; const tb = document.getElementById('btnSol'); tb.classList.remove('locked'); tb.classList.add('ready'); showToast('🏆 ' + correct + '/12 — Solutions unlocked for the teacher.'); }
+  } else { badge.classList.remove('all-correct'); }
+}
+function teacherUnlock() {
+  if (!conjComplete) { showToast('⚠️  Get at least 8/12 in "Conjugate" first!', true); return; }
+  const pw = prompt('Password:');
+  if (pw === 'bean2026') {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    ['btn0','btn1','btn2','btn3'].forEach(id => { const b = document.getElementById(id); if(b) b.classList.remove('active'); });
+    document.getElementById('phase4').classList.add('active');
+  } else if (pw !== null) { alert('Password errata.'); }
+}
+initDrag(); buildConjGrid(); buildStory();
+
+</script>
+</body>
+</html>
