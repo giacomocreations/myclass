@@ -10,7 +10,7 @@ self.addEventListener('fetch', event => {
   if (!url.startsWith('http')) return;
   if (url.includes('firebasedatabase') || url.includes('googleapis') ||
       url.includes('gstatic') || url.includes('cdnjs')) return;
-if (url.includes('localhost') || url.includes('127.0.0.1')) return;
+  if (url.includes('localhost') || url.includes('127.0.0.1')) return;
   event.respondWith(
     fetch(event.request)
       .then(response => {
