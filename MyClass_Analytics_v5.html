@@ -1709,6 +1709,7 @@
                 <!-- Run bar -->
                 <div class="agent-run-bar">
                     <button class="agent-btn-run" id="agentRunBtn" onclick="agentRun()">▶ Esegui ora</button>
+                    <button class="agent-btn-run" id="agentStopBtn" onclick="agentStopGeneration()" style="display:none;background:#c62828;border-color:#c62828;">⏹ Interrompi</button>
                     <button class="agent-btn-clear" onclick="agentClearCompleted()">🗑 Pulisci approvati</button>
                     <span style="font-size:12px;color:#aaa;" id="agentNextRunLabel"></span>
                 </div>
@@ -15431,6 +15432,7 @@ Rispondi SOLO con JSON valido:
     let agentGCalToken = localStorage.getItem('agent_gcal_token') || null;
     let agentGCalTokenExpiry = parseInt(localStorage.getItem('agent_gcal_token_expiry') || '0');
     let agentRunning   = false;
+    let agentAbortController = null; // AbortController attivo durante agentRun
     const AGENT_MAX_RETRY = 3; // dopo N errori il task diventa 'failed' (non più retentato)
     let agentSchedulerTimer = null;
 
@@ -15568,7 +15570,8 @@ Rispondi SOLO con JSON valido:
             {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
+                body: JSON.stringify(body),
+                signal: agentAbortController?.signal
             }
         );
         if (!res.ok) {
@@ -15602,7 +15605,8 @@ Rispondi SOLO con JSON valido:
                 max_tokens: 8192,
                 system,
                 messages: [{ role: 'user', content: prompt }]
-            })
+            }),
+            signal: agentAbortController?.signal
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
@@ -15629,7 +15633,8 @@ Rispondi SOLO con JSON valido:
                 max_tokens: 4096,
                 system,
                 messages: [{ role: 'user', content: prompt }]
-            })
+            }),
+            signal: agentAbortController?.signal
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
@@ -16023,8 +16028,11 @@ Rispondi SOLO con JSON valido:
     async function agentRun() {
         if (agentRunning) return;
         agentRunning = true;
-        const runBtn = document.getElementById('agentRunBtn');
-        if (runBtn) { runBtn.disabled = true; runBtn.innerHTML = '<span class="agent-spinner"></span> In esecuzione…'; }
+        agentAbortController = new AbortController();
+        const runBtn  = document.getElementById('agentRunBtn');
+        const stopBtn = document.getElementById('agentStopBtn');
+        if (runBtn)  { runBtn.disabled  = true;  runBtn.innerHTML  = '<span class="agent-spinner"></span> In esecuzione…'; }
+        if (stopBtn) { stopBtn.style.display = 'inline-flex'; }
         // Rileggi impostazioni fresche da localStorage
         AGENT_DO_CALENDAR = localStorage.getItem('agent_do_calendar') !== 'false';
         AGENT_DO_PIANO    = localStorage.getItem('agent_do_piano')    !== 'false';
@@ -16236,15 +16244,37 @@ Rispondi SOLO con JSON valido:
             }
 
         } catch(e) {
-            console.error('[Agente] Errore fatale:', e);
+            if (e.name === 'AbortError') {
+                console.log('[Agente] ⏹ Generazione interrotta dall\'utente.');
+                // Riporta i task bloccati in processing → error così sono gestibili
+                agentTasks.forEach(t => {
+                    if (t.status === 'processing') {
+                        t.status = 'error';
+                        t.error  = 'Generazione interrotta dall\'utente.';
+                    }
+                });
+            } else {
+                console.error('[Agente] Errore fatale:', e);
+            }
         }
 
         agentRunning = false;
+        agentAbortController = null;
         agentSaveTasks(agentTasks);
         agentBadgeUpdate();
         agentRenderPanel();
-        if (runBtn) { runBtn.disabled = false; runBtn.innerHTML = '▶ Esegui ora'; }
+        const runBtnEnd  = document.getElementById('agentRunBtn');
+        const stopBtnEnd = document.getElementById('agentStopBtn');
+        if (runBtnEnd)  { runBtnEnd.disabled  = false; runBtnEnd.innerHTML  = '▶ Esegui ora'; }
+        if (stopBtnEnd) stopBtnEnd.style.display = 'none';
         console.log('[Agente] ✅ Completato');
+    }
+
+    // Interrompe agentRun in corso (aborta le fetch attive)
+    function agentStopGeneration() {
+        if (!agentRunning) return;
+        agentAbortController?.abort();
+        // I task in processing vengono aggiornati nell'handler AbortError di agentRun
     }
 
     // ── Approve ───────────────────────────────────────────────────────────
@@ -16642,27 +16672,58 @@ Rispondi SOLO con JSON valido:
 
             let body = '';
             if (task.status === 'ready' || task.status === 'approved') {
-                const preview = (task.content||'').slice(0, 400) + ((task.content||'').length > 400 ? '…' : '');
-                const editId  = `agentEdit_${task.id}`;
-                body = `
-                    <div class="agent-task-preview" id="agentPrev_${task.id}">${preview.replace(/</g,'&lt;')}</div>
-                    <textarea class="agent-task-edit-area" id="${editId}" style="display:none;">${(task.content||'').replace(/</g,'&lt;')}</textarea>
-                    <div class="agent-task-actions">
-                        ${task.status==='ready' ? `
-                        <button class="agent-btn-approve" onclick="agentApprove('${task.id}')">
-                            ${task.type==='glo' ? '📋 Copia & Approva'
-                              : task.type==='valscritta' ? '📥 Importa voti & feedback'
-                              : task.type==='valorale'   ? '📥 Importa feedback'
-                              : task.type==='analisididattica' ? '📤 Approva & Invia allo studente'
-                              : '✅ Approva & Salva'}
-                        </button>` : ''}
-                        <button class="agent-btn-edit" onclick="agentToggleEdit('${task.id}','${editId}')">✏️ Modifica</button>
-                        <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
-                        ${task.type==='valscritta' ? `<button class="agent-btn-edit" title="Ricarica le risposte aggiornate da LiveLearn (dopo correzione manuale o AI) e rigenera la valutazione" onclick="agentRecalcAndRegenerate('${task.id}')">📊 Riprendi con dati aggiornati</button>` : ''}
-                        ${task.type==='valorale' && task.trascrizione ? `<button class="agent-btn-edit" onclick="agentToggleTranscript('${task.id}')">📝 Trascrizione</button>` : ''}
-                        ${task.type==='valorale' ? `<button class="agent-btn-edit" title="Modifica la trascrizione e rigenera la valutazione" onclick="agentOpenEditTranscript('${task.id}')">✏️ Modifica trascrizione</button>` : ''}
-                        <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
-                    </div>`;
+                // Per valorale: mostra 3 sezioni editabili (valDocente, argoText, classroomText)
+                if (task.type === 'valorale') {
+                    const mkSection = (label, fieldKey, placeholder, minH) => {
+                        const val   = (task[fieldKey]||'').replace(/</g,'&lt;');
+                        const eId   = `agentValOrale_${fieldKey}_${task.id}`;
+                        const prevId = `agentValOralePrev_${fieldKey}_${task.id}`;
+                        const prevText = (task[fieldKey]||'').slice(0,200) + ((task[fieldKey]||'').length>200?'…':'');
+                        return `<details style="margin-bottom:8px;border:1px solid #e0e4ff;border-radius:8px;overflow:hidden;">
+                            <summary style="padding:7px 12px;cursor:pointer;font-size:12px;font-weight:700;color:#5c35c9;background:#f5f0ff;user-select:none;">${label}</summary>
+                            <div style="padding:8px;">
+                                <div id="${prevId}" style="font-size:11px;color:#444;white-space:pre-wrap;max-height:80px;overflow:hidden;">${prevText.replace(/</g,'&lt;')}</div>
+                                <textarea id="${eId}" style="display:none;width:100%;min-height:${minH}px;padding:8px;font-size:12px;border:1.5px solid #b39ddb;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;">${val}</textarea>
+                                <div style="display:flex;gap:6px;margin-top:6px;">
+                                    <button class="agent-btn-edit" onclick="agentToggleValOraleSection('${task.id}','${fieldKey}')" style="font-size:11px;padding:3px 10px;">✏️ Modifica</button>
+                                    <button class="agent-btn-edit" onclick="agentSaveValOraleSection('${task.id}','${fieldKey}')" style="font-size:11px;padding:3px 10px;display:none;" id="agentSaveBtn_${fieldKey}_${task.id}">💾 Salva</button>
+                                </div>
+                            </div>
+                        </details>`;
+                    };
+                    body = `
+                        ${task.votoLabel ? `<div style="font-size:15px;font-weight:700;color:#2e7d32;margin-bottom:10px;">🏆 Voto: ${task.votoLabel}/10</div>` : ''}
+                        ${mkSection('📋 Valutazione Docente', 'valDocente', '', 200)}
+                        ${mkSection('📝 Argo (registro)', 'argoText', '', 80)}
+                        ${mkSection('💬 Classroom (feedback studente)', 'classroomText', '', 120)}
+                        <div class="agent-task-actions" style="margin-top:4px;">
+                            ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')">📥 Importa feedback</button>` : ''}
+                            <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
+                            ${task.trascrizione ? `<button class="agent-btn-edit" onclick="agentToggleTranscript('${task.id}')">📝 Trascrizione</button>` : ''}
+                            <button class="agent-btn-edit" title="Modifica la trascrizione e rigenera la valutazione" onclick="agentOpenEditTranscript('${task.id}')">✏️ Modifica trascrizione</button>
+                            <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                        </div>`;
+                } else {
+                    // Tutti gli altri tipi di task: textarea singolo esistente
+                    const preview = (task.content||'').slice(0, 400) + ((task.content||'').length > 400 ? '…' : '');
+                    const editId  = `agentEdit_${task.id}`;
+                    body = `
+                        <div class="agent-task-preview" id="agentPrev_${task.id}">${preview.replace(/</g,'&lt;')}</div>
+                        <textarea class="agent-task-edit-area" id="${editId}" style="display:none;">${(task.content||'').replace(/</g,'&lt;')}</textarea>
+                        <div class="agent-task-actions">
+                            ${task.status==='ready' ? `
+                            <button class="agent-btn-approve" onclick="agentApprove('${task.id}')">
+                                ${task.type==='glo' ? '📋 Copia & Approva'
+                                  : task.type==='valscritta' ? '📥 Importa voti & feedback'
+                                  : task.type==='analisididattica' ? '📤 Approva & Invia allo studente'
+                                  : '✅ Approva & Salva'}
+                            </button>` : ''}
+                            <button class="agent-btn-edit" onclick="agentToggleEdit('${task.id}','${editId}')">✏️ Modifica</button>
+                            <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
+                            ${task.type==='valscritta' ? `<button class="agent-btn-edit" title="Ricarica le risposte aggiornate da LiveLearn (dopo correzione manuale o AI) e rigenera la valutazione" onclick="agentRecalcAndRegenerate('${task.id}')">📊 Riprendi con dati aggiornati</button>` : ''}
+                            <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                        </div>`;
+                }
             } else if (task.status === 'failed') {
                 const retries = task.retryCount || 0;
                 body = `<div style="color:#7f0000;font-size:13px;padding:8px 0;">⛔ Tentativi esauriti (${retries}/${AGENT_MAX_RETRY}) — ${(task.error||'').replace(/</g,'&lt;')}<br><small style="opacity:0.7">Rimuovi il task e risolvi il problema prima di riprovare manualmente.</small></div>
@@ -16696,6 +16757,7 @@ Rispondi SOLO con JSON valido:
                     <button class="agent-btn-approve" onclick="agentSubmitManualTranscript('${task.id}')">🤖 Genera valutazione</button>
                     <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                 </div>`;
+            } else if (task.status === 'processing') {
                 body = `<div style="color:#1565c0;font-size:13px;padding:8px 0;">
                     <span class="agent-spinner" style="border-top-color:#1565c0;border-color:rgba(0,0,0,0.1);"></span>
                     Generazione in corso con ${aiBadge || 'AI'}…</div>`;
@@ -16719,6 +16781,48 @@ Rispondi SOLO con JSON valido:
                 </div>
             </div>`;
         }).join('');
+    }
+
+    // Toggle edit mode per una singola sezione del card valorale
+    function agentToggleValOraleSection(taskId, fieldKey) {
+        const task   = agentTasks.find(t => t.id === taskId);
+        const eId    = `agentValOrale_${fieldKey}_${taskId}`;
+        const prevId = `agentValOralePrev_${fieldKey}_${taskId}`;
+        const savId  = `agentSaveBtn_${fieldKey}_${taskId}`;
+        const ta     = document.getElementById(eId);
+        const prev   = document.getElementById(prevId);
+        const saveBtn = document.getElementById(savId);
+        if (!ta) return;
+        if (ta.style.display === 'none') {
+            ta.value = task?.[fieldKey] || '';
+            ta.style.display = 'block';
+            if (prev) prev.style.display = 'none';
+            if (saveBtn) saveBtn.style.display = 'inline-flex';
+        } else {
+            agentSaveValOraleSection(taskId, fieldKey);
+        }
+    }
+
+    // Salva la sezione modificata e aggiorna il task
+    function agentSaveValOraleSection(taskId, fieldKey) {
+        const task   = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        const eId    = `agentValOrale_${fieldKey}_${taskId}`;
+        const prevId = `agentValOralePrev_${fieldKey}_${taskId}`;
+        const savId  = `agentSaveBtn_${fieldKey}_${taskId}`;
+        const ta     = document.getElementById(eId);
+        const prev   = document.getElementById(prevId);
+        const saveBtn = document.getElementById(savId);
+        if (!ta) return;
+        task[fieldKey] = ta.value;
+        if (fieldKey === 'valDocente') task.content = ta.value; // mantieni .content sincronizzato
+        agentSaveTasks(agentTasks);
+        ta.style.display = 'none';
+        if (saveBtn) saveBtn.style.display = 'none';
+        if (prev) {
+            prev.textContent = (task[fieldKey]||'').slice(0,200) + ((task[fieldKey]||'').length>200?'…':'');
+            prev.style.display = 'block';
+        }
     }
 
     function agentToggleEdit(taskId, editId) {
@@ -17822,7 +17926,8 @@ Chi ha fatto il recupero riceve un unico feedback che menziona esplicitamente il
                 const res = await _nativeFetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body
+                    body,
+                    signal: agentAbortController?.signal
                 });
                 if (res.status === 429) {
                     lastErr = new GeminiQuotaError('Limite API Gemini raggiunto (429) — trascrizione automatica non disponibile.');
@@ -17910,20 +18015,26 @@ Chi ha fatto il recupero riceve un unico feedback che menziona esplicitamente il
             }
 
             // Livello CEFR atteso in base all'anno (1→A1, 2→A1-A2, 3→A2)
+            // Usato SOLO come calibrazione interna — NON va menzionato nel testo prodotto.
             const annoMatch = (task.classe||'').match(/^([123])/);
             const anno = annoMatch ? parseInt(annoMatch[1]) : null;
             const cefrMap = { 1: 'A1', 2: 'A1-A2', 3: 'A2' };
             const cefrLevel = anno ? cefrMap[anno] : 'A1-A2';
-            const cefrNote = `Livello atteso per questa classe: ${cefrLevel} (scuola media italiana, anno ${anno || '?'}).`;
+
+            // Costruisce l'indicazione dei punteggi parziali per la griglia, se presente
+            const grigliaPromptHint = task.griglia
+                ? `\nPer ogni area della griglia, indica il punteggio parziale ottenuto (es. "Comprensione: 3/5", "Produzione: 4/5"). Usa esattamente il formato "NomeArea: X/MAX".`
+                : '';
 
             const REGOLE = `REGOLE OBBLIGATORIE:
 - Plain text, niente emoji, niente grassetti o simboli speciali
 - Accenti italiani corretti (piu, perche, e → più, perché, è)
 - Non usare "eccellente", usa "ottimo"
 - Non menzionare PDP o piani individualizzati
+- Non menzionare livelli CEFR (A1, A2, B1 ecc.) nel testo — sono calibrazione interna
 - Menziona un'area solo se effettivamente testata
 - Aggrega le aree della griglia senza frammentare
-- PRIORITÀ ALLA COMUNICAZIONE: privilegia sempre la capacità comunicativa complessiva. Gli errori grammaticali che non ostacolano la comprensione non devono penalizzare significativamente il voto. Penalizza solo gli errori che compromettono la comunicazione o che indicano una lacuna strutturale importante per il livello ${cefrLevel}.
+- PRIORITÀ ALLA COMUNICAZIONE: si tratta di ragazzi di scuola media (${anno ? anno + 'ª media' : 'scuola media'}). Privilegia la capacità comunicativa complessiva rispetto alla correttezza grammaticale. Gli errori grammaticali che non ostacolano la comprensione non devono penalizzare il voto. Penalizza solo gli errori che compromettono la comunicazione o che sono lacune strutturali importanti per questo livello.
 - Se nella trascrizione compaiono pause segnalate [pausa Xs], commentale solo se significative per la fluency (es. pause >10s o ripetute).
 - Se nella trascrizione compaiono errori di pronuncia segnalati [pron: ...], menziona solo quelli che ostacolano la comprensione; non elencare ogni singola imperfezione fonetica.`;
 
@@ -17932,14 +18043,13 @@ Chi ha fatto il recupero riceve un unico feedback che menziona esplicitamente il
             // Limite aumentato a 8000 char per non troncare trascrizioni di colloqui lunghi
             const trascrizioneSlice = (task.trascrizione||'').slice(0, 8000);
             const prompt = `Sei il prof. Giacomo Cossu, docente di inglese scuola media italiana.
-Verifica orale di ${task.studentName}, classe ${task.classe}${task.unit?', '+task.unit:''}.
-${cefrNote}${grigliaInfo}
+Verifica orale di ${task.studentName}, classe ${task.classe}${task.unit?', '+task.unit:''}.${grigliaInfo}
 TRASCRIZIONE:
 ${trascrizioneSlice}
-${REGOLE}
+${REGOLE}${grigliaPromptHint}
 Genera tre blocchi con esattamente questi marcatori:
 === VALUTAZIONE DOCENTE ===
-Intestazione: nome, classe, data (${task.sessionDate}), unit, voto. Analisi per area (includi fluency se rilevante: pause significative, ritmo). Analisi complessiva con riferimento al livello ${cefrLevel} atteso.
+Intestazione: nome, classe, data (${task.sessionDate}), unit, voto.${task.griglia ? ' Poi per ogni area della griglia: nome area con punteggio parziale (es. Comprensione orale: 3/5). Poi analisi qualitativa sintetica.' : ' Analisi per area.'} Analisi complessiva.${task.griglia ? ` Infine voto finale come somma (es. ${(task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0) ? `Voto: X/${(task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0)} → Y/10` : 'Voto: X/10'}).` : ''}
 === ARGO ===
 Nome studente su riga, poi testo valutativo. Max 300 caratteri. Niente intestazione.
 === CLASSROOM ===
