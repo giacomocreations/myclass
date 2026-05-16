@@ -2833,12 +2833,44 @@ async function setupPushNotifications(){
       serviceWorkerRegistration: registration,
     });
     if(token){
+      // Rimuovi questo token da qualsiasi altra classe in cui fosse registrato
+      // (stesso dispositivo usato prima per un altro studente/classe).
+      // Senza questo cleanup il dispositivo riceve notifiche di classi "vecchie".
+      try {
+        const allSnap = await db.ref('livelearn/fcmTokens').get();
+        const allClasses = allSnap.val() || {};
+        const removeOps = [];
+        for (const [cid, students] of Object.entries(allClasses)) {
+          if (cid === S.classId) continue; // la classe corretta la gestiamo dopo
+          for (const [sid, entry] of Object.entries(students || {})) {
+            if (entry && entry.token === token) {
+              console.log('[Push] Rimuovo token stale da', cid, '/', sid);
+              removeOps.push(db.ref('livelearn/fcmTokens/' + cid + '/' + sid).remove());
+            }
+          }
+        }
+        // Anche nella classe corrente: rimuovi se registrato con un safe-name diverso
+        // (stesso device, studente rinominato o cambiato)
+        const curSnap = await db.ref('livelearn/fcmTokens/' + S.classId).get();
+        const curStudents = curSnap.val() || {};
+        for (const [sid, entry] of Object.entries(curStudents)) {
+          if (sid !== S.studentSafe && entry && entry.token === token) {
+            console.log('[Push] Rimuovo token duplicato nella stessa classe, safe:', sid);
+            removeOps.push(db.ref('livelearn/fcmTokens/' + S.classId + '/' + sid).remove());
+          }
+        }
+        if (removeOps.length) await Promise.all(removeOps);
+      } catch(cleanErr) {
+        console.warn('[Push] Cleanup token stale fallito:', cleanErr.message);
+      }
+
+      // Registra il token per la classe e studente correnti
       await db.ref('livelearn/fcmTokens/'+S.classId+'/'+S.studentSafe).set({
         token, code: S.code, name: S.studentName,
         platform: _isIOS() ? 'ios' : 'android/web',
         updatedAt: Date.now(),
       });
-      console.log('[Push] Token FCM registrato');
+      console.log('[Push] Token FCM registrato per', S.classId, '/', S.studentSafe);
     }
     messaging.onMessage(payload => {
       const n = payload.notification || payload.data || {};
