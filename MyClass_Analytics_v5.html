@@ -1906,6 +1906,7 @@
                     <div class="competence-tab" onclick="switchCompetence('prossime')">🔮 PROSSIME LEZIONI</div>
                     <div class="competence-tab" onclick="switchCompetence('risorse')">📎 RISORSE</div>
                     <div class="competence-tab" id="tabBachecaBtn" onclick="switchCompetence('bacheca')">📢 BACHECA</div>
+                    <div class="competence-tab" id="tabAccessiBtn" onclick="switchCompetence('accessi')">👁 ACCESSI</div>
                 </div>
                 
                 <!-- CONTENUTO STUDENTI -->
@@ -2396,6 +2397,21 @@
                 </div>
 
                 </div>
+
+                <!-- ACCESSI STUDENTAPP -->
+                <div id="tabAccessi" class="hidden" style="padding:16px 0;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+                        <div>
+                            <h3 style="margin:0;font-size:16px;color:#3949ab;">👁 Accessi StudentApp</h3>
+                            <div style="font-size:12px;color:#888;margin-top:3px;">Aggiornato in tempo reale da Firebase</div>
+                        </div>
+                        <button onclick="renderAccessi()" style="padding:6px 14px;border-radius:8px;border:1.5px solid #c5cae9;background:white;color:#5c6bc0;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">🔄 Aggiorna</button>
+                    </div>
+                    <div id="accessiContainer">
+                        <div style="color:#aaa;font-size:13px;text-align:center;padding:32px;">Caricamento...</div>
+                    </div>
+                </div>
+
             </div>
             
             
@@ -4387,6 +4403,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
         }
         
         function showClass(index) {
+            if (_accessiListener) { _accessiListener(); _accessiListener = null; }
             currentClass = index;
             currentCompetence = 'studenti';
             hideAllViews();
@@ -5843,7 +5860,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             currentCompetence = comp;
             
             // Nascondi tutti i tab content
-            const allPanels = ['tabStudenti','tabGrafici','tabAnalisiAI','tabDatiClasse','tabLezSvolte','tabProssime','tabRisorse','tabBacheca'];
+            const allPanels = ['tabStudenti','tabGrafici','tabAnalisiAI','tabDatiClasse','tabLezSvolte','tabProssime','tabRisorse','tabBacheca','tabAccessi'];
             allPanels.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.classList.add('hidden');
@@ -5874,6 +5891,9 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             } else if (comp === 'bacheca') {
                 document.getElementById('tabBacheca').classList.remove('hidden');
                 mcBachecaInit();
+            } else if (comp === 'accessi') {
+                document.getElementById('tabAccessi').classList.remove('hidden');
+                renderAccessi();
             } else {
                 // studenti (o orale/scritto per compatibilità con chiamate esistenti)
                 document.getElementById('tabStudenti').classList.remove('hidden');
@@ -5881,7 +5901,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             }
             
             // Aggiorna stile tab attivi
-            const compMap = ['studenti','grafici','analisi-ai','dati-classe','lez-svolte','prossime','risorse','bacheca'];
+            const compMap = ['studenti','grafici','analisi-ai','dati-classe','lez-svolte','prossime','risorse','bacheca','accessi'];
             document.querySelectorAll('.competence-tab').forEach((tab, idx) => {
                 tab.classList.toggle('active', compMap[idx] === comp ||
                     (compMap[idx] === 'studenti' && (comp === 'orale' || comp === 'scritto')));
@@ -14936,6 +14956,130 @@ Rispondi SOLO con JSON valido:
     function _mcClassId() {
       const classe = data.classi[currentClass];
       return classe.nome.replace(/\s+/g, '_').toLowerCase();
+    }
+
+    // ── ACCESSI STUDENTAPP ────────────────────────────────────────────────
+    let _accessiListener = null;
+
+    function renderAccessi() {
+        const container = document.getElementById('accessiContainer');
+        if (!container) return;
+        const classe = data.classi[currentClass];
+        if (!classe) return;
+        const classId = classe.nome.toLowerCase().replace(/\s+/g,'');
+
+        container.innerHTML = '<div style="color:#aaa;font-size:13px;text-align:center;padding:32px;">⏳ Caricamento da Firebase...</div>';
+
+        // Rimuovi listener precedente
+        if (_accessiListener) { _accessiListener(); _accessiListener = null; }
+
+        const db = firebase.database();
+        const ref = db.ref('myclass/accessLog/' + classId);
+
+        // Listener real-time
+        const fn = ref.on('value', snap => {
+            const container2 = document.getElementById('accessiContainer');
+            if (!container2) return;
+            const val = snap.val();
+
+            if (!val) {
+                container2.innerHTML = `<div style="text-align:center;padding:40px;color:#aaa;">
+                    <div style="font-size:32px;margin-bottom:12px;">📭</div>
+                    <div style="font-size:14px;">Nessun accesso registrato per la classe <strong>${classe.nome}</strong>.</div>
+                    <div style="font-size:12px;margin-top:6px;color:#bbb;">Gli accessi verranno registrati automaticamente da questo momento in poi.</div>
+                </div>`;
+                return;
+            }
+
+            // Costruisci lista ordinata per lastSeen desc
+            const rows = Object.values(val).sort((a,b) => (b.lastSeen||0) - (a.lastSeen||0));
+            const now = Date.now();
+
+            function _fmtTime(ts) {
+                if (!ts) return '—';
+                const d = new Date(ts);
+                const diff = now - ts;
+                if (diff < 60000)   return 'ora';
+                if (diff < 3600000) return Math.floor(diff/60000) + ' min fa';
+                if (diff < 86400000) {
+                    const h = Math.floor(diff/3600000);
+                    return h === 1 ? '1 ora fa' : h + ' ore fa';
+                }
+                const days = Math.floor(diff/86400000);
+                if (days === 1) return 'ieri ' + d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+                if (days < 7)  return days + ' giorni fa';
+                return d.toLocaleDateString('it-IT',{day:'2-digit',month:'2-digit'}) + ' ' + d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+            }
+
+            function _deviceBadge(r) {
+                const icon = r.device === 'mobile' ? '📱' : '🖥️';
+                const label = r.device === 'mobile' ? 'Mobile' : 'Desktop';
+                const pwa = r.pwa ? ' <span style="font-size:10px;background:#e8f5e9;color:#2e7d32;padding:2px 6px;border-radius:8px;font-weight:700;">PWA</span>' : '';
+                return `<span style="font-size:12px;">${icon} ${label}</span>${pwa}`;
+            }
+
+            function _onlineDot(ts) {
+                const diff = now - (ts||0);
+                if (diff < 300000)  return '<span title="Online ora" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#43a047;margin-right:5px;flex-shrink:0;"></span>';
+                if (diff < 3600000) return '<span title="Attivo di recente" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fb8c00;margin-right:5px;flex-shrink:0;"></span>';
+                return '<span title="Offline" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#e0e0e0;margin-right:5px;flex-shrink:0;"></span>';
+            }
+
+            const totalAccessi = rows.reduce((s,r) => s + (r.accesses||1), 0);
+            const onlineNow    = rows.filter(r => now - (r.lastSeen||0) < 300000).length;
+
+            container2.innerHTML = `
+                <div style="display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:120px;background:#e8eaf6;border-radius:12px;padding:14px 18px;text-align:center;">
+                        <div style="font-size:24px;font-weight:800;color:#3949ab;">${rows.length}</div>
+                        <div style="font-size:11px;color:#5c6bc0;margin-top:2px;">studenti collegati</div>
+                    </div>
+                    <div style="flex:1;min-width:120px;background:${onlineNow>0?'#e8f5e9':'#f5f5f5'};border-radius:12px;padding:14px 18px;text-align:center;">
+                        <div style="font-size:24px;font-weight:800;color:${onlineNow>0?'#2e7d32':'#9e9e9e'};">${onlineNow}</div>
+                        <div style="font-size:11px;color:${onlineNow>0?'#43a047':'#9e9e9e'};margin-top:2px;">online ora (5 min)</div>
+                    </div>
+                    <div style="flex:1;min-width:120px;background:#fff3e0;border-radius:12px;padding:14px 18px;text-align:center;">
+                        <div style="font-size:24px;font-weight:800;color:#e65100;">${totalAccessi}</div>
+                        <div style="font-size:11px;color:#f57c00;margin-top:2px;">accessi totali</div>
+                    </div>
+                </div>
+
+                <div style="background:white;border-radius:12px;border:1px solid #e8eaf6;overflow:hidden;">
+                    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                        <thead>
+                            <tr style="background:#f5f6ff;border-bottom:2px solid #e8eaf6;">
+                                <th style="padding:10px 14px;text-align:left;font-weight:700;color:#5c6bc0;">Studente</th>
+                                <th style="padding:10px 14px;text-align:center;font-weight:700;color:#5c6bc0;">Dispositivo</th>
+                                <th style="padding:10px 14px;text-align:center;font-weight:700;color:#5c6bc0;">N° accessi</th>
+                                <th style="padding:10px 14px;text-align:right;font-weight:700;color:#5c6bc0;">Ultimo accesso</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.map((r,i) => `
+                            <tr style="border-bottom:1px solid #f0f0f0;${i%2===1?'background:#fafafa':''}">
+                                <td style="padding:10px 14px;">
+                                    <div style="display:flex;align-items:center;">
+                                        ${_onlineDot(r.lastSeen)}
+                                        <span style="font-weight:600;color:#1e1b4b;">${r.name||'—'}</span>
+                                    </div>
+                                </td>
+                                <td style="padding:10px 14px;text-align:center;">${_deviceBadge(r)}</td>
+                                <td style="padding:10px 14px;text-align:center;">
+                                    <span style="background:#e8eaf6;color:#3949ab;padding:2px 10px;border-radius:10px;font-weight:700;font-size:12px;">${r.accesses||1}</span>
+                                </td>
+                                <td style="padding:10px 14px;text-align:right;color:#666;">${_fmtTime(r.lastSeen)}</td>
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <div style="font-size:11px;color:#bbb;text-align:right;margin-top:8px;">🟢 online ora &nbsp; 🟠 attivo &lt;1h &nbsp; ⚪ offline &nbsp;·&nbsp; PWA = app installata</div>`;
+        }, err => {
+            const c3 = document.getElementById('accessiContainer');
+            if (c3) c3.innerHTML = `<div class="warning-box">❌ Errore Firebase: ${err.message}</div>`;
+        });
+
+        // Salva off-function per cleanup
+        _accessiListener = () => ref.off('value', fn);
     }
 
     async function mcBachecaInit() {
