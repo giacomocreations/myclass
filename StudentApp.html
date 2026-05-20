@@ -740,6 +740,24 @@ async function bootApp(){
   const firstName = rawFirst ? rawFirst.charAt(0).toUpperCase() + rawFirst.slice(1).toLowerCase() : S.studentName;
   const greetEl = document.getElementById('agenda-greeting');
   if(greetEl) greetEl.textContent = 'Buongiorno, ' + firstName + '!';
+
+  // ── Registra accesso su Firebase ─────────────────────────────────────
+  try {
+    const _ua = navigator.userAgent;
+    const _isMobile = /Mobi|Android|iPhone|iPad/i.test(_ua);
+    const _isStandalone = window.matchMedia('(display-mode: standalone)').matches
+                       || window.navigator.standalone === true;
+    await db.ref('myclass/accessLog/' + S.classId + '/' + S.studentSafe).set({
+      name:       S.studentName,
+      classId:    S.classId,
+      className:  S.className,
+      lastSeen:   Date.now(),
+      device:     _isMobile ? 'mobile' : 'desktop',
+      pwa:        _isStandalone,
+      accesses:   firebase.database.ServerValue.increment(1)
+    });
+  } catch(e) { /* silenzioso — non blocca il boot */ }
+
   buildCal();
   await loadAllData();
   setupRealtimeListeners();
