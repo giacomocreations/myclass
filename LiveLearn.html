@@ -729,6 +729,8 @@ const CONFIG = {
     <div class="logo"><div class="logo-dot"></div> LiveLearn</div>
     <div class="flex gap-8">
       <button class="btn btn-ghost btn-sm" onclick="showView('teacher-dashboard')">← Dashboard</button>
+      <span id="ll-model-badge-builder" style="display:inline-flex;align-items:center;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:#f0fdf4;color:#065f46;border:1.5px solid #86efac;cursor:pointer;" onclick="openApiKeyModal()" title="Modello AI attivo — clicca per cambiare">🤖 —</span>
+      <button class="btn btn-sm" onclick="openApiKeyModal()" title="Gestisci chiave API Gemini">🔑 API Key</button>
       <button class="btn btn-sm" onclick="openPreview()" id="btn-preview-activity" style="display:none;">👁 Preview</button>
       <button class="btn btn-primary btn-sm" id="btn-save-activity" onclick="saveActivity()">💾 Salva attività</button>
     </div>
@@ -1705,6 +1707,8 @@ function showView(id) {
       if (tip) tip.textContent = 'Seleziona testo → applica formato';
       barEl.dataset.ready = '1';
     }
+    // Mantieni il badge provider/AI aggiornato anche in edit attività
+    if (typeof llUpdateModelBadge === 'function') llUpdateModelBadge();
   }
 }
 
@@ -2379,7 +2383,7 @@ async function editActivity(id) {
 }
 
 async function deleteActivity(id) {
-  if (!confirm('Eliminare questa attività?')) return;
+  if (!confirm('Eliminare questa attività?\n\n(I test già svolti dagli alunni restano: per rimuoverli elimina la singola sessione.)')) return;
   await db.ref('livelearn/activities/' + id).remove();
   loadDashboard();
 }
@@ -6183,10 +6187,18 @@ async function deleteSession(code) {
   if (dash) dash.innerHTML = '<p style="padding:16px;color:var(--muted);font-size:13px;">🗑 Eliminazione in corso…</p>';
 
   try {
-    // 3. Cancella metadati sessione
+    // 3. Leggi il classId della sessione PRIMA di rimuoverla: serve per pulire
+    //    la cronologia StudentApp in modo mirato (senza lettura root negabile).
+    let _classId = null;
+    try {
+      const _sSnap = await db.ref('livelearn/sessions/' + code).get();
+      _classId = _sSnap.val()?.classId || null;
+    } catch(e3) {}
+
+    // 4. Cancella metadati sessione
     await db.ref('livelearn/sessions/' + code).remove();
 
-    // 4. Leggi e cancella le risposte studente una per una
+    // 5. Leggi i partecipanti e cancella le risposte studente una per una
     //    (regole Firebase potrebbero non permettere remove() sul nodo padre)
     const snap = await db.ref('livelearn/responses/' + code).get();
     const students = snap.val() || {};
@@ -6197,8 +6209,9 @@ async function deleteSession(code) {
       ));
     }
 
-    // 5. Cleanup history in background (non blocca la navigazione)
-    _cleanupHistoryForSession(code).catch(() => {});
+    // 6. Cleanup history — fa sparire il test dalla sezione TEST della StudentApp.
+    //    Mirato (classId + partecipanti) e awaited: pulizia garantita e affidabile.
+    await _cleanupHistoryForSession(code, _classId, keys).catch(() => {});
 
   } catch(e) {
     console.warn('[deleteSession]', e.message);
@@ -6208,36 +6221,68 @@ async function deleteSession(code) {
   loadDashboard();
 }
 
-async function _cleanupHistoryForSession(code) {
+// Ricalcola il summary di uno studente dopo la rimozione di una sessione.
+async function _recomputeStudentSummary(classId, safe) {
+  try {
+    const hSnap = await db.ref('livelearn/history/' + classId + '/' + safe + '/sessions').get();
+    const rem = Object.values(hSnap.val() || {});
+    if (!rem.length) {
+      await db.ref('livelearn/history/' + classId + '/' + safe + '/summary').remove();
+      return;
+    }
+    const n = rem.length;
+    const avgPct = Math.round(rem.reduce((s,e)=>s+(e.pct||0),0)/n);
+    const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING'];
+    const tagAvg = {};
+    TAG_LIST.forEach(tag => {
+      const vals = rem.map(e=>e.tagBreakdown?.[tag]).filter(v=>v!=null);
+      if (vals.length) tagAvg[tag] = Math.round(vals.reduce((s,v)=>s+v,0)/vals.length);
+    });
+    const last = rem.reduce((a,b)=>((a.ts||0)>(b.ts||0)?a:b));
+    await db.ref('livelearn/history/' + classId + '/' + safe + '/summary').update({
+      avgPct, tagAvg, sessionCount: n,
+      lastActivity: last.activityTitle||'', lastTs: last.ts||null
+    });
+  } catch(e) {}
+}
+
+// Rimuove dalla cronologia studente (da cui la StudentApp legge i test svolti)
+// la sessione `code`. Usa un percorso MIRATO su path specifici quando conosce
+// classId + studenti partecipanti: così evita la lettura dell'intero nodo
+// livelearn/history, che le regole Firebase potrebbero negare (lettura root)
+// facendo fallire la pulizia in silenzio. Mantiene la scansione completa come
+// fallback per i casi senza classId (es. recovery).
+async function _cleanupHistoryForSession(code, classId, participantKeys) {
   if (!db) return;
+
+  // ── Percorso mirato (niente lettura root) ──────────────────────────────
+  if (classId && Array.isArray(participantKeys) && participantKeys.length) {
+    // Per ogni partecipante prova sia la chiave grezza sia la versione _toSafe,
+    // perché lo storico è scritto con _toSafe(safeName).
+    const safes = new Set();
+    participantKeys.forEach(k => { if (k) { safes.add(k); safes.add(_toSafe(k)); } });
+    for (const safe of safes) {
+      try {
+        const entry = await db.ref('livelearn/history/' + classId + '/' + safe + '/sessions/' + code).get();
+        if (entry.val() == null) continue;
+        await db.ref('livelearn/history/' + classId + '/' + safe + '/sessions/' + code).remove();
+        await _recomputeStudentSummary(classId, safe);
+      } catch(e2) {}
+    }
+    return;
+  }
+
+  // ── Fallback: scansione completa (best effort) ─────────────────────────
   try {
     const allSnap = await db.ref('livelearn/history').get();
     const allClasses = allSnap.val() || {};
-    for (const classId of Object.keys(allClasses)) {
-      const classData = allClasses[classId];
+    for (const cid of Object.keys(allClasses)) {
+      const classData = allClasses[cid];
       for (const safe of Object.keys(classData)) {
         if (!classData[safe]?.sessions?.[code]) continue;
         try {
-          await db.ref('livelearn/history/' + classId + '/' + safe + '/sessions/' + code).remove();
-          const hSnap = await db.ref('livelearn/history/' + classId + '/' + safe + '/sessions').get();
-          const rem = Object.values(hSnap.val() || {});
-          if (!rem.length) {
-            await db.ref('livelearn/history/' + classId + '/' + safe + '/summary').remove();
-          } else {
-            const n = rem.length;
-            const avgPct = Math.round(rem.reduce((s,e)=>s+(e.pct||0),0)/n);
-            const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING'];
-            const tagAvg = {};
-            TAG_LIST.forEach(tag => {
-              const vals = rem.map(e=>e.tagBreakdown?.[tag]).filter(v=>v!=null);
-              if (vals.length) tagAvg[tag] = Math.round(vals.reduce((s,v)=>s+v,0)/vals.length);
-            });
-            const last = rem.reduce((a,b)=>((a.ts||0)>(b.ts||0)?a:b));
-            await db.ref('livelearn/history/' + classId + '/' + safe + '/summary').update({
-              avgPct, tagAvg, sessionCount: n,
-              lastActivity: last.activityTitle||'', lastTs: last.ts||null
-            });
-          }
+          await db.ref('livelearn/history/' + cid + '/' + safe + '/sessions/' + code).remove();
+          await _recomputeStudentSummary(cid, safe);
         } catch(e2) {}
       }
     }
@@ -15417,7 +15462,7 @@ function llUpdateModelBadge() {
   const _relayTag = _relayOn ? ' 🔗RELAY' : '';
   const _isLocal = _AI_PROVIDER !== 'gemini' && _AI_PROVIDER !== 'claude-haiku' && _AI_PROVIDER !== 'claude-sonnet';
   const _isClaude = _AI_PROVIDER === 'claude-haiku' || _AI_PROVIDER === 'claude-sonnet';
-  ['ll-model-badge','ll-model-badge-live'].forEach(id => {
+  ['ll-model-badge','ll-model-badge-live','ll-model-badge-builder'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.textContent = '🤖 ' + label.replace(/^[^\s]+\s/,'') + _relayTag;
