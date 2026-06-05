@@ -14052,6 +14052,26 @@ Rispondi SOLO con JSON valido:
                 lvUpdT();lvRenderFL();
             }
 
+            // ── Beep al cambio step automatico (due note bip-bip) ───────────
+            function lvBeep(){
+                try{
+                    const Ctx=window.AudioContext||window.webkitAudioContext; if(!Ctx)return;
+                    if(!LV._actx)LV._actx=new Ctx();
+                    const ctx=LV._actx; if(ctx.state==='suspended')ctx.resume();
+                    const t0=ctx.currentTime;
+                    [880,1175].forEach((f,i)=>{
+                        const o=ctx.createOscillator(),g=ctx.createGain();
+                        o.type='sine'; o.frequency.value=f;
+                        const start=t0+i*0.16;
+                        g.gain.setValueAtTime(0,start);
+                        g.gain.linearRampToValueAtTime(0.18,start+0.02);
+                        g.gain.exponentialRampToValueAtTime(0.0001,start+0.14);
+                        o.connect(g).connect(ctx.destination);
+                        o.start(start); o.stop(start+0.16);
+                    });
+                }catch(e){}
+            }
+
             function lvToggle(){
                 if(!LV.fasi.length)return;
                 if(LV.tMax===0)lvGoF(0);
@@ -14060,7 +14080,7 @@ Rispondi SOLO con JSON valido:
                 if(LV.tRun){
                     LV.tInt=setInterval(()=>{
                         if(LV.tSec>0){LV.tSec--;lvUpdT();}
-                        else{clearInterval(LV.tInt);LV.tRun=false;const b=q('lv-bsp');if(b)b.textContent='▶ Riprendi';}
+                        else{clearInterval(LV.tInt);LV.tRun=false;lvBeep();lvNext();} // fine step → avanza in automatico
                     },1000);
                 } else clearInterval(LV.tInt);
             }
@@ -25907,8 +25927,9 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
       // Posticipa: rimuove la chiave dal Set → riattiva il check tra 5 minuti
       t.querySelector('#al-snooze-btn').onclick = () => { t.remove(); const k = ci + '_' + isoDate + '_' + ora; _autoLiveNotified.delete(k); setTimeout(checkAutoLiveNow, 5 * 60 * 1000); };
       t.querySelector('#al-close-btn').onclick = () => t.remove();
-      // Auto-apre dopo 30s se non viene cliccato (era 120s fisso, ora proporzionale al diff)
-      const autoOpenMs = diff > 0 ? Math.min(diff * 60000, 30000) : 15000;
+      // Auto-apre ESATTAMENTE all'oraInizio: il toast può comparire fino a 10 min prima
+      // (preavviso), ma la LIVE si apre puntuale. diff = minuti mancanti all'inizio.
+      const autoOpenMs = diff > 0 ? diff * 60000 : 0;
       setTimeout(() => { if (document.getElementById('al-toast') === t) { t.remove(); window.currentClass = ci; if (typeof apriLive === 'function') apriLive(ci, slotId); } }, autoOpenMs);
       setTimeout(() => { if (document.getElementById('al-toast') === t) t.remove(); }, autoOpenMs + 60000);
     }
