@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>I'm Gonna… – To Be Going To</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&display=swap');
+
+  :root {
+    --bg: #070b14;
+    --surface: #0e1422;
+    --card: #131b2e;
+    --accent: #38bdf8;
+    --accent2: #c084fc;
+    --gold: #fbbf24;
+    --text: #eef3fb;
+    --muted: #7e8aa3;
+    --correct: #34d399;
+    --wrong: #fb7185;
+    --border: rgba(255,255,255,0.07);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; overflow-x: hidden; }
+  body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(ellipse 60% 40% at 18% 18%, rgba(56,189,248,0.13) 0%, transparent 60%), radial-gradient(ellipse 50% 50% at 82% 82%, rgba(192,132,252,0.11) 0%, transparent 60%); pointer-events: none; z-index: 0; }
+
+  .container { max-width: 800px; margin: 0 auto; padding: 24px 16px 60px; position: relative; z-index: 1; }
+  .header { text-align: center; margin-bottom: 28px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+  .eyebrow { font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  .header h1 { font-family: 'Bebas Neue', sans-serif; font-size: clamp(34px, 7vw, 60px); letter-spacing: 2px; line-height: 1; background: linear-gradient(135deg, #fff 20%, var(--accent) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 6px; }
+  .subtitle { color: var(--muted); font-size: 14px; }
+
+  .score-bar { display: flex; align-items: center; justify-content: center; gap: 24px; margin-bottom: 24px; padding: 12px 20px; background: var(--surface); border-radius: 12px; border: 1px solid var(--border); }
+  .score-item { text-align: center; }
+  .score-item .val { font-family: 'Bebas Neue', sans-serif; font-size: 28px; line-height: 1; }
+  .score-item .lbl { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
+  .score-item.correct .val { color: var(--correct); }
+  .score-item.wrong .val { color: var(--wrong); }
+  .score-item.total .val { color: var(--gold); }
+
+  .phase-tabs { display: flex; gap: 6px; margin-bottom: 22px; background: var(--surface); padding: 6px; border-radius: 12px; border: 1px solid var(--border); }
+  .phase-tab { flex: 1; padding: 10px 6px; border-radius: 8px; border: none; background: transparent; color: var(--muted); font-family: 'DM Sans', sans-serif; font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.2s; text-align: center; line-height: 1.3; }
+  .phase-tab.active { background: var(--accent); color: #070b14; }
+  .phase-tab .phase-num { display: block; font-family: 'Bebas Neue', sans-serif; font-size: 18px; line-height: 1; margin-bottom: 2px; }
+  .phase-tab:not(.active):hover { color: var(--text); background: var(--border); }
+
+  .phase-panel { display: none; }
+  .phase-panel.active { display: block; }
+
+  .instruction { background: var(--card); border-left: 3px solid var(--accent2); border-radius: 0 10px 10px 0; padding: 14px 18px; margin-bottom: 18px; font-size: 14px; line-height: 1.6; }
+  .instruction strong { color: var(--gold); }
+
+  /* AUDIO */
+  .audio-box { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; margin-bottom: 16px; text-align: center; }
+  .audio-box audio { width: 100%; margin-top: 8px; filter: invert(0); }
+  .audio-title { font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); }
+
+  /* ORDER LIST */
+  .order-list { display: grid; gap: 10px; margin-bottom: 16px; }
+  .order-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; }
+  .order-num { font-family: 'Bebas Neue', sans-serif; font-size: 26px; width: 36px; height: 36px; flex-shrink: 0; border-radius: 9px; display: flex; align-items: center; justify-content: center; background: rgba(56,189,248,0.15); color: var(--accent); }
+  .order-card.ok .order-num { background: rgba(52,211,153,0.18); color: var(--correct); }
+  .order-card.no .order-num { background: rgba(251,113,133,0.18); color: var(--wrong); }
+  .order-body { flex: 1; min-width: 0; }
+  .order-hook { font-size: 14px; font-weight: 700; color: var(--text); }
+  .order-lyric { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+  .order-moves { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+  .move-btn { background: var(--surface); border: 1px solid var(--border); border-radius: 7px; color: var(--muted); width: 30px; height: 22px; font-size: 13px; cursor: pointer; line-height: 1; transition: all 0.15s; }
+  .move-btn:hover { color: var(--text); border-color: var(--accent); }
+
+  /* DRILL */
+  .drill-card { background: var(--card); border-radius: 16px; padding: 28px 24px; border: 1px solid var(--border); margin-bottom: 16px; text-align: center; position: relative; overflow: hidden; }
+  .drill-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+  .drill-counter { font-family: 'Space Mono', monospace; font-size: 11px; color: var(--muted); letter-spacing: 2px; margin-bottom: 18px; }
+  .drill-tag { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 12px; background: rgba(56,189,248,0.2); color: var(--accent); }
+  .drill-question { font-family: 'Bebas Neue', sans-serif; font-size: clamp(20px, 4.5vw, 30px); letter-spacing: 1px; color: var(--text); margin-bottom: 8px; line-height: 1.2; }
+  .drill-hint { font-size: 13px; color: var(--muted); margin-bottom: 22px; }
+  .drill-hint span { color: var(--accent2); font-weight: 600; }
+  .answer-options { display: grid; gap: 10px; max-width: 460px; margin: 0 auto; }
+  .answer-btn { padding: 13px 18px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.18s; text-align: left; }
+  .answer-btn:hover:not(:disabled) { border-color: var(--accent); background: rgba(56,189,248,0.08); transform: translateX(4px); }
+  .answer-btn.correct-ans { border-color: var(--correct); background: rgba(52,211,153,0.12); color: var(--correct); }
+  .answer-btn.wrong-ans { border-color: var(--wrong); background: rgba(251,113,133,0.12); color: var(--wrong); }
+  .answer-btn:disabled { cursor: default; }
+  .feedback-msg { margin-top: 14px; font-size: 15px; font-weight: 600; min-height: 22px; }
+  .feedback-msg.ok { color: var(--correct); }
+  .feedback-msg.ko { color: var(--wrong); }
+  .next-btn { margin-top: 18px; padding: 12px 30px; background: linear-gradient(135deg, var(--accent), var(--accent2)); border: none; border-radius: 10px; color: #070b14; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; display: none; }
+  .next-btn.visible { display: inline-block; }
+
+  /* BUILD IT */
+  .build-area { background: var(--card); border-radius: 16px; padding: 22px; border: 1px solid var(--border); margin-bottom: 16px; }
+  .build-prompt { font-size: 13px; color: var(--muted); margin-bottom: 6px; font-style: italic; }
+  .build-answer-display { font-family: 'Bebas Neue', sans-serif; font-size: 20px; color: var(--gold); min-height: 28px; margin-bottom: 16px; letter-spacing: 0.5px; }
+  .build-display { background: var(--bg); border-radius: 10px; padding: 14px 16px; min-height: 52px; font-size: 17px; font-weight: 600; margin-bottom: 16px; border: 1px dashed var(--border); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .word-token { background: var(--accent); padding: 4px 11px; border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer; color: #070b14; }
+  .word-bank { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .word-chip { background: var(--surface); border: 1px solid var(--border); padding: 8px 14px; border-radius: 8px; font-size: 14px; cursor: pointer; transition: all 0.15s; user-select: none; font-weight: 500; }
+  .word-chip:hover:not(.used) { border-color: var(--accent); background: rgba(56,189,248,0.12); }
+  .word-chip.used { opacity: 0.3; cursor: not-allowed; }
+  .build-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .build-nav-btn { padding: 6px 14px; background: transparent; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 13px; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+  #build-nav-counter { font-family: 'Space Mono', monospace; font-size: 11px; color: var(--muted); letter-spacing: 2px; }
+
+  .action-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .btn-check { padding: 11px 24px; background: var(--accent); border: none; border-radius: 9px; color: #070b14; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; }
+  .btn-clear { padding: 11px 18px; background: transparent; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); font-family: 'DM Sans', sans-serif; font-size: 14px; cursor: pointer; }
+  .btn-next-build { padding: 11px 24px; background: linear-gradient(135deg, var(--accent), var(--accent2)); border: none; border-radius: 9px; color: #070b14; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; display: none; }
+  .btn-next-build.visible { display: inline-block; }
+  .score-badge { background: rgba(56,189,248,0.13); border: 1px solid var(--accent); border-radius: 8px; padding: 7px 14px; font-size: 14px; font-weight: 600; color: var(--accent); margin-left: auto; display: none; }
+  .score-badge.all-correct { background: rgba(52,211,153,0.13); border-color: var(--correct); color: var(--correct); }
+
+  /* FREE */
+  .free-card { background: var(--card); border-radius: 14px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 12px; }
+  .free-card-head { padding: 10px 18px; background: rgba(56,189,248,0.12); font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); display: flex; justify-content: space-between; align-items: center; }
+  .free-card-body { padding: 16px 20px; }
+  .role-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+  .role-a { background: rgba(56,189,248,0.15); color: var(--accent); }
+  .role-b { background: rgba(192,132,252,0.15); color: var(--accent2); }
+  .role-solo { background: rgba(251,191,36,0.15); color: var(--gold); }
+  .role-task { font-size: 14px; line-height: 1.7; }
+  .role-task em { color: var(--gold); font-style: normal; font-weight: 600; }
+
+  .progress-wrap { background: var(--surface); border-radius: 4px; height: 4px; margin-bottom: 18px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width 0.4s ease; }
+  .phase-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px; color: var(--accent); margin-bottom: 12px; }
+
+  .final-screen { text-align: center; padding: 40px 20px; background: var(--card); border-radius: 20px; border: 1px solid var(--border); }
+  .final-emoji { font-size: 60px; margin-bottom: 14px; }
+  .final-title { font-family: 'Bebas Neue', sans-serif; font-size: 48px; background: linear-gradient(135deg, var(--gold), var(--accent)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 8px; }
+  .final-sub { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  .final-score-big { font-family: 'Bebas Neue', sans-serif; font-size: 80px; color: var(--gold); line-height: 1; margin-bottom: 4px; }
+  .restart-btn { padding: 14px 36px; background: linear-gradient(135deg, var(--accent), var(--accent2)); border: none; border-radius: 12px; color: #070b14; font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 18px; }
+
+  @keyframes pop-in { from { transform: scale(0.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .pop { animation: pop-in 0.22s ease; }
+  @keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+  .shake { animation: shake 0.3s ease; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div style="position:fixed;top:14px;left:14px;z-index:100;">
+    <a href="index.html" style="display:inline-flex;align-items:center;gap:7px;padding:8px 16px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:10px;color:#aaa;text-decoration:none;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;backdrop-filter:blur(8px);transition:all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.13)';this.style.color='#fff'" onmouseout="this.style.background='rgba(255,255,255,0.07)';this.style.color='#aaa'">← Menu</a>
+  </div>
+
+  <div class="header">
+    <div class="eyebrow">🎵 To Be Going To</div>
+    <h1>I'm Gonna…</h1>
+    <div class="subtitle">Future Plans &amp; Predictions · "gonna" = going to</div>
+  </div>
+
+  <div class="score-bar">
+    <div class="score-item correct"><div class="val" id="score-correct">0</div><div class="lbl">Correct</div></div>
+    <div class="score-item wrong"><div class="val" id="score-wrong">0</div><div class="lbl">Wrong</div></div>
+    <div class="score-item total"><div class="val" id="score-total">0</div><div class="lbl">Total</div></div>
+  </div>
+
+  <div class="phase-tabs">
+    <button class="phase-tab active" onclick="showPhase(0)"><span class="phase-num">1</span>Listening</button>
+    <button class="phase-tab" onclick="showPhase(1)"><span class="phase-num">2</span>Quick Drill</button>
+    <button class="phase-tab" onclick="showPhase(2)"><span class="phase-num">3</span>Build It</button>
+    <button class="phase-tab" onclick="showPhase(3)"><span class="phase-num">4</span>Free Practice</button>
+  </div>
+
+  <!-- PHASE 1: LISTENING -->
+  <div class="phase-panel active" id="phase-0">
+    <div class="instruction">🎧 <strong>Put the songs in the order you hear them.</strong> Ascolta l'audio e usa le frecce ▲▼ per mettere gli estratti nell'ordine giusto, poi premi <strong>Check</strong>. Tutte le canzoni usano <em style="color:var(--accent2)">"gonna" = going to</em>.</div>
+
+    <div class="audio-box">
+      <div class="audio-title">🔊 Listening – the "gonna" songs</div>
+      <audio controls preload="none" src="going_to_activity.mp3"></audio>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;font-family:'Space Mono',monospace;">se l'audio non parte, carica <strong>going_to_activity.mp3</strong> nella stessa cartella</div>
+    </div>
+
+    <div class="order-list" id="order-list"></div>
+
+    <div class="action-row">
+      <button class="btn-check" onclick="checkOrder()">✓ Check</button>
+      <button class="btn-clear" onclick="shuffleOrder()">🔀 Shuffle</button>
+      <div class="score-badge" id="order-badge"></div>
+    </div>
+
+    <div style="text-align:center;margin-top:16px;">
+      <button class="next-btn visible" onclick="showPhase(1)">Quick Drill →</button>
+    </div>
+  </div>
+
+  <!-- PHASE 2: QUICK DRILL -->
+  <div class="phase-panel" id="phase-1">
+    <div class="phase-title">⚡ Quick Drill</div>
+    <div class="instruction"><strong>am / is / are + going to + verb.</strong> Per piani decisi e previsioni con prove evidenti.</div>
+    <div class="progress-wrap"><div class="progress-fill" id="drill-progress" style="width:0%"></div></div>
+    <div class="drill-card" id="drill-card">
+      <div class="drill-counter" id="drill-counter">1 / 12</div>
+      <div class="drill-tag">To be going to</div>
+      <div class="drill-question" id="drill-question"></div>
+      <div class="drill-hint" id="drill-hint"></div>
+      <div class="answer-options" id="answer-options"></div>
+      <div class="feedback-msg" id="feedback-msg"></div>
+      <button class="next-btn" id="drill-next" onclick="nextDrill()">Next →</button>
+    </div>
+  </div>
+
+  <!-- PHASE 3: BUILD IT -->
+  <div class="phase-panel" id="phase-2">
+    <div class="phase-title">🔨 Build It</div>
+    <div class="instruction">🔨 <strong>Build the sentence.</strong> Clicca le parole nell'ordine giusto, poi premi <strong>Check</strong>. (<em style="color:var(--accent2)">"going to"</em> è un'unica tessera!)</div>
+    <div class="progress-wrap"><div class="progress-fill" id="build-progress" style="width:0%"></div></div>
+    <div class="build-area">
+      <div class="build-nav">
+        <button class="build-nav-btn" onclick="skipBuild()">Skip →</button>
+        <span id="build-nav-counter">1 / 6</span>
+      </div>
+      <div class="build-prompt">Make this sentence:</div>
+      <div class="build-answer-display" id="build-answer"></div>
+      <div class="build-display" id="build-display"></div>
+      <div class="word-bank" id="word-bank"></div>
+      <div class="action-row">
+        <button class="btn-check" onclick="checkBuild()">✓ Check</button>
+        <button class="btn-clear" onclick="clearBuild()">Clear</button>
+        <button class="btn-next-build" id="build-next" onclick="nextBuild()">Next →</button>
+      </div>
+      <div class="feedback-msg" id="build-feedback" style="margin-top:14px"></div>
+    </div>
+  </div>
+
+  <!-- PHASE 4: FREE PRACTICE -->
+  <div class="phase-panel" id="phase-3">
+    <div class="phase-title">🗣️ Free Practice</div>
+    <div class="instruction">Parla e scrivi dei tuoi piani e delle tue previsioni con <em>going to</em>.</div>
+
+    <div class="free-card">
+      <div class="free-card-head"><span>Activity 1 – My Weekend Plans (pair work)</span><span style="color:var(--muted);font-size:10px">3 min</span></div>
+      <div class="free-card-body">
+        <div class="role-tag role-a">Student A</div>
+        <div class="role-task">Chiedi i piani del weekend: <em>"What are you going to do this weekend?"</em> / <em>"Are you going to study?"</em></div>
+        <br>
+        <div class="role-tag role-b">Student B</div>
+        <div class="role-task">Rispondi con piani veri: <em>"I'm going to play football and I'm going to visit my grandma."</em> Poi scambiatevi.</div>
+      </div>
+    </div>
+
+    <div class="free-card">
+      <div class="free-card-head"><span>Activity 2 – The Interview (like Billie!)</span><span style="color:var(--muted);font-size:10px">5 min</span></div>
+      <div class="free-card-body">
+        <div class="role-tag role-a">Journalist</div>
+        <div class="role-task">Sei un giornalista (come nell'intervista a Billie). Intervista il/la tuo/a compagno/a sui suoi piani futuri: <em>"Are you going to learn an instrument?"</em>, <em>"Are you going to travel this summer?"</em>, <em>"What are you going to be when you grow up?"</em></div>
+        <br>
+        <div class="role-tag role-b">Star</div>
+        <div class="role-task">Rispondi come una star: <em>"I'm going to release an album!"</em> Fai almeno 5 domande, poi cambiate ruolo.</div>
+      </div>
+    </div>
+
+    <div class="free-card">
+      <div class="free-card-head"><span>Activity 3 – Predictions ✍️</span><span style="color:var(--muted);font-size:10px">6 min</span></div>
+      <div class="free-card-body">
+        <div class="role-tag role-solo">Solo</div>
+        <div class="role-task">Scrivi <strong>6 frasi</strong> con <em>going to</em>: 3 <strong>piani</strong> tuoi e 3 <strong>previsioni</strong> (guarda gli indizi!).<br><br>
+        <em>Plan:</em> "I'm going to study English tonight."<br>
+        <em>Prediction:</em> "Look at those clouds — it's going to rain!"<br><br>
+        ⚠️ <em>"I going to play"</em> ❌ → <em>"I'm going to play"</em> ✅ · <em>"She going to sing"</em> ❌ → <em>"She is going to sing"</em> ✅</div>
+      </div>
+    </div>
+
+    <div style="text-align:center;margin-top:24px;">
+      <button class="restart-btn" onclick="showFinal()">See My Score 🏆</button>
+    </div>
+  </div>
+
+  <!-- FINAL -->
+  <div class="phase-panel" id="phase-final">
+    <div class="final-screen">
+      <div class="final-emoji" id="final-emoji">🏆</div>
+      <div class="final-title">Well Done!</div>
+      <div class="final-sub">I'm Gonna… completed</div>
+      <div class="final-score-big" id="final-score-big">0</div>
+      <div style="color:var(--muted);font-size:13px;">correct answers out of <span id="final-total">0</span></div>
+      <div style="margin-top:16px;color:var(--text);font-size:15px;" id="final-message"></div>
+      <button class="restart-btn" onclick="restart()">🔄 Play Again</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let scoreCorrect=0,scoreWrong=0,scoreTotal=0;
+function updateScore(ok){if(ok)scoreCorrect++;else scoreWrong++;scoreTotal++;document.getElementById('score-correct').textContent=scoreCorrect;document.getElementById('score-wrong').textContent=scoreWrong;document.getElementById('score-total').textContent=scoreTotal;}
+function showPhase(n){document.querySelectorAll('.phase-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.phase-tab').forEach(t=>t.classList.remove('active'));if(n==='final'){document.getElementById('phase-final').classList.add('active');return;}document.getElementById('phase-'+n).classList.add('active');document.querySelectorAll('.phase-tab')[n].classList.add('active');if(n===1&&drillIndex===0)loadDrill();if(n===2&&buildIndex===0)loadBuild();}
+
+// ===== LISTENING: ORDER THE SONGS =====
+// Estratti dal foglio. NB: i titoli non sono mostrati, gli studenti ordinano a orecchio.
+const songs = [
+  { id:'fame',       hook:'♪ "…live forever / remember my name"',       lyric:"I'm gonna live forever, I'm gonna learn how to fly… Light up the sky like a flame. Baby, remember my name." },
+  { id:'want',       hook:'♪ "…be what I want / can you feel it?"',      lyric:"I'm gonna be what I want, what I want… I'm goin' hard 'til I'm gone. Can you feel it?" },
+  { id:'change',     hook:'♪ "…make a change / make it right"',          lyric:"I'm gonna make a change, for once in my life… Gonna make a difference, gonna make it right." },
+  { id:'chandelier', hook:'♪ "…swing from the chandelier"',             lyric:"I'm gonna swing from the chandelier… I'm gonna live like tomorrow doesn't exist." },
+  { id:'oneday',     hook:'♪ "…one of these days / sky gonna be blue"', lyric:"One of these days I'm gonna wake up, sky's gonna be blue… the world is gonna be brand new." },
+];
+// ⬇️ ORDINE CORRETTO (= ordine dell'audio). Cambia qui se serve.
+const CORRECT_ORDER = ['fame','want','change','chandelier','oneday'];
+
+let orderState = [];
+let orderScored = false;
+function buildOrder(){
+  orderState = songs.map(s=>s.id);
+  shuffleArray(orderState);
+  renderOrder();
+}
+function shuffleArray(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} }
+function shuffleOrder(){ shuffleArray(orderState); document.getElementById('order-badge').style.display='none'; renderOrder(); }
+function renderOrder(){
+  const list = document.getElementById('order-list'); list.innerHTML='';
+  orderState.forEach((id,pos)=>{
+    const s = songs.find(x=>x.id===id);
+    const card = document.createElement('div'); card.className='order-card'; card.id='oc-'+id;
+    card.innerHTML =
+      '<div class="order-num">'+(pos+1)+'</div>'+
+      '<div class="order-body"><div class="order-hook">'+s.hook+'</div><div class="order-lyric">'+s.lyric+'</div></div>'+
+      '<div class="order-moves">'+
+        '<button class="move-btn" onclick="moveCard('+pos+',-1)">▲</button>'+
+        '<button class="move-btn" onclick="moveCard('+pos+',1)">▼</button>'+
+      '</div>';
+    list.appendChild(card);
+  });
+}
+function moveCard(pos,dir){
+  const np = pos+dir; if(np<0||np>=orderState.length) return;
+  [orderState[pos],orderState[np]]=[orderState[np],orderState[pos]];
+  renderOrder();
+}
+function checkOrder(){
+  let correct=0;
+  orderState.forEach((id,pos)=>{
+    const card=document.getElementById('oc-'+id);
+    card.classList.remove('ok','no');
+    if(id===CORRECT_ORDER[pos]){card.classList.add('ok');correct++;}else{card.classList.add('no');}
+  });
+  const badge=document.getElementById('order-badge');badge.style.display='block';
+  badge.textContent=correct+' / '+songs.length+' in the right place';
+  badge.classList.toggle('all-correct',correct===songs.length);
+  if(!orderScored){orderScored=true;for(let k=0;k<correct;k++)updateScore(true);for(let k=0;k<songs.length-correct;k++)updateScore(false);}
+}
+
+// ===== QUICK DRILL =====
+const drillData=[
+  {q:'"I ___ going to call my friend."',hint:'→ I → am',options:['am','is','are','be'],correct:0},
+  {q:'"She ___ going to be a singer."',hint:'→ she → is',options:['am','are','is','be'],correct:2},
+  {q:'"They ___ going to travel to London."',hint:'→ they → are',options:['is','are','am','be'],correct:1},
+  {q:'"He ___ going to come."  (negative)',hint:"→ he → isn't",options:["aren't","isn't","amn't","don't"],correct:1},
+  {q:'"___ you going to study tonight?"',hint:'→ you → Are',options:['Is','Am','Are','Do'],correct:2},
+  {q:'Look at those black clouds! It ___ rain.',hint:'→ prediction (evidence)',options:['is going to','going to','goes to','is go to'],correct:0},
+  {q:'"What ___ she going to do after school?"',hint:'→ she → is',options:['are','am','is','do'],correct:2},
+  {q:'"gonna" is the informal way to say…',hint:'→ song language',options:['go to','going to','gone to','goes to'],correct:1},
+  {q:'"We ___ going to be late."  (negative)',hint:'→ we → are not',options:['am not','is not','are not','do not'],correct:2},
+  {q:'Choose the CORRECT sentence:',hint:'→ am/is/are + going to + verb',options:['I going to sleep.','I am going to sleep.','I am going to sleeping.','I am go to sleep.'],correct:1},
+  {q:'"___ it going to snow this weekend?"',hint:'→ it → Is',options:['Are','Is','Am','Does'],correct:1},
+  {q:'"The team is strong. They ___ win."',hint:'→ prediction',options:['are going to','is going to','going to are','are go to'],correct:0},
+];
+let drillIndex=0,drillAnswered=false;
+function loadDrill(){drillIndex=0;drillAnswered=false;renderDrill();}
+function renderDrill(){
+  if(drillIndex>=drillData.length){showPhase(2);return;}
+  const d=drillData[drillIndex];
+  document.getElementById('drill-counter').textContent=(drillIndex+1)+' / '+drillData.length;
+  document.getElementById('drill-question').textContent=d.q;
+  document.getElementById('drill-hint').innerHTML=d.hint;
+  document.getElementById('drill-progress').style.width=(drillIndex/drillData.length*100)+'%';
+  document.getElementById('feedback-msg').textContent='';document.getElementById('feedback-msg').className='feedback-msg';
+  document.getElementById('drill-next').classList.remove('visible');drillAnswered=false;
+  const opts=document.getElementById('answer-options');opts.innerHTML='';
+  d.options.forEach((opt,i)=>{const b=document.createElement('button');b.className='answer-btn';b.textContent=opt;b.onclick=()=>selectAnswer(i,d.correct);opts.appendChild(b);});
+  document.getElementById('drill-card').classList.add('pop');setTimeout(()=>document.getElementById('drill-card').classList.remove('pop'),280);
+}
+function selectAnswer(chosen,correct){
+  if(drillAnswered)return;drillAnswered=true;
+  const btns=document.querySelectorAll('.answer-btn');btns.forEach(b=>b.disabled=true);btns[correct].classList.add('correct-ans');
+  const fb=document.getElementById('feedback-msg');
+  if(chosen===correct){fb.textContent='✓ Correct!';fb.className='feedback-msg ok';updateScore(true);}
+  else{btns[chosen].classList.add('wrong-ans');fb.textContent='✗ Not quite — see the correct answer.';fb.className='feedback-msg ko';updateScore(false);document.getElementById('drill-card').classList.add('shake');setTimeout(()=>document.getElementById('drill-card').classList.remove('shake'),350);}
+  document.getElementById('drill-next').classList.add('visible');
+}
+function nextDrill(){drillIndex++;renderDrill();}
+
+// ===== BUILD IT =====
+const buildData=[
+  { answer:'A plan for tonight', question:['She','is','going to','sing','tonight'], extra:['are','am','sings','to'] },
+  { answer:'A question about the match', question:['Are','you','going to','watch','the','match','?'], extra:['Is','am','watching'] },
+  { answer:'A personal intention', question:['I','am','going to','learn','the','guitar'], extra:['is','are','learns'] },
+  { answer:'A weather prediction', question:['It','is','going to','rain','tomorrow'], extra:['are','am','raining'] },
+  { answer:'A negative plan', question:['They','are','not','going to','lose'], extra:['is','am','loses'] },
+  { answer:'A question with WHAT', question:['What','are','you','going to','do','?'], extra:['is','am','doing'] },
+];
+let buildIndex=0,currentBuilt=[];
+function loadBuild(){buildIndex=0;renderBuild();}
+function skipBuild(){ if(buildIndex<buildData.length-1){buildIndex++;renderBuild();} else {showPhase(3);} }
+function renderBuild(){
+  if(buildIndex>=buildData.length){showPhase(3);return;}
+  const d=buildData[buildIndex];
+  document.getElementById('build-answer').textContent=d.answer;
+  document.getElementById('build-nav-counter').textContent=(buildIndex+1)+' / '+buildData.length;
+  document.getElementById('build-progress').style.width=(buildIndex/buildData.length*100)+'%';
+  document.getElementById('build-feedback').textContent='';document.getElementById('build-feedback').className='feedback-msg';
+  document.getElementById('build-next').classList.remove('visible');
+  currentBuilt=[];renderBuilt();
+  const all=[...d.question,...d.extra]; shuffleArray(all);
+  const bank=document.getElementById('word-bank');bank.innerHTML='';
+  all.forEach((w,i)=>{const c=document.createElement('div');c.className='word-chip';c.textContent=w;c.dataset.idx=i;c.onclick=()=>{if(c.classList.contains('used'))return;c.classList.add('used');currentBuilt.push({word:w,idx:i});renderBuilt();};bank.appendChild(c);});
+}
+function renderBuilt(){
+  const disp=document.getElementById('build-display');
+  if(currentBuilt.length===0){disp.innerHTML='<span style="color:var(--muted);font-size:14px;">Tap the words…</span>';return;}
+  disp.innerHTML='';
+  currentBuilt.forEach((it,i)=>{const t=document.createElement('span');t.className='word-token';t.textContent=it.word;t.title='remove';t.onclick=()=>{currentBuilt.splice(i,1);document.querySelectorAll('.word-chip').forEach(c=>{if(parseInt(c.dataset.idx)===it.idx)c.classList.remove('used');});renderBuilt();};disp.appendChild(t);});
+}
+function clearBuild(){currentBuilt=[];document.querySelectorAll('.word-chip').forEach(c=>c.classList.remove('used'));renderBuilt();document.getElementById('build-feedback').textContent='';document.getElementById('build-next').classList.remove('visible');}
+function checkBuild(){
+  const d=buildData[buildIndex];
+  const built=currentBuilt.map(i=>i.word).join(' ').replace('?','').replace(/\s+/g,' ').trim().toLowerCase();
+  const correct=d.question.join(' ').replace('?','').replace(/\s+/g,' ').trim().toLowerCase();
+  const fb=document.getElementById('build-feedback');
+  if(built===correct){fb.textContent='✓ Perfect! '+d.question.join(' ').replace(' ?','?');fb.className='feedback-msg ok';document.getElementById('build-next').classList.add('visible');updateScore(true);}
+  else{fb.textContent='✗ Not quite — check the word order!';fb.className='feedback-msg ko';updateScore(false);}
+}
+function nextBuild(){buildIndex++;renderBuild();}
+
+// ===== FINAL =====
+function showFinal(){
+  document.getElementById('final-score-big').textContent=scoreCorrect;
+  document.getElementById('final-total').textContent=scoreTotal;
+  const pct=Math.round(scoreCorrect/Math.max(scoreTotal,1)*100);
+  let emoji='🌟',msg='Outstanding!';
+  if(pct<50){emoji='💪';msg='Keep practising – you\'re getting there!';}
+  else if(pct<75){emoji='👍';msg='Good job! Review and try again.';}
+  else if(pct<90){emoji='🎉';msg='Almost perfect – great work!';}
+  document.getElementById('final-emoji').textContent=emoji;
+  document.getElementById('final-message').textContent=msg;
+  showPhase('final');
+}
+function restart(){scoreCorrect=0;scoreWrong=0;scoreTotal=0;orderScored=false;document.getElementById('score-correct').textContent='0';document.getElementById('score-wrong').textContent='0';document.getElementById('score-total').textContent='0';drillIndex=0;buildIndex=0;buildOrder();showPhase(0);}
+
+// init
+buildOrder();
+</script>
+</body>
+</html>
