@@ -1,0 +1,1276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quantifiers Drill – Count It Up!</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&display=swap');
+
+  :root {
+    --bg: #0a0812;
+    --surface: #141020;
+    --card: #1c1630;
+    --accent: #ff4fa3;
+    --accent2: #2dd4bf;
+    --gold: #ffd166;
+    --text: #f0f5f0;
+    --muted: #8e9ab8;
+    --correct: #06d6a0;
+    --wrong: #ff3c5f;
+    --border: rgba(255,255,255,0.07);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 40% at 20% 20%, rgba(45,212,191,0.12) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 50% at 80% 80%, rgba(255,79,163,0.10) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 24px 16px 60px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .header { text-align: center; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+  .header .eyebrow { font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  .header h1 { font-family: 'Bebas Neue', sans-serif; font-size: clamp(36px, 8vw, 64px); letter-spacing: 2px; line-height: 1; background: linear-gradient(135deg, #fff 30%, var(--accent) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 8px; }
+  .header .subtitle { color: var(--muted); font-size: 14px; font-weight: 300; }
+
+  .score-bar { display: flex; align-items: center; justify-content: center; gap: 24px; margin-bottom: 28px; padding: 12px 20px; background: var(--surface); border-radius: 12px; border: 1px solid var(--border); }
+  .score-item { text-align: center; }
+  .score-item .val { font-family: 'Bebas Neue', sans-serif; font-size: 28px; line-height: 1; }
+  .score-item .lbl { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
+  .score-item.correct .val { color: var(--correct); }
+  .score-item.wrong .val { color: var(--wrong); }
+  .score-item.total .val { color: var(--gold); }
+
+  /* TABS — now 5 */
+  .phase-tabs { display: flex; gap: 6px; margin-bottom: 24px; background: var(--surface); padding: 6px; border-radius: 12px; border: 1px solid var(--border); }
+  .phase-tab { flex: 1; padding: 10px 4px; border-radius: 8px; border: none; background: transparent; color: var(--muted); font-family: 'DM Sans', sans-serif; font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.2s; text-align: center; line-height: 1.3; }
+  .phase-tab.active { background: var(--accent); color: #080c18; }
+  .phase-tab .phase-num { display: block; font-family: 'Bebas Neue', sans-serif; font-size: 18px; line-height: 1; margin-bottom: 2px; }
+  .phase-tab:not(.active):hover { color: var(--text); background: var(--border); }
+
+  .phase-panel { display: none; }
+  .phase-panel.active { display: block; }
+
+  .instruction { background: var(--card); border-left: 3px solid var(--accent2); border-radius: 0 10px 10px 0; padding: 14px 18px; margin-bottom: 20px; font-size: 14px; color: var(--text); line-height: 1.6; }
+  .instruction strong { color: var(--gold); }
+
+  /* LYRICS */
+  .lyrics-container { background: var(--card); border-radius: 14px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 16px; }
+  .lyrics-section { padding: 0; }
+  .lyrics-label { background: var(--accent2); padding: 6px 16px; font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #fff; }
+  .chorus-label { background: var(--accent); color: #080c18; }
+  .lyrics-lines { padding: 14px 18px; display: grid; gap: 6px; }
+  .lyric-line { display: flex; gap: 12px; align-items: baseline; font-size: 15px; line-height: 1.5; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: background 0.15s; }
+  .lyric-line:hover { background: rgba(255,255,255,0.04); }
+  .lyric-line.highlighted { background: rgba(255,209,102,0.08); }
+  .lyric-q { color: var(--gold); }
+  .lyric-a { color: var(--correct); }
+  .lyric-a.neg { color: #ff8fab; }
+  .lyric-chorus { color: var(--muted); font-style: italic; }
+  .highlight-form { background: rgba(255,209,102,0.15); border-radius: 4px; padding: 0 3px; color: var(--gold); font-weight: 700; }
+
+  /* QUICK DRILL */
+  .drill-card { background: var(--card); border-radius: 16px; padding: 28px 24px; border: 1px solid var(--border); margin-bottom: 16px; text-align: center; position: relative; overflow: hidden; }
+  .drill-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--accent2), var(--accent)); }
+  .drill-counter { font-family: 'Space Mono', monospace; font-size: 11px; color: var(--muted); letter-spacing: 2px; margin-bottom: 20px; }
+  .drill-question { font-family: 'Bebas Neue', sans-serif; font-size: clamp(22px, 5vw, 34px); letter-spacing: 1px; color: var(--gold); margin-bottom: 10px; line-height: 1.2; }
+  .drill-hint { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+  .drill-hint span { color: var(--accent2); font-weight: 600; }
+  .answer-options { display: grid; gap: 10px; max-width: 440px; margin: 0 auto; }
+  .answer-btn { padding: 14px 20px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 500; cursor: pointer; transition: all 0.18s; text-align: left; }
+  .answer-btn:hover:not(:disabled) { border-color: var(--accent2); background: rgba(45,212,191,0.12); transform: translateX(4px); }
+  .answer-btn.correct-ans { border-color: var(--correct); background: rgba(6,214,160,0.12); color: var(--correct); }
+  .answer-btn.wrong-ans { border-color: var(--wrong); background: rgba(255,60,95,0.12); color: var(--wrong); }
+  .answer-btn:disabled { cursor: default; }
+  .feedback-msg { margin-top: 16px; font-size: 15px; font-weight: 600; min-height: 24px; transition: all 0.2s; }
+  .feedback-msg.ok { color: var(--correct); }
+  .feedback-msg.ko { color: var(--wrong); }
+  .next-btn { margin-top: 20px; padding: 12px 32px; background: linear-gradient(135deg, var(--accent2), var(--accent)); border: none; border-radius: 10px; color: white; font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 700; cursor: pointer; display: none; transition: transform 0.15s, box-shadow 0.15s; }
+  .next-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(255,79,163,0.3); }
+  .next-btn.visible { display: inline-block; }
+
+  /* BUILD IT */
+  .build-area { background: var(--card); border-radius: 16px; padding: 24px; border: 1px solid var(--border); margin-bottom: 16px; }
+  .build-prompt { font-size: 14px; color: var(--muted); margin-bottom: 8px; font-style: italic; }
+  .build-answer-display { font-family: 'Bebas Neue', sans-serif; font-size: 20px; color: var(--gold); min-height: 32px; margin-bottom: 20px; letter-spacing: 0.5px; }
+  .build-question-display { background: var(--bg); border-radius: 10px; padding: 16px 18px; min-height: 56px; font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 20px; border: 1px dashed var(--border); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .word-token { background: var(--accent2); padding: 4px 10px; border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer; transition: transform 0.1s; user-select: none; color: #fff; }
+  .word-token:hover { transform: scale(0.95); }
+  .word-bank { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .word-chip { background: var(--surface); border: 1px solid var(--border); padding: 8px 14px; border-radius: 8px; font-size: 14px; cursor: pointer; transition: all 0.15s; user-select: none; font-weight: 500; }
+  .word-chip:hover:not(.used) { border-color: var(--accent2); background: rgba(45,212,191,0.15); }
+  .word-chip.used { opacity: 0.3; cursor: not-allowed; }
+  .build-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn-check { padding: 11px 24px; background: var(--accent); border: none; border-radius: 9px; color: #080c18; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; transition: transform 0.15s; }
+  .btn-check:hover { transform: translateY(-1px); }
+  .btn-clear { padding: 11px 20px; background: transparent; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); font-family: 'DM Sans', sans-serif; font-size: 14px; cursor: pointer; }
+  .btn-clear:hover { color: var(--text); border-color: var(--muted); }
+  .btn-next-build { padding: 11px 24px; background: linear-gradient(135deg, var(--accent2), var(--accent)); border: none; border-radius: 9px; color: white; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; display: none; }
+  .btn-next-build.visible { display: inline-block; }
+  .build-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .build-nav-btn { padding: 6px 14px; background: transparent; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 13px; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+  .build-nav-btn:hover { color: var(--text); border-color: var(--muted); }
+  #build-nav-counter { font-family: 'Space Mono', monospace; font-size: 11px; color: var(--muted); letter-spacing: 2px; }
+
+  /* FREE PRACTICE */
+  .free-card { background: var(--card); border-radius: 14px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 12px; }
+  .free-card-head { padding: 10px 18px; background: rgba(45,212,191,0.2); font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent2); display: flex; justify-content: space-between; align-items: center; }
+  .free-card-body { padding: 18px 20px; }
+  .role-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+  .role-a { background: rgba(255,209,102,0.15); color: var(--gold); }
+  .role-b { background: rgba(6,214,160,0.15); color: var(--correct); }
+  .role-task { font-size: 15px; line-height: 1.6; color: var(--text); }
+  .role-task em { color: var(--gold); font-style: normal; font-weight: 600; }
+  .example-box { margin-top: 10px; padding: 10px 14px; background: rgba(255,255,255,0.04); border-radius: 8px; font-size: 14px; color: var(--muted); line-height: 1.7; }
+  .example-box .q { color: var(--gold); }
+  .example-box .a-yes { color: var(--correct); }
+  .example-box .a-no { color: #ff8fab; }
+
+  /* RULES PANEL */
+  .rules-panel { background: var(--card); border-radius: 14px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 16px; }
+  .rules-head { padding: 10px 18px; background: rgba(255,79,163,0.15); font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+  .rules-body { padding: 16px 20px; display: none; font-size: 14px; line-height: 1.9; color: var(--text); }
+  .rules-body.open { display: block; }
+  .rules-body .rule-row { margin-bottom: 6px; }
+  .rules-body .tag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; margin-right: 6px; font-family: 'Space Mono', monospace; }
+  .tag-i { background: rgba(255,209,102,0.2); color: var(--gold); }
+  .tag-she { background: rgba(255,79,163,0.2); color: var(--accent); }
+
+  /* FINAL SCREEN */
+  .final-screen { text-align: center; padding: 40px 20px; background: var(--card); border-radius: 20px; border: 1px solid var(--border); }
+  .final-emoji { font-size: 64px; margin-bottom: 16px; }
+  .final-title { font-family: 'Bebas Neue', sans-serif; font-size: 48px; background: linear-gradient(135deg, var(--gold), var(--accent)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 8px; }
+  .final-sub { color: var(--muted); font-size: 15px; margin-bottom: 28px; }
+  .final-score-big { font-family: 'Bebas Neue', sans-serif; font-size: 80px; color: var(--gold); line-height: 1; margin-bottom: 4px; }
+  .restart-btn { padding: 14px 36px; background: linear-gradient(135deg, var(--accent2), var(--accent)); border: none; border-radius: 12px; color: white; font-family: 'DM Sans', sans-serif; font-size: 16px; font-weight: 700; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; margin-top: 20px; }
+  .restart-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(255,79,163,0.35); }
+
+  /* PROGRESS */
+  .progress-wrap { background: var(--surface); border-radius: 4px; height: 4px; margin-bottom: 20px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--accent2), var(--accent)); transition: width 0.4s ease; }
+  .phase-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px; color: var(--accent); margin-bottom: 12px; }
+
+  /* ANIMATIONS */
+  @keyframes pop-in { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .pop { animation: pop-in 0.25s ease; }
+  @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+  .shake { animation: shake 0.3s ease; }
+
+  /* =============================================
+     SPEAK ACTIVITY — WHO AM I?
+     ============================================= */
+
+  /* Role selection */
+  .speak-home { padding: 4px 0; }
+  .role-select-btn {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
+    padding: 18px 22px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    cursor: pointer;
+    transition: all 0.22s;
+    margin-bottom: 12px;
+    text-align: left;
+  }
+  .role-select-btn:hover { border-color: var(--accent); background: rgba(255,79,163,0.08); transform: translateX(4px); }
+  .role-select-btn .role-emoji-big { font-size: 36px; flex-shrink: 0; }
+  .role-select-btn .role-text { flex: 1; }
+  .role-select-btn .role-title { font-size: 17px; font-weight: 700; display: block; margin-bottom: 3px; }
+  .role-select-btn .role-desc { font-size: 12px; color: var(--muted); display: block; line-height: 1.4; }
+
+  /* Student A: food grid */
+  .food-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7px;
+    margin-bottom: 20px;
+  }
+  .food-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 9px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .food-item.marked-yes { border-color: var(--correct); background: rgba(6,214,160,0.08); }
+  .food-item.marked-no  { border-color: var(--wrong);   background: rgba(255,60,95,0.08); }
+  .food-label { font-size: 13px; color: var(--text); line-height: 1.3; }
+  .food-label .verb-hint { display: block; font-size: 10px; color: var(--muted); font-family: 'Space Mono', monospace; letter-spacing: 0.5px; }
+  .food-toggles { display: flex; gap: 4px; flex-shrink: 0; }
+  .toggle-btn {
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+    color: var(--muted);
+    font-family: 'DM Sans', sans-serif;
+  }
+  .toggle-btn.yes-active { background: rgba(6,214,160,0.2); border-color: var(--correct); color: var(--correct); }
+  .toggle-btn.no-active  { background: rgba(255,60,95,0.2);  border-color: var(--wrong);   color: var(--wrong);   }
+
+  /* Student A: question template */
+  .question-template {
+    background: var(--card);
+    border-radius: 10px;
+    border: 1px solid rgba(255,79,163,0.2);
+    padding: 10px 16px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+  .question-template strong { color: var(--gold); font-size: 14px; }
+  .question-template em { color: var(--accent); font-style: normal; }
+
+  /* Student A: character guess grid */
+  .char-guess-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .char-guess-btn {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+    font-family: 'DM Sans', sans-serif;
+  }
+  .char-guess-btn:hover { border-color: var(--accent2); transform: translateY(-2px); }
+  .char-guess-btn.selected { border-color: var(--gold); background: rgba(255,209,102,0.1); }
+  .char-guess-btn .cg-emoji { font-size: 26px; display: block; margin-bottom: 4px; }
+  .char-guess-btn .cg-name { font-size: 11px; font-weight: 700; color: var(--text); }
+
+  /* Student B: mystery card grid */
+  .mystery-card-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .mystery-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 8px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .mystery-card:hover { border-color: var(--accent); background: rgba(255,79,163,0.08); transform: translateY(-3px); box-shadow: 0 8px 24px rgba(255,79,163,0.15); }
+  .mystery-card .mc-num { font-family: 'Bebas Neue', sans-serif; font-size: 40px; color: var(--gold); line-height: 1; }
+  .mystery-card .mc-q { font-size: 22px; color: var(--muted); margin-top: 2px; }
+
+  /* Student B: revealed character card */
+  .char-card {
+    background: var(--card);
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+    margin-bottom: 16px;
+    animation: pop-in 0.3s ease;
+  }
+  .char-card-head {
+    padding: 20px;
+    text-align: center;
+    background: rgba(255,79,163,0.12);
+    border-bottom: 1px solid var(--border);
+  }
+  .char-card-emoji { font-size: 52px; display: block; margin-bottom: 6px; }
+  .char-card-name { font-family: 'Bebas Neue', sans-serif; font-size: 30px; color: var(--gold); letter-spacing: 1px; }
+  .char-card-sub { font-size: 12px; color: var(--muted); margin-top: 4px; font-family: 'Space Mono', monospace; }
+  .char-card-body { padding: 14px 18px; }
+  .char-card-hint {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+    padding: 8px;
+    margin-bottom: 10px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
+    line-height: 1.5;
+  }
+  .char-card-hint strong { color: var(--correct); }
+  .char-card-hint span { color: #ff8fab; }
+  .food-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 4px;
+    font-size: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .food-row:last-child { border-bottom: none; }
+  .food-row .fr-icon { font-size: 17px; flex-shrink: 0; }
+  .food-row .fr-text { color: var(--text); }
+  .food-row .fr-text.yes-text { color: var(--correct); }
+  .food-row .fr-text.no-text  { color: #ff8fab; }
+
+  /* A's guess result */
+  .guess-result-box {
+    background: var(--surface);
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    padding: 20px;
+    text-align: center;
+    margin-bottom: 16px;
+    animation: pop-in 0.25s ease;
+  }
+  .guess-result-box .gr-emoji { font-size: 44px; display: block; margin-bottom: 8px; }
+  .guess-result-box .gr-name { font-family: 'Bebas Neue', sans-serif; font-size: 26px; color: var(--gold); }
+  .guess-result-box .gr-msg  { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+  /* Speak action buttons */
+  .speak-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  .speak-primary-btn {
+    padding: 12px 24px;
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    border: none;
+    border-radius: 10px;
+    color: #080c18;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.15s;
+  }
+  .speak-primary-btn:hover { transform: translateY(-1px); }
+  .speak-secondary-btn {
+    padding: 12px 18px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--muted);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .speak-secondary-btn:hover { color: var(--text); border-color: var(--muted); }
+
+  /* Speak sub-screens */
+  .speak-screen { display: none; }
+  .speak-screen.active { display: block; }
+
+  /* Round badge */
+  .round-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    background: rgba(255,209,102,0.12);
+    border: 1px solid rgba(255,209,102,0.2);
+    border-radius: 20px;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--gold);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+
+  /* Proceed to drill banner */
+  .proceed-banner {
+    margin-top: 24px;
+    padding: 14px 20px;
+    background: rgba(45,212,191,0.12);
+    border: 1px solid rgba(45,212,191,0.25);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .proceed-banner span { font-size: 13px; color: var(--muted); }
+  .proceed-banner button {
+    padding: 10px 22px;
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    border: none;
+    border-radius: 9px;
+    color: #080c18;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* ACTIVITY CARDS */
+  .activity-card { background: var(--card); border-radius: 14px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 16px; }
+  .activity-head { padding: 10px 18px; background: rgba(45,212,191,0.2); font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent2); display: flex; justify-content: space-between; align-items: center; }
+  .activity-head.head-b { background: rgba(255,79,163,0.15); color: var(--accent); }
+  .activity-head.head-d { background: rgba(255,209,102,0.1); color: var(--gold); }
+  .act-badge { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent2); color: #080c18; font-family: 'Bebas Neue', sans-serif; font-size: 14px; margin-right: 8px; flex-shrink: 0; }
+  .head-b .act-badge { background: var(--accent); }
+  .head-d .act-badge { background: var(--gold); }
+  .act-time { color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .activity-body { padding: 14px 16px; }
+
+  /* SUBSTITUTION CHANT SCAFFOLD */
+  .chant-scaffold { background: var(--bg); border-radius: 10px; border: 1px solid var(--border); overflow: hidden; margin-top: 12px; }
+  .cs-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--border); }
+  .cs-row:last-child { border-bottom: none; }
+  .cs-subjects { display: flex; flex-direction: column; gap: 1px; padding: 10px 8px; min-width: 56px; justify-content: center; }
+  .cs-pronoun { font-family: 'Space Mono', monospace; font-size: 11px; font-weight: 700; }
+  .do-side .cs-pronoun { color: var(--gold); }
+  .does-side .cs-pronoun { color: var(--accent); }
+  .cs-aux { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; padding: 10px 8px; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--border); border-right: 1px solid var(--border); min-width: 62px; }
+  .do-aux { color: var(--gold); }
+  .does-aux { color: var(--accent); }
+  .cs-right { flex: 1; padding: 10px 12px; }
+  .cs-q { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+  .cs-answers { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ans-yes { font-size: 11px; color: var(--correct); background: rgba(6,214,160,0.1); padding: 2px 7px; border-radius: 4px; }
+  .ans-no  { font-size: 11px; color: #ff8fab; background: rgba(255,60,95,0.1); padding: 2px 7px; border-radius: 4px; }
+
+  /* FOOD SURVEY GRID */
+  .survey-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .survey-table th { padding: 6px 6px 8px; text-align: center; font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); border-bottom: 2px solid var(--border); }
+  .survey-table th:first-child { text-align: left; }
+  .survey-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .survey-table tr:last-child td { border-bottom: none; }
+  .sv-food-label { font-size: 13px; color: var(--text); line-height: 1.2; }
+  .sv-food-label small { display: block; font-size: 10px; color: var(--muted); font-family: 'Space Mono', monospace; }
+  .survey-cell-btn { display: block; width: 100%; padding: 5px 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 15px; text-align: center; transition: all 0.13s; min-height: 32px; color: transparent; }
+  .survey-cell-btn:hover { border-color: var(--accent2); }
+  .survey-cell-btn.sv-yes { background: rgba(6,214,160,0.15); border-color: var(--correct); color: var(--correct); }
+  .survey-cell-btn.sv-no  { background: rgba(255,60,95,0.10); border-color: var(--wrong);   color: #ff8fab; }
+  .col-name-inp { background: transparent; border: none; border-bottom: 1px dashed rgba(255,255,255,0.2); color: var(--text); font-family: 'Space Mono', monospace; font-size: 10px; text-align: center; width: 90px; outline: none; letter-spacing: 1px; }
+  .col-name-inp::placeholder { color: var(--muted); }
+
+  /* SPEAK: STEP INDICATOR */
+  .speak-step-indicator { display:flex; align-items:center; justify-content:center; margin-bottom:22px; }
+  .step-pip { width:32px; height:32px; border-radius:50%; border:2px solid var(--border); display:flex; align-items:center; justify-content:center; font-family:'Bebas Neue',sans-serif; font-size:16px; color:var(--muted); transition:all 0.25s; flex-shrink:0; }
+  .step-pip.active { border-color:var(--accent); background:var(--accent); color:#080c18; }
+  .step-pip.done { border-color:var(--accent2); color:var(--accent2); }
+  .step-line { width:40px; height:2px; background:var(--border); transition:background 0.3s; flex-shrink:0; }
+  .step-line.done { background:var(--accent2); }
+  .speak-activity-step { display:none; }
+  .speak-activity-step.active { display:block; }
+
+  /* FAMILY SELECTOR */
+  .family-selector { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+  .family-chip { padding:5px 12px; border-radius:20px; border:1px solid var(--border); background:var(--surface); color:var(--muted); font-size:13px; cursor:pointer; transition:all 0.15s; font-family:'DM Sans',sans-serif; font-weight:500; }
+  .family-chip.selected { border-color:var(--accent); background:rgba(255,79,163,0.15); color:var(--accent); }
+  .family-name-inp { background:var(--surface); border:1px solid var(--border); border-radius:20px; color:var(--text); font-family:'DM Sans',sans-serif; font-size:13px; padding:5px 14px; outline:none; width:150px; transition:border-color 0.15s; }
+  .family-name-inp:focus { border-color:var(--accent2); }
+  .family-name-inp::placeholder { color:var(--muted); }
+
+  /* STEP NAV */
+  .step-nav { display:flex; gap:10px; justify-content:flex-end; align-items:center; margin-top:18px; }
+  .step-nav-back { padding:10px 18px; background:transparent; border:1px solid var(--border); border-radius:9px; color:var(--muted); font-family:'DM Sans',sans-serif; font-size:13px; cursor:pointer; }
+  .step-nav-back:hover { color:var(--text); border-color:var(--muted); }
+  .step-nav-next { padding:10px 26px; background:linear-gradient(135deg,var(--accent2),var(--accent)); border:none; border-radius:9px; color:#080c18; font-family:'DM Sans',sans-serif; font-size:14px; font-weight:700; cursor:pointer; transition:transform 0.15s; }
+  .step-nav-next:hover { transform:translateY(-1px); }
+  /* ===== ADDITIONS — Yes, You Can! ===== */
+  .audio-box { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .audio-box .audio-title { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--gold); }
+  .video-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: #000; }
+  .video-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .gap-toggle { align-self: flex-start; padding: 8px 14px; border-radius: 9px; border: 1px solid var(--accent2); background: rgba(45,212,191,0.1); color: var(--accent2); font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .gap-toggle.on { background: var(--accent2); color: #080c18; }
+  .gap-mode .gw { color: transparent !important; background: rgba(255,255,255,0.07); border-bottom: 2px dashed var(--muted); border-radius: 4px; cursor: pointer; }
+  .gap-mode .gw:not(.shown) * { color: transparent !important; background: transparent !important; }
+  .gap-mode .gw.shown { color: inherit !important; background: rgba(255,209,102,0.15); border-bottom-color: transparent; }
+  .lyric-a.neg .gw.shown { color: #ff8fab !important; }
+  .gap-mode .lyric-a .gw.shown { color: var(--correct) !important; }
+  .gap-mode .lyric-a.neg .gw.shown { color: #ff8fab !important; }
+  .pron-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .pron-chip { font-size: 13px; padding: 4px 10px; border-radius: 6px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); }
+  .pron-chip b { color: var(--gold); }
+  .level-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 6px; margin: 10px 0 14px; }
+  .level-legend div { font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+  .level-legend .sym { font-weight: 700; margin-right: 6px; }
+  .lv-pos { color: var(--correct); }
+  .lv-neg { color: #ff8fab; }
+  .survey-cell-btn.lv { color: var(--text); font-size: 12px; line-height: 1.2; }
+  .survey-cell-btn.lv small { display: block; font-size: 10px; color: var(--muted); }
+  .survey-cell-btn.lv.pos { background: rgba(6,214,160,0.12); border-color: var(--correct); }
+  .survey-cell-btn.lv.neg { background: rgba(255,60,95,0.10); border-color: var(--wrong); }
+  .char-guess-btn.out { opacity: 0.25; filter: grayscale(1); }
+  .still-possible { font-size: 12px; color: var(--muted); margin: -8px 0 16px; }
+  .still-possible b { color: var(--gold); }
+  .look-box { background: rgba(255,79,163,0.08); border: 1px solid rgba(255,79,163,0.25); border-radius: 10px; padding: 10px 14px; font-size: 13px; line-height: 1.8; margin-top: 10px; }
+  .look-box b { color: var(--accent); }
+  @media (max-width: 520px) {
+    .phase-tab { font-size: 10px; }
+    .char-guess-grid, .mystery-card-grid { grid-template-columns: repeat(2, 1fr); }
+    .food-grid { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  button:focus-visible, .word-chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  /* ===== ADDITIONS — Count It Up! ===== */
+  .qf-c { color: #2dd4bf; } .qf-u { color: #ffa94d; } .qf-b { color: #b197fc; }
+  .qtag { display:inline-block; font-weight:700; border-radius:4px; padding:0 4px; }
+  .qtag.qf-c { background: rgba(45,212,191,0.14); } .qtag.qf-u { background: rgba(255,169,77,0.14); } .qtag.qf-b { background: rgba(177,151,252,0.16); }
+  .lyric-plain { color: var(--text); }
+  .gap-mode .gw:not(.shown) { background: rgba(255,255,255,0.07) !important; }
+  .lyrics-label:not(.chorus-label) { color: #0a0812; font-weight: 700; }
+  .qf-legend { display:flex; flex-wrap:wrap; gap:8px; margin: 10px 0 2px; }
+  .qf-legend span { font-size: 12px; padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border); background: var(--bg); }
+  .gap-mode .gw.shown.qf-c { color: #2dd4bf !important; } .gap-mode .gw.shown.qf-u { color: #ffa94d !important; } .gap-mode .gw.shown.qf-b { color: #b197fc !important; }
+  .detective { background: var(--card); border: 1px dashed rgba(255,224,102,0.35); border-radius: 14px; padding: 14px 18px; margin-bottom: 16px; }
+  .detective h3 { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--gold); font-weight: 400; margin-bottom: 6px; }
+  .detective p { font-size: 13px; color: var(--muted); line-height: 1.6; }
+  .det-item { margin-top: 10px; font-size: 14px; line-height: 1.6; }
+  .det-btn { margin-left: 6px; padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 12px; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+  .det-ans { display: none; margin-top: 4px; padding: 6px 10px; border-radius: 8px; background: rgba(6,214,160,0.08); color: var(--correct); font-size: 13px; }
+  .det-ans.open { display: block; }
+  .noun-chip { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 13px; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: all 0.15s; }
+  .noun-chip.rev-c { border-color: #2dd4bf; background: rgba(45,212,191,0.12); }
+  .noun-chip.rev-u { border-color: #ffa94d; background: rgba(255,169,77,0.12); }
+  .noun-chip small { display:block; font-size: 11px; font-weight: 700; }
+  .answer-strip { display:flex; flex-wrap:wrap; gap:6px; margin-top: 10px; }
+  .answer-strip span { font-size: 12px; padding: 3px 9px; border-radius: 6px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); }
+  .survey-q { font-size: 10px; color: var(--muted); font-family: 'Space Mono', monospace; display:block; margin-top: 2px; }
+  .ctype { font-size: 9px; font-weight: 700; padding: 0 5px; border-radius: 3px; margin-left: 4px; font-family: 'Space Mono', monospace; }
+  .ctype.c { background: rgba(45,212,191,0.15); color: #2dd4bf; } .ctype.u { background: rgba(255,169,77,0.15); color: #ffa94d; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div style="position:fixed;top:14px;left:14px;z-index:100;">
+    <a href="index.html" style="display:inline-flex;align-items:center;gap:7px;padding:8px 16px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:10px;color:#aaa;text-decoration:none;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;backdrop-filter:blur(6px);">← Home</a>
+  </div>
+
+  <div class="header">
+    <div class="eyebrow">🎵 Quantifiers Drill · Unit 6</div>
+    <h1>Count It Up!</h1>
+    <div class="subtitle">Countable &amp; Uncountable · Some / Any · Much / Many · A few / A little · Enough · Containers</div>
+  </div>
+
+  <div class="score-bar">
+    <div class="score-item correct"><div class="val" id="score-correct">0</div><div class="lbl">Correct</div></div>
+    <div class="score-item wrong"><div class="val" id="score-wrong">0</div><div class="lbl">Wrong</div></div>
+    <div class="score-item total"><div class="val" id="score-total">0</div><div class="lbl">Total</div></div>
+  </div>
+
+  <div class="phase-tabs">
+    <button class="phase-tab active" data-phase="0" onclick="showPhase(0)"><span class="phase-num">1</span> Lyrics</button>
+    <button class="phase-tab" data-phase="speak" onclick="showPhase('speak')"><span class="phase-num">2</span> Speak</button>
+    <button class="phase-tab" data-phase="1" onclick="showPhase(1)"><span class="phase-num">3</span> Drill</button>
+    <button class="phase-tab" data-phase="2" onclick="showPhase(2)"><span class="phase-num">4</span> Build It</button>
+    <button class="phase-tab" data-phase="3" onclick="showPhase(3)"><span class="phase-num">5</span> Free</button>
+  </div>
+
+  <!-- ===================== PHASE 1: LYRICS ===================== -->
+  <div class="phase-panel active" id="phase-0">
+
+    <div class="audio-box">
+      <div class="audio-title">▶️ Count It Up! — the song</div>
+      <div class="video-wrap"><iframe src="https://drive.google.com/file/d/1faUtk0KcIlCwhuhWY4RvDY60uGpKZnN6/preview" allow="autoplay; fullscreen" allowfullscreen title="Count It Up! – song video"></iframe></div>
+      <button class="gap-toggle" id="gap-toggle" onclick="toggleGapMode()">🙈 Listening mode: nascondi i quantificatori</button>
+    </div>
+
+    <div class="instruction">
+      🎵 <strong>1° ascolto:</strong> attiva il <em>Listening mode</em> — spariscono <em>a lot of, a few, a little, much, many, some, any</em>. Ascolta e scrivili sul quaderno. Poi clicca sugli spazi per controllare.<br>
+      🎵 <strong>2° ascolto:</strong> canta! Guarda i colori: ogni quantificatore ti dice con che tipo di nome si usa.
+      <div class="qf-legend">
+        <span class="qf-c">■ solo NUMERABILI · many · a few</span>
+        <span class="qf-u">■ solo NON NUMERABILI · much · a little</span>
+        <span class="qf-b">■ ENTRAMBI · some · any · a lot of</span>
+      </div>
+    </div>
+
+    <div class="rules-panel">
+      <div class="rules-head" onclick="toggleRules()">📋 Quick Rules — Quantifiers <span id="rules-toggle">▼ show</span></div>
+      <div class="rules-body" id="rules-body">
+        <div class="rule-row"><span class="tag tag-i">COUNTABLE</span> a burger → two burgers · <span class="qf-c">many · a few · How many…?</span></div>
+        <div class="rule-row"><span class="tag tag-she">UNCOUNTABLE</span> meat, cheese, bread, water, money, time, homework, advice → <strong>no plurale, no a/an</strong> · <span class="qf-u">much · a little · How much…?</span></div>
+        <div class="rule-row"><span class="tag tag-i">SOME</span> frasi affermative → There are <b>some</b> burgers. / There is <b>some</b> cheese.</div>
+        <div class="rule-row"><span class="tag tag-she">ANY</span> negative e domande → There aren't <b>any</b> cows. / Is there <b>any</b> ketchup?</div>
+        <div class="rule-row"><span class="tag tag-i">A LOT OF</span> con tutti i nomi, soprattutto in frasi <b>affermative</b>: I eat <b>a lot of</b> chocolate. (<s>I eat much chocolate</s>)</div>
+        <div class="rule-row"><span class="tag tag-she">MUCH / MANY</span> soprattutto in <b>negative e domande</b>: There isn't <b>much</b> bread. · Are there <b>many</b> burgers?</div>
+        <div class="rule-row"><span class="tag tag-i">A FEW / A LITTLE</span> piccola quantità: There are <b>a few</b> burgers. · There's <b>a little</b> bread.</div>
+        <div class="rule-row"><span class="tag tag-she">ENOUGH</span> <b>prima</b> del nome: There isn't <b>enough</b> bread! (<s>bread enough</s>)</div>
+        <div class="rule-row" style="color:var(--muted);font-size:13px;">🇬🇧≠🇮🇹 advice, information, homework, news sono <strong>non numerabili</strong> in inglese: I've got <b>some advice</b> — <s>an advice</s>, <s>advices</s></div>
+        <div class="rule-row" style="margin-top:8px;"><span class="tag tag-i">CONTAINERS</span></div>
+        <div class="pron-row">
+          <span class="pron-chip"><b>a carton</b> of milk</span><span class="pron-chip"><b>a loaf</b> of bread</span><span class="pron-chip"><b>a bar</b> of chocolate</span>
+          <span class="pron-chip"><b>a jar</b> of olives</span><span class="pron-chip"><b>a tin</b> of tomatoes</span><span class="pron-chip"><b>a packet</b> of biscuits</span>
+          <span class="pron-chip"><b>a slice</b> of cake</span><span class="pron-chip"><b>a piece</b> of cheese</span><span class="pron-chip"><b>a can</b> of lemonade</span>
+          <span class="pron-chip"><b>a bottle</b> of water</span><span class="pron-chip"><b>a box</b> of cereal</span><span class="pron-chip"><b>a bag</b> of apples</span>
+        </div>
+        <div class="rule-row" style="margin-top:8px;color:var(--muted);font-size:13px;">💡 Con un contenitore anche i non numerabili si contano: <b>How many</b> cartons of milk? → two cartons of milk.</div>
+      </div>
+    </div>
+
+    <div class="lyrics-container" id="lyrics"></div>
+
+    <div style="text-align:center;margin-top:20px;">
+      <button class="next-btn visible" onclick="showPhase('speak')">Oral Activities →</button>
+    </div>
+  </div>
+
+  <!-- ===================== PHASE SPEAK ===================== -->
+  <div class="phase-panel" id="phase-speak">
+
+    <div class="speak-screen active" id="speak-home">
+      <div class="speak-step-indicator">
+        <div class="step-pip active" id="pip-0">A</div><div class="step-line" id="line-0"></div>
+        <div class="step-pip" id="pip-1">B</div><div class="step-line" id="line-1"></div>
+        <div class="step-pip" id="pip-2">C</div>
+      </div>
+
+      <!-- STEP A -->
+      <div class="speak-activity-step active" id="speak-step-0">
+        <div class="activity-card">
+          <div class="activity-head"><span><span class="act-badge">A</span> Much or Many? Chant</span><span class="act-time">⏱ 3 min · coppia</span></div>
+          <div class="activity-body">
+            <div style="font-size:13px;line-height:1.7;margin-bottom:12px;">
+              Come nel ritornello! <strong style="color:var(--gold)">Student A</strong> sceglie un nome e fa la domanda <em>a ritmo</em>: <em class="qf-u">"How much…?"</em> o <em class="qf-c">"How many…?"</em>. <strong style="color:var(--correct)">Student B</strong> risponde velocissimo con una sola espressione. Poi tocca il nome per controllare. Dopo 6 nomi scambiatevi i ruoli.
+            </div>
+            <div class="chant-scaffold">
+              <div class="cs-row">
+                <div class="cs-subjects do-side"><span class="cs-pronoun">friends</span><span class="cs-pronoun">books</span><span class="cs-pronoun">cars</span></div>
+                <div class="cs-aux do-aux" style="color:#2dd4bf;font-size:18px;">MANY</div>
+                <div class="cs-right">
+                  <div class="cs-q">How <span class="qf-c">many</span> friends have you got?</div>
+                  <div class="cs-answers"><span class="ans-yes">A lot!</span><span class="ans-yes">A few.</span><span class="ans-no">Not many.</span><span class="ans-no">None!</span></div>
+                </div>
+              </div>
+              <div class="cs-row">
+                <div class="cs-subjects does-side"><span class="cs-pronoun">time</span><span class="cs-pronoun">money</span><span class="cs-pronoun">energy</span></div>
+                <div class="cs-aux does-aux" style="color:#ffa94d;font-size:18px;">MUCH</div>
+                <div class="cs-right">
+                  <div class="cs-q">How <span class="qf-u">much</span> money have you got?</div>
+                  <div class="cs-answers"><span class="ans-yes">A lot!</span><span class="ans-yes">A little.</span><span class="ans-no">Not much.</span><span class="ans-no">None!</span></div>
+                </div>
+              </div>
+            </div>
+            <div style="font-family:'Space Mono',monospace;font-size:10px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin:14px 0 8px;">Tocca per controllare:</div>
+            <div id="chant-chips" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+            <div class="step-nav">
+              <span style="font-size:11px;color:var(--muted);font-family:'Space Mono',monospace;">1 / 3</span>
+              <button class="step-nav-next" onclick="goToSpeakStep(1)">Food Habits Survey →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP B -->
+      <div class="speak-activity-step" id="speak-step-1">
+        <div class="activity-card">
+          <div class="activity-head head-b"><span><span class="act-badge">B</span> Your Food Habits — Survey</span><span class="act-time">⏱ 7 min · coppia</span></div>
+          <div class="activity-body">
+            <div style="font-size:13px;line-height:1.7;margin-bottom:6px;">
+              A legge la domanda: <em style="color:var(--gold)">"How many cups of tea do you drink in a week?"</em> — B risponde con una frase completa:
+              <em style="color:var(--correct)">"I drink a lot of tea."</em> / <em style="color:var(--correct)">"I drink a few cups."</em> / <em style="color:#ff8fab">"I don't drink much water."</em> / <em style="color:#ff8fab">"I don't drink any fizzy drinks."</em><br>
+              Colonna 2: <em style="color:var(--accent)" id="survey-col2-q">"How much water does your mum drink?"</em> → occhio a <strong>does</strong> e alla <strong>-s</strong>!<br>
+              Tocca la cella più volte: le etichette cambiano da sole se il nome è <span class="qf-c">numerabile</span> o <span class="qf-u">non numerabile</span>.
+            </div>
+            <div style="background:var(--bg);border-radius:10px;border:1px solid var(--border);padding:12px 14px;margin:12px 0 14px;">
+              <div style="font-family:'Space Mono',monospace;font-size:10px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;margin-bottom:10px;">Colonna 2 — chiedi di:</div>
+              <div class="family-selector" id="family-selector"></div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+                <span style="font-size:12px;color:var(--muted);">o un compagno:</span>
+                <input class="family-name-inp" id="family-custom-input" placeholder="es. Giulia" maxlength="15" oninput="selectFamily('custom', this.value.trim())">
+              </div>
+            </div>
+            <div style="overflow-x:auto;">
+              <table class="survey-table">
+                <thead><tr><th style="min-width:150px;text-align:left;">How much / many…?</th><th>Partner</th><th><span id="col-b-header">your mum</span></th></tr></thead>
+                <tbody id="survey-tbody"></tbody>
+              </table>
+            </div>
+            <div style="text-align:right;margin-top:8px;">
+              <button onclick="resetSurveyGrid()" style="background:transparent;border:1px solid var(--border);border-radius:7px;color:var(--muted);font-family:'DM Sans',sans-serif;font-size:12px;padding:5px 12px;cursor:pointer;">↺ Reset</button>
+            </div>
+            <div class="step-nav">
+              <button class="step-nav-back" onclick="goToSpeakStep(0)">← Chant</button>
+              <span style="font-size:11px;color:var(--muted);font-family:'Space Mono',monospace;">2 / 3</span>
+              <button class="step-nav-next" onclick="goToSpeakStep(2)">Mystery Fridge →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP C -->
+      <div class="speak-activity-step" id="speak-step-2">
+        <div class="activity-card">
+          <div class="activity-head head-d"><span><span class="act-badge">C</span> Mystery Fridge 🧊</span><span class="act-time">⏱ 7 min · coppia</span></div>
+          <div class="activity-body">
+            <div style="font-size:13px;line-height:1.7;margin-bottom:14px;">
+              <span style="color:var(--gold);font-weight:700;">Student B</span> apre un frigo segreto.<br>
+              <span style="color:var(--correct);font-weight:700;">Student A</span> fa domande con <em class="qf-u">"Is there any…?"</em> (non numerabili) o <em class="qf-c">"Are there any…?"</em> (numerabili), segna YES / NO e indovina di chi è il frigo! Max <strong>5 domande</strong>. B risponde con short answer <strong>+ contenitore</strong>: <em style="color:var(--correct)">"Yes, there is. There's a carton of milk."</em>
+            </div>
+            <div style="font-family:'Space Mono',monospace;font-size:10px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:12px;">Scegli il tuo ruolo:</div>
+            <button class="role-select-btn" onclick="selectSpeakRole('A')">
+              <span class="role-emoji-big">🕵️</span>
+              <div class="role-text"><span class="role-title">I'm Student A — The Detective</span><span class="role-desc">Fai le domande e scopri di chi è il frigo</span></div>
+              <span style="color:var(--muted);font-size:18px;">→</span>
+            </button>
+            <button class="role-select-btn" onclick="selectSpeakRole('B')">
+              <span class="role-emoji-big">🧊</span>
+              <div class="role-text"><span class="role-title">I'm Student B — The Fridge Owner</span><span class="role-desc">Scegli un frigo segreto e rispondi alle domande di A</span></div>
+              <span style="color:var(--muted);font-size:18px;">→</span>
+            </button>
+            <div class="step-nav" style="justify-content:flex-start;">
+              <button class="step-nav-back" onclick="goToSpeakStep(1)">← Survey</button>
+              <span style="font-size:11px;color:var(--muted);font-family:'Space Mono',monospace;margin-left:auto;">3 / 3</span>
+            </div>
+          </div>
+        </div>
+        <div class="proceed-banner"><span>Pronti per il Quick Drill?</span><button onclick="showPhase(1)">Quick Drill →</button></div>
+      </div>
+    </div>
+
+    <!-- STUDENT A -->
+    <div class="speak-screen" id="speak-a">
+      <div class="phase-title">🕵️ Student A — The Detective</div>
+      <div class="question-template">
+        <strong>Usa questa struttura:</strong><br>
+        <em class="qf-u">"Is there any milk?"</em> &nbsp;·&nbsp; <em class="qf-c">"Are there any eggs?"</em><br>
+        → <em style="color:var(--correct)">"Yes, there is / are."</em> &nbsp;/&nbsp; <em style="color:#ff8fab">"No, there isn't / aren't."</em><br>
+        <span style="font-size:11px;color:var(--muted)">Segna ogni risposta — i frighi impossibili si spengono da soli!</span>
+      </div>
+      <div style="font-family:'Space Mono',monospace;font-size:10px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:10px;">📝 Mark the answers:</div>
+      <div class="food-grid" id="food-grid-a"></div>
+      <div style="font-family:'Space Mono',monospace;font-size:10px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:10px;">🎯 Whose fridge is it?</div>
+      <div class="char-guess-grid" id="char-guess-grid"></div>
+      <div class="still-possible" id="still-possible"></div>
+      <div id="a-guess-result" style="display:none;"></div>
+      <div class="speak-actions">
+        <button class="speak-primary-btn" id="a-make-guess-btn" onclick="makeGuess()">🎯 Make My Guess!</button>
+        <button class="speak-secondary-btn" onclick="showSpeakScreen('speak-home')">← Change Role</button>
+      </div>
+    </div>
+
+    <!-- STUDENT B choose -->
+    <div class="speak-screen" id="speak-b-choose">
+      <div class="phase-title">🧊 Student B — Choose Your Fridge</div>
+      <div class="instruction">Tocca un frigo per aprirlo. <strong>Non mostrare lo schermo a Student A!</strong> 🤫</div>
+      <div class="mystery-card-grid" id="mystery-card-grid"></div>
+      <button class="speak-secondary-btn" onclick="showSpeakScreen('speak-home')">← Change Role</button>
+    </div>
+
+    <!-- STUDENT B card -->
+    <div class="speak-screen" id="speak-b-card">
+      <div class="phase-title">🧊 Il tuo frigo segreto</div>
+      <div class="instruction">Rispondi alle domande di A con la short answer <strong>e</strong> il contenitore: <strong>Yes, there is. There's a carton of milk.</strong> / <strong>No, there aren't.</strong> 🤫</div>
+      <div id="b-card-content"></div>
+      <div class="speak-actions">
+        <button class="speak-primary-btn" onclick="showSpeakScreen('speak-b-choose')">🔄 Nuovo Frigo</button>
+        <button class="speak-secondary-btn" onclick="showSpeakScreen('speak-home')">← Cambia Ruolo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== QUICK DRILL ===================== -->
+  <div class="phase-panel" id="phase-1">
+    <p class="phase-title">⚡ Quick Drill</p>
+    <div class="instruction">
+      🎯 <strong>Choose the correct answer.</strong> Prima chiediti: il nome è <span class="qf-c">numerabile</span> o <span class="qf-u">non numerabile</span>? La frase è affermativa, negativa o una domanda?
+    </div>
+    <div class="progress-wrap"><div class="progress-fill" id="drill-progress" style="width:0%"></div></div>
+    <div class="drill-card" id="drill-card">
+      <div class="drill-counter" id="drill-counter"></div>
+      <div class="drill-question" id="drill-question"></div>
+      <div class="drill-hint" id="drill-hint"></div>
+      <div class="answer-options" id="answer-options"></div>
+      <div class="feedback-msg" id="feedback-msg"></div>
+      <button class="next-btn" id="drill-next" onclick="nextDrill()">Next →</button>
+    </div>
+  </div>
+
+  <!-- ===================== BUILD IT ===================== -->
+  <div class="phase-panel" id="phase-2">
+    <p class="phase-title">🔨 Build It</p>
+    <div class="instruction">🔨 <strong>Read the clue. Build the question or the sentence.</strong> Clicca le parole nell'ordine giusto (o trascinale), poi premi Check. Attenzione: ci sono parole-trappola!</div>
+    <div class="progress-wrap"><div class="progress-fill" id="build-progress" style="width:0%"></div></div>
+    <div class="build-area">
+      <div class="build-nav">
+        <button class="build-nav-btn" id="build-prev" onclick="prevBuild()">← Back</button>
+        <span id="build-nav-counter"></span>
+        <button class="build-nav-btn" onclick="skipBuild()">Skip →</button>
+      </div>
+      <div class="build-prompt" id="build-clue-label">The answer is:</div>
+      <div class="build-answer-display" id="build-answer"></div>
+      <div class="build-prompt" id="build-task-label">Build the question:</div>
+      <div class="build-question-display" id="build-display"></div>
+      <div class="word-bank" id="word-bank"></div>
+      <div class="build-actions">
+        <button class="btn-check" onclick="checkBuild()">✓ Check</button>
+        <button class="btn-clear" onclick="clearBuild()">Clear</button>
+        <button class="btn-next-build" id="build-next" onclick="nextBuild()">Next →</button>
+      </div>
+      <div class="feedback-msg" id="build-feedback" style="margin-top:14px"></div>
+    </div>
+  </div>
+
+  <!-- ===================== FREE PRACTICE ===================== -->
+  <div class="phase-panel" id="phase-3">
+    <p class="phase-title">🗣️ Free Practice</p>
+
+    <div class="free-card">
+      <div class="free-card-head"><span>Activity 1 — Speaking: Party Planners</span><span style="color:var(--muted)">👥 Pairs</span></div>
+      <div class="free-card-body">
+        <div class="role-task">Organizzate la festa di fine anno per <em>20 compagni</em>. A controlla cosa c'è già (inventato!), B decide cosa comprare. Usate <em>How much / How many</em>, <em>some / any</em>, <em>enough</em> e almeno <em>4 contenitori</em> diversi. Alla fine leggete la vostra shopping list alla classe.</div>
+        <div class="example-box"><span class="q">How many bottles of water have we got?</span> <span class="a-yes">→ Only a few. We need six bottles.</span><br><span class="q">Is there any cake?</span> <span class="a-no">→ No, there isn't any. Let's buy two cakes.</span><br><span class="q">Have we got enough cups?</span> <span class="a-no">→ No, we haven't got enough. We need a packet of paper cups.</span></div>
+      </div>
+    </div>
+
+    <div class="free-card">
+      <div class="free-card-head"><span>Activity 2 — Speaking: Report to the class</span><span style="color:var(--muted)">🙋 Individual</span></div>
+      <div class="free-card-body">
+        <div class="role-task">Usa i risultati del <em>Food Habits Survey</em>. Presenta il tuo compagno con <em>3 frasi</em>: una con <em>a lot of</em>, una con <em>a few / a little</em>, una negativa con <em>much / many / any</em>. Collega con <em>but</em>. Attenzione alla <em>-s</em> della terza persona!</div>
+        <div class="example-box"><span class="a-yes">Sara drinks a lot of water, but she doesn't eat much fruit.</span><br><span class="a-yes">She eats a few packets of crisps a week.</span><br><span class="a-no">She doesn't drink any fizzy drinks.</span></div>
+      </div>
+    </div>
+
+    <div class="free-card">
+      <div class="free-card-head"><span>Activity 3 — Writing: My school</span><span style="color:var(--muted)">✏️ Individual · 15 min</span></div>
+      <div class="free-card-body">
+        <div class="role-task">Scrivi <em>4 cose belle</em> e <em>4 cose brutte</em> della tua scuola (SB p.92 ex.6, versione potenziata). Usa almeno: <em>some</em>, <em>any</em>, <em>much</em>, <em>many</em>, <em>a few</em> o <em>a little</em>, <em>enough</em>.</div>
+        <div class="example-box"><span class="a-yes">There are some great teachers.</span><br><span class="a-no">There aren't any vending machines.</span><br><span class="a-no">There isn't enough space in the gym.</span><br><span class="a-yes">We've got a few new computers, but we haven't got much time to use them.</span></div>
+        <div style="margin-top:10px;font-size:13px;color:var(--muted)">⚠️ some advice <strong style="color:var(--correct)">✓</strong> · an advice <strong style="color:var(--wrong)">✗</strong> · enough time <strong style="color:var(--correct)">✓</strong> · time enough <strong style="color:var(--wrong)">✗</strong></div>
+      </div>
+    </div>
+
+    <div style="text-align:center;margin-top:24px;"><button class="next-btn visible" onclick="showFinal()">See my score 🎉</button></div>
+  </div>
+
+  <!-- FINAL -->
+  <div class="phase-panel" id="phase-final">
+    <div class="final-screen">
+      <div class="final-emoji" id="final-emoji">🌟</div>
+      <div class="final-title">Count it up!</div>
+      <div class="final-sub" id="final-message">Great work!</div>
+      <div class="final-score-big" id="final-score-big">0</div>
+      <div style="color:var(--muted);font-size:14px;">correct out of <span id="final-total">0</span> answered</div>
+      <button class="restart-btn" onclick="restart()">🔄 Restart</button>
+    </div>
+  </div>
+
+</div>
+<script>
+// ===================== GLOBAL =====================
+let scoreCorrect = 0, scoreWrong = 0, scoreTotal = 0;
+function updateScore(ok) {
+  scoreTotal++; if (ok) scoreCorrect++; else scoreWrong++;
+  document.getElementById('score-correct').textContent = scoreCorrect;
+  document.getElementById('score-wrong').textContent = scoreWrong;
+  document.getElementById('score-total').textContent = scoreTotal;
+}
+function showPhase(n) {
+  document.querySelectorAll('.phase-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.phase-tab').forEach(t => t.classList.remove('active'));
+  const panel = document.getElementById('phase-' + n); if (panel) panel.classList.add('active');
+  const tab = document.querySelector(`.phase-tab[data-phase="${n}"]`); if (tab) tab.classList.add('active');
+  if (n === 'speak') { showSpeakScreen('speak-home'); goToSpeakStep(0); }
+  if (n === 1 && drillIndex === 0 && !drillStarted) loadDrill();
+  if (n === 2 && buildIndex === 0 && !buildStarted) loadBuild();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+function toggleLine(el) { el.classList.toggle('highlighted'); }
+function toggleRules() {
+  const b = document.getElementById('rules-body'), t = document.getElementById('rules-toggle');
+  b.classList.toggle('open'); t.textContent = b.classList.contains('open') ? '▲ hide' : '▼ show';
+}
+
+// ===================== LYRICS =====================
+// line types: q = question, a = affirmative, n = negative, c = chorus/shout
+// quantifier markup: {c|many} countable · {u|much} uncountable · {b|some} both → becomes a gap in Listening mode
+const lyrics = [
+  { label: 'VERSE 1', lines: [
+    ['a','I have {b|a lot of} dreams,'], ['a','I have {b|a lot of} plans.'],
+    ['a','I make {c|a few} mistakes,'], ['a','but I do the best I can.'],
+    ['a','Wait a sec, listen up,'], ['a','I need {u|a little} time.'],
+    ['n','There isn\'t {u|much} noise'], ['a','when I write this rhyme.'] ] },
+  { label: 'CHORUS', cls: 'chorus-label', lines: [
+    ['q','How {u|much} time? How {c|many} friends?'], ['q','How {u|much} money in your hands?'],
+    ['q','Got {b|some} energy, got {b|any} doubts?'], ['c','Say it clear, say it loud!'],
+    ['q','How {u|much}? How {c|many}?'], ['q','{b|Some} or {b|any}? Count it up!'] ] },
+  { label: 'VERSE 2', lines: [
+    ['a','There are {b|a lot of} books to read.'], ['a','There are {b|a lot of} cars outside.'],
+    ['a','Got {b|some} friends by my side,'], ['a','we are ready for the ride.'],
+    ['q','Have you got {b|any} doubts?'], ['q','Do you have {b|any} questions?'],
+    ['n','I don\'t have {b|any} fear,'], ['a','now you got the lesson.'] ] },
+  { label: 'CHORUS × 3', cls: 'chorus-label', lines: [['c','How much time? How many friends?… (repeat)']] },
+  { label: 'OUTRO', cls: 'chorus-label', lines: [
+    ['c','Count it up, count it up…'], ['a','{b|A lot}, {c|a few}, {u|a little}.'],
+    ['a','{u|Much}, {c|many}, {b|some}, {b|any}.'], ['c','Drop the beat!'] ] },
+];
+function renderLyrics() {
+  const box = document.getElementById('lyrics'); box.innerHTML = '';
+  lyrics.forEach(sec => {
+    const s = document.createElement('div'); s.className = 'lyrics-section';
+    let html = `<div class="lyrics-label ${sec.cls || ''}">${sec.label}</div><div class="lyrics-lines">`;
+    sec.lines.forEach(([type, txt]) => {
+      const cls = type === 'q' ? 'lyric-q' : type === 'n' ? 'lyric-a neg' : type === 'c' ? 'lyric-chorus' : 'lyric-plain';
+      const t = txt.replace(/\{([cub])\|(.+?)\}/g, (m, k, w) =>
+        `<span class="gw qtag qf-${k}" onclick="event.stopPropagation();this.classList.add('shown')">${w}</span>`);
+      html += `<div class="lyric-line ${cls}" onclick="toggleLine(this)"><span>${t}</span></div>`;
+    });
+    s.innerHTML = html + '</div>'; box.appendChild(s);
+  });
+}
+function toggleGapMode() {
+  const box = document.getElementById('lyrics'), btn = document.getElementById('gap-toggle');
+  const on = !box.classList.contains('gap-mode');
+  box.classList.toggle('gap-mode', on); btn.classList.toggle('on', on);
+  box.querySelectorAll('.gw').forEach(g => g.classList.remove('shown'));
+  btn.textContent = on ? '👀 Mostra tutto il testo' : '🙈 Listening mode: nascondi i quantificatori';
+}
+
+// ===================== SPEAK A: CHANT =====================
+// k: c = countable (How many), u = uncountable (How much)
+const chantNouns = [
+  ['friends','c'],['time','u'],['money','u'],['books','c'],['brothers and sisters','c'],['homework','u'],
+  ['water','u'],['apps on your phone','c'],['energy','u'],['sugar in your tea','u'],['pets','c'],['bread','u'],
+  ['T-shirts','c'],['free time','u'],['bottles of water','c'],['milk','u'],['slices of pizza','c'],['advice','u'] ];
+function renderChantChips() {
+  document.getElementById('chant-chips').innerHTML = chantNouns.map(([n, k], i) =>
+    `<button class="noun-chip" id="nc-${i}" onclick="revealNoun(${i})">${n}</button>`).join('');
+}
+function revealNoun(i) {
+  const [n, k] = chantNouns[i], b = document.getElementById('nc-' + i);
+  if (b.classList.contains('rev-c') || b.classList.contains('rev-u')) { b.className = 'noun-chip'; b.innerHTML = n; return; }
+  b.className = 'noun-chip rev-' + k;
+  b.innerHTML = `<small class="qf-${k}">How ${k === 'c' ? 'many' : 'much'}…?</small>${n}`;
+}
+
+// ===================== SPEAK B: FOOD HABITS SURVEY =====================
+// q uses {do} placeholder → "do you" / "does your mum"
+const surveyRows = [
+  { n:'cups of tea', k:'c', q:'How many cups of tea {do} drink in a week?' },
+  { n:'water', k:'u', q:'How much water {do} drink in a day?' },
+  { n:'fizzy drinks', k:'c', q:'How many fizzy drinks {do} drink in a week?' },
+  { n:'fruit', k:'u', q:'How much fruit {do} eat in a day?' },
+  { n:'packets of crisps', k:'c', q:'How many packets of crisps {do} eat in a week?' },
+  { n:'chocolate', k:'u', q:'How much chocolate {do} eat in a week?' },
+  { n:'slices of pizza', k:'c', q:'How many slices of pizza {do} eat on Saturday?' },
+  { n:'homework', k:'u', q:'How much homework {do} do every day?' },
+];
+const LEVELS = {
+  c: [null, { s:'✓✓✓', t:'a lot', pos:true }, { s:'✓', t:'a few', pos:true }, { s:'✗', t:'not many', pos:false }, { s:'✗✗✗', t:'not any', pos:false }],
+  u: [null, { s:'✓✓✓', t:'a lot', pos:true }, { s:'✓', t:'a little', pos:true }, { s:'✗', t:'not much', pos:false }, { s:'✗✗✗', t:'not any', pos:false }],
+};
+let surveyState = surveyRows.map(() => [0, 0]);
+const familyOpts = ['mum','dad','brother','sister','grandma','grandpa','best friend'];
+let selectedFamily = 'mum', customFamilyName = '';
+function renderFamilySelector() {
+  document.getElementById('family-selector').innerHTML = familyOpts.map(f =>
+    `<button class="family-chip" data-family="${f}" onclick="selectFamily('${f}')">${f}</button>`).join('');
+}
+function selectFamily(type, val) {
+  if (type === 'custom') { customFamilyName = (val || '').trim(); selectedFamily = customFamilyName ? null : 'mum'; }
+  else { selectedFamily = type; customFamilyName = ''; document.getElementById('family-custom-input').value = ''; }
+  updateFamilyUI();
+}
+function getFamilyLabel() { return customFamilyName || ('your ' + (selectedFamily || 'mum')); }
+function updateFamilyUI() {
+  document.querySelectorAll('.family-chip').forEach(c => c.classList.toggle('selected', c.dataset.family === selectedFamily && !customFamilyName));
+  document.getElementById('col-b-header').textContent = getFamilyLabel();
+  document.getElementById('survey-col2-q').textContent = `"How much water does ${getFamilyLabel()} drink?"`;
+}
+function buildSurveyGrid() {
+  const tb = document.getElementById('survey-tbody'); tb.innerHTML = '';
+  surveyRows.forEach((row, r) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><div class="sv-food-label">${row.n}<span class="ctype ${row.k}">${row.k === 'c' ? 'C' : 'U'}</span>
+        <span class="survey-q">${row.q.replace('{do}', 'do you')}</span></div></td>
+      <td><button class="survey-cell-btn" id="sc-${r}-0" onclick="cycleCell(${r},0)" aria-label="partner ${row.n}"></button></td>
+      <td><button class="survey-cell-btn" id="sc-${r}-1" onclick="cycleCell(${r},1)" aria-label="second person ${row.n}"></button></td>`;
+    tb.appendChild(tr);
+  });
+}
+function cycleCell(r, c) { surveyState[r][c] = (surveyState[r][c] + 1) % 5; paintCell(r, c); }
+function paintCell(r, c) {
+  const b = document.getElementById(`sc-${r}-${c}`), lv = LEVELS[surveyRows[r].k][surveyState[r][c]];
+  if (!lv) { b.className = 'survey-cell-btn'; b.innerHTML = ''; return; }
+  b.className = 'survey-cell-btn lv ' + (lv.pos ? 'pos' : 'neg');
+  b.innerHTML = `${lv.s}<small>${lv.t}</small>`;
+}
+function resetSurveyGrid() { surveyState = surveyRows.map(() => [0, 0]); surveyRows.forEach((_, r) => { paintCell(r,0); paintCell(r,1); }); }
+
+// ===================== SPEAK C: MYSTERY FRIDGE =====================
+const fridgeItems = [
+  { n:'milk', k:'u', icon:'🥛', box:'a carton of milk' },
+  { n:'eggs', k:'c', icon:'🥚', box:'a box of eggs' },
+  { n:'cheese', k:'u', icon:'🧀', box:'a piece of cheese' },
+  { n:'olives', k:'c', icon:'🫒', box:'a jar of olives' },
+  { n:'bread', k:'u', icon:'🍞', box:'a loaf of bread' },
+  { n:'biscuits', k:'c', icon:'🍪', box:'a packet of biscuits' },
+  { n:'orange juice', k:'u', icon:'🧃', box:'a bottle of orange juice' },
+  { n:'tomatoes', k:'c', icon:'🍅', box:'a tin of tomatoes' },
+];
+const fridges = [
+  { name:'The Student', emoji:'🎓', sub:'Lives alone · loves snacks',    has:[1,0,0,0,1,1,1,0] },
+  { name:'Grandma Rosa', emoji:'👵', sub:'Cooks every Sunday',           has:[1,1,1,0,1,0,0,1] },
+  { name:'The Athlete', emoji:'🏋️', sub:'Protein, protein, protein!',  has:[1,1,0,0,1,0,1,1] },
+  { name:'Chef Luigi', emoji:'👨‍🍳', sub:'Pizza and pasta expert',       has:[0,1,1,1,1,0,0,1] },
+  { name:'The Vegan', emoji:'🌱', sub:'No animal products',              has:[0,0,0,1,1,1,1,1] },
+  { name:'Party Time', emoji:'🎉', sub:'Ready for a party tonight',     has:[0,0,1,1,0,1,1,0] },
+];
+let speakAAnswers = [], speakAGuess = null;
+function showSpeakScreen(id) { document.querySelectorAll('.speak-screen').forEach(s => s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+function selectSpeakRole(role) {
+  if (role === 'A') {
+    speakAAnswers = fridgeItems.map(() => null); speakAGuess = null;
+    document.getElementById('a-guess-result').style.display = 'none';
+    document.getElementById('a-make-guess-btn').style.display = 'inline-block';
+    renderStudentA(); showSpeakScreen('speak-a');
+  } else { renderMysteryCards(); showSpeakScreen('speak-b-choose'); }
+}
+function possibleFridges() {
+  return fridges.map((f, i) => speakAAnswers.every((v, k) => v === null || !!f.has[k] === v) ? i : -1).filter(i => i >= 0);
+}
+function renderStudentA() {
+  const grid = document.getElementById('food-grid-a'); grid.innerHTML = '';
+  fridgeItems.forEach((it, i) => {
+    const st = speakAAnswers[i], el = document.createElement('div');
+    el.className = 'food-item' + (st === true ? ' marked-yes' : st === false ? ' marked-no' : '');
+    el.innerHTML = `<div class="food-label"><span class="verb-hint qf-${it.k}">${it.k === 'c' ? 'Are there any…?' : 'Is there any…?'}</span>${it.icon} ${it.n}</div>
+      <div class="food-toggles"><button class="toggle-btn ${st === true ? 'yes-active' : ''}" onclick="markItem(${i},true)">YES</button>
+      <button class="toggle-btn ${st === false ? 'no-active' : ''}" onclick="markItem(${i},false)">NO</button></div>`;
+    grid.appendChild(el);
+  });
+  const poss = possibleFridges(), gg = document.getElementById('char-guess-grid'); gg.innerHTML = '';
+  fridges.forEach((f, i) => {
+    const b = document.createElement('button');
+    b.className = 'char-guess-btn' + (speakAGuess === i ? ' selected' : '') + (poss.includes(i) ? '' : ' out');
+    b.innerHTML = `<span class="cg-emoji">${f.emoji}</span><span class="cg-name">${f.name}</span>`;
+    b.onclick = () => { speakAGuess = i; renderStudentA(); }; gg.appendChild(b);
+  });
+  const asked = speakAAnswers.filter(v => v !== null).length;
+  document.getElementById('still-possible').innerHTML = `Domande fatte: <b>${asked}</b> / 5 · Frighi ancora possibili: <b>${poss.length}</b>`
+    + (poss.length === 0 ? ' — 🤔 qualcosa non torna: ricontrolla le risposte!' : '');
+}
+function markItem(i, v) { speakAAnswers[i] = speakAAnswers[i] === v ? null : v; renderStudentA(); }
+function makeGuess() {
+  if (speakAGuess === null) { const gg = document.getElementById('char-guess-grid'); gg.style.outline = '2px solid var(--wrong)'; setTimeout(() => gg.style.outline = '', 1200); return; }
+  const f = fridges[speakAGuess], box = document.getElementById('a-guess-result');
+  box.innerHTML = `<div class="guess-result-box"><span class="gr-emoji">${f.emoji}</span><div class="gr-name">Is it ${f.name}'s fridge?</div>
+    <div class="gr-msg">Fai la domanda ad alta voce! B risponde: <em>"Yes, it is!"</em> o <em>"No, it isn't!"</em></div></div>`;
+  box.style.display = 'block'; document.getElementById('a-make-guess-btn').style.display = 'none';
+}
+function renderMysteryCards() {
+  const g = document.getElementById('mystery-card-grid'); g.innerHTML = '';
+  fridges.forEach((_, i) => {
+    const c = document.createElement('div'); c.className = 'mystery-card';
+    c.innerHTML = `<div class="mc-num">${i + 1}</div><div class="mc-q">🧊</div>`;
+    c.onclick = () => showBCard(i); g.appendChild(c);
+  });
+}
+function showBCard(i) {
+  const f = fridges[i];
+  const lines = fridgeItems.map((it, k) => {
+    const yes = !!f.has[k];
+    const txt = yes
+      ? (it.k === 'c' ? `Yes, there are. There's ${it.box}.` : `Yes, there is. There's ${it.box}.`)
+      : (it.k === 'c' ? `No, there aren't any ${it.n}.` : `No, there isn't any ${it.n}.`);
+    return `<div class="food-row"><span class="fr-icon">${it.icon}</span><span class="fr-text ${yes ? 'yes-text' : 'no-text'}">${txt}</span></div>`;
+  }).join('');
+  document.getElementById('b-card-content').innerHTML = `<div class="char-card">
+    <div class="char-card-head"><span class="char-card-emoji">${f.emoji}</span><div class="char-card-name">${f.name}'s fridge</div><div class="char-card-sub">${f.sub}</div></div>
+    <div class="char-card-body"><div class="char-card-hint"><strong>Is there any…? → Yes, there is / No, there isn't.</strong><br><span>Are there any…? → Yes, there are / No, there aren't.</span></div>
+    ${lines}</div></div>`;
+  showSpeakScreen('speak-b-card');
+}
+let speakStep = 0;
+function goToSpeakStep(n) {
+  speakStep = n;
+  document.querySelectorAll('.speak-activity-step').forEach((el, i) => el.classList.toggle('active', i === n));
+  [0,1,2].forEach(i => { const p = document.getElementById('pip-' + i); p.classList.remove('active','done'); if (i === n) p.classList.add('active'); else if (i < n) p.classList.add('done'); });
+  [0,1].forEach(i => document.getElementById('line-' + i).classList.toggle('done', i < n));
+}
+
+// ===================== QUICK DRILL =====================
+const drillData = [
+  { q:'🎵 "I have ___ dreams."', hint:'Frase <span>affermativa</span> → la scelta più naturale è…', options:['a lot of','much','a little','any'] },
+  { q:'🎵 "I need ___ time."', hint:'time è <span>non numerabile</span> · piccola quantità', options:['a little','a few','many','any'] },
+  { q:'🎵 "There isn\'t ___ noise."', hint:'Negativa + <span>non numerabile</span>', options:['much','many','a few','some'] },
+  { q:'"How ___ friends have you got?"', hint:'friends → <span>numerabile</span>', options:['many','much','lot','little'] },
+  { q:'"How ___ money is in your hands?"', hint:'money → <span>non numerabile</span> (anche se si conta… in euro!)', options:['much','many','lot of','few'] },
+  { q:'🎵 "I don\'t have ___ fear."', hint:'Frase <span>negativa</span>', options:['any','some','many','a few'] },
+  { q:'Which noun is UNCOUNTABLE?', hint:'Niente plurale, niente <span>a/an</span>', options:['bread','burger','apple','plate'] },
+  { q:'Which sentence is CORRECT?', hint:'advice in inglese è <span>non numerabile</span>!', options:["I've got some advice.","I've got an advice.","I've got some advices.","I've got many advices."] },
+  { q:'"French cheese ___ expensive."', hint:'cheese → non numerabile → verbo al <span>singolare</span>', options:['is','are','have','be'] },
+  { q:'"There ___ some apples in the bag."', hint:'apples → plurale', options:['are','is','has','any'] },
+  { q:'"We haven\'t got ___ milk."', hint:'Negativa + <span>non numerabile</span>', options:['much','many','a few','some'] },
+  { q:'"There are ___ biscuits, but not many."', hint:'Piccola quantità + <span>numerabile</span>', options:['a few','a little','much','any'] },
+  { q:'"There\'s ___ ketchup, but not much."', hint:'Piccola quantità + <span>non numerabile</span>', options:['a little','a few','many','any'] },
+  { q:'"I eat ___ chocolate." ✓✓✓', hint:'Affermativa: <span>NON</span> much!', options:['a lot of','much','many','a few'] },
+  { q:'"Is there ___ orange juice?"', hint:'Domanda → <span>any</span>', options:['any','some of','many','a few'] },
+  { q:'🥛 "a ___ of milk"', hint:'Il contenitore di cartone', options:['carton','loaf','bar','slice'] },
+  { q:'🍞 "a ___ of bread"', hint:'Il pane intero', options:['loaf','jar','tin','can'] },
+  { q:'🍫 "a ___ of chocolate"', hint:'La tavoletta', options:['bar','jug','loaf','carton'] },
+  { q:'🫒 "a ___ of olives"', hint:'Il barattolo di vetro', options:['jar','slice','loaf','bar'] },
+  { q:'"Oh no, there isn\'t ___!"', hint:'enough va <span>prima</span> del nome', options:['enough bread','bread enough','enough of bread','much enough bread'] },
+  { q:'🎵 "Do you have any ___?"', hint:'question è <span>numerabile</span> → con any nelle domande va al plurale', options:['questions','question','a question','much questions'] },
+]; // correct answer is always options[0] (options are shuffled)
+let drillIndex = 0, drillAnswered = false, drillStarted = false;
+function loadDrill() { drillIndex = 0; drillStarted = true; renderDrill(); }
+function renderDrill() {
+  if (drillIndex >= drillData.length) { showPhase(2); return; }
+  const d = drillData[drillIndex];
+  document.getElementById('drill-counter').textContent = (drillIndex + 1) + ' / ' + drillData.length;
+  document.getElementById('drill-question').textContent = d.q;
+  document.getElementById('drill-hint').innerHTML = d.hint;
+  document.getElementById('drill-progress').style.width = (drillIndex / drillData.length * 100) + '%';
+  const fb = document.getElementById('feedback-msg'); fb.textContent = ''; fb.className = 'feedback-msg';
+  document.getElementById('drill-next').classList.remove('visible');
+  drillAnswered = false;
+  const opts = document.getElementById('answer-options'); opts.innerHTML = '';
+  [0,1,2,3].sort(() => Math.random() - 0.5).forEach(k => {
+    const b = document.createElement('button'); b.className = 'answer-btn'; b.textContent = d.options[k];
+    b.onclick = () => selectAnswer(b, k === 0, d.options[0]); opts.appendChild(b);
+  });
+  const card = document.getElementById('drill-card'); card.classList.add('pop'); setTimeout(() => card.classList.remove('pop'), 300);
+}
+function selectAnswer(btn, ok, correctText) {
+  if (drillAnswered) return; drillAnswered = true;
+  document.querySelectorAll('.answer-btn').forEach(b => { b.disabled = true; if (b.textContent === correctText) b.classList.add('correct-ans'); });
+  const fb = document.getElementById('feedback-msg');
+  if (ok) { fb.textContent = '✓ Count it up — correct!'; fb.className = 'feedback-msg ok'; updateScore(true); }
+  else { btn.classList.add('wrong-ans'); fb.textContent = '✗ Not quite… guarda la risposta giusta.'; fb.className = 'feedback-msg ko'; updateScore(false);
+    const c = document.getElementById('drill-card'); c.classList.add('shake'); setTimeout(() => c.classList.remove('shake'), 350); }
+  document.getElementById('drill-next').classList.add('visible');
+}
+function nextDrill() { drillIndex++; renderDrill(); }
+
+// ===================== BUILD IT =====================
+// type q = build the question from the answer; s = build the sentence from the clue
+const buildData = [
+  { type:'q', clue:"I've got a lot of friends. 👫", words:['How','many','friends','have','you','got','?'], extra:['much','has','lot'] },
+  { type:'q', clue:'I drink two litres of water a day. 💧', words:['How','much','water','do','you','drink','?'], extra:['many','does','drinks'] },
+  { type:'q', clue:"Yes, there is. There's a loaf of bread. 🍞", words:['Is','there','any','bread','?'], extra:['Are','some','many'] },
+  { type:'q', clue:"No, there aren't. There aren't any eggs. 🥚", words:['Are','there','any','eggs','?'], extra:['Is','much','some'] },
+  { type:'q', clue:'I eat three packets a week. 🥔', words:['How','many','packets','of','crisps','do','you','eat','?'], extra:['much','packet','does'] },
+  { type:'s', clue:'✓ small quantity — biscuits', words:['There','are','a','few','biscuits','.'], extra:['is','little','much'] },
+  { type:'s', clue:'✓ small quantity — cheese', words:['There','is','a','little','cheese','.'], extra:['are','few','many'] },
+  { type:'s', clue:'✗ not sufficient — bread 😱', words:['There','isn\'t','enough','bread','.'], extra:['aren\'t','any','of'] },
+  { type:'s', clue:'✗ 🎵 I / time (negative)', words:['I','haven\'t','got','much','time','.'], extra:['many','a','few'] },
+  { type:'s', clue:'🛒 I need / milk × 2 (container!)', words:['I','need','two','cartons','of','milk','.'], extra:['carton','loaves','much'] },
+];
+let buildIndex = 0, currentBuilt = [], buildStarted = false;
+function loadBuild() { buildIndex = 0; buildStarted = true; renderBuild(); }
+function prevBuild() { if (buildIndex === 0) return; buildIndex--; renderBuild(); }
+function skipBuild() { if (buildIndex < buildData.length - 1) { buildIndex++; renderBuild(); } else showPhase(3); }
+const placeholder = '<span style="color:var(--muted);font-size:14px;font-family:DM Sans">Click or drag words here...</span>';
+function renderBuild() {
+  if (buildIndex >= buildData.length) { showPhase(3); return; }
+  const d = buildData[buildIndex];
+  document.getElementById('build-clue-label').textContent = d.type === 'q' ? 'The answer is:' : 'The clue is:';
+  document.getElementById('build-task-label').textContent = d.type === 'q' ? 'Build the question:' : 'Build the sentence:';
+  document.getElementById('build-answer').textContent = d.clue;
+  document.getElementById('build-display').innerHTML = placeholder;
+  document.getElementById('build-progress').style.width = (buildIndex / buildData.length * 100) + '%';
+  const fb = document.getElementById('build-feedback'); fb.textContent = ''; fb.className = 'feedback-msg';
+  document.getElementById('build-next').classList.remove('visible');
+  document.getElementById('build-nav-counter').textContent = (buildIndex + 1) + ' / ' + buildData.length;
+  document.getElementById('build-prev').style.opacity = buildIndex === 0 ? '0.3' : '1';
+  currentBuilt = [];
+  const bank = document.getElementById('word-bank'); bank.innerHTML = '';
+  [...d.words, ...d.extra].sort(() => Math.random() - 0.5).forEach((w, i) => {
+    const chip = document.createElement('div'); chip.className = 'word-chip'; chip.textContent = w; chip.dataset.idx = i; chip.draggable = true; chip.tabIndex = 0;
+    chip.onclick = () => addWord(chip, w, i);
+    chip.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addWord(chip, w, i); } };
+    chip.addEventListener('dragstart', e => { if (chip.classList.contains('used')) { e.preventDefault(); return; } e.dataTransfer.setData('chipIdx', i); e.dataTransfer.setData('word', w); chip.style.opacity = '0.4'; });
+    chip.addEventListener('dragend', () => chip.style.opacity = '');
+    bank.appendChild(chip);
+  });
+  renderBuiltSentence();
+}
+function addWord(chip, w, i) { if (chip.classList.contains('used')) return; chip.classList.add('used'); currentBuilt.push({ word: w, idx: i }); renderBuiltSentence(); }
+function renderBuiltSentence() {
+  const disp = document.getElementById('build-display');
+  disp.ondragover = e => { e.preventDefault(); disp.style.borderColor = 'var(--accent2)'; };
+  disp.ondragleave = () => disp.style.borderColor = '';
+  disp.ondrop = e => { e.preventDefault(); disp.style.borderColor = '';
+    const i = parseInt(e.dataTransfer.getData('chipIdx')), w = e.dataTransfer.getData('word');
+    if (!isNaN(i) && w) { const chip = [...document.querySelectorAll('.word-chip')].find(c => +c.dataset.idx === i); if (chip) addWord(chip, w, i); } };
+  if (!currentBuilt.length) { disp.innerHTML = placeholder; return; }
+  disp.innerHTML = '';
+  currentBuilt.forEach((it, pos) => {
+    const t = document.createElement('span'); t.className = 'word-token'; t.textContent = it.word; t.title = 'Click to remove'; t.draggable = true;
+    t.onclick = () => removeWord(pos, it.idx);
+    t.addEventListener('dragstart', e => { e.dataTransfer.setData('tokenPos', pos); t.style.opacity = '0.4'; });
+    t.addEventListener('dragend', () => t.style.opacity = '');
+    t.addEventListener('dragover', e => { e.preventDefault(); t.style.outline = '2px solid var(--gold)'; });
+    t.addEventListener('dragleave', () => t.style.outline = '');
+    t.addEventListener('drop', e => { e.preventDefault(); e.stopPropagation(); t.style.outline = '';
+      const from = parseInt(e.dataTransfer.getData('tokenPos')); if (!isNaN(from) && from !== pos) { const m = currentBuilt.splice(from, 1)[0]; currentBuilt.splice(pos, 0, m); renderBuiltSentence(); } });
+    disp.appendChild(t);
+  });
+}
+function removeWord(pos, idx) { currentBuilt.splice(pos, 1); document.querySelectorAll('.word-chip').forEach(c => { if (+c.dataset.idx === idx) c.classList.remove('used'); }); renderBuiltSentence(); }
+function clearBuild() { currentBuilt = []; document.querySelectorAll('.word-chip').forEach(c => c.classList.remove('used')); renderBuiltSentence(); document.getElementById('build-feedback').textContent = ''; document.getElementById('build-next').classList.remove('visible'); }
+const norm = arr => arr.filter(w => !['?','.','!'].includes(w)).join(' ').toLowerCase();
+const pretty = arr => arr.join(' ').replace(/ ([?.!])/g, '$1');
+function checkBuild() {
+  const d = buildData[buildIndex], fb = document.getElementById('build-feedback');
+  if (norm(currentBuilt.map(x => x.word)) === norm(d.words)) {
+    fb.textContent = '✓ Perfect! ' + pretty(d.words); fb.className = 'feedback-msg ok';
+    document.getElementById('build-next').classList.add('visible'); updateScore(true);
+  } else { fb.textContent = '✗ Not quite — controlla ordine e parole-trappola!'; fb.className = 'feedback-msg ko'; updateScore(false); }
+}
+function nextBuild() { buildIndex++; renderBuild(); }
+
+// ===================== FINAL =====================
+function showFinal() {
+  document.getElementById('final-score-big').textContent = scoreCorrect;
+  document.getElementById('final-total').textContent = scoreTotal;
+  const pct = Math.round(scoreCorrect / Math.max(scoreTotal, 1) * 100);
+  let e = '🏆', m = 'A lot of right answers — not many mistakes!';
+  if (pct < 50) { e = '💪'; m = 'A few mistakes… keep practising and count it up again!'; }
+  else if (pct < 75) { e = '👍'; m = 'Good job! Review your mistakes and try again.'; }
+  else if (pct < 90) { e = '🎉'; m = 'Great work! Almost perfect!'; }
+  document.getElementById('final-emoji').textContent = e;
+  document.getElementById('final-message').textContent = m;
+  showPhase('final');
+}
+function restart() {
+  scoreCorrect = scoreWrong = scoreTotal = 0;
+  ['score-correct','score-wrong','score-total'].forEach(id => document.getElementById(id).textContent = '0');
+  drillIndex = 0; buildIndex = 0; drillStarted = false; buildStarted = false;
+  showPhase(0);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  renderLyrics(); renderChantChips(); renderFamilySelector(); buildSurveyGrid(); updateFamilyUI();
+});
+</script>
+</body>
+</html>
