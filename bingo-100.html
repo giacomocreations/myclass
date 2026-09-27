@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bingo 1–100</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bungee&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EEF1F6; --panel:#FFFFFF; --ink:#1B2A4A; --muted:#5B6782;
+  --ball:#E23B3B; --ball-dark:#B22424; --gold:#F5C518;
+  --cell:#FFFFFF; --cell-line:#C9D1E0; --called:#1B2A4A; --called-ink:#FFFFFF;
+  --last:#F5C518; --ok:#1E8E5A; --no:#C0392B;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#101a2e; --panel:#18243d; --ink:#E8ECF5; --muted:#9AA6C0;
+    --cell:#1f2d4a; --cell-line:#2c3d60; --called:#F5C518; --called-ink:#1B2A4A;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#101a2e; --panel:#18243d; --ink:#E8ECF5; --muted:#9AA6C0;
+  --cell:#1f2d4a; --cell-line:#2c3d60; --called:#F5C518; --called-ink:#1B2A4A;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:17px;line-height:1.45}
+button,select,input{font:inherit;color:inherit}
+button:focus-visible,select:focus-visible,input:focus-visible,.cell:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+
+.wrap{max-width:1400px;margin:0 auto;padding:18px;display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:22px;align-items:start}
+@media (max-width:900px){.wrap{grid-template-columns:1fr}}
+
+header.top{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+header.top h1{font-family:"Bungee","Arial Black",sans-serif;font-weight:400;font-size:clamp(1.5rem,3vw,2.2rem);margin:0;letter-spacing:.5px}
+.count{font-size:1.05rem;color:var(--muted)}
+.count b{color:var(--ink);font-size:1.3rem}
+
+.side{background:var(--panel);border-radius:22px;padding:22px;display:flex;flex-direction:column;gap:18px;border:1px solid var(--cell-line)}
+
+/* The ball: the one loud element */
+.ballzone{display:flex;flex-direction:column;align-items:center;gap:10px}
+.ball{width:min(78vw,300px);aspect-ratio:1;border-radius:50%;
+  background:radial-gradient(circle at 32% 28%,#ff8a80 0%,var(--ball) 38%,var(--ball-dark) 100%);
+  display:grid;place-items:center;position:relative;box-shadow:inset -14px -18px 30px rgba(0,0,0,.25)}
+.ball::after{content:"";position:absolute;inset:18%;border-radius:50%;background:#fff;box-shadow:inset 0 -6px 12px rgba(0,0,0,.12)}
+.ball span{position:relative;z-index:1;font-family:"Bungee","Arial Black",sans-serif;color:#1B2A4A;font-size:clamp(3.4rem,11vw,6.2rem);line-height:1}
+.ball.pop{animation:pop .45s cubic-bezier(.3,1.6,.5,1)}
+@keyframes pop{0%{transform:scale(.6) rotate(-25deg)}100%{transform:scale(1) rotate(0)}}
+@media (prefers-reduced-motion:reduce){.ball.pop{animation:none}}
+.word{font-size:1.6rem;font-weight:700;min-height:2.2rem;text-align:center}
+.word.hidden{color:var(--muted);font-weight:400;font-size:1.05rem}
+
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.btn{border:0;border-radius:14px;padding:13px 14px;font-weight:700;cursor:pointer;background:var(--cell);border:2px solid var(--cell-line)}
+.btn:hover{border-color:var(--ink)}
+.btn.primary{grid-column:1/-1;background:var(--ball);color:#fff;border-color:var(--ball);font-size:1.3rem;padding:16px}
+.btn.primary:hover{background:var(--ball-dark)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.kbd{font-size:.8rem;opacity:.8;font-weight:400}
+
+.settings{display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--cell-line);padding-top:16px}
+.settings label{display:flex;flex-direction:column;gap:5px;font-size:.95rem;color:var(--muted)}
+.settings select,.settings input[type=range]{width:100%}
+.settings select{padding:9px;border-radius:10px;border:2px solid var(--cell-line);background:var(--cell)}
+.check-row{flex-direction:row!important;align-items:center;gap:10px!important;color:var(--ink)!important}
+.check-row input{width:20px;height:20px}
+
+.recent{display:flex;gap:8px;flex-wrap:wrap;align-items:center;min-height:44px}
+.recent .chip{font-family:"Bungee",sans-serif;background:var(--bg);border-radius:999px;padding:6px 12px;font-size:1.05rem}
+.recent .lbl{color:var(--muted);font-size:.95rem;margin-right:4px}
+
+.main{display:flex;flex-direction:column;gap:18px}
+.board-wrap{background:var(--panel);border-radius:22px;padding:16px;border:1px solid var(--cell-line);overflow-x:auto}
+.board{display:grid;grid-template-columns:repeat(10,minmax(38px,1fr));gap:6px;min-width:420px}
+.cell{aspect-ratio:1.35;border-radius:10px;background:var(--cell);border:2px solid var(--cell-line);display:grid;place-items:center;
+  font-family:"Bungee",sans-serif;font-size:clamp(.95rem,1.9vw,1.55rem);color:var(--muted);cursor:pointer;user-select:none;padding:0}
+.cell.called{background:var(--called);color:var(--called-ink);border-color:var(--called)}
+.cell.last{background:var(--last);color:#1B2A4A;border-color:var(--ball);box-shadow:0 0 0 3px var(--ball)}
+.cell.trap:not(.called){border-style:dashed}
+.board-wrap{position:relative}
+.board-wrap.covered .board{visibility:hidden}
+.cover{display:none;position:absolute;inset:16px;place-items:center;text-align:center;border-radius:14px;
+  background:repeating-linear-gradient(45deg,var(--bg) 0 14px,var(--cell) 14px 28px);font-size:1.2rem;font-weight:700;padding:20px}
+.board-wrap.covered .cover{display:grid}
+.recent.covered{visibility:hidden}
+
+.lower{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media (max-width:700px){.lower{grid-template-columns:1fr}}
+.box{background:var(--panel);border-radius:22px;padding:18px 20px;border:1px solid var(--cell-line)}
+.box h2{margin:0 0 10px;font-size:1.15rem}
+.box p,.box li{margin:0 0 8px;max-width:70ch}
+.box ol{padding-left:22px;margin:0}
+.checkin{display:flex;gap:8px;flex-wrap:wrap}
+.checkin input{flex:1;min-width:180px;padding:10px 12px;border-radius:10px;border:2px solid var(--cell-line);background:var(--cell)}
+.result{margin-top:12px;display:flex;flex-wrap:wrap;gap:6px}
+.result span{padding:5px 10px;border-radius:8px;font-weight:700}
+.result .y{background:var(--ok);color:#fff}
+.result .n{background:var(--no);color:#fff}
+.verdict{width:100%;margin-top:6px;font-weight:700;font-size:1.1rem}
+.mini{font-size:.9rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Bingo 1–100</h1>
+    <div class="count">Numeri usciti: <b id="count">0</b> / 100</div>
+  </header>
+
+  <aside class="side">
+    <div class="ballzone">
+      <div class="ball" id="ball" aria-live="polite"><span id="ballNum">?</span></div>
+      <div class="word hidden" id="word">Premi «Estrai» per iniziare</div>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" id="drawBtn">Estrai <span class="kbd">(spazio)</span></button>
+      <button class="btn" id="repeatBtn">Ripeti audio <span class="kbd">(R)</span></button>
+      <button class="btn" id="revealBtn">Mostra <span class="kbd">(Invio)</span></button>
+      <button class="btn" id="undoBtn">Annulla ultimo</button>
+      <button class="btn" id="resetBtn">Nuova partita</button>
+      <button class="btn" id="boardBtn" style="grid-column:1/-1">Mostra tabellone <span class="kbd">(T)</span></button>
+    </div>
+
+    <div class="recent" id="recent"></div>
+
+    <div class="settings">
+      <label>Modalità
+        <select id="mode">
+          <option value="listen">Ascolto: sentono il numero, lo scopro dopo</option>
+          <option value="both">Ascolto + numero subito visibile</option>
+          <option value="read">Lettura: vedono il numero e lo dicono loro</option>
+        </select>
+      </label>
+      <label>Voce
+        <select id="voice"></select>
+      </label>
+      <label>Velocità voce <input type="range" id="rate" min="0.5" max="1.2" step="0.05" value="0.85"></label>
+      <label class="check-row"><input type="checkbox" id="twice" checked> Ripeti ogni numero due volte</label>
+      <label class="check-row"><input type="checkbox" id="traps"> Più «trappole» (13/30, 14/40, 15/50…)</label>
+    </div>
+  </aside>
+
+  <section class="main">
+    <div class="board-wrap" id="boardWrap"><div class="board" id="board" role="grid" aria-label="Tabellone 1–100"></div><div class="cover">Tabellone nascosto durante il gioco.<br>Premi «Mostra tabellone» (T) per il controllo.</div></div>
+
+    <div class="lower">
+      <div class="box">
+        <h2>Controlla la cartella</h2>
+        <p class="mini">Quando qualcuno grida «Bingo!», fagli leggere i numeri in inglese e scrivili qui (separati da spazi o virgole).</p>
+        <div class="checkin">
+          <input id="checkInput" inputmode="numeric" placeholder="es. 13 47 60 82 99">
+          <button class="btn" id="checkBtn">Controlla</button>
+        </div>
+        <div class="result" id="result"></div>
+      </div>
+
+      <div class="box">
+        <h2>Cartella sul quaderno</h2>
+        <ol>
+          <li>Griglia 5 × 5 (25 caselle). Per partite brevi: 4 × 4.</li>
+          <li>Ogni colonna ha la sua fascia: 1–20, 21–40, 41–60, 61–80, 81–100. Così i numeri non si ammassano.</li>
+          <li>Numeri scritti in cifre, tutti diversi. La casella centrale può essere «FREE».</li>
+          <li>Quando esce un numero lo cerchiano (non lo cancellano: serve per il controllo).</li>
+          <li>Vince chi fa la riga, poi si continua per la cartella piena.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function(){
+  const ones=["","one","two","three","four","five","six","seven","eight","nine","ten","eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen"];
+  const tens=["","","twenty","thirty","forty","fifty","sixty","seventy","eighty","ninety"];
+  const toWords=n=>{
+    if(n===100) return "one hundred";
+    if(n<20) return ones[n];
+    const t=Math.floor(n/10),o=n%10;
+    return tens[t]+(o?"-"+ones[o]:"");
+  };
+  const isTrap=n=>(n>=13&&n<=19)||(n>=30&&n<=90&&n%10===0);
+
+  const $=id=>document.getElementById(id);
+  const board=$("board"),ball=$("ball"),ballNum=$("ballNum"),word=$("word");
+  const KEY="bingo100-state";
+
+  let state={called:[],revealed:true,mode:"listen",rate:0.85,twice:true,traps:false,voice:"",boardHidden:true};
+  try{const s=JSON.parse(localStorage.getItem(KEY)||"null"); if(s&&Array.isArray(s.called)) state=Object.assign(state,s);}catch(e){}
+  const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}};
+
+  // Board
+  const cells=[];
+  for(let i=1;i<=100;i++){
+    const c=document.createElement("button");
+    c.className="cell"+(isTrap(i)?" trap":"");
+    c.textContent=i; c.setAttribute("aria-label",String(i));
+    c.addEventListener("click",()=>{ if(state.called.includes(i)) speak(i); });
+    board.appendChild(c); cells.push(c);
+  }
+
+  // Voices
+  let voices=[];
+  function loadVoices(){
+    if(!("speechSynthesis" in window)) return;
+    voices=speechSynthesis.getVoices().filter(v=>/^en/i.test(v.lang));
+    const sel=$("voice"); sel.innerHTML="";
+    if(!voices.length){sel.innerHTML='<option value="">Voce inglese non disponibile</option>';return;}
+    voices.sort((a,b)=>(b.lang==="en-GB")-(a.lang==="en-GB"));
+    voices.forEach(v=>{const o=document.createElement("option");o.value=v.name;o.textContent=v.name+" ("+v.lang+")";sel.appendChild(o);});
+    if(state.voice&&voices.some(v=>v.name===state.voice)) sel.value=state.voice; else state.voice=sel.value;
+  }
+  if("speechSynthesis" in window){loadVoices(); speechSynthesis.onvoiceschanged=loadVoices;}
+
+  function speak(n){
+    if(!("speechSynthesis" in window)) return;
+    speechSynthesis.cancel();
+    const v=voices.find(x=>x.name===state.voice);
+    const times=state.twice?2:1;
+    for(let k=0;k<times;k++){
+      const u=new SpeechSynthesisUtterance(toWords(n));
+      if(v){u.voice=v;u.lang=v.lang}else u.lang="en-GB";
+      u.rate=state.rate; speechSynthesis.speak(u);
+      if(k<times-1){const p=new SpeechSynthesisUtterance(" ");p.rate=state.rate;p.volume=0;speechSynthesis.speak(p);}
+    }
+  }
+
+  function render(){
+    const called=state.called,last=called[called.length-1];
+    $("count").textContent=called.length;
+    cells.forEach((c,i)=>{
+      const n=i+1,isCalled=called.includes(n);
+      const hideLast=(n===last&&!state.revealed);
+      c.classList.toggle("called",isCalled&&!hideLast);
+      c.classList.toggle("last",n===last&&state.revealed);
+    });
+    if(last===undefined){
+      ballNum.textContent="?"; word.textContent="Premi «Estrai» per iniziare"; word.className="word hidden";
+    }else{
+      const showNum=state.revealed||state.mode!=="listen";
+      ballNum.textContent=showNum?last:"?";
+      if(state.revealed){word.textContent=toWords(last);word.className="word";}
+      else{word.textContent=state.mode==="read"?"Come si dice?":"Ascolta…";word.className="word hidden";}
+    }
+    const rec=called.slice(-7,-1).reverse();
+    $("recent").innerHTML=rec.length?'<span class="lbl">Prima:</span>'+rec.map(n=>'<span class="chip">'+n+'</span>').join(""):"";
+    $("boardWrap").classList.toggle("covered",state.boardHidden);
+    $("recent").classList.toggle("covered",state.boardHidden);
+    $("boardBtn").innerHTML=(state.boardHidden?"Mostra tabellone":"Nascondi tabellone")+' <span class="kbd">(T)</span>';
+    $("drawBtn").disabled=called.length>=100;
+    $("revealBtn").disabled=last===undefined||state.revealed;
+    $("undoBtn").disabled=!called.length;
+    $("repeatBtn").disabled=last===undefined;
+    $("mode").value=state.mode;$("rate").value=state.rate;$("twice").checked=state.twice;$("traps").checked=state.traps;
+  }
+
+  function draw(){
+    if(state.called.length>=100) return;
+    const pool=[];
+    for(let n=1;n<=100;n++){ if(!state.called.includes(n)){ pool.push(n); if(state.traps&&isTrap(n)) pool.push(n); } }
+    const n=pool[Math.floor(Math.random()*pool.length)];
+    state.called.push(n);
+    state.revealed=(state.mode==="both");
+    save(); render();
+    ball.classList.remove("pop"); void ball.offsetWidth; ball.classList.add("pop");
+    if(state.mode!=="read") speak(n);
+  }
+  function reveal(){
+    const last=state.called[state.called.length-1];
+    if(last===undefined||state.revealed) return;
+    state.revealed=true; save(); render();
+    if(state.mode==="read") speak(last);
+  }
+  function undo(){
+    if(!state.called.length) return;
+    state.called.pop(); state.revealed=true; save(); render();
+  }
+  function reset(){
+    if(state.called.length&&!confirm("Iniziare una nuova partita? I numeri usciti verranno azzerati.")) return;
+    state.called=[]; state.revealed=true; state.boardHidden=true; $("result").innerHTML=""; $("checkInput").value=""; save(); render();
+  }
+  function toggleBoard(){state.boardHidden=!state.boardHidden;save();render();}
+  function check(){
+    const nums=($("checkInput").value.match(/\d+/g)||[]).map(Number).filter(n=>n>=1&&n<=100);
+    const res=$("result");
+    if(!nums.length){res.innerHTML='<div class="verdict">Scrivi i numeri della cartella, tra 1 e 100.</div>';return;}
+    // Only revealed numbers count as called
+    const valid=state.revealed?state.called:state.called.slice(0,-1);
+    const miss=nums.filter(n=>!valid.includes(n));
+    res.innerHTML=nums.map(n=>'<span class="'+(valid.includes(n)?"y":"n")+'">'+n+'</span>').join("")+
+      '<div class="verdict">'+(miss.length?"Non valido: "+miss.join(", ")+(miss.length>1?" non sono ancora usciti.":" non è ancora uscito."):"Bingo valido!")+'</div>';
+  }
+
+  $("drawBtn").onclick=draw; $("revealBtn").onclick=reveal; $("undoBtn").onclick=undo; $("resetBtn").onclick=reset;
+  $("repeatBtn").onclick=()=>{const l=state.called[state.called.length-1]; if(l!==undefined) speak(l);};
+  $("boardBtn").onclick=toggleBoard;
+  $("checkBtn").onclick=check; $("checkInput").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();check();}});
+  $("mode").onchange=e=>{state.mode=e.target.value;save();render();};
+  $("rate").oninput=e=>{state.rate=parseFloat(e.target.value);save();};
+  $("twice").onchange=e=>{state.twice=e.target.checked;save();};
+  $("traps").onchange=e=>{state.traps=e.target.checked;save();};
+  $("voice").onchange=e=>{state.voice=e.target.value;save();};
+
+  document.addEventListener("keydown",e=>{
+    const tag=(e.target.tagName||"").toLowerCase();
+    if(tag==="input"||tag==="select") return;
+    if(tag==="button"&&(e.code==="Space"||e.key==="Enter")) e.target.blur();
+    if(e.code==="Space"){e.preventDefault();draw();}
+    else if(e.key==="Enter"){e.preventDefault();reveal();}
+    else if(e.key==="t"||e.key==="T"){toggleBoard();}
+    else if(e.key==="r"||e.key==="R"){const l=state.called[state.called.length-1]; if(l!==undefined) speak(l);}
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
