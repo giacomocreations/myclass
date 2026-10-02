@@ -16542,6 +16542,8 @@ ${blocco.regole}`;
 .lv-att-ctl button{width:34px;height:34px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#fff;cursor:pointer;font-size:calc(14px*var(--lv-z,1));font-family:inherit;}
 .lv-att-ctl button:hover{background:rgba(255,255,255,.2);}
 .lv-att-ctl button.del{border-color:#ef4444;color:#fca5a5;}
+.lv-att-addbtn.lv-att-undo{border-style:solid;border-color:rgba(255,255,255,.3);background:rgba(255,255,255,.06);color:#e5e7eb;}
+.lv-att-addbtn:disabled{opacity:.35;cursor:default;}
 .lv-att-addbtn{margin-top:10px;padding:8px 16px;border-radius:10px;border:1.5px dashed #a78bfa;background:rgba(167,139,250,.12);color:#c4b5fd;cursor:pointer;font-size:calc(15px*var(--lv-z,1));font-weight:700;font-family:inherit;}
 .lv-att-ed{width:100%;box-sizing:border-box;background:rgba(255,255,255,.08);border:1.5px solid #a78bfa;color:#fff;border-radius:8px;padding:10px;font-size:inherit;line-height:1.5;font-family:inherit;resize:vertical;}
 .lvbtn.att-on{background:#7c3aed;border-color:#a78bfa;color:#fff;}
@@ -16797,7 +16799,8 @@ ${blocco.regole}`;
                 grigliaAttiva: grigliaCollegata ? {...grigliaCollegata} : null,
                 pianoBAttivo: false,
                 fasiOriginali: null,
-                attEdit: false, attEditing: null, attDirty: false, rimosse: [], aggiunte: [], gen: null, _undo: null, _fA: null, _fB: null,
+                attEdit: false, attEditing: null, attDirty: false, rimosse: [], aggiunte: [], gen: null, _hist: [], _fA: null, _fB: null,
+                _origA: Object.fromEntries(fasi.map(f=>[f.key,f.testo])), _origB: null,
                 coppiaMode: false,       // modalità valutazione coppia (0=off, 2=coppia, 3=trio)
                 coppiaSlot: 1,           // tab attiva: 1, 2 o 3
                 coppiaIdx: [null, null, null], // [idx studente 1, idx studente 2, idx studente 3]
@@ -17644,13 +17647,22 @@ ${blocco.regole}`;
             // Ogni fase è un testo a righe; un'"attività" è una riga di primo livello
             // con le sue righe rientrate. Le modifiche vengono scritte nel piano
             // solo a "Segna lezione come svolta" (o "Applica alla lezione").
+            // La riga "di testa" di ogni attività viene salvata senza rientro: se il
+            // testo della fase era tutto rientrato, una nuova attività a rientro 0
+            // non deve "inglobare" le altre come sotto-righe. Una riga a elenco con
+            // durata "(X min)" è sempre un'attività a sé, anche se rientrata.
             function lvItems(testo){
                 const out=[];
-                String(testo||'').split('\n').forEach(l=>{
-                    if(!l.trim())return;
-                    const tr=l.trimStart(), ind=l.length-tr.length;
-                    if(out.length&&(ind>=2||/^[>»→]\s/.test(tr)))out[out.length-1]+='\n'+l.trimEnd();
-                    else out.push(l.trimEnd());
+                const righe=String(testo||'').split('\n').filter(l=>l.trim());
+                const indOf=l=>l.length-l.trimStart().length;
+                const isSub=tr=>/^[>»→]\s/.test(tr);
+                const isAtt=tr=>/^(?:[-•*]|\d+[.)])\s.*[\(\[]\s*\d+\s*min/i.test(tr);
+                const tops=righe.filter(l=>!isSub(l.trimStart())).map(indOf);
+                const base=tops.length?Math.min(...tops):0;
+                righe.forEach(l=>{
+                    const tr=l.trimStart(), ind=indOf(l)-base;
+                    if(out.length&&!isAtt(tr)&&(ind>=2||isSub(tr)))out[out.length-1]+='\n'+l.trimEnd();
+                    else out.push(tr.trimEnd());
                 });
                 return out;
             }
@@ -17659,6 +17671,17 @@ ${blocco.regole}`;
             }
             const _escT=t=>String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
             function lvAttSet(fi,items){ LV.fasi[fi].testo=items.join('\n'); LV.attDirty=true; lvAutoSave(); }
+            // Cronologia per "Annulla": istantanea di tutte le fasi prima di ogni modifica
+            function lvAttSnap(){
+                LV._hist.push({ testi:LV.fasi.map(f=>({key:f.key,testo:f.testo})), rimosse:LV.rimosse.slice(), aggiunte:LV.aggiunte.slice(), fPreview:LV.fPreview });
+                if(LV._hist.length>60)LV._hist.shift();
+            }
+            // Attività come erano prima di qualsiasi modifica in LIVE (salvate nel piano
+            // alla prima modifica, quindi disponibili anche riaprendo il LIVE)
+            function lvAttOrig(){
+                if(!LV.pianoBAttivo&&pd.fasiPrimaDelLive)return pd.fasiPrimaDelLive;
+                return LV.pianoBAttivo?LV._origB:LV._origA;
+            }
             function lvAttBody(fi,f){
                 const items=lvItems(f.testo);
                 let h='<div class="lv-fb-body lv-att-edit" onclick="event.stopPropagation()">';
@@ -17679,7 +17702,12 @@ ${blocco.regole}`;
                       +'<button onclick="lvAttMove('+fi+','+ii+',1)" title="Sposta giù">▼</button>'
                       +'<button class="del" onclick="lvAttDel('+fi+','+ii+')" title="Togli l\'attività">✕</button></div></div>';
                 });
-                h+='<button class="lv-att-addbtn" onclick="lvAttOpenAdd('+fi+')">➕ Aggiungi attività</button></div>';
+                const nU=LV._hist.length;
+                h+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+                  +'<button class="lv-att-addbtn" onclick="lvAttOpenAdd('+fi+')">➕ Aggiungi attività</button>'
+                  +'<button class="lv-att-addbtn lv-att-undo" onclick="lvAttUndo()"'+(nU?'':' disabled')+' title="Annulla l\'ultima modifica alle attività">↩ Annulla'+(nU?' ('+nU+')':'')+'</button>'
+                  +'<button class="lv-att-addbtn lv-att-undo" onclick="lvAttRipristina()" title="Riporta tutte le attività come erano nel piano prima delle modifiche in LIVE">⟲ Ripristina originale</button>'
+                  +'</div></div>';
                 return h;
             }
             window.lvAttToggle=function(){
@@ -17692,10 +17720,10 @@ ${blocco.regole}`;
             window.lvAttMove=function(fi,ii,d){
                 LV.attEditing=null;
                 const items=lvItems(LV.fasi[fi].testo), j=ii+d;
-                if(j>=0&&j<items.length){ const t=items[ii]; items[ii]=items[j]; items[j]=t; lvAttSet(fi,items); }
-                else if(j<0&&fi>0){ const it=items.splice(ii,1)[0]; lvAttSet(fi,items); const pv=lvItems(LV.fasi[fi-1].testo); pv.push(it); lvAttSet(fi-1,pv); }
-                else if(j>=items.length&&fi<LV.fasi.length-1){ const it=items.splice(ii,1)[0]; lvAttSet(fi,items); const nx=lvItems(LV.fasi[fi+1].testo); nx.unshift(it); lvAttSet(fi+1,nx); }
-                lvRenderFL();
+                if(items[ii]==null)return;
+                if(j>=0&&j<items.length){ lvAttSnap(); const t=items[ii]; items[ii]=items[j]; items[j]=t; lvAttSet(fi,items); lvRenderFL(); }
+                else if(j<0&&fi>0){ lvAttSnap(); const it=items.splice(ii,1)[0]; lvAttSet(fi,items); const pv=lvItems(LV.fasi[fi-1].testo); pv.push(it); lvAttSet(fi-1,pv); lvPreview(fi-1); lvAttToast('Attività spostata nella fase precedente',true); }
+                else if(j>=items.length&&fi<LV.fasi.length-1){ lvAttSnap(); const it=items.splice(ii,1)[0]; lvAttSet(fi,items); const nx=lvItems(LV.fasi[fi+1].testo); nx.unshift(it); lvAttSet(fi+1,nx); lvPreview(fi+1); lvAttToast('Attività spostata nella fase successiva',true); }
             };
             window.lvAttEdit=function(fi,ii){
                 LV.attEditing={fi,ii};
@@ -17711,7 +17739,7 @@ ${blocco.regole}`;
                 if(!nuovo.trim()){ alert('Il testo è vuoto: per toglierla usa ✕.'); return; }
                 const pre=(old.split('\n')[0].match(/^\s*[-•*]\s+/)||[''])[0];
                 if(pre&&!/^\s*[-•*]\s+/.test(nuovo))nuovo=pre+nuovo.replace(/^\s+/,'');
-                if(nuovo!==old){ items[e.ii]=nuovo; lvAttSet(e.fi,items); }
+                if(nuovo!==old){ lvAttSnap(); items[e.ii]=nuovo; lvAttSet(e.fi,items); }
                 LV.attEditing=null;
                 lvRenderFL();
             };
@@ -17729,24 +17757,46 @@ ${blocco.regole}`;
             }
             window.lvAttDel=function(fi,ii){
                 LV.attEditing=null;
-                const items=lvItems(LV.fasi[fi].testo), it=items.splice(ii,1)[0];
-                if(it==null)return;
+                const items=lvItems(LV.fasi[fi].testo);
+                if(items[ii]==null)return;
+                lvAttSnap();
+                const it=items.splice(ii,1)[0];
                 lvAttSet(fi,items);
-                const nome=lvItemNome(it);
-                LV._undo={fi,ii,it,nome};
-                LV.rimosse.push(nome);
+                LV.rimosse.push(lvItemNome(it));
                 lvRenderFL();
                 lvAttToast('Attività tolta',true);
             };
+            // Annulla l'ultima modifica (aggiunta, spostamento, modifica, eliminazione, ripristino)
             window.lvAttUndo=function(){
-                const u=LV._undo; if(!u)return;
-                const items=lvItems(LV.fasi[u.fi].testo);
-                items.splice(Math.min(u.ii,items.length),0,u.it);
-                lvAttSet(u.fi,items);
-                const k=LV.rimosse.lastIndexOf(u.nome); if(k>=0)LV.rimosse.splice(k,1);
-                LV._undo=null;
+                const u=LV._hist.pop(); if(!u)return;
+                LV.attEditing=null;
+                LV.fasi.forEach(f=>{ const t=u.testi.find(x=>x.key===f.key); f.testo=t?t.testo:''; });
+                LV.rimosse=u.rimosse; LV.aggiunte=u.aggiunte;
+                LV.attDirty=true; lvAutoSave();
                 const t=q('lv-att-toast'); if(t)t.remove();
+                if(u.fPreview!==LV.fPreview&&u.fPreview!=null&&u.fPreview<LV.fasi.length)lvPreview(u.fPreview);
+                else lvRenderFL();
+            };
+            window.lvAttRipristina=function(){
+                const src=lvAttOrig();
+                if(!src){ alert('Nessuna versione originale disponibile.'); return; }
+                if(!confirm('Riportare tutte le attività come erano nel piano prima delle modifiche in LIVE?\n\n(Puoi comunque tornare indietro con ↩ Annulla.)'))return;
+                lvAttSnap();
+                LV.attEditing=null;
+                // fasi svuotate e non più presenti (es. LIVE riaperto): reinseriscile
+                if(!LV.pianoBAttivo)FASI_DEF.forEach((def,k)=>{
+                    if(String(src[def.key]||'').trim()&&!LV.fasi.some(f=>f.key===def.key)){
+                        const pos=LV.fasi.filter(f=>FASI_DEF.findIndex(d=>d.key===f.key)<k).length;
+                        LV.fasi.splice(pos,0,{...def,testo:'',minuti:estraiMinuti(src[def.key])});
+                        if(pos<=LV.fc&&LV.fasi.length>1)LV.fc++;
+                    }
+                });
+                LV.fasi.forEach(f=>{ if(Object.prototype.hasOwnProperty.call(src,f.key))f.testo=String(src[f.key]||''); });
+                LV.rimosse=[]; LV.aggiunte=[];
+                LV.attDirty=true; lvAutoSave();
+                LV.fPreview=null;
                 lvRenderFL();
+                lvAttToast('Attività ripristinate',true);
             };
             // Suggerimenti: storico anni precedenti (date vicine per prime) + attività di altri piani
             let _attPool=null;
@@ -17812,6 +17862,7 @@ ${blocco.regole}`;
                 const inp=q('lv-att-in'); if(!inp)return;
                 const testo=inp.value.trim().replace(/^[-•*]\s+/,''); if(!testo)return;
                 const fi=parseInt(q('lv-att-fase')?.value)||0;
+                lvAttSnap();
                 const items=lvItems(LV.fasi[fi].testo);
                 items.unshift('- '+testo); // in cima: più comodo poi spostarla giù con ▼
                 lvAttSet(fi,items);
@@ -17900,6 +17951,12 @@ ${blocco.regole}`;
             function lvPersistFasi(lzF){
                 if(!LV.attDirty||!lzF||!lzF.pianoDettagliato)return;
                 const A=LV.pianoBAttivo?LV._fA:LV.fasi, B=LV.pianoBAttivo?LV.fasi:LV._fB;
+                // Copia delle attività come erano prima di qualsiasi modifica in LIVE
+                // (serve a "Ripristina originale"; si azzera salvando il piano dal modal)
+                if(!lzF.pianoDettagliato.fasiPrimaDelLive){
+                    lzF.pianoDettagliato.fasiPrimaDelLive={...LV._origA};
+                    if(lzF.pianoDettagliato!==pd)pd.fasiPrimaDelLive=lzF.pianoDettagliato.fasiPrimaDelLive;
+                }
                 if(A)A.forEach(f=>{ if(/^fase[123]$/.test(f.key))lzF.pianoDettagliato[f.key]=f.testo; });
                 const pB=lzF.pianoDettagliato.pianoB;
                 if(B&&pB)B.forEach(f=>{ if(/^fase[123]$/.test(f.key))pB[f.key]=f.testo; else if(f.key==='pianoB')pB.descrizione=f.testo; });
@@ -17983,6 +18040,8 @@ ${blocco.regole}`;
                 if(LV.tRun) lvToggle(); // ferma timer
                 // conserva le modifiche alle attività del piano che si sta lasciando
                 if(LV.pianoBAttivo) LV._fB=LV.fasi.map(f=>({...f})); else LV._fA=LV.fasi.map(f=>({...f}));
+                if(!LV._origB) LV._origB=Object.fromEntries(fasiBConfig.map(f=>[f.key,f.testo]));
+                LV._hist=[]; // la cronologia "Annulla" vale per il piano visualizzato
                 LV.pianoBAttivo = (piano==='b');
                 LV.fAdj={}; LV.minUsati=0;
                 // Swappa le fasi
