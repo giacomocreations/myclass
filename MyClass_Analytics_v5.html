@@ -12795,7 +12795,9 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
         async function _aiDescrizioniLezione(o) {
             o = o || {};
             const pulisci = t => String(t || '').split('\n').filter(r => !/\b(BES|DSA|PEI|PDP)\b/i.test(r)).join('\n');
-            const attivita = (o.fasi || []).map(f => String(f.label || '').replace(/[^\p{L}\p{N} \/]/gu, '').trim() + ':\n' + pulisci(f.testo)).join('\n\n');
+            // Routine da non riportare: saluto/appello (scontati) e assegnazione compiti (vanno nel campo Compiti)
+            const routine = r => /^\s*(?:[-•*>»→]|\d+[.)])?\s*(?:saluto|appello)\b/i.test(r) || /\bassegn\w*\b.*\bcompit/i.test(r);
+            const attivita = (o.fasi || []).map(f => String(f.label || '').replace(/[^\p{L}\p{N} \/]/gu, '').trim() + ':\n' + pulisci(f.testo).split('\n').filter(r => !routine(r)).join('\n')).join('\n\n');
             const prompt = 'Sei un insegnante di inglese alle scuole medie italiane. Genera titolo e descrizioni di una lezione a partire dalle attività che la compongono. Il titolo originale della lezione non è noto e NON va considerato: la lezione può essere cambiata in corso, quindi basati solo sulle attività elencate qui sotto (se gli obiettivi contraddicono le attività, valgono le attività).\n\n'
               + 'DATI DELLA LEZIONE\n'
               + (o.unit ? 'Unità: ' + o.unit + '\n' : '')
@@ -12805,12 +12807,12 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
               + ((o.rimosse || []).length ? '\nAttività previste ma NON svolte (NON citarle): ' + o.rimosse.join(' | ') + '\n' : '')
               + ((o.aggiunte || []).length ? '\nAttività aggiunte durante la lezione (citale): ' + o.aggiunte.join(' | ') + '\n' : '')
               + (o.pagine ? '\nPagine del libro: ' + o.pagine + '\n' : '')
-              + (o.compiti ? 'Compiti assegnati: ' + o.compiti + '\n' : '')
               + '\nGenera TRE campi:\n'
               + '1) "titolo": titolo breve, massimo 5-6 parole, ricavato dalle attività effettivamente presenti (mantenute, aggiunte o modificate); ignora quelle non svolte.\n'
               + '2) "argo": descrizione per il registro elettronico, via di mezzo tra un elenco telegrafico e un testo discorsivo: brevi frasi nominali o con verbo, separate da punto e virgola, nell\'ordine in cui le attività sono state svolte (circa 150-280 caratteri). Ogni voce dice cosa si è fatto con un minimo di dettaglio concreto (nome del gioco, titolo del video o della canzone, argomento). Se ci sono pagine ed esercizi del libro indicali sempre (p.__ ex.__). Niente aggettivi di riempimento, commenti o valutazioni, niente frasi lunghe o subordinate.\n'
               + 'Esempio dello stile richiesto: "Correzione compiti; consolidamento alfabeto con attività di spelling e gioco \'The Alphabet Chain\'; introduzione a \'The Numbers 1-100\'; gli alunni ripetono i numeri seguendo il video \'Count by ten\'"\n'
               + '3) "studente": descrizione un po\' più dettagliata per la StudentApp, 3-5 frasi, massimo 450 caratteri. Scrivi semplicemente cosa è stato fatto durante la lezione, in ordine, con pagine ed esercizi se presenti. NON salutare (niente "Ciao", "Salve", "Ragazzi" o simili), niente formule di apertura o chiusura, non rivolgerti direttamente agli alunni, niente commenti motivazionali: solo le attività svolte, con frasi semplici.\n\n'
+              + 'In NESSUNO dei campi citare il saluto o l\'appello (sono scontati) né l\'assegnazione dei compiti (vanno già nel campo Compiti). La correzione dei compiti assegnati la volta prima, invece, è un\'attività e va citata.\n'
               + 'Non citare nomi di alunni, voti, note sul comportamento, BES/DSA/PEI/PDP né livelli CEFR.\n'
               + 'Rispondi SOLO con JSON valido senza markdown: {"titolo":"...","argo":"...","studente":"..."}';
             const res = await callGemini(prompt);
@@ -14187,7 +14189,7 @@ ${unitCtx}${pageDict}${topicDict}${pdCtx}
 
 ISTRUZIONI:
 1. TITOLO: in italiano, max 7 parole, secco e nominale, senza verbi introduttivi (es. "Present Perfect: introduzione"). Se il titolo originale è vuoto ma è presente il PIANO DETTAGLIATO qui sopra, generalo da quello (obiettivi/fasi), non lasciarlo vuoto
-2. DESCRIZIONE: nello STILE indicato sopra (circa 150-280 caratteri), voci separate da punto e virgola nell'ordine delle attività; se ci sono pagine ed esercizi del libro indicali sempre (p.__ ex.__); niente commenti o valutazioni. Basati SOLO su ciò che è scritto (titolo/descrizione originali oppure, se assenti, sul PIANO DETTAGLIATO). Se la descrizione originale è vuota ma è presente il piano dettagliato, scrivila elencando argomenti e attività in quello stile (da obiettivi e fasi), non lasciarla vuota
+2. DESCRIZIONE: nello STILE indicato sopra (circa 150-280 caratteri), voci separate da punto e virgola nell'ordine delle attività; se ci sono pagine ed esercizi del libro indicali sempre (p.__ ex.__); niente commenti o valutazioni; NON citare saluto/appello (scontati) né l'assegnazione dei compiti (va nel campo compiti), mentre la correzione dei compiti è un'attività e va citata. Basati SOLO su ciò che è scritto (titolo/descrizione originali oppure, se assenti, sul PIANO DETTAGLIATO). Se la descrizione originale è vuota ma è presente il piano dettagliato, scrivila elencando argomenti e attività in quello stile (da obiettivi e fasi), non lasciarla vuota
 3. PAGINE: mantieni le pagine originali; aggiungi nota argomento solo se hai il dizionario pagine→argomento
 4. COMPITI: in italiano, puliti e formattati, senza aggiungerne di nuovi (usa anche i compiti del piano dettagliato se presenti)
 5. UNITÀ: conferma o correggi basandoti sulla programmazione
