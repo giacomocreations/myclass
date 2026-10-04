@@ -16480,7 +16480,7 @@ ${blocco.regole}`;
 
             ov.innerHTML = `
 <style>
-#lv-topbar{background:#1a1a2e;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #667eea;flex-shrink:0;gap:10px;flex-wrap:wrap;}
+#lv-topbar{--lv-z:1;font-size:20px;background:#1a1a2e;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #667eea;flex-shrink:0;gap:10px;flex-wrap:wrap;}
 .lv-tb-classe{font-size:21px;font-weight:800;color:#a78bfa;}.lv-tb-titolo{font-size:calc(16px*var(--lv-z,1));opacity:.6;margin-top:2px;}
 .lv-tb-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 #lv-orologio{font-size:25px;font-weight:800;font-variant-numeric:tabular-nums;color:#fbbf24;}
@@ -20685,8 +20685,13 @@ ${blocco.regole}`;
         return (v >= 0.8 && v <= 1.8) ? v : 1;
     })();
     function agentZoomApply() {
+        // Lo zoom vale per il contenuto della pagina, NON per l'intestazione che
+        // contiene A−/A+: così i pulsanti restano fermi e si può cliccare di seguito.
         const view = document.getElementById('agenteView');
-        if (view) view.style.zoom = AGENT_ZOOM;
+        if (view) {
+            view.style.zoom = '';
+            [...view.children].forEach(el => { el.style.zoom = el.classList.contains('section-header') ? '' : AGENT_ZOOM; });
+        }
         const lbl = document.getElementById('agentZoomLabel');
         if (lbl) lbl.textContent = Math.round(AGENT_ZOOM * 100) + '%';
         try { localStorage.setItem('agent_zoom', String(AGENT_ZOOM)); } catch(e) {}
@@ -21786,7 +21791,7 @@ ${blocco.regole}`;
             isOggi: iso === oggi,
             label: `${GGp[dd.getDay()]} ${dd.getDate()}/${dd.getMonth()+1}`,
             lezioni,
-            daFare: lezioni.filter(l => l.mancaDescrizione || l.mancaPiano || l.mancaCompiti || l.mancaMateriale || l.bozza).length
+            daFare: lezioni.filter(l => l.mancaDescrizione || l.mancaPiano || l.mancaCompiti || l.bozza).length
         };
     }
 
@@ -22344,7 +22349,10 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
                 const item = (ok, txt) => `<span style="display:inline-flex;align-items:center;gap:3px;margin-right:10px;font-size:11px;font-weight:700;color:${ok ? '#166534' : '#991b1b'};">${ok ? '✅' : '❌'} ${txt}</span>`;
                 let checklist = item(!l.mancaDescrizione, 'descrizione')
                     + item(!l.mancaPiano, 'piano')
-                    + item(!l.mancaMateriale, 'materiale allegato')
+                    // Materiale: solo informativo (per molte lezioni non serve) → mai ❌ né conteggiato in "da completare"
+                    + (l.mancaMateriale
+                        ? `<span style="display:inline-flex;align-items:center;gap:3px;margin-right:10px;font-size:11px;font-weight:600;color:#94a3b8;">📎 nessun materiale allegato</span>`
+                        : `<span style="display:inline-flex;align-items:center;gap:3px;margin-right:10px;font-size:11px;font-weight:700;color:#166534;">📎 materiale allegato</span>`)
                     + (l.compitiNonServono ? item(true, 'compiti (non richiesti)') : item(!l.mancaCompiti, 'compiti'));
                 const bozzaBadge = l.bozza ? `<span style="background:#fff3c4;color:#854d0e;border-radius:5px;padding:1px 7px;font-size:11px;font-weight:700;margin-left:2px;">📝 bozza da validare</span>` : '';
                 const reg = l.regolaCompiti || {};
