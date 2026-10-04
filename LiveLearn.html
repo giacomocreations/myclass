@@ -13315,7 +13315,7 @@ async function openCodesManager() {
         <span style="font-size:11px;color:#888;">${codsForClass.length}/${roster.length} codici generati</span>
         <button class="btn btn-sm" onclick="generateCodes('${esc(classId)}')" style="font-size:11px;padding:3px 8px;">⚡ Genera mancanti</button>
         <button class="btn btn-sm" onclick="regenerateCodes('${esc(classId)}')" style="font-size:11px;padding:3px 8px;background:#fef2f2;color:#dc2626;border-color:#dc2626;">🔄 Rigenera tutti</button>
-        <button class="btn btn-sm" onclick="copyCodes('${esc(classId)}')" style="font-size:11px;padding:3px 8px;background:#e8fdf5;color:#047857;border-color:#047857;">📋 Copia lista</button>
+        <button class="btn btn-sm" onclick="copyCodes('${esc(classId)}')" style="font-size:11px;padding:3px 8px;background:#e8fdf5;color:#047857;border-color:#047857;">📋 Copia lista / targhette</button>
       </div>
       <div style="max-height:200px;overflow-y:auto;border:1px solid #f0f0f0;border-radius:8px;padding:6px 10px;">
         ${codsForClass.length ? codsForClass.map(s =>
@@ -13526,18 +13526,66 @@ async function regenerateCodes(classId) {
   openCodesManager();
 }
 
+// QR della StudentApp (lo stesso della guida per i genitori): apre l'app, il
+// codice personale e' stampato sotto e si digita/incolla al primo accesso.
+const _STUDENT_APP_URL = 'giacomocreations.github.io/myclass/StudentApp.html';
+const _STUDENT_QR_PNG  = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAZoAAAGaCAIAAAC5ZBI0AAAACXBIWXMAAAsSAAALEgHS3X78AAAHMElEQVR42u3dwW7iQBBF0fHI///LzC4LFDFKmqJedZ+zT7ANXDVStX09Ho8/APP9dQkAOQOQMwA5A5AzQM4A5AxAzgDkDJAzADkDkDMAOQOQM0DOAOQMQM4A5AyQMwA5A5AzADkD5AxAzgDkDEDOAOQMkDMAOQOQMwA5A+QMQM4A5AxAzgA5A5AzADkDkDOA79xdL3xd12aX8vF4/Pp8u/525Yy63v2Vo9rvakz8LlidAcgZIGcAcgYgZwByBsgZgJwByBnAG92Zh9U1Vfxa5vR23Z6Blf+88v7WHVXdDgrfBaszADkDkDNAzgDkDEDOAOQMkDMAOQNocU886LqJ5MwJ7MxZ9sz77tcdc90eCd8FqzMAOQPkDEDOAOQMQM4AOQOQMwA5A/i12yX4jLrJ/pX/3LXfYOJd+TOPGaszQM4A5AxAzgDkDJAzADkDkDMAOQMOZ1fAh3TN/a/I3MnQdUYT751vdQYgZwByBiBnAHIGyBmAnAHIGYCcAdsbuStg4nx23THXTdh33R2/6/2duGfAXgWrM0DOAOQMQM4A5AyQMwA5A5AzADkDDhe6K6BrHr3rjPabR6/bjVB3rTLfo/2+C1ZnAHIGyBmAnAHIGYCcAXIGIGcAcgbwRpd7jUe8DQuT33UT53Vz/11T8nVnVHe+WJ0BcgYgZwByBiBnAHIGyBmAnAHIGcALbbsC3Fv9M+e7356BzCcnnLavo+6MrM4A5AyQMwA5A5AzADkD5AxAzgDkDOBHrolT1CvqJs5Pu+9+3XWue926q7Hf92ji8w2szgA/NgHkDEDOAOQMkDMAOQOQMwA5Aw5073dKdfPomTP0Eyf76ybOM58Ukfl8g7or6VkBAHIGIGeAnAHIGYCcAcgZIGcAcgbwMW27Auruu7/yuismPv2g7nXrrtXEd7/uWp32bASrM8CPTQA5A5AzADkD5AxAzgDkDEDOAJ607QpYmXXOnJPOvJKZr5s5Jd/1uqftJ7E6A5AzQM4A5AxAzgDkDJAzADkDkDOAN7oy7/n9n4OOnKKuO6OuGfr97lI/cUdB5jtodQYgZwByBsgZgJwByBmAnAFyBiBnACFCnxVQZ2WKer8Z67qJ8673aOU/Z37q9pvdtzoDkDNAzgDkDEDOAOQMkDMAOQOQM4A3ujMPK3Me/bXM2e6uCfvMu+OvmPjUhdOeQmB1BvixCSBnAHIGIGeAnAHIGYCcAcgZcKDQXQFdTxKYeB/6rvnszL0ZmRP2XVey7rOR+QQDqzPAj00AOQOQMwA5A+QMQM4A5AxAzoADXZnTvV27Arpm6Ce+7sTdCJn3v594v3/PCgCQMwA5A+QMQM4A5AxAzgA5A5AzgBBtzwromvuvO+bXk9B18/cT36Ou5wxkztDXfeomfsuszgDkDJAzADkDkDMAOQPkDEDOAOQM4EfanhXQNeucOfldd8x1r9v12cg8o4n7DSZ+NqzOAD82AeQMQM4A5AyQMwA5A5AzADkDeDJyV0DbxdpuWr3umDN3bkz8PHftN5j4/bU6A/zYBJAzADkDkDNAzgDkDEDOAOQMONC93ynVzaPXTVF3nVGXlaOauIOiazo/8x20OgOQM0DOAOQMQM4A5AyQMwA5A5AzgDca+ayAur9dMfF+8Pvdh37iUdV9ruq+oZnHbHUG+LEJIGcAcgYgZ4CcAcgZgJwByBlwoPu0E+6aKa87qtf22wUx8ZOTKXN3jdUZgJwBcgYgZwByBiBngJwByBmAnAH8SOiugP3uFr/yn1d0zXbvN3HedVSZn43MnRtWZ4AfmwByBiBnAHIGyBmAnAHIGYCcAQdq2xXQdd/9rqPKnJKfOJ0/8T067XNldQYgZwByBsgZgJwByBmAnAFyBiBnAB/Ttitgv4nkrn0Or69k17R63d4Mz1XA6gyQMwA5A5AzADkD5AxAzgDkDEDOAL7cmYeVOQmdORe+cq0y7zR/2pR815MEJn4Hrc4APzYB5AxAzgDkDJAzADkDkDMAOQN4ck886K67xWee78rsftfcf+a70LXPYeKVzNy5YXUG+LEJIGcAcgYgZ4CcAcgZgJwByBlwoNslSDBxOn/iDP3KtHrd1ajb15H5LlidAcgZIGcAcgYgZwByBsgZgJwByBnAG9kV8CF18+grf5t5x/fMPRKZT12Y+CwIqzMAOQPkDEDOAOQMQM4AOQOQMwA5A3ijkbsCuqbV63TNdtftGej627rP1cRnI+w39291BsgZgJwByBmAnAFyBiBnAHIGIGcAT0J3Bew3zbxyRvtNjWc+o6DrjLrehf1211idAXIGIGcAcgYgZ4CcAcgZgJwByBlwoGu/yWDA6gxAzgDkDEDOAOQMkDMAOQOQMwA5A+QMQM4A5AxAzgA5A5AzADkDkDMAOQPkDEDOAOQMQM4AOQOQMwA5A5AzADkD5AxAzgDkDEDOADkDkDMAOQOQM0DOAOQMQM4A5Azgyz93afF7LHkYHgAAAABJRU5ErkJggg==';
+
 async function copyCodes(classId) {
   if (!db) { alert('Firebase non configurato.'); return; }
+  // La finestra va aperta subito (click utente), altrimenti il popup viene bloccato dopo l'await.
+  const w = window.open('', '_blank');
   let existing = {};
   try { const s = await db.ref('livelearn/students').get(); if (s.val()) existing = s.val(); } catch(e) {}
-  const cods = Object.entries(existing)
+  const list = Object.entries(existing)
     .filter(([, s]) => s.classId === classId)
-    .map(([code, s]) => `${s.name}: ${code}`)
-    .sort();
-  if (!cods.length) { alert('Nessun codice da copiare. Genera prima i codici.'); return; }
-  navigator.clipboard.writeText(cods.join('\n'))
-    .then(() => alert(`✅ ${cods.length} codici copiati negli appunti.\nIncollali su Classroom come post privati.`))
-    .catch(() => alert('Errore copia. Usa HTTPS o concedi il permesso clipboard.'));
+    .map(([code, s]) => ({ code, name: s.name || '', className: s.className || '' }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+  if (!list.length) {
+    if (w) w.close();
+    alert('Nessun codice da stampare. Genera prima i codici.');
+    return;
+  }
+  // Copia testuale negli appunti come prima (se il browser lo permette)
+  try { await navigator.clipboard.writeText(list.map(x => `${x.name}: ${x.code}`).join('\n')); } catch(e) {}
+
+  const tags = list.map(x => `
+    <div class="tag">
+      <div class="info">
+        <div class="cls">${esc(x.className)}</div>
+        <div class="nm">${esc(x.name)}</div>
+        <div class="lbl">Il tuo codice</div>
+        <div class="cd">${esc(x.code)}</div>
+        <div class="url">${esc(_STUDENT_APP_URL)}</div>
+      </div>
+      <div class="qr"><img src="${_STUDENT_QR_PNG}" alt="QR"><span>Inquadra per aprire</span></div>
+    </div>`).join('');
+  const html = `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8">
+<title>Targhette codici – ${esc(list[0].className)}</title>
+<style>
+  @page { size: A4; margin: 10mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #1a1a2e; }
+  .bar { padding: 10px 14px; background: #6c47ff; color: #fff; font-size: 14px; display: flex; gap: 12px; align-items: center; }
+  .bar button { padding: 6px 14px; border: 0; border-radius: 6px; font-weight: 700; cursor: pointer; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 10px; }
+  .tag { height: 54mm; border: 1px dashed #888; padding: 4mm 5mm; display: flex; justify-content: space-between; align-items: center; gap: 4mm; break-inside: avoid; page-break-inside: avoid; }
+  .info { flex: 1; min-width: 0; }
+  .cls { font-size: 10pt; font-weight: 700; color: #6c47ff; }
+  .nm { font-size: 14pt; font-weight: 700; margin: 1mm 0 3mm; line-height: 1.15; }
+  .lbl { font-size: 8pt; color: #666; }
+  .cd { font-family: "Courier New", monospace; font-size: 20pt; font-weight: 700; letter-spacing: 2px; }
+  .url { font-size: 6.5pt; color: #666; margin-top: 2mm; word-break: break-all; }
+  .qr { text-align: center; font-size: 6.5pt; color: #666; }
+  .qr img { width: 30mm; height: 30mm; display: block; background: #fff; padding: 1mm; }
+  @media print { .bar { display: none; } .grid { padding: 0; } }
+</style></head><body>
+<div class="bar"><b>${list.length} targhette</b> · ritaglia lungo le linee tratteggiate
+  <button onclick="window.print()">🖨️ Stampa / Salva PDF</button></div>
+<div class="grid">${tags}</div>
+</body></html>`;
+  if (!w) { alert('Il browser ha bloccato la finestra. Consenti i popup per questo sito e riprova.'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
 }
 
 
