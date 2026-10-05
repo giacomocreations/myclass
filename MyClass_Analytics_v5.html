@@ -3439,6 +3439,8 @@
             setTimeout(startBachecaListeners, 2000);
             // Avvia controllo auto-LIVE
             setTimeout(startAutoLive, 3000);
+            // Allinea le verifiche future con il calendario StudentApp
+            setTimeout(_syncVerificheStudentApp, 5000);
         }
         
         function saveData(opts) {
@@ -3477,6 +3479,8 @@
             if (typeof _triggerAutoSync === 'function') _triggerAutoSync();
             // Il pannello dell'agente ricalcola "da preparare" al render
             if (typeof _briefingRefreshSoon === 'function') _briefingRefreshSoon();
+            // Verifiche pianificate → calendario StudentApp
+            if (typeof _syncVerificheSoon === 'function') _syncVerificheSoon();
         }
         
         function saveGeminiConfig() {
@@ -12753,8 +12757,6 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             saveData();
             // Auto-publish su StudentApp se la lezione è svolta
             if (typeof _autoPublishLesson === 'function') _autoPublishLesson(data_iso, ci);
-            // Verifiche/interrogazioni future: compaiono subito nel calendario studenti
-            if (typeof _syncVerificaToStudentApp === 'function') _syncVerificaToStudentApp(data_iso, ci);
         }
 
         function _estraiCompitiDaPiano(pd) {
@@ -30971,47 +30973,73 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
       return (lz.pubblicataHash && lz.pubblicataHash !== _lessonPubHash(lz)) ? 'stale' : 'ok';
     }
 
-    // Verifica/interrogazione pianificata → scritta (senza notifiche) in livelearn/lessons
-    // così StudentApp la mostra nel calendario. Le notifiche restano al pulsante "📡 Pubblica".
-    // Se il tipo viene tolto o la lezione eliminata, la voce viene rimossa.
-    async function _syncVerificaToStudentApp(data_iso, classIdx) {
+    // ── Verifiche/interrogazioni → calendario StudentApp ───────────────────
+    // Riconciliazione: per ogni classe, le lezioni FUTURE con tipo verifica
+    // (scritta/orale) vengono scritte in livelearn/lessons come 'pianificata'
+    // (senza notifiche: quelle restano al pulsante "📡 Pubblica"). Le voci
+    // scritte da qui (auto:true) che non corrispondono più a una verifica del
+    // piano (tipo tolto, lezione spostata o eliminata, già svolta) vengono rimosse.
+    // Parte dopo ogni saveData (debounce) e all'avvio, quindi copre qualunque
+    // modo in cui la verifica entra nel piano (modal, AI, copia, import…).
+    let _verSyncTimer = null, _verSyncRunning = false;
+    function _syncVerificheSoon(ms) {
+      clearTimeout(_verSyncTimer);
+      _verSyncTimer = setTimeout(_syncVerificheStudentApp, ms == null ? 3000 : ms);
+    }
+    async function _syncVerificheStudentApp() {
+      if (_verSyncRunning || window._tabBlocked) return;
+      if (typeof firebase === 'undefined' || !data || !Array.isArray(data.classi)) return;
+      _verSyncRunning = true;
       try {
-        const idx = (classIdx == null ? currentClass : classIdx);
-        const classe = data.classi?.[idx];
-        if (!classe || !data_iso) return;
-        const [isoDate] = data_iso.split('_');
-        const lz = (classe.pianificazione?.piano || [])
-          .find(p => (p.data + (p.ora ? '_' + p.ora : '')) === data_iso || (!p.ora && p.data === isoDate));
-        const tipo = _tipoArr(lz?.tipo || []);
-        const isScritta = tipo.includes('verifica_scritta');
-        const isOrale   = tipo.includes('verifica_orale');
-        const classId = classe.nome.replace(/\s+/g, '_').toLowerCase();
-        const ref = firebase.database().ref('livelearn/lessons/' + classId + '/' + _lessonPubKey(data_iso));
-        if (!lz || lz.stato === 'svolta' || !(isScritta || isOrale)) {
-          // rimuovi solo ciò che avevamo pubblicato noi come verifica pianificata
-          if (lz?.verificaPubAt) {
-            const snap = await ref.get(); const v = snap.val();
-            if (v && v.stato === 'pianificata' && (v.tipo === 'verifica' || v.tipo === 'interrogazione')) await ref.remove();
-            if (lz) { delete lz.verificaPubAt; saveData(); }
+        const db = firebase.database();
+        const oggi = new Date().toISOString().slice(0, 10);
+        for (const classe of data.classi) {
+          if (!classe?.nome) continue;
+          const classId = classe.nome.replace(/\s+/g, '_').toLowerCase();
+          // voci desiderate: chiave → payload
+          const want = {};
+          (classe.pianificazione?.piano || []).forEach(lz => {
+            if (!lz?.data || lz.data < oggi || lz.stato === 'svolta') return;
+            const tipo = _tipoArr(lz.tipo || []);
+            const scritta = tipo.includes('verifica_scritta'), orale = tipo.includes('verifica_orale');
+            if (!scritta && !orale) return;
+            const isOrale = orale && !scritta;
+            const key = _lessonPubKey(lz.data + (lz.ora ? '_' + lz.ora : ''));
+            const pl = {
+              titolo:      (lz.titolo || '').trim() || (isOrale ? 'Interrogazione' : 'Verifica scritta'),
+              descrizione: (lz.descrizioneStudent || lz.descrizione || '').trim(),
+              unit:        (lz.unit || '').trim(),
+              data:        lz.data,
+              ora:         lz.ora != null ? String(lz.ora) : '',
+              stato:       'pianificata',
+              tipo:        isOrale ? 'interrogazione' : 'verifica',
+              auto:        true
+            };
+            Object.keys(pl).forEach(k => { if (pl[k] === '') delete pl[k]; });
+            want[key] = pl;
+          });
+          const ref = db.ref('livelearn/lessons/' + classId);
+          const remote = (await ref.get()).val() || {};
+          const upd = {};
+          Object.entries(want).forEach(([k, pl]) => {
+            const r = remote[k];
+            // se esiste già una lezione vera (svolta) con quella chiave non toccarla
+            if (r && r.stato === 'svolta') return;
+            const same = r && Object.keys(pl).every(f => r[f] === pl[f]) &&
+                         Object.keys(r).every(f => f === 'pubblicataAt' || f in pl);
+            if (!same) upd[k] = { ...pl, pubblicataAt: (r && r.pubblicataAt) || Date.now() };
+          });
+          Object.entries(remote).forEach(([k, r]) => {
+            if (r && r.auto === true && r.stato === 'pianificata' && !want[k]) upd[k] = null;
+          });
+          if (Object.keys(upd).length) {
+            await ref.update(upd);
+            console.log('[Verifiche→StudentApp]', classId, Object.keys(upd).length, 'aggiornamenti');
           }
-          return;
         }
-        const orale = isOrale && !isScritta;
-        const payload = {
-          titolo:      (lz.titolo || '').trim() || (orale ? 'Interrogazione' : 'Verifica scritta'),
-          descrizione: (lz.descrizioneStudent || lz.descrizione || '').trim(),
-          unit:        (lz.unit || '').trim(),
-          data:        isoDate,
-          ora:         lz.ora != null ? String(lz.ora) : '',
-          stato:       'pianificata',
-          tipo:        orale ? 'interrogazione' : 'verifica',
-          pubblicataAt: Date.now()
-        };
-        Object.keys(payload).forEach(k => { if (payload[k] === '') delete payload[k]; });
-        await ref.set(payload);
-        await _cleanupLegacyLessonKey(firebase.database(), classId, isoDate, _lessonPubKey(data_iso), payload.titolo);
-        if (!lz.verificaPubAt) { lz.verificaPubAt = payload.pubblicataAt; saveData(); }
-      } catch (e) { console.warn('[Verifica→StudentApp] sync fallita:', e.message); }
+      } catch (e) {
+        console.warn('[Verifiche→StudentApp] sync fallita:', e.message);
+      } finally { _verSyncRunning = false; }
     }
 
     function _autoPublishLesson(data_iso, classIdx) {

@@ -1318,14 +1318,20 @@ function buildCal(){
 
   // Build event map for this month
   const evMap = {};
+  const sospesiCal = new Set(S.myclass?.giorniSospesi || []);
+  const saltatiCal = S.myclass?.giorniSaltati || {};
   S.lessons.forEach(l=>{
     if(l.data){
       if(!evMap[l.data]) evMap[l.data]=[];
       const isV = _isVerifica(l);
       evMap[l.data].push(isV?'verifica':'lesson');
     }
-    const hw = extractHwDate(l.compiti) || nextLessonDate(l.data);
-    if(hw){ if(!evMap[hw]) evMap[hw]=[]; evMap[hw].push('hw'); }
+    // Pallino compiti: solo lezioni passate/di oggi che HANNO compiti, con la stessa
+    // logica della lista eventi (giorni sospesi/saltati esclusi)
+    if(l.compiti && l.data && l.data <= todayStr && !sospesiCal.has(l.data) && !saltatiCal[l.data]){
+      const hw = extractHwDate(l.compiti) || nextLessonDate(l.data);
+      if(hw){ if(!evMap[hw]) evMap[hw]=[]; evMap[hw].push('hw'); }
+    }
   });
 
   const dotColor = {lesson:'#9FE1CB',verifica:'#E24B4A',hw:'#EF9F27'};
