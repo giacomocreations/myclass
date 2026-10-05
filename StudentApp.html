@@ -499,15 +499,22 @@ function fmtLessonDesc(raw){
   // 1) Paragrafi: a capo espliciti o separatore " | " (usato quando più
   //    attività della stessa lezione vengono unite)
   let paras = text.split(/\n+|\s+\|\s+/).map(s=>s.trim()).filter(Boolean);
-  // Testo unico e lungo → un paragrafo ogni 2 frasi
+  // Testo unico e lungo → un paragrafo ogni 2 frasi. Il punto dopo abbreviazioni
+  // (p. 164, ex. 3, es. 2) o dentro numeri (3.5) NON chiude la frase; la divisione
+  // inserisce solo a-capo, quindi non può mai far perdere testo.
   if(paras.length===1){
-    const sent = text.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g)||[text];
+    const ABBR = new Set(['p','pp','pag','ex','es','n','nr','fig','cfr','vs','sig','prof','dott','unit','u']);
+    const marked = text.replace(/(\S*?)([.!?])\s+(?=[A-ZÀ-ÝÈ"“'‘(])/g,(m,w,pt)=>{
+      if(pt==='.' && ABBR.has(w.toLowerCase().replace(/^[^a-zà-ÿ]+/,''))) return m;
+      return w+pt+'\n';
+    });
+    const sent = marked.split('\n').map(x=>x.trim()).filter(Boolean);
     if(sent.length>2){
       paras=[];
-      for(let i=0;i<sent.length;i+=2) paras.push(sent.slice(i,i+2).join('').trim());
+      for(let i=0;i<sent.length;i+=2) paras.push(sent.slice(i,i+2).join(' '));
     }
   }
-  const GRAM = 'present simple|present continuous|present perfect|past simple|past continuous|future simple|going to|will|there is|there are|have got|has got|can|can\'t|must|should|comparatives?|superlatives?|countable|uncountable|some|any|much|many|a lot of|vocabulary|vocabolario|grammar|grammatica|listening|speaking|reading|writing|verifica|interrogazione|test|quiz|verbi irregolari|irregular verbs?|phrasal verbs?';
+  const GRAM = 'adverbs? of (?:manner|frequency|place|time|degree)|adverbs?|adjectives?|present simple|present continuous|present perfect|past simple|past continuous|past participle|future simple|going to|will|there is|there are|have got|has got|have to|can|can\'t|cannot|could|must|should|would|might|may|comparatives?|superlatives?|countable|uncountable|some|any|much|many|a lot of|what|which|who|whose|where|when|why|how|articles?|prepositions?|pronouns?|possessives?|imperative|vocabulary|vocabolario|lessico|grammar|grammatica|listening|speaking|reading|writing|verifica|interrogazione|test|quiz|verbi irregolari|irregular verbs?|phrasal verbs?';
   const gramRe = new RegExp('\\b('+GRAM+')\\b','gi');
   const hl = (c,bg,t)=>`<span style="color:${c};${bg?`background:${bg};padding:0 4px;border-radius:5px;`:''}font-weight:700">${t}</span>`;
   const fmtLine = (s)=>{
@@ -518,6 +525,7 @@ function fmtLessonDesc(raw){
     h = h.replace(/^([^:]{2,30}):(\s)/,(m,t,sp)=>put(hl('#534AB7','',t+':'))+sp);   // "Etichetta: ..."
     h = h.replace(/\b(pp?\.\s?\d+(?:[-–]\d+)?(?:\s+ex\.?\s?[\d\-–,\s]+)?)/gi,(m)=>put(hl('#854F0B','#FAEEDA',m.trim()))); // pagine
     h = h.replace(/("[^"]{1,40}"|«[^»]{1,40}»|“[^”]{1,40}”)/g,(m)=>put(hl('#085041','#E1F5EE',m)));        // "parole tra virgolette"
+    h = h.replace(/(^|[\s(])('[^']{1,40}?'|‘[^’]{1,40}?’)(?=[\s.,;:!?)]|$)/g,(m,pre,q)=>pre+put(hl('#085041','#E1F5EE',q)));   // 'parole tra apici'
     h = h.replace(gramRe,(m)=>put(hl('#1D9E75','',m)));                              // termini grammaticali
     return h.replace(/\u0000(\d+)\u0000/g,(m,i)=>keep[+i]);
   };
@@ -802,6 +810,11 @@ function _lessonCmpDesc(a,b){
 }
 function _lessonCmpAsc(a,b){ return _lessonCmpDesc(b,a); }
 function _oraLbl(l){ return l && l.ora ? ' · '+l.ora+'ª ora' : ''; }
+// Verifica/interrogazione: dal tipo pubblicato da MyClass, o dal titolo per le lezioni più vecchie
+function _isVerifica(l){
+  return l?.tipo==='verifica' || l?.tipo==='interrogazione' || /verifica|test|interrogazione/i.test(l?.titolo||'');
+}
+
 // Chiave sicura da inserire negli onclick
 function _lk(l){ return String(l?._key || l?.data || '').replace(/'/g,''); }
 
@@ -1264,7 +1277,7 @@ function getUpcomingEvents(n=10){
 
   // ── Verifiche future ──────────────────────────────────────────────────────
   S.lessons.forEach(l=>{
-    const isVerifica = /verifica|test|interroga/i.test(l.titolo||'')||l.tipo==='verifica'||l.tipo==='interrogazione';
+    const isVerifica = _isVerifica(l);
     if(isVerifica && l.data && daysUntil(l.data)>=0)
       events.push({type:'verifica', title:l.titolo, date:l.data, daysLeft:daysUntil(l.data)});
   });
@@ -1308,7 +1321,7 @@ function buildCal(){
   S.lessons.forEach(l=>{
     if(l.data){
       if(!evMap[l.data]) evMap[l.data]=[];
-      const isV = /verifica|test|interrogazione/i.test(l.titolo||'');
+      const isV = _isVerifica(l);
       evMap[l.data].push(isV?'verifica':'lesson');
     }
     const hw = extractHwDate(l.compiti) || nextLessonDate(l.data);
@@ -1363,7 +1376,7 @@ function renderAgendaEvents(dateStr){
     if(btnReset) btnReset.style.display = 'block';
     // Lessons on this date
     S.lessons.filter(l=>l.data===dateStr).sort(_lessonCmpAsc).forEach(l=>{
-      const isV=/verifica|test|interrogazione/i.test(l.titolo||'');
+      const isV=_isVerifica(l);
       events.push({type:isV?'verifica':'lesson',lesson:l});
     });
     // HW: lezioni PASSATE o di oggi con compiti, la cui prossima scadenza cade in questa data
@@ -1457,7 +1470,7 @@ function renderLessons(){
   if(future.length){
     html += `<div class="sec-lbl" style="color:#6c47ff;margin-bottom:8px;">PROSSIME LEZIONI</div>`;
     [...future].sort(_lessonCmpAsc).forEach(l=>{
-      const isV = /verifica|test|interrogazione/i.test(l.titolo||'');
+      const isV = _isVerifica(l);
       html += `<div class="card card-tap" data-search="${(l.titolo+' '+(l.descrizione||'')+' '+(l.unit||'')).toLowerCase()}" onclick="openLesson('${_lk(l)}')" style="border-left:3px solid #6c47ff;border-radius:0 14px 14px 0;background:#f8f6ff;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
           <div style="flex:1;min-width:0">
@@ -1482,7 +1495,7 @@ function renderLessons(){
     if(!future.length) html += `<div class="sec-lbl">${MONTHS_IT[parseInt(m)-1].toUpperCase()} ${yr}</div>`;
     else html += `<div style="font-size:11px;font-weight:700;color:var(--muted);margin:8px 0 6px;letter-spacing:0.5px">${MONTHS_IT[parseInt(m)-1].toUpperCase()} ${yr}</div>`;
     lessons.sort(_lessonCmpDesc).forEach(l=>{
-      const isV = /verifica|test|interrogazione/i.test(l.titolo||'');
+      const isV = _isVerifica(l);
       const hasHw = l.compiti && l.compiti.trim();
       const cardClass = isV?'verifica-card':'lesson-card';
       html += `<div class="card card-tap ${cardClass}" data-search="${(l.titolo+' '+(l.descrizione||'')+' '+(l.unit||'')).toLowerCase()}" onclick="openLesson('${_lk(l)}')">

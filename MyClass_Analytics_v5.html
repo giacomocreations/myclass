@@ -11136,7 +11136,8 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             if (lz.stato === 'svolta') return false;
             return !String(lz.titolo||'').trim() && !String(lz.descrizione||'').trim()
                 && !String(lz.compiti||'').trim() && !String(lz.unit||'').trim()
-                && !String(lz.pagine||'').trim() && !lz.pianoDettagliato;
+                && !String(lz.pagine||'').trim() && !lz.pianoDettagliato
+                && !_tipoArr(lz.tipo||[]).length;
         }
 
         /**
@@ -12752,6 +12753,8 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             saveData();
             // Auto-publish su StudentApp se la lezione è svolta
             if (typeof _autoPublishLesson === 'function') _autoPublishLesson(data_iso, ci);
+            // Verifiche/interrogazioni future: compaiono subito nel calendario studenti
+            if (typeof _syncVerificaToStudentApp === 'function') _syncVerificaToStudentApp(data_iso, ci);
         }
 
         function _estraiCompitiDaPiano(pd) {
@@ -30968,6 +30971,49 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
       return (lz.pubblicataHash && lz.pubblicataHash !== _lessonPubHash(lz)) ? 'stale' : 'ok';
     }
 
+    // Verifica/interrogazione pianificata → scritta (senza notifiche) in livelearn/lessons
+    // così StudentApp la mostra nel calendario. Le notifiche restano al pulsante "📡 Pubblica".
+    // Se il tipo viene tolto o la lezione eliminata, la voce viene rimossa.
+    async function _syncVerificaToStudentApp(data_iso, classIdx) {
+      try {
+        const idx = (classIdx == null ? currentClass : classIdx);
+        const classe = data.classi?.[idx];
+        if (!classe || !data_iso) return;
+        const [isoDate] = data_iso.split('_');
+        const lz = (classe.pianificazione?.piano || [])
+          .find(p => (p.data + (p.ora ? '_' + p.ora : '')) === data_iso || (!p.ora && p.data === isoDate));
+        const tipo = _tipoArr(lz?.tipo || []);
+        const isScritta = tipo.includes('verifica_scritta');
+        const isOrale   = tipo.includes('verifica_orale');
+        const classId = classe.nome.replace(/\s+/g, '_').toLowerCase();
+        const ref = firebase.database().ref('livelearn/lessons/' + classId + '/' + _lessonPubKey(data_iso));
+        if (!lz || lz.stato === 'svolta' || !(isScritta || isOrale)) {
+          // rimuovi solo ciò che avevamo pubblicato noi come verifica pianificata
+          if (lz?.verificaPubAt) {
+            const snap = await ref.get(); const v = snap.val();
+            if (v && v.stato === 'pianificata' && (v.tipo === 'verifica' || v.tipo === 'interrogazione')) await ref.remove();
+            if (lz) { delete lz.verificaPubAt; saveData(); }
+          }
+          return;
+        }
+        const orale = isOrale && !isScritta;
+        const payload = {
+          titolo:      (lz.titolo || '').trim() || (orale ? 'Interrogazione' : 'Verifica scritta'),
+          descrizione: (lz.descrizioneStudent || lz.descrizione || '').trim(),
+          unit:        (lz.unit || '').trim(),
+          data:        isoDate,
+          ora:         lz.ora != null ? String(lz.ora) : '',
+          stato:       'pianificata',
+          tipo:        orale ? 'interrogazione' : 'verifica',
+          pubblicataAt: Date.now()
+        };
+        Object.keys(payload).forEach(k => { if (payload[k] === '') delete payload[k]; });
+        await ref.set(payload);
+        await _cleanupLegacyLessonKey(firebase.database(), classId, isoDate, _lessonPubKey(data_iso), payload.titolo);
+        if (!lz.verificaPubAt) { lz.verificaPubAt = payload.pubblicataAt; saveData(); }
+      } catch (e) { console.warn('[Verifica→StudentApp] sync fallita:', e.message); }
+    }
+
     function _autoPublishLesson(data_iso, classIdx) {
       if (!data_iso) return;
       const idx = (classIdx == null ? currentClass : classIdx);
@@ -31029,6 +31075,9 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         stato:       'svolta',
         pubblicataAt: Date.now()
       };
+      { const _t = _tipoArr(activity.tipo || []);
+        if (_t.includes('verifica_scritta')) payload.tipo = 'verifica';
+        else if (_t.includes('verifica_orale')) payload.tipo = 'interrogazione'; }
       // Aggiungi risorse allegate (solo titolo + URL, niente dati sensibili)
       if ((activity.risorse||[]).length > 0) {
         const risorseDettaglio = (activity.risorse||[])
