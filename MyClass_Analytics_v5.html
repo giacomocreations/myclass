@@ -19996,6 +19996,8 @@ ${blocco.regole}`;
               ${l.compiti?`<div style="font-size:11px;color:#854F0B;margin-top:4px;background:#fffbeb;border-radius:6px;padding:4px 8px;">📚 ${l.compiti}</div>`:''}
               <div style="font-size:11px;color:#6c47ff;margin-top:5px;opacity:0.7;">👁 Clicca per anteprima</div>
             </div>
+            <button onclick="mcEditLezione('${l._key}')"
+              style="background:none;border:none;cursor:pointer;color:#6c47ff;font-size:16px;flex-shrink:0;padding:2px 4px;" title="Modifica (l'alunno la vede aggiornata subito)">✏️</button>
             <button onclick="mcDeleteLezione('${l._key}')"
               style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:16px;flex-shrink:0;padding:2px 4px;" title="Elimina">🗑</button>
           </div>
@@ -20071,6 +20073,7 @@ ${blocco.regole}`;
                 : ''}
               <!-- Stato -->
               <div style="margin-top:8px;padding-top:14px;border-top:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#888;">
+                <button onclick="_lessPreviewClose();mcEditLezione('${l._key}')" style="background:#6c47ff;color:#fff;border:none;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;">✏️ Modifica</button>
                 <span>Stato: <strong style="color:${l.stato==='svolta'?'#047857':'#6c47ff'}">${l.stato||'—'}</strong></span>
                 ${l.pubblicataAt?`<span>Pubblicata: ${new Date(l.pubblicataAt).toLocaleString('it-IT')}</span>`:''}
               </div>
@@ -20082,6 +20085,79 @@ ${blocco.regole}`;
       const old = document.getElementById('lessPreviewOverlay');
       if (old) old.remove();
       document.body.insertAdjacentHTML('beforeend', html);
+    }
+
+    function _lessEsc(v) {
+      return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // Modifica di una lezione già pubblicata: scrive sullo stesso nodo Firebase,
+    // la StudentApp ascolta in tempo reale quindi l'alunno la trova già aggiornata.
+    function mcEditLezione(key) {
+      const l = _lessAllLessons.find(x => x._key === key);
+      if (!l) return;
+      const inp = 'width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;';
+      const lab = 'display:block;font-size:11px;font-weight:700;color:#6c47ff;text-transform:uppercase;letter-spacing:.5px;margin:12px 0 4px;';
+      const html = `
+        <div id="lessEditOverlay" onclick="if(event.target===this)_lessEditClose()"
+          style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;">
+          <div style="background:#fff;border-radius:16px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3);padding:20px;">
+            <div style="font-size:17px;font-weight:700;color:#1e1b4b;">✏️ Modifica lezione</div>
+            <div style="font-size:12px;color:#888;margin-top:2px;">Le modifiche compaiono subito nella StudentApp degli alunni.</div>
+            <label style="${lab}">Titolo</label>
+            <input id="le-titolo" style="${inp}" value="${_lessEsc(l.titolo)}">
+            <label style="${lab}">Unit</label>
+            <input id="le-unit" style="${inp}" value="${_lessEsc(l.unit)}">
+            <div style="display:flex;gap:10px;">
+              <div style="flex:2;"><label style="${lab}">Data</label><input id="le-data" type="date" style="${inp}" value="${_lessEsc(l.data)}"></div>
+              <div style="flex:1;"><label style="${lab}">Ora</label><input id="le-ora" style="${inp}" value="${_lessEsc(l.ora)}"></div>
+            </div>
+            <label style="${lab}">Descrizione / Svolta</label>
+            <textarea id="le-descrizione" rows="3" style="${inp}">${_lessEsc(l.descrizione)}</textarea>
+            <label style="${lab}">Pagine / Riferimenti</label>
+            <input id="le-pagine" style="${inp}" value="${_lessEsc(l.pagine)}">
+            <label style="${lab}">Compiti assegnati</label>
+            <textarea id="le-compiti" rows="3" style="${inp}">${_lessEsc(l.compiti)}</textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;">
+              <button onclick="_lessEditClose()" style="background:#f3f4f6;color:#444;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;">Annulla</button>
+              <button id="le-save" onclick="mcSaveLezione('${l._key}')" style="background:#6c47ff;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;">💾 Salva</button>
+            </div>
+          </div>
+        </div>`;
+      _lessEditClose();
+      document.body.insertAdjacentHTML('beforeend', html);
+    }
+
+    function _lessEditClose() {
+      const el = document.getElementById('lessEditOverlay');
+      if (el) el.remove();
+    }
+
+    async function mcSaveLezione(key) {
+      const v = id => (document.getElementById('le-' + id)?.value || '').trim();
+      const titolo = v('titolo');
+      if (!titolo) { alert('Il titolo non può essere vuoto.'); return; }
+      const upd = {
+        titolo,
+        unit: v('unit') || null,
+        data: v('data') || null,
+        ora: v('ora') || null,
+        descrizione: v('descrizione') || null,
+        pagine: v('pagine') || null,
+        compiti: v('compiti') || null,
+        modificataAt: Date.now()
+      };
+      if (!upd.data) { alert('La data è obbligatoria.'); return; }
+      const btn = document.getElementById('le-save');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Salvo…'; }
+      try {
+        await firebase.database().ref('livelearn/lessons/' + _mcClassId() + '/' + key).update(upd);
+        _lessEditClose();
+        await mcBachecaLoadLezioni();
+      } catch (e) {
+        alert('Errore nel salvataggio: ' + e.message);
+        if (btn) { btn.disabled = false; btn.textContent = '💾 Salva'; }
+      }
     }
 
     function _lessPreviewClose() {
