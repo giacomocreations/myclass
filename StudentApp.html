@@ -490,6 +490,44 @@ function _safeHtml(html) {
     return tmp.innerHTML.trim();
 }
 
+// Formatta la descrizione di una lezione in modo "student friendly":
+// paragrafi separati, elenchi puntati, parole importanti colorate.
+// Input = testo semplice del docente (opzionalmente con **grassetto**).
+function fmtLessonDesc(raw){
+  const text = String(raw||'').replace(/\r/g,'').trim();
+  if(!text) return '';
+  // 1) Paragrafi: a capo espliciti o separatore " | " (usato quando più
+  //    attività della stessa lezione vengono unite)
+  let paras = text.split(/\n+|\s+\|\s+/).map(s=>s.trim()).filter(Boolean);
+  // Testo unico e lungo → un paragrafo ogni 2 frasi
+  if(paras.length===1){
+    const sent = text.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g)||[text];
+    if(sent.length>2){
+      paras=[];
+      for(let i=0;i<sent.length;i+=2) paras.push(sent.slice(i,i+2).join('').trim());
+    }
+  }
+  const GRAM = 'present simple|present continuous|present perfect|past simple|past continuous|future simple|going to|will|there is|there are|have got|has got|can|can\'t|must|should|comparatives?|superlatives?|countable|uncountable|some|any|much|many|a lot of|vocabulary|vocabolario|grammar|grammatica|listening|speaking|reading|writing|verifica|interrogazione|test|quiz|verbi irregolari|irregular verbs?|phrasal verbs?';
+  const gramRe = new RegExp('\\b('+GRAM+')\\b','gi');
+  const hl = (c,bg,t)=>`<span style="color:${c};${bg?`background:${bg};padding:0 4px;border-radius:5px;`:''}font-weight:700">${t}</span>`;
+  const fmtLine = (s)=>{
+    let h = esc(s);
+    const keep = [];                       // placeholder per evitare doppie sostituzioni
+    const put = (html)=>{ keep.push(html); return '\u0000'+(keep.length-1)+'\u0000'; };
+    h = h.replace(/\*\*(.+?)\*\*/g,(m,t)=>put(hl('#3C3489','#EEEDFE',t)));          // **evidenziato**
+    h = h.replace(/^([^:]{2,30}):(\s)/,(m,t,sp)=>put(hl('#534AB7','',t+':'))+sp);   // "Etichetta: ..."
+    h = h.replace(/\b(pp?\.\s?\d+(?:[-–]\d+)?(?:\s+ex\.?\s?[\d\-–,\s]+)?)/gi,(m)=>put(hl('#854F0B','#FAEEDA',m.trim()))); // pagine
+    h = h.replace(/("[^"]{1,40}"|«[^»]{1,40}»|“[^”]{1,40}”)/g,(m)=>put(hl('#085041','#E1F5EE',m)));        // "parole tra virgolette"
+    h = h.replace(gramRe,(m)=>put(hl('#1D9E75','',m)));                              // termini grammaticali
+    return h.replace(/\u0000(\d+)\u0000/g,(m,i)=>keep[+i]);
+  };
+  return paras.map(p=>{
+    const bullet = p.match(/^[-•*–]\s+(.*)$/);
+    if(bullet) return `<div style="display:flex;gap:8px;margin:0 0 8px"><span style="color:#1D9E75;font-weight:700">•</span><span>${fmtLine(bullet[1])}</span></div>`;
+    return `<p style="margin:0 0 10px">${fmtLine(p)}</p>`;
+  }).join('');
+}
+
 // Garantisce che un URL abbia un protocollo — senza, il browser lo tratta come
 // path relativo e la pagina risulta vuota.
 function ensureUrl(u){
@@ -1485,7 +1523,7 @@ function openLesson(key){
   if(l.descrizione){
     html += `<div class="card" style="margin-bottom:12px">
       <div class="sec-lbl" style="margin-bottom:8px">ARGOMENTI TRATTATI</div>
-      <div style="font-size:14px;color:var(--text);line-height:1.6">${esc(l.descrizione)}</div>
+      <div style="font-size:14px;color:var(--text);line-height:1.7">${fmtLessonDesc(l.descrizione)}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
         ${l.unit?`<span class="pill pill-purple">${esc(l.unit)}</span>`:''}
         ${l.pagine?`<span class="pill pill-teal">pp. ${esc(l.pagine)}</span>`:''}
