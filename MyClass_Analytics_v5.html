@@ -5347,7 +5347,10 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 // Compiti assegnati nel GIORNO di lezione immediatamente precedente (da fare per oggi),
                 // raccolti da tutte le ore di quel giorno. Vedi _compitiDaControllare.
                 const compiti = _compitiDaControllare(cl, isoDate).testo.replace(/\n/g, '<br>');
-                return { cl, idx, slots, lezioniGiorno, compiti };
+                // Compiti assegnati OGGI (da fare per la prossima lezione), da tutte le ore del giorno
+                const assegnati = [...new Set(lezioniGiorno.map(lz => String(lz.compiti || '').trim()).filter(Boolean))]
+                    .join('\n').replace(/\n/g, '<br>');
+                return { cl, idx, slots, lezioniGiorno, compiti, assegnati };
             }).filter(Boolean)
               .sort((a,b) => a.slots[0].ora - b.slots[0].ora); // ← ordina blocchi per prima ora
 
@@ -5396,7 +5399,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             } else if (!classiOggi.length) {
                 html += `<div class="day-empty-msg">Nessuna classe in orario</div>`;
             } else {
-                classiOggi.forEach(({ cl, idx, slots, lezioniGiorno, compiti }) => {
+                classiOggi.forEach(({ cl, idx, slots, lezioniGiorno, compiti, assegnati }) => {
                     const oreLabel = slots.map(s => `${s.ora}ª ora${s.oraInizio?' ('+s.oraInizio+')':''}`).join(', ');
                     const lezioneOggi = lezioniGiorno[0];
                     html += `<div class="day-class-block" onclick="showClassLezione(${idx},'${isoDate}')">
@@ -5411,7 +5414,10 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                         if (lezioneOggi.unit) html += `<div style="font-size:11px;color:#7c3aed;margin-top:2px;">${lezioneOggi.unit}</div>`;
                     }
                     if (compiti) {
-                        html += `<div class="dcb-compiti">📚 <strong>Compiti assegnati:</strong><br>${compiti}</div>`;
+                        html += `<div class="dcb-compiti">📚 <strong>Compiti per oggi:</strong><br>${compiti}</div>`;
+                    }
+                    if (assegnati) {
+                        html += `<div class="dcb-compiti">📝 <strong>Compiti assegnati:</strong><br>${assegnati}</div>`;
                     }
                     html += `</div>`;
                 });
