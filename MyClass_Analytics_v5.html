@@ -12803,6 +12803,34 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             return x ? x.charAt(0).toUpperCase() + x.slice(1) : x;
         }
 
+        // Sceglie le attività da cui generare le descrizioni: Piano A o Piano B.
+        // Se la lezione ha un Piano B, chiede quale usare (default = quello usato in LIVE,
+        // memorizzato in lz.pianoUsato). Ritorna { fasi, obiettivi, materiali, nome }.
+        function _fasiPerDescrizione(lz, pd) {
+            const a = [['🔥 Warm up / Revisione', pd.fase1], ['📖 Attività principale', pd.fase2], ['✅ Consolidamento / Chiusura', pd.fase3]]
+                .filter(x => String(x[1]||'').trim()).map(([label, testo]) => ({ label, testo }));
+            const pb = pd.pianoB;
+            let b = [];
+            if (pb) {
+                b = [['⚡ Warm up / Avvio (Piano B)', pb.fase1], ['⚡ Attività principale (Piano B)', pb.fase2], ['⚡ Chiusura (Piano B)', pb.fase3]]
+                    .filter(x => String(x[1]||'').trim()).map(([label, testo]) => ({ label, testo }));
+                if (!b.length && String(pb.descrizione||'').trim()) b = [{ label: '⚡ ' + (pb.titolo || 'Piano B'), testo: pb.descrizione }];
+            }
+            const A = { fasi: a, obiettivi: pd.obiettivi, materiali: pd.materiali, nome: 'A' };
+            if (!b.length) return A;
+            const usatoLive = lz?.pianoUsato === 'B' ? 'in LIVE è stato usato il Piano B'
+                            : lz?.pianoUsato === 'A' ? 'in LIVE è stato usato il Piano A'
+                            : 'non risulta quale piano sia stato usato in LIVE';
+            const titB = (pb.titolo || '').trim();
+            const defB = lz?.pianoUsato === 'B';
+            const okB = confirm('Questa lezione ha anche un ⚡ Piano B' + (titB ? ' («' + titB + '»)' : '') + ' (' + usatoLive + ').\n\n'
+                + 'Da quale piano genero la descrizione?\n\n'
+                + 'OK  →  ⚡ Piano B' + (defB ? '  (consigliato)' : '') + '\n'
+                + 'Annulla  →  Piano A' + (!defB && lz?.pianoUsato === 'A' ? '  (consigliato)' : ''));
+            if (!okB) return A;
+            return { fasi: b, obiettivi: titB || '', materiali: '', nome: 'B' };
+        }
+
         async function _aiDescrizioniLezione(o) {
             o = o || {};
             const pulisci = t => String(t || '').split('\n').filter(r => !/\b(BES|DSA|PEI|PDP)\b/i.test(r)).join('\n');
@@ -12848,9 +12876,9 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             const lz = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotId || (!p.ora && p.data===isoDate));
             const pd = lz?.pianoDettagliato;
             if (!pd) { alert('Nessun piano dettagliato per questa lezione.\nCrealo prima con il bottone "📋 Piano".'); return; }
-            const fasi = [['🔥 Warm up / Revisione', pd.fase1], ['📖 Attività principale', pd.fase2], ['✅ Consolidamento / Chiusura', pd.fase3]]
-                .filter(x => String(x[1]||'').trim()).map(([label, testo]) => ({ label, testo }));
-            if (!fasi.length && !String(pd.obiettivi||'').trim()) { alert('Il piano dettagliato è vuoto.'); return; }
+            const _sc = _fasiPerDescrizione(lz, pd);
+            const fasi = _sc.fasi;
+            if (!fasi.length && !String(_sc.obiettivi||'').trim()) { alert('Il piano dettagliato è vuoto.'); return; }
 
             const btn = document.querySelector('[data-gendesc="' + slotId + '"]');
             const orig = btn?.textContent;
@@ -12859,7 +12887,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             try {
                 g = await _aiDescrizioniLezione({
                     unit: lz.unit || '',
-                    obiettivi: pd.obiettivi, materiali: pd.materiali, fasi,
+                    obiettivi: _sc.obiettivi, materiali: _sc.materiali, fasi,
                     pagine: lz.pagine || '', compiti: String(lz.compiti || pd.compiti || '').trim()
                 });
             } catch (err) {
@@ -12937,9 +12965,9 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             if (!ta) return;
             const taS = document.getElementById('editDescStu');
 
-            const fasi = [['🔥 Warm up / Revisione', pd.fase1], ['📖 Attività principale', pd.fase2], ['✅ Consolidamento / Chiusura', pd.fase3]]
-                .filter(x => String(x[1]||'').trim()).map(([label, testo]) => ({ label, testo }));
-            if (!fasi.length && !String(pd.obiettivi||'').trim()) { alert('Il piano dettagliato è vuoto.'); return; }
+            const _sc = _fasiPerDescrizione(lz, pd);
+            const fasi = _sc.fasi;
+            if (!fasi.length && !String(_sc.obiettivi||'').trim()) { alert('Il piano dettagliato è vuoto.'); return; }
 
             const btn = document.querySelector('[onclick*="fillDescFromPiano"]');
             const origText = btn?.textContent;
@@ -12949,7 +12977,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             try {
                 const g = await _aiDescrizioniLezione({
                     unit: document.getElementById('editUnit')?.value || lz.unit || '',
-                    obiettivi: pd.obiettivi, materiali: pd.materiali, fasi,
+                    obiettivi: _sc.obiettivi, materiali: _sc.materiali, fasi,
                     pagine: document.getElementById('editPagine')?.value || lz.pagine || '',
                     compiti: (document.getElementById('editCompiti')?.value || pd.compiti || '').trim()
                 });
@@ -17954,6 +17982,7 @@ ${blocco.regole}`;
                     if(note&&note!==String(pd.note||'').trim())lzF.liveNote=note; else delete lzF.liveNote;
                     if(LV.semLog.length)lzF.liveSemLog=LV.semLog;
                     lvPersistFasi(lzF);
+                    lzF.pianoUsato=LV.pianoBAttivo?'B':'A';   // usato poi dalla generazione descrizioni
                     saveData();
                     const n=new Date(), el=q('lv-saved');
                     if(el)el.textContent='💾 salvato '+String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');
@@ -18007,9 +18036,15 @@ ${blocco.regole}`;
                 const lzF=lvFindLz(), pdx=lzF.pianoDettagliato||pd;
                 box.innerHTML='<div style="opacity:.7;font-size:calc(14px*var(--lv-z,1));">⏳ Genero le descrizioni…</div>';
                 try{
+                    let fasiGen=LV.fasi.map(f=>({label:f.label,testo:f.testo})), objGen=pdx.obiettivi, matGen=pdx.materiali;
+                    // LIVE riaperto (mostra il Piano A) ma la lezione era stata fatta col Piano B: chiedi
+                    if(!LV.pianoBAttivo && pdx.pianoB && lzF.pianoUsato==='B'){
+                        const sc=_fasiPerDescrizione(lzF,pdx);
+                        if(sc.nome==='B'){ fasiGen=sc.fasi; objGen=sc.obiettivi; matGen=sc.materiali; }
+                    }
                     const g=await _aiDescrizioniLezione({
-                        unit:lzF.unit, obiettivi:pdx.obiettivi, materiali:pdx.materiali,
-                        fasi:LV.fasi.map(f=>({label:f.label,testo:f.testo})),
+                        unit:lzF.unit, obiettivi:objGen, materiali:matGen,
+                        fasi:fasiGen,
                         rimosse:LV.rimosse, aggiunte:LV.aggiunte, pagine:lzF.pagine,
                         compiti:String(LV.cmpEdited?compitiOggi:(lzF.compiti||compitiOggi||pdx.compiti||'')).trim()
                     });
@@ -18081,6 +18116,7 @@ ${blocco.regole}`;
                 LV.tSec=0; LV.tMax=0;
                 lvRenderFL();
                 if(LV.fasi.length>0){lvGoF(0);lvToggle();}
+                lvAutoSave(200);   // memorizza subito quale piano è in uso (A/B)
             };
             // mantieni alias per compatibilità
             window.lvTogglePianoB=function(){ window.lvSwitchPlan(LV.pianoBAttivo?'a':'b'); };
