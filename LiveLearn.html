@@ -2480,11 +2480,17 @@ function renderActivitiesGrouped(actArr, activeFilter) {
   });
   const hasUnclassified = actArr.some(([, a]) => !a.classes || !a.classes.length);
   const filterOrder = ['TUTTE', 'prime', 'seconde', 'terze'];
+  const sortMode = _getActivitySort();
   const filterBarHtml = `<div class="class-filter-bar">
     ${filterOrder.filter(f => f === 'TUTTE' || usedYears.has(f) || (f === '—' && hasUnclassified)).map(f =>
       `<span class="class-filter-pill${activeFilter === f ? ' active' : ''}" onclick="filterActivities('${f}')">${YEAR_LABELS[f] || f}</span>`
     ).join('')}
     ${hasUnclassified ? `<span class="class-filter-pill${activeFilter === '—' ? ' active' : ''}" onclick="filterActivities('—')">Senza classe</span>` : ''}
+    <span style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+      <span style="font-size:12px;color:var(--muted);font-weight:700;">Ordina:</span>
+      <span class="class-filter-pill${sortMode === 'date' ? ' active' : ''}" onclick="setActivitySort('date')" title="Dalla più recente alla più vecchia">🕒 Più recenti</span>
+      <span class="class-filter-pill${sortMode === 'topic' ? ' active' : ''}" onclick="setActivitySort('topic')" title="Raggruppate per argomento (dentro ogni argomento: dalla più recente)">🏷 Per argomento</span>
+    </span>
   </div>`;
 
   // Filter activities by year group
@@ -2499,9 +2505,26 @@ function renderActivitiesGrouped(actArr, activeFilter) {
     return;
   }
 
-  // Elenco unico in ordine cronologico (actArr è già ordinato dal più recente)
-  const items = filtered;
+  // actArr è già in ordine cronologico (dalla più recente): in modalità
+  // "Per argomento" i gruppi sono alfabetici e le schede restano in ordine di data.
+  const topicMap = {};
+  if (sortMode === 'topic') {
+    filtered.forEach(([id, a]) => {
+      const topic = (a.topicTag || '').trim() || '—';
+      (topicMap[topic] = topicMap[topic] || []).push([id, a]);
+    });
+  } else {
+    topicMap[''] = filtered;
+  }
+  const sortedTopics = Object.keys(topicMap).sort((a, b) => {
+    if (a === '—') return 1;
+    if (b === '—') return -1;
+    return a.localeCompare(b, 'it');
+  });
+
   let html = filterBarHtml;
+  sortedTopics.forEach(topic => {
+    const items = topicMap[topic];
   const cardsHtml = items.map(([id, a]) => {
       const badges = (a.classes || []).map(classBadgeHtml).join('');
       const qCount = a.questions ? a.questions.length : 0;
@@ -2535,9 +2558,29 @@ function renderActivitiesGrouped(actArr, activeFilter) {
       </div>`;
     }).join('');
 
-  html += `<div class="topic-group"><div class="activity-grid">${cardsHtml}</div></div>`;
+    const header = topic === '' ? '' : `<div class="topic-group-header">
+        <span class="topic-group-label">${topic === '—' ? 'senza argomento' : esc(topic)}</span>
+        <span class="topic-group-count">${items.length}</span>
+      </div>`;
+    html += `<div class="topic-group">${header}<div class="activity-grid">${cardsHtml}</div></div>`;
+  });
 
   grid.innerHTML = html;
+}
+
+// Ordinamento elenco attività: 'date' (più recenti) o 'topic' (per argomento).
+// La scelta è ricordata su questo dispositivo.
+function _getActivitySort() {
+  if (!S._activitySort) {
+    try { S._activitySort = localStorage.getItem('ll_activity_sort'); } catch(e) {}
+    if (S._activitySort !== 'topic') S._activitySort = 'date';
+  }
+  return S._activitySort;
+}
+function setActivitySort(mode) {
+  S._activitySort = mode === 'topic' ? 'topic' : 'date';
+  try { localStorage.setItem('ll_activity_sort', S._activitySort); } catch(e) {}
+  renderActivitiesGrouped(S._allActivities || [], S._activeClassFilter || 'TUTTE');
 }
 
 function filterActivities(f) {
