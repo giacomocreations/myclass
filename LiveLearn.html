@@ -2138,7 +2138,10 @@ async function loadDashboard() {
 
   // Activities
   const acts = aSnap.val() || {};
-  const actArr = Object.entries(acts).reverse();
+  // Ordine cronologico: dalla più recente alla più vecchia (a parità di data,
+  // vale l'ordine delle chiavi push di Firebase, anch'esse cronologiche)
+  const actArr = Object.entries(acts).reverse()
+    .sort(([, a], [, b]) => ((b && b.createdAt) || 0) - ((a && a.createdAt) || 0));
   document.getElementById('stat-activities').textContent = actArr.length;
 
   // Store for filtering
@@ -2496,23 +2499,9 @@ function renderActivitiesGrouped(actArr, activeFilter) {
     return;
   }
 
-  // Group by topicTag (deduplicated — each activity appears once)
-  const topicMap = {};
-  filtered.forEach(([id, a]) => {
-    const topic = (a.topicTag || '').trim() || '—';
-    if (!topicMap[topic]) topicMap[topic] = [];
-    topicMap[topic].push([id, a]);
-  });
-
-  const sortedTopics = Object.keys(topicMap).sort((a, b) => {
-    if (a === '—') return 1;
-    if (b === '—') return -1;
-    return a.localeCompare(b, 'it');
-  });
-
+  // Elenco unico in ordine cronologico (actArr è già ordinato dal più recente)
+  const items = filtered;
   let html = filterBarHtml;
-  sortedTopics.forEach(topic => {
-    const items = topicMap[topic];
   const cardsHtml = items.map(([id, a]) => {
       const badges = (a.classes || []).map(classBadgeHtml).join('');
       const qCount = a.questions ? a.questions.length : 0;
@@ -2546,15 +2535,7 @@ function renderActivitiesGrouped(actArr, activeFilter) {
       </div>`;
     }).join('');
 
-    const topicLabel = topic === '—' ? 'senza argomento' : esc(topic);
-    html += `<div class="topic-group">
-      <div class="topic-group-header">
-        <span class="topic-group-label">${topicLabel}</span>
-        <span class="topic-group-count">${items.length}</span>
-      </div>
-      <div class="activity-grid">${cardsHtml}</div>
-    </div>`;
-  });
+  html += `<div class="topic-group"><div class="activity-grid">${cardsHtml}</div></div>`;
 
   grid.innerHTML = html;
 }
