@@ -25131,7 +25131,11 @@ ${sectionInstr}`;
             if (!sess || !sess.activityId) return null;
             const actSnap  = await db.ref('livelearn/activities/' + sess.activityId).get();
             const act      = actSnap.val() || {};
-            const questions = agentFbArr(act.questions);
+            // LiveLearn "Escludi listening": in quella sessione le domande di ascolto
+            // sono state tolte (originale e versioni) e le risposte sono indicizzate
+            // sulla lista filtrata → qui va applicato lo stesso filtro.
+            const _noL = qs => sess.noListening ? qs.filter(q => !q || q.type !== 'listening') : qs;
+            const questions = _noL(agentFbArr(act.questions));
             // ── Versioni per-studente (fila B/C/recupero) ──────────────────────────
             // sess.studentVersions → { [safeKey]: 'fila_b' | 'fila_c' | 'recupero' | ... }
             // act.versions         → { fila_b: [...], fila_c: [...], recupero: [...], ... }
@@ -25139,7 +25143,7 @@ ${sectionInstr}`;
             const actVersions = {};
             if (act.versions && typeof act.versions === 'object') {
                 for (const [vKey, vArr] of Object.entries(act.versions)) {
-                    const parsed = agentFbArr(vArr);
+                    const parsed = _noL(agentFbArr(vArr));
                     if (parsed.length) actVersions[vKey] = parsed;
                 }
             }

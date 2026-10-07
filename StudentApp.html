@@ -620,8 +620,7 @@ async function _refreshSessionScores(){
         // 3. Domande complete dell'attività (base + versioni fila)
         const actSnap = await db.ref('livelearn/activities/' + activityId).get();
         const actData = actSnap.val() || {};
-        const baseQuestions = actData.questions || [];
-        const versions      = actData.versions  || {};
+        const { baseQuestions, versions } = _noListeningFilter(sessData, actData.questions || [], actData.versions || {});
 
         // 4. Risolvi le domande per la FILA/versione di questo studente
         const questions = _resolveStudentQuestions(
@@ -2685,8 +2684,7 @@ async function openFullPdf(sessionCode) {
     // 2. Attività completa (domande base + tutte le versioni fila/DSA/PEI)
     const actSnap = await db.ref('livelearn/activities/' + activityId).get();
     const actData = actSnap.val() || {};
-    const baseQuestions = actData.questions || [];
-    const versions      = actData.versions  || {};
+    const { baseQuestions, versions } = _noListeningFilter(sessData, actData.questions || [], actData.versions || {});
 
     // 3. Risposte dell'alunno
     // LiveLearn salva responses con name.replace(/[.#$[\]\/]/g,'_') — spazi mantenuti, case originale
@@ -2706,6 +2704,17 @@ async function openFullPdf(sessionCode) {
   } finally {
     if (btn) { btn.textContent = '📄 Apri PDF completo'; btn.disabled = false; }
   }
+}
+
+// LiveLearn "Escludi listening" (session.noListening): in quella sessione le
+// domande di ascolto sono state tolte dall'originale e da tutte le versioni,
+// e le risposte sono indicizzate sulla lista filtrata → stesso filtro qui.
+function _noListeningFilter(sessData, baseQuestions, versions) {
+  if (!sessData || !sessData.noListening) return { baseQuestions, versions };
+  const keep = qs => (Array.isArray(qs) ? qs : Object.values(qs || {})).filter(q => !q || q.type !== 'listening');
+  const v2 = {};
+  Object.keys(versions || {}).forEach(k => { const f = keep(versions[k]); if (f.length) v2[k] = f; });
+  return { baseQuestions: keep(baseQuestions), versions: v2 };
 }
 
 // Replica getStudentAssignedQuestions di LiveLearn:

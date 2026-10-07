@@ -957,6 +957,7 @@ const CONFIG = {
         <span class="code-label">Codice:</span>
         <span id="live-code-val" class="code-val"></span>
       </div>
+      <span id="live-nolistening-badge" style="display:none;font-size:11px;font-weight:800;padding:3px 10px;border-radius:20px;background:#ede9ff;color:#4c1d95;border:1.5px solid #c4b5fd;" title="In questa sessione le domande di ascolto sono escluse e non contano nel punteggio">🔇 Listening escluso</span>
       <button class="btn btn-sm" id="btn-show-code" onclick="showCodeScreen()" title="Mostra codice a schermo intero">🖥️ Mostra codice</button>
       <button class="btn btn-sm" onclick="reloadLiveSession()" title="Ricarica la lista studenti e riconnetti il listener">🔄 Ricarica</button>
       <button class="btn btn-sm" id="btn-launch-all-lobby" onclick="launchAllLobby()" title="Avvia tutti gli alunni in attesa (lobby)" style="display:none;">▶ Avvia tutti</button>
@@ -1543,6 +1544,11 @@ const CONFIG = {
       </div>
     </div>
 
+    <label id="launch-nolistening-row" style="display:none;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;padding:10px 14px;background:#ede9ff;border:1.5px solid #c4b5fd;border-radius:10px;margin-bottom:14px;">
+      <input type="checkbox" id="launch-noListening" style="margin-top:2px;">
+      <span><strong>🔇 Escludi il listening</strong><br><span class="text-muted" style="font-size:12px;">Le domande di ascolto non vengono mostrate agli studenti e non contano nel punteggio (vale per tutte le versioni).</span></span>
+    </label>
+
     <div class="form-group" style="margin-bottom:18px;">
       <label>👥 Collega a una classe (opzionale)</label>
       <select id="start-session-class" onchange="onClassSelectForSession()"><option value="">— Nessuna classe —</option></select>
@@ -2044,6 +2050,36 @@ function _vkDecodeActivity(a, keys) {
   Object.keys(vp).forEach(k => { versionPassages[_vkNameOf(k, keys)] = vp[k]; });
   return { questions: _vkQs((a && a.questions) || [], 'lt', 'dsaLargeText'), versions, versionPassages };
 }
+// ── Listening escluso dalla sessione ─────────────────────────────────────
+// Se all'avvio il docente sceglie "Escludi listening" (session.noListening),
+// le domande listening spariscono dall'originale e da tutte le versioni PER
+// QUELLA SESSIONE: lo studente non le vede e non contano nel punteggio.
+// Il filtro va applicato in TUTTI i punti che caricano l'attività di una
+// sessione (studente, live docente, PDF, consegne forzate, Analytics), così
+// gli indici delle risposte restano allineati ovunque.
+function _sessActHasListening(a) {
+  if (!a) return false;
+  const lists = [a.questions].concat(Object.values(a.versions || {}));
+  return lists.some(qs => qs && Object.values(qs).some(q => q && q.type === 'listening'));
+}
+function _sessFilterActivity(act, sess) {
+  if (!act || !sess || !sess.noListening) return act;
+  const keep = qs => {
+    if (!qs || typeof qs !== 'object') return qs;
+    const arr = Array.isArray(qs) ? qs : Object.values(qs);
+    return arr.filter(q => !q || q.type !== 'listening');
+  };
+  const out = Object.assign({}, act, { questions: keep(act.questions) });
+  if (act.versions && typeof act.versions === 'object') {
+    out.versions = {};
+    Object.keys(act.versions).forEach(k => {
+      const f = keep(act.versions[k]);
+      if (Array.isArray(f) && f.length) out.versions[k] = f;
+    });
+  }
+  return out;
+}
+
 // Lettura della legenda: LANCIA se la rete fallisce, null se assente.
 async function _vkRead(activityId) {
   const s = await _fbGet(db.ref('livelearn/versionKeys/' + activityId), 8000);
@@ -2426,7 +2462,7 @@ async function exportSessionAllPDF(code, activityId) {
     if (!act) { alert('Attività non trovata per questa sessione (potrebbe essere stata eliminata).'); return; }
     // Stato minimo richiesto da exportAllPDFCorretto + getStudentAssignedQuestions
     S.liveCode = code;
-    S.liveActivity = act;
+    S.liveActivity = _sessFilterActivity(act, sess);
     S.liveActivityId = activityId;
     S.liveStudentVersions = sess.studentVersions || {};
     S.liveVersionKeys = _vkNeedsKeys(act) ? await _vkLoad(aSnap.val() ? activityId : sess.activityId) : null; // R1
@@ -3919,6 +3955,95 @@ function _ttsChunks(text) {
   return out.filter(Boolean);
 }
 
+// ── Dialoghi: una voce per personaggio ───────────────────────────────────
+// "Waiter: Good evening. MIA: Hi!" → l'etichetta del personaggio NON viene
+// letta e ogni personaggio riceve una voce diversa (maschile/femminile se
+// riconoscibile dal nome). Serve almeno 2 etichette, altrimenti il testo
+// viene letto così com'è (evita di scambiare "Listen:" per un personaggio).
+const _TTS_ACRONYMS = new Set(['USA','UK','BBC','DVD','CD','TV','OK','NASA','UFO','ATM','FAQ','PC','DJ','ID','NHS','UN','EU','PE','IT','ICT','CEO','VIP','SMS','GPS','LOL','OMG','ASAP']);
+// Nomi in MAIUSCOLO (es. MIA) verrebbero compitati lettera per lettera
+function _ttsFixCaps(t) {
+  return String(t).replace(/\b[A-Z]{3,}\b/g, w => _TTS_ACRONYMS.has(w) ? w : w[0] + w.slice(1).toLowerCase());
+}
+function _ttsParseDialogue(text) {
+  const t = String(text).replace(/\r/g, '');
+  const re = /(^|\n|[.!?…"”)\]]\s+)[ \t]*([A-Za-z][A-Za-z'’\-]*\.?(?:[ \t]+(?:[A-Z][A-Za-z'’\-]*\.?|\d{1,2})){0,2})[ \t]*:[ \t]+/g;
+  const marks = [];
+  let m;
+  while ((m = re.exec(t))) {
+    marks.push({ at: m.index + m[1].length, textStart: re.lastIndex, speaker: m[2].replace(/\s+/g, ' ').trim() });
+  }
+  if (marks.length < 2) return [{ speaker: null, text: t }];
+  const segs = [];
+  const pre = t.slice(0, marks[0].at).trim();
+  if (pre) segs.push({ speaker: null, text: pre });
+  marks.forEach((mk, i) => {
+    const body = t.slice(mk.textStart, i + 1 < marks.length ? marks[i + 1].at : t.length).trim();
+    if (body) segs.push({ speaker: mk.speaker, text: body });
+  });
+  return segs;
+}
+const _TTS_F_SPK = /\b(mrs|ms|miss|lady|woman|girl|mum|mom|mother|grandma|granny|aunt|sister|daughter|wife|queen|princess|waitress|actress|hostess|sales ?woman|she|mia|emma|sarah|sara|anna|zara|lucy|kate|katie|sophie|sofia|olivia|lily|ella|grace|chloe|amy|jess|jessica|emily|hannah|alice|ellie|ruby|isla|holly|jane|mary|laura|lisa|julia|rosie|maria|jenny|helen|rachel|megan|nina|eva|amelia|ava|mia|zoe|lara|leah|maya|poppy|daisy|freya|millie|molly|jade|kim|liz|beth|sue|ann|annie|clara|giulia|martina|chiara|francesca|elena|paola|giorgia|alessia|nora|linda|susan|karen|nancy|betty|sandra|tina|tara|amber|naomi|layla|sienna|evie|harper|abigail|charlotte|victoria|elizabeth|rebecca|natalie|stephanie|claire|fiona|kelly|tracy|anne|jo)\b/i;
+const _TTS_M_SPK = /\b(mr|sir|man|boy|dad|father|grandpa|grandad|uncle|brother|son|husband|king|prince|waiter|actor|host|sales ?man|policeman|he|tom|jack|ben|max|leo|harry|sam|joe|james|john|mike|michael|david|dan|daniel|paul|peter|mark|luke|matt|matthew|chris|nick|alex|adam|ryan|oliver|olly|george|charlie|noah|jacob|william|thomas|oscar|henry|archie|freddie|alfie|theo|ethan|josh|lewis|ollie|kevin|steve|tony|bob|bill|fred|frank|andy|marco|luca|matteo|lorenzo|giacomo|andrea|francesco|alessandro|giovanni|pietro|mario|carlo|ali|omar|liam|mason|logan|lucas|dylan|jake|kyle|connor|callum|finn|jamie|toby|ed|eddie|edward|richard|robert|rob|simon|martin|carl)\b/i;
+function _ttsGuessGender(label) {
+  const l = String(label || '');
+  if (_TTS_F_SPK.test(l)) return 'f';
+  if (_TTS_M_SPK.test(l)) return 'm';
+  return null;
+}
+const _TTS_F_VOICE = /female|woman|samantha|karen|victoria|serena|moira|tessa|fiona|kate|susan|zira|hazel|libby|sonia|martha|catherine|allison|ava|joanna|salli|kimberly|emma|amy|olivia|aria|jenny|michelle|natasha|clara|nicky|shelley|sandy|flo\b|kathy|vicki|maisie|stephanie|heather|nora|linda|ana\b|jane|ruth|kendra|ivy|lily|alice|anna|libby|mia/i;
+const _TTS_M_VOICE = /\bmale\b|daniel|alex\b|fred\b|arthur|oliver|george|david|mark\b|ryan|thomas|rishi|aaron|guy\b|eric\b|brian|matthew|joey|justin|gordon|lee\b|ralph|reed|rocko|eddy|albert|bruce|junior|james|william|christopher|roger|steffan|andrew|liam|noah|elliot|harry|ethan|thomas|jack/i;
+function _ttsVoiceGender(v) {
+  const n = (v && v.name) || '';
+  if (_TTS_F_VOICE.test(n)) return 'f';
+  if (_TTS_M_VOICE.test(n)) return 'm';
+  return null;
+}
+function _ttsEnglishVoices() {
+  const all = (window.speechSynthesis && window.speechSynthesis.getVoices()) || [];
+  const en = all.filter(v => /^en/i.test(v.lang || ''));
+  const rank = v => (/^en[-_]GB/i.test(v.lang) ? 0 : /^en[-_]US/i.test(v.lang) ? 1 : 2) + (v.localService ? 0 : 0.5);
+  return en.sort((a, b) => rank(a) - rank(b));
+}
+// Costruisce i pezzi da leggere: [{ text, voice, pitch }]
+function _ttsBuildParts(text) {
+  const segs = _ttsParseDialogue(text);
+  const voices = _ttsEnglishVoices();
+  const base = _getTTSVoice();
+  const cast = {};        // speaker → { voice, pitch }
+  const used = new Set();
+  let prevGender = null;
+  const sharedCount = { f: 0, m: 0 };
+  const pickFor = speaker => {
+    const key = speaker.toLowerCase();
+    if (cast[key]) return cast[key];
+    let g = _ttsGuessGender(speaker) || (prevGender === 'm' ? 'f' : prevGender === 'f' ? 'm' : 'f');
+    prevGender = g;
+    let v = voices.find(x => !used.has(x) && _ttsVoiceGender(x) === g)
+         || voices.find(x => !used.has(x) && _ttsVoiceGender(x) === null)
+         || voices.find(x => !used.has(x));
+    let pitch = 1;
+    if (v) {
+      used.add(v);
+      const vg = _ttsVoiceGender(v);
+      // Voce di genere diverso/sconosciuto: aggiusto il tono
+      if (vg !== g) pitch = g === 'f' ? 1.25 : 0.8;
+    } else {
+      // Voci finite (es. una sola voce inglese): stessa voce, tono diverso
+      v = base;
+      const pitches = g === 'f' ? [1.3, 1.15, 1.45] : [0.75, 0.9, 0.65];
+      pitch = pitches[sharedCount[g]++ % pitches.length];
+    }
+    return (cast[key] = { voice: v, pitch });
+  };
+  const parts = [];
+  segs.forEach(sg => {
+    const who = sg.speaker ? pickFor(sg.speaker) : { voice: base, pitch: 1 };
+    _ttsChunks(_ttsFixCaps(sg.text)).forEach(c => parts.push({ text: c, voice: who.voice, pitch: who.pitch }));
+  });
+  return parts;
+}
+
 let _ttsRun = 0; // identifica la lettura in corso (le vecchie callback vengono ignorate)
 function _ttsStop() {
   _ttsRun++;
@@ -3933,17 +4058,18 @@ function _ttsSpeak(text, rate, onEndCb) {
     return;
   }
   const run = ++_ttsRun;
-  const chunks = _ttsChunks(text);
-  const voice = _getTTSVoice();
+  const parts = _ttsBuildParts(text);
   let started = false;
   const finish = () => { if (run === _ttsRun && onEndCb) { _ttsRun++; onEndCb(); } };
   const speakFrom = idx => {
     if (run !== _ttsRun) return;
-    if (idx >= chunks.length) return finish();
-    const utter = new SpeechSynthesisUtterance(chunks[idx]);
-    utter.lang = voice ? voice.lang : 'en-GB';
+    if (idx >= parts.length) return finish();
+    const part = parts[idx];
+    const utter = new SpeechSynthesisUtterance(part.text);
+    utter.lang = part.voice ? part.voice.lang : 'en-GB';
     utter.rate = rate || 1;
-    if (voice) utter.voice = voice;
+    utter.pitch = part.pitch || 1;
+    if (part.voice) utter.voice = part.voice;
     utter.onstart = () => { started = true; };
     utter.onend = () => speakFrom(idx + 1);
     utter.onerror = e => {
@@ -4885,6 +5011,14 @@ async function startSession(activityId, title) {
   document.getElementById('launch-timer').value = 0;
   document.getElementById('launch-shuffleQ').checked = false;
   document.getElementById('launch-shuffleOpts').checked = false;
+  // Opzione "Escludi listening": solo se l'attività contiene domande di ascolto
+  const _nlRow = document.getElementById('launch-nolistening-row');
+  const _nlChk = document.getElementById('launch-noListening');
+  if (_nlChk) _nlChk.checked = false;
+  if (_nlRow) {
+    const _cachedAct = ((S._allActivities || []).find(([aid]) => aid === activityId) || [])[1];
+    _nlRow.style.display = _sessActHasListening(_cachedAct) ? 'flex' : 'none';
+  }
   const _ao = document.getElementById('assigned-options');
   if (_ao) _ao.style.display = 'none';
   const _dl = document.getElementById('launch-deadline');
@@ -5045,6 +5179,12 @@ async function confirmStartSession() {
   const timer = parseInt(document.getElementById('launch-timer').value) || 0;
   const shuffleQ = document.getElementById('launch-shuffleQ').checked;
   const shuffleOpts = document.getElementById('launch-shuffleOpts').checked;
+  const noListening = !!document.getElementById('launch-noListening')?.checked;
+  if (noListening) {
+    const _a = ((S._allActivities || []).find(([aid]) => aid === S.pendingActivityId) || [])[1];
+    if (_a && !(_sessFilterActivity(_a, { noListening: true }).questions || []).length)
+      return alert('⚠️ Questa attività contiene solo domande di ascolto: escludendo il listening non resterebbe nessuna domanda.');
+  }
   const classId = document.getElementById('start-session-class').value;
   // Get roster
   let roster = [], classes = {};
@@ -5078,6 +5218,7 @@ async function confirmStartSession() {
       aiProvider: _AI_PROVIDER
     };
     if (_deadline) sessionPayload.deadline = _deadline;
+    if (noListening) sessionPayload.noListening = true;
     if (Object.keys(studentVersions).length) sessionPayload.studentVersions = studentVersions;
     const _tchrKey = localStorage.getItem('gemini_api_key');
     if (_tchrKey) sessionPayload.sharedApiKey = _tchrKey;
@@ -5330,6 +5471,10 @@ async function openLive(code, activityId, roster, silent) {
     sessionStatus: sess.status,
     sessionMode: sess.mode
   });
+  S.liveActivity = _sessFilterActivity(S.liveActivity, sess);
+  S.liveNoListening = !!sess.noListening;
+  const _nlBadge = document.getElementById('live-nolistening-badge');
+  if (_nlBadge) _nlBadge.style.display = sess.noListening ? '' : 'none';
   S.liveMode = sess.mode || 'test';
   S.liveStudentVersions = sess.studentVersions || {};
   S.liveVersionKeys = _vkNeedsKeys(S.liveActivity) ? await _vkLoad(aSnap.val() ? activityId : sess.activityId) : null; // R1
@@ -7096,7 +7241,7 @@ async function _retroForcedSubmit(code) {
   const actSnap = sessData.activityId
     ? await db.ref('livelearn/activities/' + sessData.activityId).get()
     : null;
-  const questions = actSnap?.val()?.questions || S.liveActivity?.questions || [];
+  const questions = _sessFilterActivity(actSnap?.val(), sessData)?.questions || S.liveActivity?.questions || [];
   const maxPts = questions.reduce((s, q) => s + (q.points || 1), 0);
 
   const respSnap = await db.ref('livelearn/responses/' + code).get();
@@ -7363,7 +7508,7 @@ async function studentEnter() {
       }
     }
   } catch(e) {}
-  S.studentName = studentName; S.sessionCode = code; S.activity = aSnap.val();
+  S.studentName = studentName; S.sessionCode = code; S.activity = _sessFilterActivity(aSnap.val(), session);
   S.sessionMode = session.mode || 'test';
   _syncPassageBtn(); // mostra/nascondi il pulsante 📄 Testo
   // Legge il provider AI scelto dal docente per questa sessione
