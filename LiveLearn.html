@@ -732,6 +732,10 @@ const CONFIG = {
       <div class="tab" onclick="switchDashTab('classes', this)">👥 Classi</div>
     </div>
     <div id="tab-activities" class="tab-panel active">
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;">
+        <button class="btn btn-sm" onclick="document.getElementById('activity-upload-file').click()" title="Carica un'attività già pronta (file JSON) con originale e tutte le versioni differenziate">📂 Carica attività</button>
+        <input type="file" id="activity-upload-file" accept=".json,application/json" style="display:none" onchange="uploadActivityFile(event)">
+      </div>
       <div id="activity-grid" class="activity-grid"></div>
     </div>
     <div id="tab-sessions" class="tab-panel">
@@ -2722,6 +2726,117 @@ async function duplicateActivity(id) {
   _vkEncodePayload(copy, _vkHasVersions(copy) ? await _vkEnsure(_vkCopyRef.key) : null);
   await _vkCopyRef.set(copy);
   loadDashboard();
+}
+
+// ── Carica attività già pronta (JSON con originale + versioni) ──
+// Formato atteso (le chiavi sono tollerate in più varianti):
+// { "title": "...", "topicTag": "...", "classes": ["2E"], "passageText": "...",
+//   "questions": [...],                       // originale / Fila A
+//   "versions": { "fila_b": [...], "fila_c": [...], "dsa": [...], "pei": [...],
+//                 "recupero": [...], "recupero_1": [...], "recupero_2": [...] },
+//   "versionPassages": { "dsa": "...", ... } }
+// Le versioni possono stare anche al primo livello ("dsa": [...], "FILA B": [...]).
+// Un semplice array di domande viene caricato come solo originale.
+const _UPLOAD_VER_ALIASES = {
+  filab: 'fila_b', versioneb: 'fila_b',
+  filac: 'fila_c', versionec: 'fila_c',
+  dsa: 'dsa', pei: 'pei',
+  recupero: 'recupero', training: 'recupero', recuperotraining: 'recupero',
+  recupero1: 'recupero_1', recuperofast1: 'recupero_1', fast1: 'recupero_1',
+  recupero2: 'recupero_2', recuperofast2: 'recupero_2', fast2: 'recupero_2'
+};
+function _uploadVerName(k) {
+  return _UPLOAD_VER_ALIASES[String(k).toLowerCase().replace(/[\s_\-\/]/g, '')] || null;
+}
+
+function _uploadParseActivity(raw) {
+  if (Array.isArray(raw)) raw = { questions: raw };
+  if (!raw || typeof raw !== 'object') throw new Error('Il file non contiene un oggetto JSON valido.');
+  // Esportazioni Firebase con una sola attività sotto la chiave-ID
+  if (!raw.questions && !raw.domande && Object.keys(raw).length === 1) {
+    const inner = raw[Object.keys(raw)[0]];
+    if (inner && typeof inner === 'object' && (inner.questions || inner.domande)) raw = inner;
+  }
+  const questions = raw.questions || raw.domande || raw.originale || raw.fila_a || raw.filaA;
+  if (!Array.isArray(questions) || !questions.length) throw new Error('Manca l\'elenco delle domande originali ("questions").');
+
+  // Versioni con lettere neutre (R1): servono le chiavi per ricollegarle
+  const keys = _vkValid(raw.versionKeys) ? raw.versionKeys : null;
+  const src = Object.assign({}, raw.versions || raw.versioni || {});
+  Object.keys(raw).forEach(k => { if (_uploadVerName(k) && Array.isArray(raw[k])) src[k] = raw[k]; });
+  const versions = {}, unknown = [];
+  Object.keys(src).forEach(k => {
+    const n = _uploadVerName(_vkNameOf(k, keys)) || (_vkNameOf(k, keys) === 'originale' ? 'originale' : null);
+    if (!n || n === 'originale' || !Array.isArray(src[k])) { if (n !== 'originale') unknown.push(k); return; }
+    versions[n] = _vkQs(src[k], 'lt', 'dsaLargeText');
+  });
+  const vpSrc = raw.versionPassages || raw.testiVersioni || {};
+  const versionPassages = {};
+  Object.keys(vpSrc).forEach(k => {
+    const n = _uploadVerName(_vkNameOf(k, keys));
+    if (n && typeof vpSrc[k] === 'string' && vpSrc[k].trim()) versionPassages[n] = vpSrc[k];
+  });
+
+  const fixQs = qs => qs.filter(q => q && q.type).map(q => { if (!q.points) q.points = 10; return q; });
+  const mainQs = fixQs(_vkQs(questions, 'lt', 'dsaLargeText'));
+  if (!mainQs.length) throw new Error('Nessuna domanda valida (manca il campo "type").');
+  mainQs.forEach(q => _autoTagQuestion(q));
+  Object.keys(versions).forEach(n => { versions[n] = fixQs(versions[n]); if (!versions[n].length) delete versions[n]; });
+
+  return {
+    title: String(raw.title || raw.titolo || '').trim(),
+    topicTag: String(raw.topicTag || raw.argomento || '').trim(),
+    classes: Array.isArray(raw.classes) ? raw.classes : (Array.isArray(raw.classi) ? raw.classi : []),
+    passageText: raw.passageText || raw.testo || '',
+    passageLink: raw.passageLink || '',
+    revisionSheet: raw.revisionSheet || '',
+    questions: mainQs, versions, versionPassages, unknown
+  };
+}
+
+function uploadActivityFile(event) {
+  const input = event.target;
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    input.value = '';
+    let act;
+    try { act = _uploadParseActivity(JSON.parse(e.target.result)); }
+    catch (err) { return alert('❌ Impossibile caricare l\'attività: ' + err.message); }
+
+    openBuilder();
+    const v = act.versions;
+    S.questions = act.questions;
+    S.versionFilaB = v.fila_b || []; S.versionFilaC = v.fila_c || [];
+    S.versionDSA = v.dsa || []; S.versionPEI = v.pei || [];
+    S.versionRecupero = v.recupero || []; S.versionRecupero1 = v.recupero_1 || []; S.versionRecupero2 = v.recupero_2 || [];
+    S.versionPassages = act.versionPassages;
+    S.activityClasses = act.classes;
+    S.activityTopic = act.topicTag;
+    document.getElementById('activity-title').value = act.title || file.name.replace(/\.json$/i, '');
+    const topicEl = document.getElementById('activity-topic');
+    if (topicEl) topicEl.value = act.topicTag;
+    const rsEl = document.getElementById('activity-revision-sheet');
+    if (rsEl) rsEl.value = act.revisionSheet;
+    const passEl = document.getElementById('activity-passage');
+    if (passEl) { passEl.value = act.passageText; _updatePassageCharCount(); }
+    const passLinkEl = document.getElementById('activity-passage-link');
+    if (passLinkEl) passLinkEl.value = act.passageLink;
+    renderQList();
+    renderClassChips();
+    document.getElementById('versions-panel').style.display = 'block';
+    switchVersionTab('fila_b', document.querySelector('.version-tab'));
+    updateVersionTabBadges();
+
+    const loaded = _VK_ORDER.filter(n => v[n]).map(n => '• ' + _VK_LABELS[n] + ': ' + v[n].length + ' domande');
+    let msg = '✅ Attività caricata: ' + act.questions.length + ' domande originali.';
+    msg += loaded.length ? '\n\nVersioni:\n' + loaded.join('\n') : '\n\n(Nessuna versione differenziata nel file.)';
+    if (act.unknown.length) msg += '\n\n⚠️ Ignorate (versione non riconosciuta): ' + act.unknown.join(', ');
+    msg += '\n\nControlla e premi "💾 Salva attività" per aggiungerla all\'elenco.';
+    alert(msg);
+  };
+  reader.readAsText(file);
 }
 
 // Salva solo il topicTag in-place (senza aprire l'editor)
