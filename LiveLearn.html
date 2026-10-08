@@ -5946,7 +5946,13 @@ function renderLiveSidebar(responses) {
         ? '<span title="Non appartiene alla classe" style="font-size:10px;background:#f59e0b;color:#fff;border-radius:4px;padding:1px 5px;margin-left:4px;flex-shrink:0;">⚠ fuori classe</span>' +
           '<button title="Regolarizza (associa a un nome del registro)" data-action="regularize" style="background:#2563eb;color:#fff;border:0;border-radius:4px;font-size:10px;font-weight:800;padding:1px 6px;margin-left:4px;cursor:pointer;flex-shrink:0;">👤→📋</button>' +
           '<button title="Rimuovi dalla sessione" data-action="remove" style="background:#dc2626;color:#fff;border:0;border-radius:4px;font-size:10px;font-weight:800;padding:1px 6px;margin-left:4px;cursor:pointer;flex-shrink:0;">✕</button>'
-        : (aliasOf ? '<span title="Regolarizzato come: ' + esc(aliasOf) + '" style="font-size:10px;background:#2563eb;color:#fff;border-radius:4px;padding:1px 5px;margin-left:4px;flex-shrink:0;">≡ ' + esc(aliasOf).substring(0, 14) + (aliasOf.length > 14 ? '…' : '') + '</span>' : '');
+        : (aliasOf ? '<span title="Regolarizzato come: ' + esc(aliasOf) + '" style="font-size:10px;background:#2563eb;color:#fff;border-radius:4px;padding:1px 5px;margin-left:4px;flex-shrink:0;">≡ ' + esc(aliasOf).substring(0, 14) + (aliasOf.length > 14 ? '…' : '') + '</span>'
+          // Riconosciuto solo per somiglianza (es. "marcoperra"): in lista sembra
+          // a posto, ma la cronologia personale cerca il nome esatto e non lo
+          // trova. Si propone l'associazione esplicita.
+          : (S.liveRoster.length && !rosterNorm.includes(normDisp)
+              ? '<button title="Nome non identico al registro: associa al nome giusto" data-action="regularize" style="background:#eff6ff;color:#1d4ed8;border:1px solid #93c5fd;border-radius:4px;font-size:10px;font-weight:800;padding:0 5px;margin-left:4px;cursor:pointer;flex-shrink:0;">👤→📋?</button>'
+              : ''));
 
       // Version badge (solo per il docente): mostra quale versione ha assegnato a questo studente
       let versionBadge = '';
@@ -6218,42 +6224,58 @@ async function removeStudentFromSession(key, displayName) {
   }
 }
 
-// Regolarizza un alunno "fuori classe": associa la sua entry ad un nome del
-// roster tramite il campo aliasOf. Non migra la chiave (evita condizioni di
-// race con le scritture dello studente in corso).
+// Regolarizza un alunno: associa la sua entry ad un nome del roster tramite il
+// campo aliasOf. Non migra la chiave (evita condizioni di race con le
+// scritture dello studente in corso). Si puo' fare in qualunque momento,
+// anche a test consegnato e a sessione chiusa: in quel caso il risultato
+// viene spostato anche nella cronologia personale del nome scelto.
 async function regularizeStudent(key, displayName) {
-  if (!db || !S.liveCode) return;
+  if (!db || !S.liveCode || !key) return;
   const name = displayName || key;
 
   // Calcola il set dei nomi del roster non ancora connessi (per non duplicare
   // uno studente già presente nella lista)
   const normFn = s => String(s == null ? '' : s)
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/['’`´]/g, '')
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/).filter(Boolean).sort().join(' ');
 
   let connectedNames = [];
+  let current = null;
   try {
     const snap = await db.ref('livelearn/responses/' + S.liveCode).get();
     const all = snap.val() || {};
-    Object.values(all).forEach(r => {
-      if (!r || r.removed) return;
+    current = all[key] || null;
+    Object.entries(all).forEach(([k, r]) => {
+      if (!r || r.removed || k === key) return;
       if (r.name) connectedNames.push(normFn(r.name));
       if (r.aliasOf) connectedNames.push(normFn(r.aliasOf));
     });
   } catch(e) {}
+  const currentAlias = (current && current.aliasOf) || '';
 
   const roster = S.liveRoster || [];
-  const available = roster.filter(n => !connectedNames.includes(normFn(n)));
+  const available = roster.filter(n => !connectedNames.includes(normFn(n)) || normFn(n) === normFn(currentAlias));
   if (!available.length) {
     alert('Non ci sono nomi disponibili nel registro (tutti gli studenti della classe sono già collegati).');
     return;
   }
 
-  // Costruisci il modale inline
-  const opts = available.map(n => '<option value="' + esc(n).replace(/"/g, '&quot;') + '">' + esc(n) + '</option>').join('');
+  // Preselezione: l'associazione attuale, altrimenti il nome del registro
+  // che somiglia di piu' a quello digitato (es. "marcoperra" → Marco Perra)
+  const normName = normFn(name);
+  let preselect = currentAlias;
+  if (!preselect) {
+    const sugg = available.find(n => _nameMatchesAny(normName, [normFn(n)]));
+    if (sugg) preselect = sugg;
+  }
+
+  const optHtml = n => '<option value="' + esc(n) + '"' + (n === preselect ? ' selected' : '') + '>' + esc(n) + '</option>';
+  const opts = (currentAlias ? '<option value="__none__">— Rimuovi associazione —</option>' : '') +
+    available.map(optHtml).join('');
+  const isSubmitted = !!(current && current.submittedAt);
   let host = document.getElementById('modal-regularize');
   if (!host) {
     host = document.createElement('div');
@@ -6261,15 +6283,19 @@ async function regularizeStudent(key, displayName) {
     host.className = 'modal-overlay';
     document.body.appendChild(host);
   }
+  host.dataset.pendingKey = key;
   host.classList.remove('hidden');
   host.innerHTML = '<div class="modal-box" style="max-width:460px;">' +
-    '<h2 style="margin-bottom:10px;font-size:18px;">👤→📋 Regolarizza alunno</h2>' +
-    '<p style="font-size:13px;color:var(--muted);margin-bottom:14px;">Associa l\'alunno <strong>' + esc(name) + '</strong> a un nome del registro di classe. L\'alunno non se ne accorge e può continuare la prova normalmente.</p>' +
+    '<h2 style="margin-bottom:10px;font-size:18px;">👤→📋 Associa al registro</h2>' +
+    '<p style="font-size:13px;color:var(--muted);margin-bottom:14px;">Associa l\'alunno <strong>' + esc(name) + '</strong> a un nome del registro di classe. ' +
+      (isSubmitted
+        ? 'Il test è già consegnato: il risultato verrà spostato nella cronologia dell\'alunno scelto.'
+        : 'L\'alunno non se ne accorge e può continuare la prova normalmente.') + '</p>' +
     '<label style="display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;letter-spacing:0.3px;">NOME NEL REGISTRO</label>' +
     '<select id="regularize-select" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:16px;">' + opts + '</select>' +
     '<div style="display:flex;gap:10px;justify-content:flex-end;">' +
       '<button class="btn btn-ghost btn-sm" onclick="closeRegularizeModal()">Annulla</button>' +
-      '<button class="btn btn-primary btn-sm" onclick="confirmRegularize(\'' + key.replace(/'/g,"\\'") + '\')">✓ Regolarizza</button>' +
+      '<button class="btn btn-primary btn-sm" id="regularize-confirm-btn" onclick="confirmRegularize()">✓ Associa</button>' +
     '</div></div>';
 }
 
@@ -6405,24 +6431,205 @@ async function launchAllLobby() {
 }
 
 async function confirmRegularize(key) {
+  const host = document.getElementById('modal-regularize');
+  key = key || (host && host.dataset.pendingKey) || '';
   const sel = document.getElementById('regularize-select');
-  if (!sel || !sel.value) return;
-  const chosenName = sel.value;
+  if (!key || !sel || !sel.value) return;
+  const remove = sel.value === '__none__';
+  const chosenName = remove ? null : sel.value;
+  const btn = document.getElementById('regularize-confirm-btn');
+  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+  const ref = db.ref('livelearn/responses/' + S.liveCode + '/' + key);
   try {
-    await db.ref('livelearn/responses/' + S.liveCode + '/' + key).update({
+    const before = (await ref.get()).val() || {};
+    const prevAlias = before.aliasOf || null;
+    await ref.update({
       aliasOf: chosenName,
-      regularizedAt: Date.now()
+      regularizedAt: remove ? null : Date.now()
     });
+    // A test consegnato il risultato e' gia' partito verso la cronologia con il
+    // nome digitato: lo si sposta sul nome giusto (e lo si toglie dal vecchio).
+    let esito = null;
+    if (before.submittedAt) {
+      try { esito = await _llSyncStudentHistory(S.liveCode, key, prevAlias); }
+      catch(e3) { console.warn('[Associa] aggiornamento cronologia:', e3.message); esito = { ok: false, reason: e3.message }; }
+    }
     closeRegularizeModal();
     // FIX: forza aggiornamento immediato della sidebar dopo regolarizzazione,
     // senza aspettare il prossimo evento Firebase (che potrebbe tardare)
     try {
       const snap = await db.ref('livelearn/responses/' + S.liveCode).get();
-      renderLiveSidebar(snap.val() || {});
+      const all = snap.val() || {};
+      renderLiveSidebar(all);
+      if (S.selectedStudent === key && all[key]) renderStudentResultsTeacher(all[key].name || key, all[key]);
     } catch(e2) { console.warn('sidebar refresh after regularize:', e2.message); }
+    if (esito && !esito.ok && esito.reason !== 'no_class') {
+      alert('Associazione salvata, ma la cronologia personale non è stata aggiornata: ' + esito.reason);
+    } else if (esito && esito.ok && !esito.ownerCode) {
+      alert('Associazione salvata. "' + esito.owner + '" non ha ancora un codice personale: il risultato resta nel nodo di raccolta e verrà smistato da MyClass quando il codice sarà generato.');
+    }
   } catch(e) {
+    if (btn) { btn.textContent = '✓ Associa'; btn.disabled = false; }
     alert('Errore nella regolarizzazione: ' + e.message);
   }
+}
+
+// ── Punteggio effettivo di una consegna ────────────────────────────────────
+// Stessa regola usata dal pannello docente: manualScores (gia' sulla scala
+// riscalata) > aiScores > correzione automatica, riscalati con
+// questionMaxOverrides. Un esercizio escluso ha massimo 0 e punteggio 0.
+function _llEffectiveScore(qs, r) {
+  const ans = fbArr((r && r.answers) || []);
+  const ms  = (r && r.manualScores) || {};
+  const as2 = (r && r.aiScores) || {};
+  const qmo = (r && r.questionMaxOverrides) || {};
+  let score = 0, maxPts = 0;
+  (qs || []).forEach((q, i) => {
+    const op = q.points || 1;
+    const em = qmo[i] != null ? Number(qmo[i]) : op;
+    maxPts += em;
+    if (ms[i] != null) score += Number(ms[i]);
+    else if (as2[i] != null) score += op > 0 ? Math.round(Number(as2[i]) / op * em * 100) / 100 : Number(as2[i]);
+    else {
+      let raw = 0;
+      try { raw = _earnedFrom(evaluateAnswer(q, ans[i])); } catch(e) {}
+      score += op > 0 ? Math.round(raw / op * em * 100) / 100 : raw;
+    }
+  });
+  return { score: Math.round(score * 100) / 100, maxPts: Math.round(maxPts * 100) / 100 };
+}
+
+// ── Togli / rimetti un esercizio nella valutazione di un alunno ────────────
+// L'esclusione azzera massimo e punteggio dell'esercizio (questionMaxOverrides
+// = 0, manualScores = 0): cosi' PDF, MyClass e StudentApp, che gia' leggono
+// questi due campi, la rispettano senza logica dedicata. I valori precedenti
+// restano in excludedQuestions/{i} e vengono ripristinati al reinserimento.
+async function toggleExcludeQuestion(qi) {
+  const studentKey = S.selectedStudent;
+  if (!db || !studentKey || !S.liveCode) return;
+  const ref = db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey);
+  try {
+    const resp = (await ref.get()).val() || {};
+    if (!resp.submittedAt) { alert('Puoi escludere un esercizio solo dopo la consegna.'); return; }
+    const exc = resp.excludedQuestions || {};
+    const qmo = resp.questionMaxOverrides || {};
+    const ms  = resp.manualScores || {};
+    const updates = {};
+    if (exc[qi]) {
+      const prev = exc[qi];
+      updates['questionMaxOverrides/' + qi] = prev.prevMax != null ? prev.prevMax : null;
+      updates['manualScores/' + qi]         = prev.prevManual != null ? prev.prevManual : null;
+      updates['excludedQuestions/' + qi]    = null;
+    } else {
+      const qs0 = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion);
+      const restanti = qs0.filter((q, i) => i !== qi && !exc[i] && (qmo[i] != null ? Number(qmo[i]) : (q.points || 1)) > 0).length;
+      if (!restanti) { alert('Non puoi escludere tutti gli esercizi: almeno uno deve restare nella valutazione.'); return; }
+      if (!confirm('Togliere l\'esercizio ' + (qi + 1) + ' dalla valutazione di questo alunno?\n\nNon conterà né nel punteggio né nel totale. Puoi reinserirlo in qualunque momento.')) return;
+      updates['excludedQuestions/' + qi] = {
+        prevMax:    qmo[qi] != null ? qmo[qi] : null,
+        prevManual: ms[qi]  != null ? ms[qi]  : null,
+        at: Date.now()
+      };
+      updates['questionMaxOverrides/' + qi] = 0;
+      updates['manualScores/' + qi]         = 0;
+    }
+    await ref.update(updates);
+
+    const r2 = (await ref.get()).val() || {};
+    const qs = getStudentAssignedQuestions(studentKey, r2.name || studentKey, r2.aliasOf, r2.studentVersion);
+    const eff = _llEffectiveScore(qs, r2);
+    await ref.child('score').set(eff.score);
+    r2.score = eff.score;
+    renderStudentResultsTeacher(r2.name || studentKey, r2);
+    _refreshPendingForStudent(studentKey, r2);
+    // La cronologia personale (media, StudentApp) deve vedere il nuovo esito
+    _llSyncStudentHistory(S.liveCode, studentKey).catch(e => console.warn('[Escludi] cronologia:', e.message));
+  } catch(e) {
+    alert('Errore: ' + e.message);
+  }
+}
+
+// ── Riallinea la cronologia personale a una consegna ──────────────────────
+// Ricostruisce la voce di cronologia dalla response (punteggi docente ed
+// esclusioni compresi) e la scrive sotto il codice personale del suo vero
+// proprietario: l'alias del registro se c'e', altrimenti il nome digitato.
+// Toglie la voce dai proprietari sbagliati (nome digitato, alias precedente)
+// e i depositi nel nodo di raccolta, che MyClass smisterebbe sopra con dati
+// vecchi. Senza codice personale si deposita sotto il nome giusto.
+// Gira solo nel pannello docente della sessione aperta (usa S.liveActivity).
+async function _llSyncStudentHistory(code, key, prevAlias) {
+  if (!db || !code || !key) return { ok: false, reason: 'parametri mancanti' };
+  if (code !== S.liveCode || !S.liveActivity) return { ok: false, reason: 'sessione non aperta' };
+  const [sSnap, rSnap] = await Promise.all([
+    db.ref('livelearn/sessions/' + code).get(),
+    db.ref('livelearn/responses/' + code + '/' + key).get()
+  ]);
+  const sess = sSnap.val() || {};
+  const r = rSnap.val();
+  if (!r || r.removed || !r.submittedAt) return { ok: false, reason: 'non consegnato' };
+  if (!sess.classId) return { ok: false, reason: 'no_class' };
+
+  const owner = r.aliasOf || r.name || key;
+  const qs = getStudentAssignedQuestions(key, r.name || key, r.aliasOf, r.studentVersion);
+  const eff = _llEffectiveScore(qs, r);
+  const entry = _buildHistoryEntry({
+    questions:            qs,
+    answers:              fbArr(r.answers || []),
+    aiScores:             r.aiScores || null,
+    manualScores:         r.manualScores || null,
+    questionMaxOverrides: r.questionMaxOverrides || null,
+    questionTimes:        fbArr(r.questionTimes || []),
+    finalScore:           eff.score,
+    submittedAt:          r.submittedAt,
+    sessionCode:          code,
+    activityTitle:        S.liveActivity.title || sess.title || '',
+    mode:                 sess.mode || 'test'
+  });
+  // Chiave della response: StudentApp la usa per ritrovare il dettaglio
+  // anche quando il nome digitato non somiglia al proprio.
+  entry.respKey = key;
+
+  const ownerCode = await _llCodeOf(owner);
+
+  // Proprietari sbagliati da ripulire
+  const stale = new Set();
+  for (const n of [r.name, key, prevAlias]) {
+    if (!n) continue;
+    const c = await _llCodeOf(n);
+    if (c && c !== ownerCode) stale.add(c);
+  }
+  const touched = [];
+  for (const c of stale) {
+    try {
+      const p = 'livelearn/history_priv/' + c + '/sessions/' + code;
+      const v = (await db.ref(p).get()).val();
+      // Si toglie solo una voce che viene da QUESTA response (o di origine
+      // ignota): mai il risultato di un compagno che ha davvero quel nome.
+      if (v && (!v.respKey || v.respKey === key)) { await db.ref(p).remove(); touched.push(c); }
+    } catch(e) { console.warn('[Cronologia] pulizia', c, e.message); }
+  }
+
+  // Depositi nel nodo di raccolta ancora da smistare
+  const inboxKeys = new Set([key, _toSafe(key), _toSafe(r.name || key), _toSafe(owner)]);
+  if (prevAlias) inboxKeys.add(_toSafe(prevAlias));
+  await Promise.all([...inboxKeys].map(k =>
+    db.ref('livelearn/inbox/' + code + '/' + k).remove().catch(() => {})
+  ));
+
+  if (ownerCode) {
+    await db.ref('livelearn/history_priv/' + ownerCode + '/sessions/' + code).set(entry);
+    touched.push(ownerCode);
+  } else {
+    await db.ref('livelearn/inbox/' + code + '/' + _toSafe(owner)).set({
+      classId:     sess.classId,
+      safeName:    _toSafe(owner),
+      studentName: owner,
+      entry,
+      depositedAt: Date.now()
+    });
+  }
+  for (const c of touched) await _llRecomputeSummaryAt('livelearn/history_priv/' + c, c === ownerCode ? owner : null);
+  return { ok: true, owner, ownerCode };
 }
 
 // Helper: ritorna le domande della versione assegnata a questo studente, oppure
@@ -6596,7 +6803,11 @@ function renderStudentResultsTeacher(name, response) {
     recPctBadges += '<span class="badge" style="background:' + recBadgeColor(recScore2) + ';color:#fff;font-weight:800;">🔁 T2: ' + recScore2 + '%</span>';
   }
     const pdfBtn = submitted ? '<button class="btn btn-sm btn-primary" onclick="exportStudentPDF(this.dataset.name)" data-name="' + esc(displayName) + '">⬇ PDF</button>' : '';
-  const cardsHtml = questions.map((q, i) => renderAnswerCard(q, i, answers[i], questionTimes[i], manualScoresRST[i], aiScoresRST[i], (response.aiFeedbacks||{})[i], qMaxOverridesRST[i] != null ? Number(qMaxOverridesRST[i]) : null)).join('');
+  // Esercizi tolti dalla valutazione (solo dopo la consegna: prima, il set()
+  // finale dello studente cancellerebbe gli interventi del docente)
+  const excludedRST = response.excludedQuestions || {};
+  const canExcludeRST = !!submitted && !response.aiScoringPending;
+  const cardsHtml = questions.map((q, i) => renderAnswerCard(q, i, answers[i], questionTimes[i], manualScoresRST[i], aiScoresRST[i], (response.aiFeedbacks||{})[i], qMaxOverridesRST[i] != null ? Number(qMaxOverridesRST[i]) : null, { excluded: !!excludedRST[i], canExclude: canExcludeRST })).join('');
 
   // Recovery panel
   const recStatus = response.status || '';
@@ -6758,16 +6969,27 @@ function renderStudentResultsTeacher(name, response) {
       '</div>';
   }
 
+  // Associazione al nome del registro: sempre disponibile (anche a test
+  // finito e a sessione chiusa), per i nomi scritti male o attaccati.
+  const aliasBadge = response.aliasOf
+    ? '<span class="badge" style="background:#2563eb;color:#fff;font-weight:800;" title="Risultato attribuito a questo alunno del registro">≡ ' + esc(response.aliasOf) + '</span>'
+    : '';
+  const aliasBtn = (S.liveRoster || []).length
+    ? '<button class="btn btn-sm" style="background:#eff6ff;color:#1d4ed8;border-color:#93c5fd;font-weight:800;" onclick="regularizeStudent(S.selectedStudent, this.dataset.name)" data-name="' + esc(displayName) + '" title="Associa questo alunno a un nome del registro di classe (es. nome scritto male o attaccato)">👤→📋 ' + (response.aliasOf ? 'Cambia associazione' : 'Associa a registro') + '</button>'
+    : '';
+
   main.innerHTML =
     '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px;">' +
       '<div class="flex-center gap-12" style="flex-wrap:wrap;">' +
         '<h2 style="font-size:20px;font-weight:700;">' + esc(displayName) + '</h2>' +
+        aliasBadge +
         statusBadge +
         '<span class="badge badge-blue">' + answeredCount + '/' + questions.length + ' risposte</span>' +
         scoreBadge + pctBadgeCenter + timeBadge + focusBadgeCenter +
       '</div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
         aiAllBtn +
+        aliasBtn +
         '<button class="btn btn-sm btn-ghost" onclick="selectStudent(S.selectedStudent)" title="Ricarica le risposte di questo studente da Firebase">🔄</button>' +
         '<button class="btn btn-sm btn-danger" onclick="deleteStudentFromSession(S.liveCode,S.selectedStudent)" title="Elimina tutti i dati di questo alunno dalla sessione corrente">🗑 Elimina</button>' +
         '<button class="btn btn-sm" onclick="exportAllPDFCorretto()" title="PDF tutti gli studenti (versione corretta per fila)">📥 PDF tutti</button>' +
@@ -6779,7 +7001,9 @@ function renderStudentResultsTeacher(name, response) {
     '<div id="teacher-answer-cards">' + cardsHtml + '</div>';
 }
 
-function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedback, qMaxOverride) {
+function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedback, qMaxOverride, opts) {
+  const excluded   = !!(opts && opts.excluded);
+  const canExclude = !!(opts && opts.canExclude);
   const fmtSecs = s => s == null ? null : s >= 60 ? Math.floor(s/60)+'m '+(s%60)+'s' : s+'s';
   const timeTag = timeSec != null ? `<span style="font-size:10px;background:#f0ede8;color:#888;padding:2px 8px;border-radius:10px;margin-left:6px;">⏱ ${fmtSecs(timeSec)}</span>` : '';
   let body = '';
@@ -6949,10 +7173,19 @@ function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedbac
     ? '<button id="ai-score-btn-' + i + '" class="btn btn-sm" style="font-size:11px;padding:3px 10px;background:#ede9ff;color:#6c47ff;border-color:#c4b5fd;font-weight:800;" onclick="teacherAIScoreQuestion(' + i + ', ' + qPointsEff + ')" title="Valuta questa risposta con AI">🤖 AI</button>'
     : '';
 
-  const overrideRow =
-    '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+  const excludeBtn = canExclude
+    ? '<button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 10px;" onclick="toggleExcludeQuestion(' + i + ')" title="Togli questo esercizio dalla valutazione dell\'alunno (non conta né nel punteggio né nel massimo)">🚫 Escludi</button>'
+    : '';
+
+  const overrideRow = excluded
+    ? '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+        '<span style="font-size:12px;font-weight:700;color:#475569;">🚫 Esercizio escluso dalla valutazione — non conta nel punteggio né nel totale</span>' +
+        '<button class="btn btn-sm btn-primary" style="font-size:11px;padding:3px 10px;margin-left:auto;" onclick="toggleExcludeQuestion(' + i + ')" title="Rimetti l\'esercizio nella valutazione con il punteggio che aveva">↩ Reinserisci</button>' +
+      '</div>'
+    : '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
       aiTag + feedbackTag +
       '<div style="display:flex;align-items:center;gap:5px;margin-left:auto;flex-wrap:wrap;">' +
+        excludeBtn +
         aiQBtn +
         '<span style="font-size:11px;color:var(--muted);">Punteggio:</span>' +
         '<input type="number" id="score-override-' + i + '" min="0" max="' + currentMax + '" step="0.5" value="' + effectivePts + '" data-raw-orig="' + rawOrig + '" style="width:52px;padding:2px 5px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-weight:700;">' +
@@ -6967,18 +7200,19 @@ function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedbac
       '</div>' +
     '</div>';
 
-  const borderColor = manualScore != null ? 'var(--info)' :
+  if (excluded) scoreTag = '<span style="font-size:11px;font-weight:800;color:#fff;background:#64748b;padding:2px 8px;border-radius:10px;">🚫 ESCLUSO</span>';
+  const borderColor = excluded ? '#94a3b8' : manualScore != null ? 'var(--info)' :
     (q.type === 'free-response' && aiScore == null && manualScore == null && answer ? '#f59e0b' :
     scoreTag.includes('correct-mark') || scoreTag.includes('success') ? 'var(--success)' :
     scoreTag.includes('danger') ? 'var(--danger)' : 'var(--border)');
   const qPreviewText = qPreview(q);
   const detailBtn = '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openQuestionDetailTeacher(' + i + ')" title="Vedi dettaglio domanda" style="font-size:11px;padding:2px 8px;">🔍</button>';
-  return '<div class="answer-card" style="border-color:' + borderColor + ';">' +
+  return '<div class="answer-card" style="border-color:' + borderColor + ';' + (excluded ? 'border-style:dashed;background:#f8fafc;' : '') + '">' +
     '<div class="answer-card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">' +
       '<span>' + (i+1) + '. ' + typeLabel(q.type).toUpperCase() + ' — ' + esc(qPreviewText.substring(0,60)) + (qPreviewText.length>60?'…':'') + '</span>' +
       '<span style="display:flex;gap:6px;align-items:center;">' + scoreTag + timeTag + detailBtn + '</span>' +
     '</div>' +
-    '<div class="answer-card-body">' + body + overrideRow + '</div>' +
+    '<div class="answer-card-body">' + (excluded ? '<div style="opacity:0.55;">' + body + '</div>' : body) + overrideRow + '</div>' +
   '</div>';
 }
 
@@ -7054,6 +7288,13 @@ async function _recomputeStudentSummary(classId, safe) {
   try {
     const base = await _histBase(safe);
     if (!base) return;
+    await _llRecomputeSummaryAt(base);
+  } catch(e) {}
+}
+
+// Ricalcola il summary di una cronologia personale dato il suo percorso base.
+async function _llRecomputeSummaryAt(base, studentName) {
+  try {
     const hSnap = await db.ref(base + '/sessions').get();
     const rem = Object.values(hSnap.val() || {});
     if (!rem.length) {
@@ -7069,10 +7310,12 @@ async function _recomputeStudentSummary(classId, safe) {
       if (vals.length) tagAvg[tag] = Math.round(vals.reduce((s,v)=>s+v,0)/vals.length);
     });
     const last = rem.reduce((a,b)=>((a.ts||0)>(b.ts||0)?a:b));
-    await db.ref(base + '/summary').update({
+    const upd = {
       avgPct, tagAvg, sessionCount: n,
       lastActivity: last.activityTitle||'', lastTs: last.ts||null
-    });
+    };
+    if (studentName) upd.studentName = studentName;
+    await db.ref(base + '/summary').update(upd);
   } catch(e) {}
 }
 
@@ -9033,6 +9276,16 @@ async function submitAnswers(auto) {
   });
   finalScore = Math.round(finalScore * 100) / 100;
 
+  // Associazione al registro fatta dal docente durante la prova: il set()
+  // qui sotto riscrive l'intero record, va quindi riportata nel payload.
+  // Serve anche al deposito in cronologia, che va fatto sotto il nome giusto.
+  S._aliasOf = null;
+  if (db && S.sessionCode) {
+    try {
+      S._aliasOf = (await db.ref('livelearn/responses/' + S.sessionCode + '/' + safeName + '/aliasOf').get()).val() || null;
+    } catch(e) { /* lettura non concessa: si resta sul nome digitato */ }
+  }
+
   const payload = {
     name: S.studentName,
     answers: _canonicalAnswersForServer(),
@@ -9045,6 +9298,7 @@ async function submitAnswers(auto) {
     aiScoringPending: false,
     status: 'submitted'
   };
+  if (S._aliasOf) payload.aliasOf = S._aliasOf;
   if (db && S.sessionCode) {
     try {
       await db.ref('livelearn/responses/' + S.sessionCode + '/' + safeName).set(payload);
@@ -9092,14 +9346,21 @@ function _buildHistoryEntry(o) {
   const aiScores      = o.aiScores || null;
   const manualScores  = o.manualScores || null;
   const questionTimes = Array.isArray(o.questionTimes) ? o.questionTimes : null;
+  // Massimo per domanda riscalato dal docente (0 = esercizio escluso). Lato
+  // alunno e' sempre assente e il calcolo resta identico a prima.
+  const qmo = o.questionMaxOverrides || null;
+  const maxDi = (q, i) => (qmo && qmo[i] != null) ? Number(qmo[i]) : (q.points || 1);
 
-  const maxPts = questions.reduce((s, q) => s + (q.points || 1), 0);
+  const maxPts = questions.reduce((s, q, i) => s + maxDi(q, i), 0);
   const pct    = maxPts > 0 ? Math.round((o.finalScore || 0) / maxPts * 100) : 0;
 
   const puntiDi = (q, i) => {
     if (manualScores && manualScores[i] != null) return Number(manualScores[i]);
-    if (aiScores && aiScores[i] != null) return Number(aiScores[i]);
-    try { return _earnedFrom(evaluateAnswer(q, answers[i])); } catch(e) { return 0; }
+    const op = q.points || 1, em = maxDi(q, i);
+    let raw;
+    if (aiScores && aiScores[i] != null) raw = Number(aiScores[i]);
+    else { try { raw = _earnedFrom(evaluateAnswer(q, answers[i])); } catch(e) { raw = 0; } }
+    return (qmo && op > 0) ? Math.round(raw / op * em * 100) / 100 : raw;
   };
 
   const tagBreakdown = {};
@@ -9107,8 +9368,9 @@ function _buildHistoryEntry(o) {
     let earned = 0, total = 0, trovate = 0;
     questions.forEach((q, i) => {
       if (q.tag !== tag) return;
+      if (maxDi(q, i) <= 0) return; // esercizio escluso dalla valutazione
       trovate++;
-      total  += (q.points || 1);
+      total  += maxDi(q, i);
       earned += puntiDi(q, i);
     });
     if (!trovate) return;
@@ -9168,7 +9430,14 @@ async function _writeStudentHistory(finalScore, aiScores, questionTimes, submitt
 
     if (!classId) return; // sessione senza classe → skip
 
-    const safeName = S.safeName ? _toSafe(S.safeName) : _toSafe(S.studentName || 'anonimo');
+    // Chiave della response (stessa formula di submitAnswers): va nella voce
+    // come respKey, cosi' StudentApp ritrova il dettaglio anche se il nome
+    // digitato era scritto male.
+    const respKey = S.safeName || (S.studentName || 'Anonimo').replace(/[.#$\[\]/]/g, '_');
+    // Se il docente ha associato l'alunno a un nome del registro, il
+    // risultato appartiene a quel nome.
+    const ownerName = S._aliasOf || S.studentName || '';
+    const safeName = S._aliasOf ? _toSafe(S._aliasOf) : (S.safeName ? _toSafe(S.safeName) : _toSafe(S.studentName || 'anonimo'));
     const entry = _buildHistoryEntry({
       questions:     S.activity.questions,
       answers:       S.answers,
@@ -9180,6 +9449,7 @@ async function _writeStudentHistory(finalScore, aiScores, questionTimes, submitt
       activityTitle: S.activity.title || '',
       mode:          S.sessionMode || S.liveMode || 'test'
     });
+    entry.respKey = respKey;
 
     // ⚠️ NODO DI RACCOLTA. Il dispositivo dello studente non scrive piu'
     // nella cronologia personale: non conosce il proprio codice, e un ramo
@@ -9193,7 +9463,7 @@ async function _writeStudentHistory(finalScore, aiScores, questionTimes, submitt
     ).set({
       classId,
       safeName,
-      studentName: S.studentName || '',
+      studentName: ownerName,
       entry,
       depositedAt: Date.now()
     });
@@ -9361,8 +9631,9 @@ if (typeof window !== 'undefined' && !window._ctxMenuGuard) {
 
 // ── Tag score breakdown ───────────────────────────────────────────────────
 // Restituisce HTML con pillole percentuale per ogni tag presente nelle domande
-function buildTagBreakdown(questions, answers, aiScores, manualScores, styleMode) {
+function buildTagBreakdown(questions, answers, aiScores, manualScores, styleMode, excluded) {
   // styleMode: 'student' (card morbide) | 'pdf' (righe compatte per stampa)
+  // excluded: { indice: ... } esercizi tolti dalla valutazione dal docente
   const tagMeta = {
     'GRAMMAR':    { label: '📐 Grammar',    bg: '#dbeafe', color: '#1e3a8a', bar: '#3b82f6' },
     'VOCABULARY': { label: '📚 Vocabulary', bg: '#d1fae5', color: '#065f46', bar: '#10b981' },
@@ -9374,6 +9645,7 @@ function buildTagBreakdown(questions, answers, aiScores, manualScores, styleMode
   questions.forEach((q, i) => {
     const tag = q.tag;
     if (!tag) return;
+    if (excluded && excluded[i]) return;
     if (!tagData[tag]) tagData[tag] = { earned: 0, total: 0, hasPending: false };
     const pts = q.points || 1;
     tagData[tag].total += pts;
@@ -11691,6 +11963,7 @@ async function exportStudentPDF(studentName) {
     return String(a);
   }
   function evalResult(q, a, qi) {
+    if ((entry.excludedQuestions || {})[qi]) return { label: '🚫 Escluso', color: '#64748b', pts: 'non valutato' };
     const manual = manualScoresData[qi];
     const ai = aiScoresData[qi];
     const r = evaluateAnswer(q, a);
@@ -11905,7 +12178,7 @@ async function exportStudentPDF(studentName) {
     <div class="meta-card"><div class="label">Risposte date</div><div class="value">${answers.filter(a=>a!==null&&a!==undefined).length} / ${questions.length}</div></div>
     <div class="meta-card"><div class="label">Tempo totale</div><div class="value">${fmtSecs(totalTime)}</div></div>
   </div>
-  ${buildTagBreakdown(questions, answers, aiScoresData, manualScoresData, 'pdf')}
+  ${buildTagBreakdown(questions, answers, aiScoresData, manualScoresData, 'pdf', entry.excludedQuestions)}
   <table>
     <thead>
       <tr>
@@ -12554,7 +12827,7 @@ async function exportAllPDFCorretto() {
     const totalTime = (submittedAt && joinedAt) ? Math.round((submittedAt - joinedAt) / 1000) : null;
 
     // Tag breakdown (riusa buildTagBreakdown già disponibile)
-    const tagHtml = buildTagBreakdown(questions, answers, aiScores, manualScores, 'pdf');
+    const tagHtml = buildTagBreakdown(questions, answers, aiScores, manualScores, 'pdf', entry.excludedQuestions);
 
     // Righe domande
     const rowsHtml = questions.map((q, i) => {
@@ -12571,10 +12844,11 @@ async function exportAllPDFCorretto() {
       const pts = ms != null ? ms : (asScaled != null ? asScaled : autoScaled);
       const isPartial = r.scorable && !r.correct && r.partial && typeof r.earnedPoints === 'number' && r.earnedPoints > 0;
       const autoLabel = r.scorable ? (r.correct ? '✓ Corretta' : (isPartial ? '🔶 Parziale' : '✗ Errata')) : '—';
-      const label = ms != null ? '✏️ Manuale' : (as_ != null ? `🤖 AI: ${asScaled}` : autoLabel);
+      const isExcl = !!(entry.excludedQuestions || {})[i];
+      const label = isExcl ? '🚫 Escluso' : ms != null ? '✏️ Manuale' : (as_ != null ? `🤖 AI: ${asScaled}` : autoLabel);
       const autoColor = r.scorable ? (r.correct ? '#059669' : (isPartial ? '#d97706' : '#dc2626')) : '#555';
-      const color = ms != null ? '#3b82f6' : (as_ != null ? '#6c47ff' : autoColor);
-      const bg    = r.scorable ? (r.correct ? '#f0fdf4' : (isPartial ? '#fef3c7' : '#fef2f2')) : '#fafafa';
+      const color = isExcl ? '#64748b' : ms != null ? '#3b82f6' : (as_ != null ? '#6c47ff' : autoColor);
+      const bg    = isExcl ? '#f1f5f9' : r.scorable ? (r.correct ? '#f0fdf4' : (isPartial ? '#fef3c7' : '#fef2f2')) : '#fafafa';
       const fb    = aiFeedbacks[i] || '';
       const secs  = qTimes[i];
       const qText = (q.text || q.question?.text || '').substring(0, 100);
