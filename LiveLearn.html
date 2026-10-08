@@ -14231,6 +14231,7 @@ async function openCodesManager() {
             <div style="flex:1;font-weight:500;font-size:13px;">${esc(s.name)}</div>
             <code style="background:#f5f0ff;color:#6c47ff;padding:2px 8px;border-radius:6px;letter-spacing:1px;font-size:12px;">${s.code}</code>
             <div style="width:8px;height:8px;border-radius:50%;background:${s.lastLogin?'#34a853':'#ddd'}" title="${s.lastLogin?'Attivato':'Non ancora usato'}"></div>
+            <button class="btn btn-sm btn-ghost" onclick="regenerateSingleCode('${esc(classId)}','${s.code}')" style="font-size:11px;padding:1px 7px;" title="Rigenera solo il codice di questo alunno (i suoi dati passano al nuovo codice)">🔄</button>
           </div>`).join('')
         : '<div style="color:#aaa;font-size:11px;padding:4px 0;">Nessun codice generato. Clicca ⚡ Genera tutti.</div>'}
       </div>
@@ -14431,6 +14432,75 @@ async function regenerateCodes(classId) {
   alert('✅ ' + writes.length + ' codici rigenerati per ' + className +
         '.\nCancellati ' + oldCodes.length + ' vecchi codici e i rami collegati.\n\n' +
         'Ora usa 📋 Copia lista e ridistribuisci su Classroom.');
+  openCodesManager();
+}
+
+// Rigenera il codice di UN alunno (es. codice perso o finito in mano ad altri).
+// A differenza di regenerateCodes non cancella nulla: tutto cio' che era
+// appeso al vecchio codice viene SPOSTATO sul nuovo (cronologia, bacheca,
+// piani di recupero e relative lookup, notifiche, progressi English Town).
+// Solo i token push si scartano: l'alunno li registra di nuovo al prossimo
+// accesso, che col codice nuovo e' comunque obbligatorio.
+// Una sola scrittura multi-percorso: o va tutto o non cambia niente.
+async function regenerateSingleCode(classId, oldCode) {
+  if (!db || !classId || !oldCode) return;
+  let rec;
+  try { rec = (await db.ref('livelearn/students/' + oldCode).get()).val(); }
+  catch(e) { alert('Lettura fallita: ' + e.message); return; }
+  if (!rec) { alert('Codice non trovato.'); openCodesManager(); return; }
+  const nome = rec.name || oldCode;
+
+  if (!confirm('Rigenerare il codice di ' + nome + '?\n\n' +
+    'Il codice attuale (' + oldCode + ') smetterà di funzionare e l\'alunno dovrà rientrare in StudentApp con quello nuovo.\n\n' +
+    'Cronologia, bacheca, piani di recupero, notifiche e progressi passano al nuovo codice: non si perde nulla.')) return;
+
+  // Codice nuovo, unico
+  let existing = {};
+  try { existing = (await db.ref('livelearn/students').get()).val() || {}; } catch(e) {}
+  let newCode;
+  do { newCode = _genCode(); } while (existing[newCode]);
+
+  // Rami da spostare: [vecchio, nuovo]
+  const rami = [
+    ['livelearn/history_priv/' + oldCode,             'livelearn/history_priv/' + newCode],
+    ['livelearn/board_priv/' + classId + '/' + oldCode, 'livelearn/board_priv/' + classId + '/' + newCode],
+    ['livelearn/recovery_sessions/' + oldCode,        'livelearn/recovery_sessions/' + newCode],
+    ['studentapp/personal_plan/' + oldCode,           'studentapp/personal_plan/' + newCode],
+    ['studentapp/notifications/' + oldCode,           'studentapp/notifications/' + newCode],
+    ['englishtown/progress/' + oldCode,               'englishtown/progress/' + newCode]
+  ];
+  const updates = {};
+  let recSessions = null;
+  try {
+    for (const [da, a] of rami) {
+      const v = (await db.ref(da).get()).val();
+      if (v == null) continue;
+      updates[a]  = v;
+      updates[da] = null;
+      if (da.startsWith('livelearn/recovery_sessions/')) recSessions = v;
+    }
+    // Le lookup dei piani (codice piano → codice alunno) vanno ripuntate
+    for (const planCode of Object.keys(recSessions || {})) {
+      const lk = (await db.ref('livelearn/recovery_lookup/' + planCode).get()).val();
+      if (lk && (lk.code === oldCode || lk.studentSafe === oldCode)) {
+        updates['livelearn/recovery_lookup/' + planCode] = { code: newCode };
+      }
+    }
+  } catch(e) {
+    alert('Impossibile leggere i dati da spostare (' + e.message + ').\nNessuna modifica effettuata.');
+    return;
+  }
+  updates['livelearn/fcmTokens/' + classId + '/' + oldCode] = null;
+  const nuovo = Object.assign({}, rec, { createdAt: Date.now() });
+  delete nuovo.lastLogin;
+  updates['livelearn/students/' + newCode] = nuovo;
+  updates['livelearn/students/' + oldCode] = null;
+
+  try { await db.ref().update(updates); }
+  catch(e) { alert('Rigenerazione fallita: ' + e.message + '\nNessuna modifica effettuata.'); return; }
+
+  _llStuAll = null; // la mappa nome → codice in cache ora e' vecchia
+  alert('✅ Nuovo codice per ' + nome + ': ' + newCode + '\n\nIl vecchio codice ' + oldCode + ' non funziona più. Comunica il nuovo all\'alunno.');
   openCodesManager();
 }
 
