@@ -6758,6 +6758,29 @@ async function _llBackgroundHistorySync(sessArr, respVals, acts, classes) {
   } finally { S._llBgSyncBusy = false; }
 }
 
+// Giudizio sul tempo medio per domanda, con soglie diverse per tipo di
+// esercizio: un cloze o un drag & drop con molti spazi richiede naturalmente
+// piu' tempo di una scelta multipla. Soglie in secondi: [molto veloce,
+// buon ritmo, un po' lento]; oltre l'ultima e' "molto lento".
+function _timeSoglie() { return {
+  'multiple-choice': [8, 30, 60],
+  'categorization':  [20, 90, 150],
+  'matching':        [20, 90, 150],
+  'reorder':         [20, 90, 150],
+  'cloze':           [25, 120, 210],
+  'fill-blanks':     [25, 120, 210],
+  'drag-drop':       [25, 120, 210],
+  'listening':       [20, 120, 240],
+  'free-response':   [30, 180, 300]
+}; }
+function _timeRating(type, avg) {
+  const s = _timeSoglie()[type] || [10, 60, 120];
+  if (avg <= s[0]) return { label: 'Molto veloce', col: '#b45309' };
+  if (avg <= s[1]) return { label: 'Buon ritmo',   col: '#047857' };
+  if (avg <= s[2]) return { label: "Un po' lento", col: '#0e7490' };
+  return { label: 'Molto lento', col: '#be123c' };
+}
+
 function _llNotifySync(esito) {
   if (!esito) return;
   const dove = esito.titolo ? ' («' + esito.titolo + '»)' : '';
@@ -13756,12 +13779,12 @@ async function openStudentStats(classId, studentSafe, studentName) {
   });
   const TYPE_LABELS = {
     'multiple-choice':'Scelta multipla','cloze':'Cloze','fill-blanks':'Fill blanks',
-    'matching':'Matching','drag-drop':'Drag & Drop','reorder':'Riordina','free-response':'Risposta libera','listening':'Listening'
+    'matching':'Matching','drag-drop':'Drag & Drop','reorder':'Riordina','free-response':'Risposta libera','listening':'Listening',
+    'categorization':'Categorizzazione'
   };
   const timeRows = Object.entries(allTypes).map(([type, vals]) => {
     const avg = Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
-    const label = avg <= 8 ? 'Molto veloce' : avg <= 20 ? 'Buon ritmo' : avg <= 40 ? 'Un po lento' : 'Molto lento';
-    const col = avg <= 8 ? '#b45309' : avg <= 20 ? '#047857' : avg <= 40 ? '#0e7490' : '#be123c';
+    const { label, col } = _timeRating(type, avg);
     return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:white;border-radius:8px;margin-bottom:4px;">
       <span style="font-size:12px;font-weight:600;color:#444;">${esc(TYPE_LABELS[type]||type)}</span>
       <span style="font-size:12px;font-weight:800;color:${col};">${avg}s <span style="font-size:10px;font-weight:500;">${label}</span></span>

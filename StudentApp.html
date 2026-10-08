@@ -1711,11 +1711,10 @@ function openPdf(sessionCode){
     const typeLabels={
       'multiple-choice':'Scelta multipla','cloze':'Cloze','fill-blanks':'Fill blanks',
       'matching':'Matching','drag-drop':'Drag & Drop','reorder':'Riordina',
-      'free-response':'Risposta libera','listening':'Listening'
+      'free-response':'Risposta libera','listening':'Listening','categorization':'Categorizzazione'
     };
     Object.entries(sess.avgTimeByType).forEach(([t,avg])=>{
-      const label = avg<=8?'Molto veloce':avg<=20?'Buon ritmo':avg<=40?'Un po lento':'Molto lento';
-      const col   = avg<=8?'#854F0B':avg<=20?'#047857':avg<=40?'#0e7490':'#be123c';
+      const { label, col } = _timeRating(t, avg);
       html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:0.5px solid #f0eeff">
         <span style="font-size:12px;color:var(--text)">${typeLabels[t]||t}</span>
         <span style="font-size:12px;font-weight:600;color:${col}">${avg}s · ${label}</span>
@@ -1727,6 +1726,29 @@ function openPdf(sessionCode){
   document.getElementById('pdf-body').innerHTML = html;
   showScreen('scr-pdf');
   document.getElementById('main-tab-bar').style.display='none';
+}
+
+// Giudizio sul tempo medio per domanda, con soglie diverse per tipo di
+// esercizio: un cloze o un drag & drop con molti spazi richiede naturalmente
+// piu' tempo di una scelta multipla. Soglie in secondi: [molto veloce,
+// buon ritmo, un po' lento]; oltre l'ultima e' "molto lento".
+function _timeSoglie() { return {
+  'multiple-choice': [8, 30, 60],
+  'categorization':  [20, 90, 150],
+  'matching':        [20, 90, 150],
+  'reorder':         [20, 90, 150],
+  'cloze':           [25, 120, 210],
+  'fill-blanks':     [25, 120, 210],
+  'drag-drop':       [25, 120, 210],
+  'listening':       [20, 120, 240],
+  'free-response':   [30, 180, 300]
+}; }
+function _timeRating(type, avg) {
+  const s = _timeSoglie()[type] || [10, 60, 120];
+  if (avg <= s[0]) return { label: 'Molto veloce', col: '#b45309' };
+  if (avg <= s[1]) return { label: 'Buon ritmo',   col: '#047857' };
+  if (avg <= s[2]) return { label: "Un po' lento", col: '#0e7490' };
+  return { label: 'Molto lento', col: '#be123c' };
 }
 
 // ── STATISTICHE ───────────────────────────────────────────────────────────
