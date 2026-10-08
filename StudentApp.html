@@ -2819,103 +2819,151 @@ function _evalWithOverrides(q, i, entry) {
   return Object.assign({}, r, { pts, maxPts: em });
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// CORREZIONE AUTOMATICA — COPIA FEDELE di evaluateAnswer di LiveLearn
+// ═══════════════════════════════════════════════════════════════════════
+// Qui c'era una correzione "semplificata" che divergeva da LiveLearn: niente
+// alternative "go|goes", niente normalizzazione di accenti e punteggiatura,
+// niente categorizzazione ne' drag-drop senza ordine. Risultato: esercizi
+// giusti per il docente (98%) risultavano sbagliati qui (60%). Ora le regole
+// sono le stesse: se si cambia evaluateAnswer in LiveLearn, va cambiato anche qui.
+
+// Come fbArr di LiveLearn: conserva le posizioni ({0:a,2:c} → [a,null,c]).
+// _fbArr di questo file invece compatta, e sfaserebbe gli spazi.
+function _llFbArr(v) {
+  if (Array.isArray(v)) return v;
+  if (v && typeof v === 'object') {
+    const numKeys = Object.keys(v).map(Number).filter(n => Number.isFinite(n));
+    if (!numKeys.length) return Object.values(v);
+    const arr = new Array(Math.max(...numKeys) + 1).fill(null);
+    Object.entries(v).forEach(([k, val]) => { const i = Number(k); if (Number.isFinite(i)) arr[i] = val; });
+    return arr;
+  }
+  return [];
+}
+function _llNormCloze(s) {
+  return String(s == null ? '' : s)
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[-–—]/g, '')
+    .replace(/[.,!?;:'"()]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function _llClozeOk(givenRaw, correctRaw) {
+  const alternatives = String(correctRaw || '').split('|').map(x => x.trim()).filter(Boolean);
+  if (!alternatives.length) return false;
+  const g = _llNormCloze(givenRaw);
+  return alternatives.some(alt => _llNormCloze(alt) === g);
+}
+function _llRes(n, total, pts) {
+  const earned = Math.round((n / total) * pts * 100) / 100;
+  const allOk = n === total;
+  return { scorable: true, correct: allOk, points: pts, earnedPoints: earned,
+           partial: n > 0 && !allOk, correctCount: n, totalCount: total };
+}
+function _llEvalCloze(corrects, a, pts) {
+  const total = corrects.length || 1;
+  if (!Array.isArray(a)) return _llRes(0, total, pts);
+  let n = 0;
+  corrects.forEach((corr, bi) => { if (_llClozeOk(a[bi], corr)) n++; });
+  return _llRes(n, total, pts);
+}
+function _llEvalDragDrop(corrects, a, pts, sentences, unordered) {
+  const total = corrects.length || 1;
+  const normA = Array.isArray(a) ? a : (a && typeof a === 'object' ? _llFbArr(a) : null);
+  if (!normA) return _llRes(0, total, pts);
+  let n = 0;
+  if (unordered && sentences && sentences.length > 0) {
+    let blankIdx = 0;
+    sentences.forEach(st => {
+      const blankCount = (String(st).match(/___/g) || []).length || 1;
+      const groupCorrects = corrects.slice(blankIdx, blankIdx + blankCount).map(c => String(c || '').toLowerCase());
+      const groupAnswers  = normA.slice(blankIdx, blankIdx + blankCount).filter(Boolean).map(c => String(c || '').toLowerCase());
+      const pool = [...groupCorrects];
+      groupAnswers.forEach(ans => { const idx = pool.indexOf(ans); if (idx >= 0) { n++; pool.splice(idx, 1); } });
+      blankIdx += blankCount;
+    });
+  } else {
+    corrects.forEach((ans, i) => { if ((normA[i] || '').toLowerCase() === String(ans || '').toLowerCase() && normA[i]) n++; });
+  }
+  return _llRes(n, total, pts);
+}
+function _llEvalReorder(sentences, a, pts) {
+  const total = sentences.length || 1;
+  const normA = Array.isArray(a) ? a : (a && typeof a === 'object' ? _llFbArr(a) : null);
+  if (!normA) return _llRes(0, total, pts);
+  let n = 0;
+  sentences.forEach((st, i) => { if (String(normA[i] || '').trim().toLowerCase() === String(st || '').trim().toLowerCase() && normA[i]) n++; });
+  return _llRes(n, total, pts);
+}
+function _llEvalMatching(leftArr, rightArr, a, pts) {
+  const totalPairs = leftArr.length || 1;
+  const normA = Array.isArray(a) ? a : (a && typeof a === 'object' ? _llFbArr(a) : null);
+  if (!normA) return _llRes(0, totalPairs, pts);
+  const nm = x => (x || '').toString().trim().toLowerCase();
+  let n = 0;
+  for (let li = 0; li < totalPairs; li++) {
+    const chosenIdx = normA[li];
+    if (chosenIdx == null) continue;
+    const chosenVal = nm(rightArr[chosenIdx] || '');
+    if (chosenVal && chosenVal === nm(rightArr[li] || '')) n++;
+  }
+  return _llRes(n, totalPairs, pts);
+}
+function _llEvalCategorization(correctAnswers, a, pts) {
+  const total = correctAnswers.length || 1;
+  const normA = Array.isArray(a) ? a : (a && typeof a === 'object' ? _llFbArr(a) : null);
+  if (!normA) return _llRes(0, total, pts);
+  let n = 0;
+  correctAnswers.forEach((corr, ii) => {
+    const given = normA[ii];
+    if (given !== null && given !== undefined && Number(given) === Number(corr)) n++;
+  });
+  return _llRes(n, total, pts);
+}
+function _llEvaluate(q, a) {
+  const pts = q.points || 1;
+  const t = q.type;
+  if (t === 'multiple-choice') return { scorable: true, correct: a === q.correct, points: pts };
+  if (t === 'cloze' || t === 'fill-blanks') return _llEvalCloze(q.answers || [], a, pts);
+  if (t === 'drag-drop')      return _llEvalDragDrop(q.answers || [], a, pts, q.sentences, q.unordered);
+  if (t === 'reorder')        return _llEvalReorder(q.sentences || [], a, pts);
+  if (t === 'matching')       return _llEvalMatching(q.left || [], q.right || [], a, pts);
+  if (t === 'categorization') return _llEvalCategorization(q.answers || [], a, pts);
+  if (t === 'listening') {
+    const inner = q.question || {};
+    let sub = q.subtype || inner.type;
+    if (!sub) {
+      if (inner.correct !== undefined) sub = 'multiple-choice';
+      else if (Array.isArray(inner.answers) && inner.answers.length > 0) sub = 'cloze';
+      else if (Array.isArray(inner.left) && inner.left.length > 0) sub = 'matching';
+      else sub = 'free-response';
+    }
+    if (sub === 'multiple-choice') return { scorable: true, correct: a === inner.correct, points: pts };
+    if (sub === 'cloze' || sub === 'fill-blanks') return _llEvalCloze(inner.answers || [], a, pts);
+    if (sub === 'drag-drop')      return _llEvalDragDrop(inner.answers || [], a, pts, inner.sentences, inner.unordered);
+    if (sub === 'reorder')        return _llEvalReorder(inner.sentences || [], a, pts);
+    if (sub === 'matching')       return _llEvalMatching(inner.left || [], inner.right || [], a, pts);
+    if (sub === 'categorization') return _llEvalCategorization(inner.answers || [], a, pts);
+  }
+  return { scorable: false, correct: false, points: 0 };
+}
+
 function _evalSimple(q, a, manualScore, aiScore) {
   const maxPts = q.points || 1;
-  const type   = q.type;
-  // Priorità: manuale > AI > auto
+  // Priorità: manuale > AI > auto (come LiveLearn)
   if (manualScore != null) return { pts: manualScore, maxPts, label: '✏️ Manuale', color: '#3b82f6', bg: manualScore >= maxPts ? '#eff6ff' : manualScore > 0 ? '#fef3c7' : '#fef2f2' };
   if (aiScore    != null) return { pts: aiScore,    maxPts, label: '🤖 AI',      color: '#6c47ff', bg: aiScore    >= maxPts ? '#f5f3ff' : aiScore    > 0 ? '#fef3c7' : '#fef2f2' };
   if (a === null || a === undefined) return { pts: 0, maxPts, label: '—', color: '#888', bg: '#fafafa' };
-  if (type === 'free-response') return { pts: '?', maxPts, label: 'Aperta', color: '#555', bg: '#fafafa' };
 
-  const subQ = q.question || {};
-  let correct = false;
-  try {
-    if (type === 'multiple-choice') {
-      correct = String(a) === String(q.answer ?? q.correct ?? '');
-
-    } else if (type === 'cloze' || type === 'fill-blanks') {
-      // FIX: normalizza oggetto Firebase → array
-      const normA   = _fbArr(a);
-      const answers = q.answers || [];
-      if (normA.length && answers.length) {
-        const matched = normA.filter((v,i) => String(v||'').toLowerCase().trim() === String(answers[i]||'').toLowerCase().trim()).length;
-        if (matched === answers.length) correct = true;
-        else if (matched > 0) {
-          const partial = Math.round(matched / answers.length * maxPts * 10) / 10;
-          return { pts: partial, maxPts, label: `🔶 ${matched}/${answers.length}`, color: '#d97706', bg: '#fef3c7' };
-        }
-      }
-
-    } else if (type === 'drag-drop') {
-      // FIX: usa q.answers (testi corretti), non q.correctOrder; normalizza fbArr
-      const corrects = q.answers || [];
-      const normA    = _fbArr(a);
-      if (normA.length && corrects.length) {
-        let n = 0;
-        corrects.forEach((ans, i) => {
-          if ((normA[i]||'').toLowerCase() === String(ans||'').toLowerCase() && normA[i]) n++;
-        });
-        if (n === corrects.length) correct = true;
-        else if (n > 0) {
-          const partial = Math.round(n / corrects.length * maxPts * 10) / 10;
-          return { pts: partial, maxPts, label: `🔶 ${n}/${corrects.length}`, color: '#d97706', bg: '#fef3c7' };
-        }
-      }
-
-    } else if (type === 'reorder') {
-      // FIX: usa q.sentences (frasi corrette), non q.correctOrder; normalizza fbArr
-      const sentences = q.sentences || [];
-      const normA     = _fbArr(a);
-      if (normA.length && sentences.length) {
-        let n = 0;
-        sentences.forEach((s, i) => {
-          if (String(normA[i]||'').trim().toLowerCase() === String(s||'').trim().toLowerCase() && normA[i]) n++;
-        });
-        if (n === sentences.length) correct = true;
-        else if (n > 0) {
-          const partial = Math.round(n / sentences.length * maxPts * 10) / 10;
-          return { pts: partial, maxPts, label: `🔶 ${n}/${sentences.length}`, color: '#d97706', bg: '#fef3c7' };
-        }
-      }
-
-    } else if (type === 'matching') {
-      // FIX: normalizza fbArr; confronto per valore (non indice) come in LiveLearn
-      const normA  = _fbArr(a);
-      const right  = q.right || [];
-      const _norm  = s => (s||'').toString().trim().toLowerCase();
-      const expected = (q.left||[]).map((_,li) => _norm(right[li]||''));
-      let matched = 0;
-      const used = new Array(expected.length).fill(false);
-      for (let li = 0; li < (q.left||[]).length; li++) {
-        const chosenIdx = normA[li];
-        if (chosenIdx == null) continue;
-        const chosenVal = _norm(right[chosenIdx]||'');
-        if (!chosenVal) continue;
-        for (let ei = 0; ei < expected.length; ei++) {
-          if (!used[ei] && expected[ei] === chosenVal) { used[ei]=true; matched++; break; }
-        }
-      }
-      const totalPairs = (q.left||[]).length || 1;
-      if (matched === totalPairs) correct = true;
-      else if (matched > 0) {
-        const partial = Math.round(matched / totalPairs * maxPts * 10) / 10;
-        return { pts: partial, maxPts, label: `🔶 ${matched}/${totalPairs}`, color: '#d97706', bg: '#fef3c7' };
-      }
-
-    } else if (type === 'listening') {
-      const sub = q.subtype || subQ.type;
-      if (sub === 'multiple-choice') {
-        correct = String(a) === String(subQ.answer ?? subQ.correct ?? '');
-      } else {
-        const normA = _fbArr(a);
-        const ans   = subQ.answers || [];
-        correct = ans.length > 0 && normA.every((v,i) => String(v||'').toLowerCase().trim() === String(ans[i]||'').toLowerCase().trim());
-      }
-    }
-  } catch(e) { /* fallback silenzioso */ }
-
-  if (correct) return { pts: maxPts, maxPts, label: '✓ Corretta', color: '#059669', bg: '#f0fdf4' };
+  let r;
+  try { r = _llEvaluate(q, a); } catch(e) { r = { scorable: true, correct: false, points: maxPts }; }
+  if (!r.scorable) return { pts: '?', maxPts, label: 'Aperta', color: '#555', bg: '#fafafa' };
+  if (r.correct) return { pts: maxPts, maxPts, label: '✓ Corretta', color: '#059669', bg: '#f0fdf4' };
+  if (r.partial && typeof r.earnedPoints === 'number' && r.earnedPoints > 0) {
+    return { pts: r.earnedPoints, maxPts, label: `🔶 ${r.correctCount}/${r.totalCount}`, color: '#d97706', bg: '#fef3c7' };
+  }
   return { pts: 0, maxPts, label: '✗ Errata', color: '#dc2626', bg: '#fef2f2' };
 }
 

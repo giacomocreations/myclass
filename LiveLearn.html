@@ -5534,7 +5534,13 @@ async function openLive(code, activityId, roster, silent) {
   // che non fa il forced submit, o se closeSession ha avuto errori parziali),
   // completa il forced submit per chi è ancora in_progress.
   if (!isActive) {
-    _retroForcedSubmit(code).catch(e => console.warn('[LiveLearn] retroForcedSubmit:', e.message));
+    _retroForcedSubmit(code)
+      .catch(e => console.warn('[LiveLearn] retroForcedSubmit:', e.message))
+      // Poi allinea le cronologie personali: copre le sessioni chiuse prima
+      // di questa funzione e quelle chiuse dal dashboard.
+      .then(() => _llSyncClosedSession(code))
+      .then(_llNotifySync)
+      .catch(e => console.warn('[LiveLearn] sync cronologie:', e.message));
   }
 
   // Show code screen only for NEW active sessions (not when viewing results, not on silent reload)
@@ -6549,6 +6555,75 @@ async function toggleExcludeQuestion(qi) {
   }
 }
 
+// ── Sessione chiusa: tutte le consegne nelle cronologie personali ─────────
+// Senza questo passaggio i risultati restano nel nodo di raccolta finche'
+// MyClass non li smista, e quelli con il nome scritto male non arrivano mai
+// in StudentApp. Qui, per ogni consegna:
+//  1. se il nome digitato non corrisponde a nessun codice personale ma
+//     somiglia a UN SOLO alunno libero del registro (es. "marcoperra" →
+//     Marco Perra), lo si associa automaticamente (aliasOf + autoAliased);
+//  2. si scrive la voce di cronologia sotto il proprietario giusto.
+// Se la somiglianza e' ambigua non si indovina: resta l'associazione manuale.
+async function _llSyncClosedSession(code) {
+  if (!db || !code || code !== S.liveCode || !S.liveActivity || !S.liveClassId) return null;
+  const esito = { scritte: 0, auto: [], senzaCodice: [] };
+  const [sSnap, rSnap] = await Promise.all([
+    db.ref('livelearn/sessions/' + code).get(),
+    db.ref('livelearn/responses/' + code).get()
+  ]);
+  const sess = sSnap.val() || {};
+  if (sess.status === 'active') return null;
+  const all = rSnap.val() || {};
+  const norm = x => String(x == null ? '' : x)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/['’`´]/g, '').replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/).filter(Boolean).sort().join(' ');
+  const roster = S.liveRoster || [];
+  const consegne = Object.entries(all).filter(([, r]) => r && !r.removed && r.submittedAt);
+
+  // Nomi del registro gia' "occupati": alias esistenti e nomi digitati esatti
+  const occupati = new Set();
+  for (const [k, r] of consegne) {
+    if (r.aliasOf) occupati.add(norm(r.aliasOf));
+    else if (await _llCodeOf(r.name || k)) occupati.add(norm(r.name || k));
+  }
+  for (const [k, r] of consegne) {
+    if (r.aliasOf || !roster.length) continue;
+    const nome = r.name || k;
+    if (await _llCodeOf(nome)) continue;
+    const nn = norm(nome);
+    const cand = roster.filter(n => !occupati.has(norm(n)) && _nameMatchesAny(nn, [norm(n)]));
+    if (cand.length !== 1) continue;
+    try {
+      await db.ref('livelearn/responses/' + code + '/' + k).update({
+        aliasOf: cand[0], regularizedAt: Date.now(), autoAliased: true
+      });
+      r.aliasOf = cand[0];
+      occupati.add(norm(cand[0]));
+      esito.auto.push(nome + ' → ' + cand[0]);
+    } catch(e) { console.warn('[Chiusura] associazione automatica', nome, e.message); }
+  }
+
+  for (const [k, r] of consegne) {
+    try {
+      const res = await _llSyncStudentHistory(code, k, null, { sess, resp: r, onlyIfChanged: true });
+      if (res && res.ok) { if (res.ownerCode) esito.scritte++; else esito.senzaCodice.push(res.owner); }
+    } catch(e) { console.warn('[Chiusura] cronologia', k, e.message); }
+  }
+  console.log('[LiveLearn] cronologie allineate per ' + code + ':', esito);
+  return esito;
+}
+
+function _llNotifySync(esito) {
+  if (!esito) return;
+  if (esito.auto.length) {
+    _llToast('🔗 Associati automaticamente al registro: ' + esito.auto.join(', ') + '. Controlla e, se serve, cambia con 👤→📋.', 'info', 9000);
+  }
+  if (esito.senzaCodice.length) {
+    _llToast('⚠️ Senza codice personale (non visibili in StudentApp): ' + esito.senzaCodice.join(', ') + '. Associali con 👤→📋 o genera i codici.', 'warn', 9000);
+  }
+}
+
 // ── Riallinea la cronologia personale a una consegna ──────────────────────
 // Ricostruisce la voce di cronologia dalla response (punteggi docente ed
 // esclusioni compresi) e la scrive sotto il codice personale del suo vero
@@ -6557,15 +6632,16 @@ async function toggleExcludeQuestion(qi) {
 // e i depositi nel nodo di raccolta, che MyClass smisterebbe sopra con dati
 // vecchi. Senza codice personale si deposita sotto il nome giusto.
 // Gira solo nel pannello docente della sessione aperta (usa S.liveActivity).
-async function _llSyncStudentHistory(code, key, prevAlias) {
+// opts.sess / opts.resp: dati gia' letti (evita riletture nel giro su tutta
+// la sessione). opts.onlyIfChanged: non riscrive una voce gia' identica.
+async function _llSyncStudentHistory(code, key, prevAlias, opts) {
+  opts = opts || {};
   if (!db || !code || !key) return { ok: false, reason: 'parametri mancanti' };
   if (code !== S.liveCode || !S.liveActivity) return { ok: false, reason: 'sessione non aperta' };
-  const [sSnap, rSnap] = await Promise.all([
-    db.ref('livelearn/sessions/' + code).get(),
-    db.ref('livelearn/responses/' + code + '/' + key).get()
+  const [sess, r] = await Promise.all([
+    opts.sess ? opts.sess : db.ref('livelearn/sessions/' + code).get().then(x => x.val() || {}),
+    opts.resp ? opts.resp : db.ref('livelearn/responses/' + code + '/' + key).get().then(x => x.val())
   ]);
-  const sess = sSnap.val() || {};
-  const r = rSnap.val();
   if (!r || r.removed || !r.submittedAt) return { ok: false, reason: 'non consegnato' };
   if (!sess.classId) return { ok: false, reason: 'no_class' };
 
@@ -6617,8 +6693,19 @@ async function _llSyncStudentHistory(code, key, prevAlias) {
   ));
 
   if (ownerCode) {
-    await db.ref('livelearn/history_priv/' + ownerCode + '/sessions/' + code).set(entry);
-    touched.push(ownerCode);
+    const hp = 'livelearn/history_priv/' + ownerCode + '/sessions/' + code;
+    let same = false;
+    if (opts.onlyIfChanged) {
+      try {
+        const cur = (await db.ref(hp).get()).val();
+        same = !!cur && cur.respKey === key && cur.pct === entry.pct && cur.score === entry.score &&
+               cur.maxPts === entry.maxPts && (cur.mode || 'test') === entry.mode;
+      } catch(e) {}
+    }
+    if (!same) {
+      await db.ref(hp).set(entry);
+      touched.push(ownerCode);
+    }
   } else {
     await db.ref('livelearn/inbox/' + code + '/' + _toSafe(owner)).set({
       classId:     sess.classId,
@@ -7459,6 +7546,14 @@ async function closeSession() {
   await _closeSessionAndWipeKeys(S.liveCode);
   S.liveIsActive = false; // nasconde grantRetryBtn nel rendering
   if (S.liveListener) { S.liveListener(); S.liveListener = null; }
+  // Risultati subito nelle cronologie personali (StudentApp), con
+  // associazione automatica dei nomi scritti male ma riconoscibili.
+  try {
+    _showAiProcessingOverlay('⏳ Aggiornamento cronologie degli alunni…');
+    _llNotifySync(await _llSyncClosedSession(S.liveCode));
+  } catch(e) {
+    console.warn('[LiveLearn] closeSession sync cronologie (non bloccante):', e.message);
+  } finally { _hideAiProcessingOverlay(); }
   loadDashboard();
   showView('teacher-dashboard');
 }
