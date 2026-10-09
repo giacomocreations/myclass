@@ -3340,13 +3340,23 @@ function dismissInstall(){
   localStorage.setItem(_INSTALL_KEY, '1');
 }
 
-// ── SERVICE WORKER + BANNER AGGIORNAMENTO ─────────────────────────────────
+// ── SERVICE WORKER + AGGIORNAMENTO AUTOMATICO ─────────────────────────────
+// Prima l'aggiornamento chiedeva di premere "Ricarica", e chi teneva l'app
+// aperta in background per giorni non riceveva le modifiche alla pagina
+// (il controllo guardava solo sw.js). Ora:
+//  • nuova versione del service worker → si applica da sola;
+//  • nuova versione di StudentApp.html (ETag/Last-Modified del server,
+//    controllati al rientro nell'app e ogni 10 minuti) → si ricarica da sola;
+//  • mai mentre l'alunno sta scrivendo: si riprova appena il testo è vuoto.
 let _newSWWaiting = null;
+let _swRefreshing = false;
+let _updPending = false, _updTimer = null;
+const _hadSWController = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
 
 function _setupSWUpdateListener(registration){
   if(registration.waiting){
     _newSWWaiting = registration.waiting;
-    _showUpdateBanner();
+    _requestAutoUpdate();
   }
   registration.addEventListener('updatefound', () => {
     const newSW = registration.installing;
@@ -3354,47 +3364,76 @@ function _setupSWUpdateListener(registration){
     newSW.addEventListener('statechange', () => {
       if(newSW.state === 'installed' && navigator.serviceWorker.controller){
         _newSWWaiting = newSW;
-        _showUpdateBanner();
+        _requestAutoUpdate();
       }
     });
   });
 }
 
-function _showUpdateBanner(){
-  if(document.getElementById('update-banner')) return;
-  const banner = document.createElement('div');
-  banner.id = 'update-banner';
-  banner.style.cssText = [
-    'position:fixed','bottom:calc(70px + env(safe-area-inset-bottom,0px))',
-    'left:50%','transform:translateX(-50%)',
-    'width:calc(100% - 32px)','max-width:398px',
-    'background:#fff','border:1.5px solid #534AB7','border-radius:16px',
-    'padding:14px 16px','z-index:9998','box-shadow:0 6px 24px rgba(83,74,183,0.18)',
-    'display:flex','align-items:center','gap:12px'
-  ].join(';');
-  banner.innerHTML = `
-    <span style="font-size:22px">🔄</span>
-    <div style="flex:1">
-      <div style="font-size:13px;font-weight:700;color:#1e1b4b">Aggiornamento disponibile</div>
-      <div style="font-size:11px;color:#666;margin-top:2px">Nuova versione dell'app pronta.</div>
-    </div>
-    <button onclick="_applyUpdate()" style="background:#534AB7;color:#fff;border:none;border-radius:10px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">
-      Ricarica
-    </button>`;
-  document.body.appendChild(banner);
+// Si puo' ricaricare senza far perdere niente all'alunno?
+function _isSafeToReload(){
+  const ct = document.getElementById('compose-text');
+  if(ct && ct.value.trim()) return false;                 // messaggio in scrittura
+  const ae = document.activeElement;
+  if(ae && (ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && !/^(button|submit|checkbox|radio)$/i.test(ae.type||''))) && String(ae.value||'').trim()) return false;
+  return true;
 }
 
-function _applyUpdate(){
-  if(_newSWWaiting) _newSWWaiting.postMessage({type:'SKIP_WAITING'});
-  window.location.reload();
+function _requestAutoUpdate(){
+  _updPending = true;
+  if(_newSWWaiting){ try { _newSWWaiting.postMessage({type:'SKIP_WAITING'}); } catch(e) {} }
+  _tryAutoReload();
 }
 
-let _swRefreshing = false;
+function _tryAutoReload(){
+  if(!_updPending || _swRefreshing) return;
+  clearTimeout(_updTimer);
+  if(!_isSafeToReload()){ _updTimer = setTimeout(_tryAutoReload, 20000); return; }
+  _swRefreshing = true;
+  if(document.visibilityState === 'visible'){
+    try { _showInAppToast('🔄 Aggiornamento dell\'app…', 'Un attimo, sto caricando la nuova versione.', 'ok'); } catch(e) {}
+    setTimeout(() => window.location.reload(), 1500);
+  } else {
+    window.location.reload();
+  }
+}
+
+// Compatibilita' con eventuali banner rimasti aperti
+function _applyUpdate(){ _requestAutoUpdate(); }
+
+// ── Versione della pagina sul server ──
+let _pageSig = null, _pageSigAt = 0;
+async function _fetchPageSig(){
+  const r = await fetch(location.pathname + '?vcheck=' + Date.now(), { method:'HEAD', cache:'no-store' });
+  if(!r.ok) return null;
+  return r.headers.get('etag') || r.headers.get('last-modified') || null;
+}
+async function _checkPageVersion(force){
+  if(!navigator.onLine) return;
+  if(!force && Date.now() - _pageSigAt < 60 * 1000) return; // al massimo una volta al minuto
+  _pageSigAt = Date.now();
+  try {
+    const sig = await _fetchPageSig();
+    if(!sig) return;
+    if(_pageSig === null){ _pageSig = sig; return; }
+    if(sig !== _pageSig){ console.log('[Update] nuova versione di StudentApp sul server'); _requestAutoUpdate(); }
+  } catch(e) { /* rete assente: si riprova al prossimo giro */ }
+}
+window.addEventListener('load', () => { _checkPageVersion(true); });
+setInterval(() => _checkPageVersion(true), 10 * 60 * 1000);
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState !== 'visible') { if(_updPending) _tryAutoReload(); return; }
+  _checkPageVersion(false);
+  if(_updPending) _tryAutoReload();
+  navigator.serviceWorker?.getRegistration?.().then(reg => reg && reg.update()).catch(() => {});
+});
+
 if(navigator.serviceWorker){
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if(_swRefreshing) return;
-    _swRefreshing = true;
-    window.location.reload();
+    // Primo avvio in assoluto: il SW prende il controllo, non c'e' nulla da aggiornare
+    if(!_hadSWController) return;
+    _updPending = true;
+    _tryAutoReload();
   });
   navigator.serviceWorker.addEventListener('message', event => {
     if(event.data?.type === 'NOTIFICATION_CLICK'){
@@ -3412,7 +3451,7 @@ if('serviceWorker' in navigator){
       .then(reg => {
         console.log('SW registrato:', reg.scope);
         _setupSWUpdateListener(reg);
-        setInterval(() => reg.update(), 60 * 60 * 1000); // controlla aggiornamenti ogni ora
+        setInterval(() => reg.update(), 30 * 60 * 1000); // controlla aggiornamenti ogni 30 minuti
       })
       .catch(err => console.warn('SW non registrato:', err));
   });
