@@ -7380,6 +7380,20 @@ function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedbac
       return `Fr.${si+1}: <strong>${esc(v||'—')}</strong> <span class="${ok?'correct-mark':'wrong-mark'}">${v?(ok?'✓':`✗`):''}</span>`;
     }).join('<br>') || '<em style="color:#aaa">—</em>';
   }
+  // Categorizzazione (anche dentro un listening): elemento → categoria
+  const _catQ = q.type === 'categorization' ? q
+    : (q.type === 'listening' && (q.subtype || q.question?.type) === 'categorization' ? (q.question || {}) : null);
+  if (_catQ) {
+    const hasCat = Array.isArray(answer) ? answer.some(v => v != null) : !!(answer && typeof answer === 'object');
+    body = hasCat ? _catAnswerText(_catQ, answer, true) : '<em style="color:#aaa">—</em>';
+    const rC = evaluateAnswer(q, answer);
+    const qPtsC = q.points || 1;
+    scoreTag = hasCat ? (rC.correct
+      ? `<span style="font-size:11px;font-weight:800;color:var(--success);background:var(--success-light);padding:2px 8px;border-radius:10px;">✓ ${qPtsC} pt</span>`
+      : ((rC.correctCount || 0) > 0
+        ? `<span style="font-size:11px;font-weight:800;color:#92400e;background:var(--warning-light);padding:2px 8px;border-radius:10px;">🔶 ${rC.correctCount}/${rC.totalCount} elementi — ${rC.earnedPoints}/${qPtsC} pt</span>`
+        : `<span style="font-size:11px;font-weight:800;color:var(--danger);background:var(--danger-light);padding:2px 8px;border-radius:10px;">✗ 0/${qPtsC} pt</span>`)) : '';
+  }
   // fill-blanks case (stesso rendering di cloze, con alternative pipe)
   if (q.type === 'fill-blanks') {
     const arr = Array.isArray(answer) ? answer : [];
@@ -12222,9 +12236,11 @@ async function exportStudentPDF(studentName) {
       if (arr) return arr.join(' / ');
     }
     if (q.type === 'reorder') { const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? fbArr(a) : null); return arr ? arr.join(' | ') : String(a); }
+    if (q.type === 'categorization') return _catAnswerText(q, a, true);
     if (q.type === 'listening') {
       const sub = q.subtype||q.question?.type;
       if (sub==='multiple-choice'&&typeof a==='number') return (q.question?.options||[])[a]||'—';
+      if (sub==='categorization') return _catAnswerText(q.question||{}, a, true);
       const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? fbArr(a) : null);
       if (arr) return arr.join(' / ');
       return String(a);
@@ -13128,6 +13144,8 @@ async function exportAllPDFCorretto() {
         else if (q.type === 'cloze' || q.type === 'fill-blanks') ans = Array.isArray(a) ? a.map(x=>esc(String(x))).join(' / ') : esc(String(a));
         else if (q.type === 'free-response') ans = esc(String(a).substring(0, 100));
         else if (q.type === 'matching') { const left=q.left||[],right=q.right||[]; ans = Array.isArray(a)?left.map((l,li)=>esc(l)+' → '+esc(right[a[li]]||'?')).join(' | '):'—'; }
+        else if (q.type === 'categorization') ans = _catAnswerText(q, a, true);
+        else if (q.type === 'listening' && (q.subtype || q.question?.type) === 'categorization') ans = _catAnswerText(q.question || {}, a, true);
         else if (Array.isArray(a)) ans = a.map(x => esc(String(x))).join(' / ');
         else if (a && typeof a === 'object') ans = Object.values(a).map(x => esc(String(x))).join(' / ');
         else ans = esc(String(a));
@@ -18617,6 +18635,28 @@ function _qdRenderDetail(q, i, answer, opts) {
   return h;
 }
 
+// ── Categorizzazione leggibile ────────────────────────────────────────────
+// La risposta e' salvata come indici di categoria per elemento ([0,1,1,0]):
+// stampata cosi' l'alunno (e il docente) vedevano solo "0,1,2". Qui diventa
+// "elemento → Categoria", con ✓/✗ e la categoria giusta quando e' sbagliata.
+// html=false: testo semplice per i PDF compatti.
+function _catAnswerText(qc, a, html) {
+  const items = qc.items || [], cats = qc.categories || [], corr = qc.answers || [];
+  const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? fbArr(a) : []);
+  const e = html ? esc : (x => String(x == null ? '' : x));
+  const righe = items.map((item, ii) => {
+    const g = arr[ii];
+    const placed = g !== null && g !== undefined && g !== '';
+    const gName = placed ? (cats[Number(g)] != null ? cats[Number(g)] : '?') : null;
+    const ok = placed && Number(g) === Number(corr[ii]);
+    const cName = cats[Number(corr[ii])] != null ? cats[Number(corr[ii])] : '?';
+    if (!html) return e(item) + ' → ' + (placed ? e(gName) : '—') + (corr.length ? (ok ? ' ✓' : ' ✗ (' + e(cName) + ')') : '');
+    return e(item) + ' → ' + (placed ? '<strong>' + e(gName) + '</strong>' : '<em style="color:var(--muted);">non piazzato</em>') +
+      (corr.length ? (ok ? ' <span class="correct-mark">✓</span>' : ' <span class="wrong-mark">✗ → <em>' + e(cName) + '</em></span>') : '');
+  });
+  return righe.join(html ? '<br>' : ' | ');
+}
+
 function _qdFormatAnswer(q, a) {
   if (a === undefined || a === null || a === '') return '<em style="color:var(--muted);">— Nessuna risposta —</em>';
   if (q.type === 'multiple-choice') {
@@ -18626,6 +18666,7 @@ function _qdFormatAnswer(q, a) {
     return Array.isArray(a) ? a.map((v, i) => '<strong>Sp.' + (i+1) + ':</strong> ' + (v ? esc(v) : '<em style="color:var(--muted);">vuoto</em>')).join(' · ') : esc(String(a));
   }
   if (q.type === 'free-response') return '<em>"' + esc(String(a)) + '"</em>';
+  if (q.type === 'categorization') return _catAnswerText(q, a, true);
   if (q.type === 'matching') {
     if (!Array.isArray(a) || !q.left || !q.right) return esc(String(a));
     return a.map((ri, li) => esc(q.left[li] || '?') + ' → ' + esc(q.right[ri] || '?')).join('<br>');
@@ -18640,9 +18681,7 @@ function _qdFormatAnswer(q, a) {
     if (sub === 'matching' && Array.isArray(a) && inner.left && inner.right) return a.map((ri, li) => esc(inner.left[li] || '?') + ' → ' + esc(inner.right[ri] || '?')).join('<br>');
     if (sub === 'drag-drop' && Array.isArray(a)) return a.map(v => v ? esc(v) : '<em style="color:var(--muted);">vuoto</em>').join(' / ');
     if (sub === 'reorder' && Array.isArray(a)) return a.map((s, i) => '<strong>Frase ' + (i+1) + ':</strong> ' + esc(s)).join('<br>');
-    if (sub === 'categorization' && Array.isArray(a) && inner.items) {
-      return inner.items.map((item, ii) => esc(item) + ' → ' + (a[ii] != null ? esc((inner.categories||[])[a[ii]] || '?') : '<em style="color:var(--muted);">non piazzato</em>')).join('<br>');
-    }
+    if (sub === 'categorization' && inner.items) return _catAnswerText(inner, a, true);
     return esc(String(a));
   }
   return esc(String(a));

@@ -2804,6 +2804,23 @@ function _fbArr(v) {
   return [];
 }
 
+// Categorizzazione: la risposta e' salvata come indici di categoria per
+// elemento; mostrata cosi' l'alunno leggeva solo "0,1,2". Qui diventa
+// "elemento → Categoria", con ✓/✗ e la categoria giusta se sbagliata.
+function _catAnswerText(qc, a) {
+  const items = qc.items || [], cats = qc.categories || [], corr = qc.answers || [];
+  const arr = _llFbArr(a);
+  return items.map((item, ii) => {
+    const g = arr[ii];
+    const placed = g !== null && g !== undefined && g !== '';
+    const ok = placed && Number(g) === Number(corr[ii]);
+    const gName = placed ? (cats[Number(g)] != null ? cats[Number(g)] : '?') : null;
+    const cName = cats[Number(corr[ii])] != null ? cats[Number(corr[ii])] : '?';
+    return esc(item) + ' → ' + (placed ? '<strong>' + esc(gName) + '</strong>' : '<em>non piazzato</em>') +
+      (corr.length ? (ok ? ' ✓' : ' ✗ <em>(' + esc(cName) + ')</em>') : '');
+  }).join('<br>');
+}
+
 function _answerText(q, a) {
   if (a === null || a === undefined) return '—';
   const type = q.type;
@@ -2823,9 +2840,11 @@ function _answerText(q, a) {
     const arr = _fbArr(a);
     return arr.length ? arr.map(x=>esc(String(x))).join(' → ') : '—';
   }
+  if (type === 'categorization') return _catAnswerText(q, a);
   if (type === 'listening') {
     const sub = q.subtype || subQ.type;
     if (sub === 'multiple-choice' && typeof a === 'number') return esc(String((subQ.options||[])[a]||'?'));
+    if (sub === 'categorization') return _catAnswerText(subQ, a);
     const arr = _fbArr(a);
     if (arr.length) return arr.map(x=>esc(String(x))).join(' / ');
     return esc(String(a));
