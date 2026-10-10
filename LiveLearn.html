@@ -426,6 +426,20 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--primary); 
 .cloze-text .blank-input::placeholder { color: #9ca3af; font-weight: 700; font-size: 13px; }
 .blank-input { border: 2.5px solid var(--primary); border-radius: 8px; outline: none; font-size: 16px; min-width: 60px; max-width: 520px; text-align: center; background: #fffbe6; color: var(--text); font-family: inherit; padding: 6px 10px; margin: 0 4px; font-weight: 800; box-shadow: 0 2px 6px rgba(108,71,255,0.15); transition: border-color 0.15s, box-shadow 0.15s; vertical-align: middle; }
 .blank-input:focus { background: #fff; border-color: #4c2fc0; box-shadow: 0 0 0 3px rgba(108,71,255,0.25); }
+/* Scelta dentro la frase [[a|b|c]]: chip in linea col testo, vanno a capo su tablet */
+.ic-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; margin: 3px 4px; padding: 3px 4px; border: 1.5px dashed #c4b5fd; border-radius: 14px; background: #f5f3ff; vertical-align: middle; line-height: 1.2; }
+.ic-group:has(.ic-opt.selected) { border-style: solid; border-color: var(--primary); background: #ede9ff; }
+.ic-opt { font-family: inherit; font-size: 15px; font-weight: 700; line-height: 1.2; color: #4c2fc0; background: #fff; border: 2px solid #c4b5fd; border-radius: 999px; padding: 6px 14px; min-height: 36px; cursor: pointer; text-align: center; white-space: normal; overflow-wrap: anywhere; touch-action: manipulation; -webkit-tap-highlight-color: transparent; transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s; }
+.ic-opt:hover { border-color: var(--primary); background: #faf8ff; }
+.ic-opt:active { transform: scale(0.96); }
+.ic-opt:focus-visible { outline: 3px solid rgba(108,71,255,0.35); outline-offset: 2px; }
+.ic-opt.selected { background: var(--primary); border-color: var(--primary); color: #fff; box-shadow: 0 2px 8px rgba(108,71,255,0.35); }
+.ic-opt.selected::before { content: '✓ '; }
+.ic-opt:disabled { cursor: not-allowed; opacity: 0.65; }
+.ic-opt.selected:disabled { opacity: 0.9; }
+.vl1-mode .ic-opt { font-size: 120% !important; padding: 8px 16px; min-height: 44px; }
+.vl2-mode .ic-opt { font-size: 150% !important; padding: 10px 20px; min-height: 52px; }
+.vl2-mode .ic-group { gap: 10px; padding: 5px 6px; }
 .cloze-instruction { display: flex; align-items: center; gap: 10px; background: linear-gradient(135deg, #fef3c7, #fde68a); border: 2px solid #f59e0b; border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; font-weight: 700; color: #78350f; line-height: 1.4; }
 .cloze-instruction .ci-icon { font-size: 20px; flex-shrink: 0; }
 .word-bank { display: flex; flex-wrap: wrap; gap: 8px; background: #ede9ff; border: 2px solid #6c47ff; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
@@ -2998,7 +3012,7 @@ async function generateTopicTag() {
   try {
     const topicSummary = S.questions.slice(0, 15).map((q, i) => {
       const t = q.tag ? '[' + q.tag + '] ' : '';
-      return (i+1) + '. ' + t + ((q.text || q.question?.text || '').substring(0, 60));
+      return (i+1) + '. ' + t + _qText(q).substring(0, 60);
     }).join('\n');
     const prompt = `Sei un insegnante di inglese. Guarda queste domande di un test scolastico:\n\n${topicSummary}\n\nScrivi UN SOLO tag argomento conciso (2-5 parole max, in italiano, es. "Past Simple", "Present Perfect", "Descrizione stanza", "Vocabolario casa", "Listening Unit 4"). Rispondi SOLO con il tag, niente altro.`;
     const res = await fetch(_geminiUrl(apiKey), {
@@ -3074,7 +3088,7 @@ function renderAddForm(type) {
   } else if (type === 'cloze') {
     el.innerHTML = `
       <div class="form-group">
-        <label>Testo (usa ___ per ogni spazio)</label>
+        <label>Testo (usa ___ per ogni spazio — oppure [[a|b|c]] per far cliccare una scelta)</label>
         <textarea id="qf-text" rows="4" placeholder="Yesterday I ___ to school and I ___ my friend."></textarea>
       </div>
       <div class="form-group">
@@ -3194,7 +3208,7 @@ function renderAddForm(type) {
       <div style="background:#e8fdf5;border-radius:10px;padding:10px 14px;margin-bottom:12px;border:1.5px solid #16a37f;font-size:12px;color:#065f46;">
         <strong>Fill in the Blanks</strong> — Lo studente scrive le parole da solo, senza bank. La correzione è tollerante (ignora maiuscole, spazi extra, punteggiatura).
       </div>
-      <div class="form-group"><label>Testo (usa ___ per ogni spazio)</label>
+      <div class="form-group"><label>Testo (usa ___ per ogni spazio — oppure [[a|b|c]] per far cliccare una scelta)</label>
         <textarea id="qf-text" rows="4" placeholder="Yesterday I ___ to school. I ___ my friend near the entrance."></textarea></div>
       <div class="form-group"><label>Risposte corrette (una per riga, nell'ordine degli spazi)</label>
         <textarea id="qf-answers" rows="3" placeholder="went\nmet"></textarea></div>
@@ -3423,6 +3437,7 @@ Formats:
 - {"type":"listening","text":"Listening\nAscolta e abbina.","ttsText":"","subtype":"matching","question":{"type":"matching","text":"Match","left":["Seb's house","Zara's bedroom"],"right":["small","in the attic"]},"points":10}
 - {"type":"listening","text":"Listening\nAscolta e scegli.","ttsText":"","subtype":"multiple-choice","question":{"type":"multiple-choice","text":"Where is Zara's bedroom?","options":["ground floor","attic","basement","garden"],"correct":1},"points":10}
 
+${_IC_AI_RULE}
 ALTERNATIVE ANSWERS RULE (cloze & fill-blanks): ogni risposta in "answers" può contenere più alternative separate da "|" (pipe) quando lo spazio ammette davvero più risposte corrette equivalenti (sinonimi, forme contratte/estese come "he is|he's", varianti grammaticali valide come "have been|have gone"). NON forzare alternative quando lo spazio ha un'unica risposta naturale.
 
 Return ONLY the JSON array starting with [ and ending with ].`;
@@ -3510,6 +3525,7 @@ Formats:
 
 ⚠️ CRITICAL RULE for fill-blanks: "text" MUST always contain ___ (three underscores) in the sentence to complete. Structure: first line = bold instruction, second line (after \n) = sentence with ___. WRONG: "**Complete with can.**" — CORRECT: "**Complete with can.**\nI ___ speak English."
 
+${_IC_AI_RULE}
 ALTERNATIVE ANSWERS (cloze & fill-blanks): in ogni elemento di "answers" puoi mettere più alternative corrette separate da "|" (pipe) quando lo spazio ammette più risposte equivalenti (sinonimi, contratte/estese, varianti grammaticali). Solo quando ha senso linguisticamente — non forzare alternative artificiali.`;
 
   try {
@@ -3547,11 +3563,11 @@ function buildListeningInnerFormHTML(sub, inner) {
   const fg = '<div class="form-group">';
   inner = inner || {};
   if (sub === 'fill-blanks') {
-    return fg+'<label>Testo con spazi numerati (usa ___ per ogni spazio)</label><textarea id="qf-text" rows="5" placeholder="Esempio: Seb\'s house is small.\n1. In Zara\'s house there are ___ floors.\n2. Zara\'s bedroom is in the ___.">'+esc(inner.text||'')+'</textarea></div>'+
+    return fg+'<label>Testo con spazi numerati (usa ___ per ogni spazio — oppure [[a|b|c]] per far cliccare una scelta)</label><textarea id="qf-text" rows="5" placeholder="Esempio: Seb\'s house is small.\n1. In Zara\'s house there are ___ floors.\n2. Zara\'s bedroom is in the ___.">'+esc(inner.text||'')+'</textarea></div>'+
       fg+'<label>Risposte corrette (una per riga, in ordine)</label><textarea id="qf-answers" rows="4" placeholder="two\nattic">'+((inner.answers||[]).join('\n'))+'</textarea></div>';
   }
   if (sub === 'cloze') {
-    return fg+'<label>Testo con spazi (usa ___ per ogni blank)</label><textarea id="qf-text" rows="4" placeholder="Ben\'s dad has a problem with his ___. He doesn\'t want to watch a ___.">'+esc(inner.text||'')+'</textarea></div>'+
+    return fg+'<label>Testo con spazi (usa ___ per ogni blank — oppure [[a|b|c]] per far cliccare una scelta)</label><textarea id="qf-text" rows="4" placeholder="Ben\'s dad has a problem with his ___. He doesn\'t want to watch a ___.">'+esc(inner.text||'')+'</textarea></div>'+
       fg+'<label>Risposte corrette (una per riga) <span style="font-weight:400;color:var(--muted);font-size:11px;">— usa <code style="background:#f0ede8;padding:1px 5px;border-radius:3px;">|</code> per alternative (es. <code>go|goes</code>)</span></label><textarea id="qf-answers" rows="3" placeholder="laptop\nhorror film|horror movie">'+((inner.answers||[]).join('\n'))+'</textarea></div>';
   }
   if (sub === 'multiple-choice') {
@@ -3711,6 +3727,7 @@ async function addQuestion() {
            ttsRate: parseFloat(document.getElementById('qf-tts-rate')?.value) || 1,
            subtype, question: inner, points: pts };
   }
+  if (!_qBlanksOK(q)) return;
 
   // Read image if provided (file upload oppure URL da ricerca immagini)
   const _imgState = getImageFieldState();
@@ -4282,12 +4299,12 @@ renderQList = function() {
 function qPreview(q) {
   const imgTag = q.image ? '🖼️ ' : '';
   if (q.type === 'multiple-choice') return imgTag + esc(q.text) + (q.options ? ' → [' + q.options.map(esc).join(', ') + ']' : '');
-  if (q.type === 'cloze') return imgTag + esc(q.text);
+  if (q.type === 'cloze') return imgTag + esc(_qText(q));
   if (q.type === 'matching') return imgTag + 'Coppie: ' + (q.left || []).map(esc).join(', ');
   if (q.type === 'free-response') return imgTag + esc(q.text);
-  if (q.type === 'listening') return imgTag + '🎧 ' + (q.question?.text ? esc(q.question.text) : 'Listening');
+  if (q.type === 'listening') return imgTag + '🎧 ' + (q.question?.text ? esc(_icText(q.question.text, q)) : 'Listening');
   if (q.type === 'drag-drop') return imgTag + '🎯 ' + (q.sentences||[]).length + ' frase/i · parole: ' + (q.words||[]).join(', ');
-  if (q.type === 'fill-blanks') return imgTag + '📝 ' + esc(q.text).substring(0,60) + (q.text&&q.text.length>60?'…':'');
+  if (q.type === 'fill-blanks') { const t = _qText(q); return imgTag + '📝 ' + esc(t).substring(0,60) + (t.length>60?'…':''); }
   if (q.type === 'reorder') return imgTag + '🔀 ' + (q.sentences||[]).length + ' frase/i da riordinare';
   return '';
 }
@@ -4451,7 +4468,8 @@ async function _aiModifySingleQuestion(origQ, userHint, versionContext) {
     '- La consegna va in grassetto: **testo consegna**\n' +
     '- fill-blanks: il campo "text" DEVE contenere ___ nella frase da completare.\n' +
     '- matching: left[i] e right[i] sono la coppia corretta (non pre-shufflare right).\n' +
-    '- cloze/fill-blanks: usa | per alternative (es. "went|walked") solo se linguisticamente sensato.\n\n' +
+    '- cloze/fill-blanks: usa | per alternative (es. "went|walked") solo se linguisticamente sensato.\n' +
+    '- ' + _IC_AI_RULE + '\n\n' +
     'FORMATO ATTESO (sostituisci [CONSEGNA IDENTICA] con: ' + (consegna || 'la consegna originale') + '):\n' +
     (formatExamples[qType] || '{"type":"' + qType + '","text":"...","points":' + pts + '}') + '\n\n' +
     'Rispondi SOLO con un array JSON con UNA domanda: [{...}]\nNessun markdown, nessuna spiegazione.';
@@ -4663,7 +4681,7 @@ function getEditFormHTML(q, forcedType) {
       '<div id="qf-image-field-container"></div>'+
       fg+'<label>⭐ Punti</label><input type="number" id="qf-points" value="'+(q.points||1)+'" min="0.5" max="100" step="0.5" style="width:80px;"></div>';
   } else if (type === 'cloze') {
-    body = fg+'<label>Testo (usa ___ per ogni spazio)</label><textarea id="qf-text" rows="4">'+esc(q.text||'')+'</textarea></div>'+
+    body = fg+'<label>Testo (usa ___ per ogni spazio — oppure [[a|b|c]] per far cliccare una scelta)</label><textarea id="qf-text" rows="4">'+esc(q.text||'')+'</textarea></div>'+
       fg+'<label>Risposte corrette (una per riga) <span style="font-weight:400;color:var(--muted);font-size:11px;">— usa <code style="background:#f0ede8;padding:1px 5px;border-radius:3px;">|</code> per alternative accettate (es. <code style="background:#f0ede8;padding:1px 5px;border-radius:3px;">go|goes|is going</code>)</span></label><textarea id="qf-answers" rows="3" placeholder="soluzione1|alt1|alt2&#10;soluzione2">'+(q.answers||[]).join('\n')+'</textarea></div>'+
       fg+'<label>💡 Suggerimento (opzionale)</label><input type="text" id="qf-hint" value="'+esc(q.hint||'')+'"></div>'+
       fg+'<label style="font-size:12px;cursor:pointer;"><input type="checkbox" id="qf-hide-instruction"'+(q.hideInstruction?' checked':'')+'> Nascondi banner istruzione ("Scrivi SOLO le parole…")</label></div>'+
@@ -4736,7 +4754,7 @@ function getEditFormHTML(q, forcedType) {
       '<div id="qf-image-field-container"></div>'+
       fg+'<label>⭐ Punti</label><input type="number" id="qf-points" value="'+(q.points||1)+'" min="0.5" max="100" step="0.5" style="width:80px;"></div>';
   } else if (type === 'fill-blanks') {
-    body = fg+'<label>Testo (usa ___ per ogni spazio)</label><textarea id="qf-text" rows="4">'+esc(q.text||'')+'</textarea></div>'+
+    body = fg+'<label>Testo (usa ___ per ogni spazio — oppure [[a|b|c]] per far cliccare una scelta)</label><textarea id="qf-text" rows="4">'+esc(q.text||'')+'</textarea></div>'+
       fg+'<label>Risposte corrette (una per riga) <span style="font-weight:400;color:var(--muted);font-size:11px;">— usa <code style="background:#f0ede8;padding:1px 5px;border-radius:3px;">|</code> per alternative accettate (es. <code style="background:#f0ede8;padding:1px 5px;border-radius:3px;">go|goes|is going</code>)</span></label><textarea id="qf-answers" rows="3" placeholder="soluzione1|alt1|alt2&#10;soluzione2">'+(q.answers||[]).join('\n')+'</textarea></div>'+
       fg+'<label>💡 Suggerimento (opzionale)</label><input type="text" id="qf-hint" value="'+esc(q.hint||'')+'"></div>'+
       fg+'<label style="font-size:12px;cursor:pointer;"><input type="checkbox" id="qf-hide-instruction"'+(q.hideInstruction?' checked':'')+'> Nascondi banner istruzione ("Scrivi SOLO le parole…")</label></div>'+
@@ -4910,6 +4928,7 @@ async function buildQFromCurrentForm(type) {
     if (answers.some(a => isNaN(a) || a < 0 || a >= categories.length)) return alert('Risposte non valide.'), null;
     q = { type, text, categories, items, answers, points: pts };
   }
+  if (!_qBlanksOK(q)) return null;
   return q;
 }
 
@@ -5089,7 +5108,7 @@ function closeStartModal() {
 async function _generateRevisionSheet(apiKey, questions, sessionCode) {
   const topicSummary = questions.slice(0, 20).map((q, i) => {
     const tag = q.tag ? ' [' + q.tag + ']' : '';
-    const text = (q.text || q.question?.text || '').substring(0, 60);
+    const text = _qText(q).substring(0, 60);
     return (i+1) + '. ' + (q.type || '?') + tag + ': "' + text + '"';
   }).join('\n');
 
@@ -7219,7 +7238,7 @@ function renderStudentResultsTeacher(name, response) {
                     : '');
                 return '<div onclick="openQuestionDetailRecoveryTeacher(' + hi + ',' + ri + ')" style="padding:10px 14px;border-radius:10px;border:2px solid ' + bdr + ';background:' + bg + ';margin-bottom:8px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;" title="Clicca per vedere la domanda completa">' +
                   '<div style="flex:1;min-width:0;">' +
-                    '<div style="font-size:11px;font-weight:800;color:#888;margin-bottom:2px;">' + icon + ' Dom.' + (ri+1) + ' — ' + esc((rq.text||rq.question?.text||'').substring(0,70)) + '</div>' +
+                    '<div style="font-size:11px;font-weight:800;color:#888;margin-bottom:2px;">' + icon + ' Dom.' + (ri+1) + ' — ' + esc(_qText(rq, ans).substring(0,70)) + '</div>' +
                     '<div style="font-size:12px;color:#555;">Risposta: <strong>' + esc(String(aTxt).substring(0,60)) + '</strong></div>' +
                   '</div>' +
                   '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">' + scoreTag + '<span style="font-size:14px;">' + (hasAns ? '🔍' : '…') + '</span></div>' +
@@ -7474,6 +7493,14 @@ function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedbac
       const markHtml = given ? (ok ? '✓' : '✗ → <em>' + esc(altsText) + '</em>') : '';
       return '<span style="display:inline-block;margin:3px 0;">Spazio ' + (bi+1) + ': <strong>' + givenHtml + '</strong> <span class="' + (ok?'correct-mark':'wrong-mark') + '">' + markHtml + '</span></span>';
     }).join('<br>');
+  }
+
+  // Scelta dentro la frase: mostra la frase con le opzioni scelte (non il segnaposto [[...]])
+  const _icSrc = (q.type === 'cloze' || q.type === 'fill-blanks') ? q.text
+    : (q.type === 'listening' && ['cloze','fill-blanks'].includes(q.subtype || q.question?.type) ? (q.question?.text || '') : '');
+  if (_icSrc && _hasInlineChoice(_icSrc) && answer != null) {
+    body = '<div style="font-size:13px;line-height:1.7;margin-bottom:6px;padding:6px 10px;background:var(--surface2);border-radius:8px;">' +
+      richText(_icText(_icSrc, q, answer, v => '**' + v + '**')) + '</div>' + body;
   }
 
   // Score override row — sempre visibile al docente
@@ -10375,6 +10402,148 @@ function richText(s) {
   return h;
 }
 
+// ── Scelta dentro la frase: [[Chloe|Noah|Lisa]] ──────────────────────
+// Nei testi cloze / fill-blanks (anche dentro un listening) ogni ___ e ogni
+// [[a|b|c]] sono uno "spazio", numerati insieme nell'ordine del testo.
+// Lo spazio [[...]] diventa un gruppo di pulsanti con un input nascosto
+// .blank-input id="blank-N": salvataggio e correzione restano quelli del cloze.
+const _BLANK_RE = /___|\[\[([^\[\]\n]*\|[^\[\]\n]*)\]\]/g;
+function _countBlanks(text) { return (String(text || '').match(_BLANK_RE) || []).length; }
+// Riga per i prompt AI: così la sintassi [[a|b|c]] sopravvive alle rigenerazioni
+const _IC_AI_RULE = 'SCELTA DENTRO LA FRASE (cloze/fill-blanks, anche dentro un listening): nel testo [[a|b|c]] è uno spazio in cui lo studente clicca una delle opzioni (es. "[[Chloe|Noah|Lisa]] loves tennis."). Conta come uno spazio, esattamente come ___, nello stesso ordine del testo; answers[i] contiene il testo dell\'opzione giusta, che deve essere una delle opzioni. Se l\'originale usa [[...]] MANTIENI questa sintassi (doppie parentesi quadre, opzioni separate da |), anche cambiando frasi e opzioni; non trasformarla in ___ e non trasformare gli ___ in [[...]].';
+function _hasInlineChoice(text) { return /\[\[[^\[\]\n]*\|[^\[\]\n]*\]\]/.test(String(text || '')); }
+function _icOptions(inner) { return String(inner || '').split('|').map(s => s.trim()).filter(Boolean); }
+function _icNorm(s) { return String(s == null ? '' : s).trim().toLowerCase(); }
+
+// HTML di uno spazio: input di testo (___) oppure gruppo di pulsanti ([[...]])
+function _blankHTML(n, inner) {
+  if (inner === undefined) {
+    return '<input class="blank-input" id="blank-' + n + '" type="text" autocomplete="off" placeholder="' + (n+1) + '" oninput="saveCurrentAnswer();pushProgress();updateNavButtons();autoResizeBlank(this)">';
+  }
+  return '<span class="ic-group" data-blank="' + n + '" role="group" aria-label="Spazio ' + (n+1) + '">' +
+    _icOptions(inner).map(o => '<button type="button" class="ic-opt" aria-pressed="false" data-val="' + esc(o) + '" onclick="pickInlineChoice(this)">' + esc(o) + '</button>').join('') +
+    '<input type="hidden" class="blank-input" id="blank-' + n + '" value=""></span>';
+}
+
+// Disegna il testo con gli spazi: fmt = richText oppure esc. I segnaposto
+// vengono protetti prima della formattazione (| e [ ] non vanno toccati).
+function _renderBlanks(text, fmt) {
+  const parts = [];
+  const tok = String(text || '').replace(_BLANK_RE, (m, inner) => { parts.push(inner); return '' + (parts.length - 1) + ''; });
+  return (fmt || richText)(tok).replace(/(\d+)/g, (m, k) => _blankHTML(+k, parts[+k]));
+}
+
+// Testo leggibile senza segnaposto: ogni [[...]] diventa l'opzione scelta
+// (fill[k]); senza risposte dello studente (fill nullo) la risposta giusta
+// (answers[k]); uno spazio lasciato vuoto dallo studente resta ___.
+function _icResolveText(text, fill, answers, wrap) {
+  let k = 0;
+  return String(text || '').replace(_BLANK_RE, (m, inner) => {
+    const n = k++;
+    if (inner === undefined) return m;
+    let val = fill && fill[n] != null ? String(fill[n]).trim() : '';
+    if (!val && fill) return '___';
+    if (!val && answers && answers[n] != null) val = String(answers[n]).split('|')[0].trim();
+    if (!val) val = _icOptions(inner).join(' / ');
+    return wrap ? wrap(val) : val;
+  });
+}
+// Testo di una domanda (q.text o, per il listening, il testo interno) con le scelte risolte
+function _icText(text, q, a, wrap) {
+  if (!text || String(text).indexOf('[[') < 0) return text || '';
+  const inner = q && q.type === 'listening' ? (q.question || {}) : (q || {});
+  const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? fbArr(a) : null);
+  return _icResolveText(text, arr, inner.answers, wrap);
+}
+// _qText(q): anteprima senza studente → risposta giusta. _qText(q, a): risposte di
+// uno studente → opzione scelta; anche con a nullo (domanda non risposta) lo spazio resta ___.
+function _qText(q, a) {
+  if (!q) return '';
+  if (arguments.length > 1 && a == null) a = [];
+  return _icText(q.text || (q.question && q.question.text) || '', q, a);
+}
+
+// Banner istruzione: con le scelte [[...]] si clicca invece di scrivere
+function _blankInstrHTML(text, icon, defaultMsg) {
+  const n = _countBlanks(text), hasIC = _hasInlineChoice(text);
+  const onlyIC = hasIC && n === (String(text || '').match(/\[\[[^\[\]\n]*\|[^\[\]\n]*\]\]/g) || []).length;
+  const msg = !hasIC ? defaultMsg
+    : onlyIC ? '<strong>Clicca</strong> l\'opzione giusta in ogni frase. <em>Puoi cambiare scelta con un altro clic.</em>'
+    : 'Scrivi le parole mancanti negli spazi e <strong>clicca</strong> l\'opzione giusta dove ci sono i pulsanti.';
+  return '<div class="cloze-instruction"><span class="ci-icon">' + icon + '</span><span>' + msg + '</span></div>';
+}
+
+// Clic su un'opzione: scrive il valore nel campo nascosto, evidenzia e salva
+function pickInlineChoice(btn) {
+  if (!btn || btn.disabled) return;
+  const g = btn.closest('.ic-group');
+  if (!g) return;
+  g.querySelectorAll('.ic-opt').forEach(b => { const on = b === btn; b.classList.toggle('selected', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+  const inp = g.querySelector('input.blank-input');
+  if (inp) inp.value = btn.dataset.val || '';
+  if (btn.closest('#r-question-area')) {
+    if (typeof saveRecoveryAnswer === 'function') saveRecoveryAnswer();
+    if (typeof _pushRecoveryProgress === 'function') _pushRecoveryProgress(S.recoveryIndex);
+    return;
+  }
+  saveCurrentAnswer(); pushProgress(); updateNavButtons();
+}
+// Riattiva il pulsante giusto dopo aver ripristinato il valore di un campo nascosto
+function _icSyncGroup(inp) {
+  const g = inp && inp.closest ? inp.closest('.ic-group') : null;
+  if (!g) return;
+  const v = _icNorm(inp.value);
+  g.querySelectorAll('.ic-opt').forEach(b => { const on = v !== '' && _icNorm(b.dataset.val) === v; b.classList.toggle('selected', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+}
+// Imposta il valore di uno spazio (input di testo o gruppo di pulsanti)
+function _setBlankValue(el, val) {
+  if (!el) return;
+  el.value = val == null ? '' : String(val);
+  if (el.type === 'hidden') _icSyncGroup(el); else autoResizeBlank(el);
+}
+
+// Validazione editor: numero di risposte = numero di spazi, e per ogni
+// [[...]] la risposta deve essere una delle opzioni. Con [[...]] l'errore
+// blocca; con soli ___ (domande di sempre) chiede conferma.
+function _blanksCheck(text, answers) {
+  text = String(text || ''); answers = answers || [];
+  const n = _countBlanks(text);
+  const hasIC = _hasInlineChoice(text);
+  if (!n) return { error: null, warn: null };
+  if (answers.length !== n) {
+    const msg = 'Il testo ha ' + n + ' spazi (___ e [[...]]) ma ci sono ' + answers.length + ' risposte: devono essere lo stesso numero, nello stesso ordine.';
+    return hasIC ? { error: msg, warn: null } : { error: null, warn: msg };
+  }
+  if (hasIC) {
+    let k = 0; const bad = [];
+    text.replace(_BLANK_RE, (m, inner) => {
+      const idx = k++;
+      if (inner === undefined) return m;
+      const opts = _icOptions(inner).map(_icNorm);
+      const alts = String(answers[idx] || '').split('|').map(_icNorm).filter(Boolean);
+      if (!alts.some(a => opts.includes(a))) bad.push('Spazio ' + (idx+1) + ': "' + (answers[idx] || '') + '" non è tra le opzioni [[' + inner + ']]');
+      return m;
+    });
+    if (bad.length) return { error: 'Ogni risposta di una scelta [[...]] deve essere una delle sue opzioni.\n' + bad.join('\n'), warn: null };
+  }
+  return { error: null, warn: null };
+}
+// Controlla la domanda (cloze, fill-blanks, listening cloze/fill-blanks): false = non salvare
+function _qBlanksOK(q) {
+  if (!q) return true;
+  let text, answers;
+  if (q.type === 'cloze' || q.type === 'fill-blanks') { text = q.text; answers = q.answers; }
+  else if (q.type === 'listening') {
+    const sub = q.subtype || (q.question && q.question.type) || '';
+    if (sub !== 'cloze' && sub !== 'fill-blanks') return true;
+    text = (q.question || {}).text; answers = (q.question || {}).answers;
+  } else return true;
+  const r = _blanksCheck(text, answers);
+  if (r.error) { alert('⚠️ ' + r.error); return false; }
+  if (r.warn) return confirm('⚠️ ' + r.warn + '\n\nSalvare comunque?');
+  return true;
+}
+
 // Toolbar per formattazione ricca nei campi testo dell'editor
 function _richFmtBar(targetId) {
   return '<div class="richfmt-toolbar">' +
@@ -10425,9 +10594,8 @@ function buildQuestionHTML(q, i) {
       </div></div>`;
   }
   if (q.type === 'cloze') {
-    let idx = 0;
-    const html = richText(q.text).replace(/___/g, () => { const n = ++idx; return `<input class="blank-input" id="blank-${n-1}" type="text" autocomplete="off" placeholder="${n}" oninput="saveCurrentAnswer();pushProgress();updateNavButtons();autoResizeBlank(this)">`; });
-    const instr = q.hideInstruction ? '' : '<div class="cloze-instruction"><span class="ci-icon">✏️</span><span>Scrivi <strong>SOLO</strong> le parole mancanti negli spazi evidenziati. <em>Non riscrivere il resto del testo.</em></span></div>';
+    const html = _renderBlanks(q.text, richText);
+    const instr = q.hideInstruction ? '' : _blankInstrHTML(q.text, '✏️', 'Scrivi <strong>SOLO</strong> le parole mancanti negli spazi evidenziati. <em>Non riscrivere il resto del testo.</em>');
     const clozeHint = q.hint ? `<p class="text-muted mb-16" style="font-size:14px;font-weight:600;color:#4c2fc0;">💡 ${esc(q.hint)}</p>` : '';
     let wordBank = '';
     if (Array.isArray(q.wordBank) && q.wordBank.length) {
@@ -10469,27 +10637,27 @@ function buildQuestionHTML(q, i) {
       </div></div>`;
   }
   if (q.type === 'fill-blanks') {
-    let fbIdx = 0;
     const fbHint = q.hint ? '<p class="text-muted mb-16" style="font-size:14px;font-weight:600;color:#4c2fc0;">💡 ' + esc(q.hint) + '</p>' : '';
     // Split instruction (first line) from sentence lines (rest)
     const rawLines = (q.text || '').split('\n');
     const instrLineRaw = rawLines[0] || '';
     const sentenceLines = rawLines.length > 1 ? rawLines.slice(1).join('\n') : '';
-    // If sentence lines have ___ use them; else try full text; else append ___ to sentence
-    let textForBlanks = sentenceLines.includes('___') ? sentenceLines
-                      : (q.text || '').includes('___') ? (q.text || '')
+    // Se la prima riga contiene già spazi non è una consegna: si disegna tutto il testo
+    // (altrimenti la numerazione degli spazi non corrisponderebbe alle risposte)
+    const instrHasBlanks = _countBlanks(instrLineRaw) > 0;
+    // If sentence lines have blanks (___ or [[a|b]]) use them; else try full text; else append ___ to sentence
+    let textForBlanks = instrHasBlanks ? (q.text || '')
+                      : _countBlanks(sentenceLines) ? sentenceLines
+                      : _countBlanks(q.text) ? (q.text || '')
                       : sentenceLines ? sentenceLines + ' ___'
                       : instrLineRaw + ' ___';
-    const fbHtml = richText(textForBlanks).replace(/___/g, () => {
-      const b = fbIdx++;
-      return '<input class="blank-input" id="blank-' + b + '" type="text" autocomplete="off" placeholder="' + (b+1) + '" oninput="saveCurrentAnswer();pushProgress();updateNavButtons();autoResizeBlank(this)">';
-    });
+    const fbHtml = _renderBlanks(textForBlanks, richText);
     // Render instruction: strip leading **Consegna** token if present, show actual instruction
     const instrDisplay = instrLineRaw.replace(/^\*\*Consegna\*\*\s*/i, '').replace(/\*\*/g, '').trim();
-    const instrHtml = instrDisplay
+    const instrHtml = instrDisplay && !instrHasBlanks
       ? '<div class="q-text" style="margin-bottom:10px;">' + richText(instrDisplay) + '</div>'
       : '';
-    const fbInstr = q.hideInstruction ? '' : '<div class="cloze-instruction"><span class="ci-icon">📝</span><span>Completa <strong>SOLO</strong> gli spazi evidenziati. <em>Non riscrivere le parole già presenti.</em></span></div>';
+    const fbInstr = q.hideInstruction ? '' : _blankInstrHTML(q.text, '📝', 'Completa <strong>SOLO</strong> gli spazi evidenziati. <em>Non riscrivere le parole già presenti.</em>');
     return '<div class="question-card">' + qLabel + qImg + fbInstr + instrHtml + fbHint + '<div class="cloze-text">' + fbHtml + '</div></div>';
   }
   if (q.type === 'free-response') {
@@ -10518,20 +10686,19 @@ function buildQuestionHTML(q, i) {
         ${(inner.options||[]).map((o,oi)=>`<button class="option-btn" id="opt-${oi}" onclick="pickOption(${oi})">${esc(o)}</button>`).join('')}
       </div>`;
     } else if (subtype === 'cloze' || subtype === 'fill-blanks') {
-      let idx = 0;
       const fbHint = inner.hint ? '<p class="text-muted mb-16" style="font-size:14px;font-weight:600;color:#4c2fc0;">💡 ' + esc(inner.hint) + '</p>' : '';
       const lInstr = subtype === 'fill-blanks'
-        ? (q.hideInstruction ? '' : '<div class="cloze-instruction"><span class="ci-icon">📝</span><span>Completa <strong>SOLO</strong> gli spazi evidenziati. <em>Non riscrivere le parole già presenti.</em></span></div>')
-        : (q.hideInstruction ? '' : '<div class="cloze-instruction"><span class="ci-icon">✏️</span><span>Scrivi <strong>SOLO</strong> le parole mancanti negli spazi evidenziati. <em>Non riscrivere il resto del testo.</em></span></div>');
-      const html = richText(inner.text||'').replace(/___/g, () => { const n = ++idx; return `<input class="blank-input" id="blank-${n-1}" type="text" autocomplete="off" placeholder="${n}" oninput="saveCurrentAnswer();pushProgress();updateNavButtons();autoResizeBlank(this)">`; });
+        ? (q.hideInstruction ? '' : _blankInstrHTML(inner.text, '📝', 'Completa <strong>SOLO</strong> gli spazi evidenziati. <em>Non riscrivere le parole già presenti.</em>'))
+        : (q.hideInstruction ? '' : _blankInstrHTML(inner.text, '✏️', 'Scrivi <strong>SOLO</strong> le parole mancanti negli spazi evidenziati. <em>Non riscrivere il resto del testo.</em>'));
+      const html = _renderBlanks(inner.text||'', richText);
       const preText = (inner.text||'').split('\n').length > 1
-        ? '<div class="q-text" style="white-space:pre-line;">' + esc((inner.text||'').split('\n')[0]) + '</div>'
+        ? '<div class="q-text" style="white-space:pre-line;">' + richText((inner.text||'').split('\n')[0]) + '</div>'
         : '';
       const blankLines = (inner.text||'').split('\n').slice(1).join('\n');
-      if (subtype === 'fill-blanks' && (inner.text||'').includes('\n')) {
+      if (subtype === 'fill-blanks' && (inner.text||'').includes('\n') && !_countBlanks((inner.text||'').split('\n')[0])) {
         // Multi-line fill-blanks: show header line as instruction, rest as cloze
-        let idx2 = 0;
-        const blankHtml = esc(blankLines).replace(/___/g, () => { const n = ++idx2; return `<input class="blank-input" id="blank-${n-1}" type="text" autocomplete="off" placeholder="${n}" oninput="saveCurrentAnswer();pushProgress();updateNavButtons();autoResizeBlank(this)">`; });
+        // esc + a capo: una frase per riga (i segnaposto sono protetti da _renderBlanks)
+        const blankHtml = _renderBlanks(blankLines, t => esc(t).replace(/\n/g, '<br>'));
         qPart = lInstr + fbHint + preText + '<div class="cloze-text" style="line-height:2.2;">' + blankHtml + '</div>';
       } else {
         qPart = lInstr + fbHint + '<div class="cloze-text">' + html + '</div>';
@@ -11270,7 +11437,7 @@ function autoResizeBlank(el) {
 }
 // Run autoResizeBlank on all blank inputs after restoring answers
 function autoResizeAllBlanks() {
-  document.querySelectorAll('.blank-input').forEach(el => autoResizeBlank(el));
+  document.querySelectorAll('.blank-input:not([type=hidden])').forEach(el => autoResizeBlank(el));
 }
 
 function updateNavButtons() {
@@ -11338,11 +11505,12 @@ function saveCurrentAnswer() {
   const sub = q.subtype || q.question?.type || '';
   if (q.type === 'cloze' || (q.type === 'listening' && (sub === 'cloze' || sub === 'fill-blanks'))) {
     const text = q.type === 'cloze' ? q.text : q.question?.text || '';
-    const count = (text.match(/___/g) || []).length;
+    const count = _countBlanks(text);
     const vals = Array.from({length: count}, (_, b) => (document.getElementById('blank-' + b)?.value || '').trim());
     if (vals.some(v => v !== '')) S.answers[S.qIndex] = vals;
   } else if (q.type === 'fill-blanks') {
-    const count = (q.text.match(/___/g) || []).length;
+    // Senza spazi nel testo il fill-blanks ne aggiunge uno in coda: conta quelli disegnati
+    const count = _countBlanks(q.text) || document.querySelectorAll('#s-question-area .cloze-text .blank-input').length;
     const vals = Array.from({length: count}, (_, b) => (document.getElementById('blank-' + b)?.value || '').trim());
     if (vals.some(v => v !== '')) S.answers[S.qIndex] = vals;
   } else if (q.type === 'listening' && sub === 'categorization') {
@@ -11374,7 +11542,7 @@ function restoreAnswer(i) {
   const isDragDrop = q.type === 'drag-drop' || (q.type === 'listening' && sub === 'drag-drop');
   const isReorder = q.type === 'reorder';
   if (isMC && typeof a === 'number') { const btn = document.getElementById('opt-' + a); if (btn) btn.classList.add('selected'); }
-  else if (isCloze && Array.isArray(a)) { a.forEach((val, bi) => { const el = document.getElementById('blank-' + bi); if (el) { el.value = val; autoResizeBlank(el); } }); }
+  else if (isCloze && Array.isArray(a)) { a.forEach((val, bi) => _setBlankValue(document.getElementById('blank-' + bi), val)); }
   else if (isFree) { const el = document.getElementById('free-ans'); if (el && a) el.value = a; }
   else if (isMatching && Array.isArray(a)) {
     const right = getMatchShuffle(S.qIndex);
@@ -11601,7 +11769,7 @@ function renderReviewList() {
         <div style="font-size:12px;font-weight:800;color:var(--muted);">${icons[q.type]||''} Dom. ${i+1} · ${pts} pt</div>
         <div style="font-size:11px;font-weight:800;">${status}</div>
       </div>
-      <div style="font-size:14px;font-weight:700;margin-bottom:${ansText?'4px':'0'};color:var(--text);">${esc((q.text||q.question?.text||'').substring(0,80))}</div>
+      <div style="font-size:14px;font-weight:700;margin-bottom:${ansText?'4px':'0'};color:var(--text);">${esc(_qText(q, a).substring(0,80))}</div>
       ${ansText ? `<div style="font-size:12px;color:var(--muted);">→ ${esc(ansText)}</div>` : ''}
     </div>`;
   }).join('');
@@ -11755,7 +11923,7 @@ async function showStudentDone() {
       (ptsLabel?'<span style="font-size:11px;font-weight:800;color:'+(bdr.includes('success')?'var(--success)':bdr.includes('warning')?'var(--warning)':'var(--danger)')+';">'+ptsLabel+'</span>':'') +
       '<span style="font-size:11px;color:var(--muted);">🔍</span>' +
       '</div>' +
-      '<div style="font-size:14px;font-weight:700;margin-bottom:3px;color:var(--text);">'+esc((q.text||q.question?.text||'').substring(0,80))+'</div>' +
+      '<div style="font-size:14px;font-weight:700;margin-bottom:3px;color:var(--text);">'+esc(_qText(q, a).substring(0,80))+'</div>' +
       '<div style="font-size:12px;color:var(--muted);">Risposta: <em>'+ans+'</em>'+(r.scorable&&!r.correct&&!aiPts?' · '+r.detail:'')+'</div>' +
       aiFeedbackHtml +
       '</div>';
@@ -11862,7 +12030,7 @@ async function runAIAnalysis(apiKey, questions, answers, pct, mode, isRecovery, 
       else if (Array.isArray(a)) ans = a.join(' / ');
       else ans = String(a);
     }
-    const qText = (q.text||q.question?.text||'').substring(0,80);
+    const qText = _qText(q, a).substring(0,80);
     // Priorità: manual > AI > valutazione locale — uguale a buildTagBreakdown
     const overridePts = _manSc[i] != null ? Number(_manSc[i])
                       : _aiSc[i]  != null ? Number(_aiSc[i])
@@ -12018,7 +12186,7 @@ async function runGlobalAnalysis(apiKey, origQuestions, origAnswers, origPct, mo
       else ans = String(a);
     }
     const status = !r.scorable ? 'APERTA' : r.correct ? 'CORRETTA' : (r.partial && r.earnedPoints > 0 ? 'PARZIALE' : 'SBAGLIATA');
-    return 'Q' + (i+1) + ' (' + typeLabel(q.type) + '): "' + (q.text||'').substring(0,60) + '" \u2192 ' + ans + ' \u2192 ' + status;
+    return 'Q' + (i+1) + ' (' + typeLabel(q.type) + '): "' + _qText(q, a).substring(0,60) + '" \u2192 ' + ans + ' \u2192 ' + status;
   }).join('\n');
 
   // Riepilogo recupero/i
@@ -12034,7 +12202,7 @@ async function runGlobalAnalysis(apiKey, origQuestions, origAnswers, origPct, mo
         else ans = String(a);
       }
       const status = !r.scorable ? 'APERTA' : r.correct ? 'CORRETTA' : (r.partial && r.earnedPoints > 0 ? 'PARZIALE' : 'SBAGLIATA');
-      return 'Q' + (i+1) + ': "' + (q.text||'').substring(0,55) + '" \u2192 ' + ans + ' \u2192 ' + status;
+      return 'Q' + (i+1) + ': "' + _qText(q, a).substring(0,55) + '" \u2192 ' + ans + ' \u2192 ' + status;
     }).join('\n');
     return 'RECUPERO ' + (idx+1) + ' (' + recPct + '):\n' + lines;
   }).join('\n\n');
@@ -12352,7 +12520,7 @@ async function exportStudentPDF(studentName) {
     const a    = answers[i];
     const res  = evalResult(q, a, i);
     const txt  = answerText(q, a);
-    const qtext = (q.text||q.question?.text||'');
+    const qtext = _qText(q, a);
     const secs = qTimes[i];
     const bgRow = res.label.includes('✓') ? '#f0fdf4' : res.label.includes('✗') ? '#fef2f2' : '#fafafa';
     return `<tr style="background:${bgRow};">
@@ -12405,7 +12573,7 @@ async function exportStudentPDF(studentName) {
         hQs.forEach((rq, ri) => {
           const ra  = hAns[ri];
           const rr  = evaluateAnswer(rq, ra);
-          const rqText = (rq.text || rq.question?.text || '');
+          const rqText = _qText(rq, ra);
           const rTxt  = answerText(rq, ra);
           const rPts  = rq.points || 1;
           // Legge punteggio e feedback AI dal recupero (salvati in recoveryHistory da recoveryFinish)
@@ -12644,7 +12812,7 @@ async function _scoreWithHaikuStudent(question, answer, passageText) {
 function _buildScoringPrompt(question, answer, passageText) {
   const maxPts = question.points || 10;
   const hint = question.hint || question.question?.hint || '';
-  const qText = question.text || question.question?.text || '';
+  const qText = _qText(question, answer);
   const passageBlock = passageText
     ? `\nTesto di riferimento fornito agli studenti:\n"""\n${passageText}\n"""\n`
     : '';
@@ -13216,7 +13384,7 @@ async function exportAllPDFCorretto() {
       const bg    = isExcl ? '#f1f5f9' : r.scorable ? (r.correct ? '#f0fdf4' : (isPartial ? '#fef3c7' : '#fef2f2')) : '#fafafa';
       const fb    = aiFeedbacks[i] || '';
       const secs  = qTimes[i];
-      const qText = (q.text || q.question?.text || '').substring(0, 100);
+      const qText = _qText(q, a).substring(0, 100);
 
       let ans = '—';
       if (a !== null && a !== undefined) {
@@ -13234,7 +13402,7 @@ async function exportAllPDFCorretto() {
       return `<tr style="background:${bg};">
         <td style="padding:6px 8px;font-weight:700;color:#6c47ff;text-align:center;">${i+1}</td>
         <td style="padding:6px 8px;font-size:11px;color:#888;white-space:nowrap;">${typeIcons[q.type]||''} ${q.type||''}</td>
-        <td style="padding:6px 8px;font-size:12px;">${esc(qText)}${(q.text||'').length>100?'…':''}</td>
+        <td style="padding:6px 8px;font-size:12px;">${esc(qText)}${_qText(q, a).length>100?'…':''}</td>
         <td style="padding:6px 8px;font-size:12px;">${ans}</td>
         <td style="padding:6px 8px;font-weight:700;color:${color};white-space:nowrap;">${label}</td>
         <td style="padding:6px 8px;text-align:center;font-weight:700;">${pts}/${effMax}</td>
@@ -13310,7 +13478,7 @@ async function exportAllPDFCorretto() {
             return `<tr style="background:${rBg};">
               <td style="padding:4px 6px;font-weight:700;color:#f59e0b;">${h.attempt||1}.${ri+1}</td>
               <td style="padding:4px 6px;color:#888;">${typeIcons[rq.type]||''}</td>
-              <td style="padding:4px 6px;">${esc((rq.text||rq.question?.text||'').substring(0,70))}</td>
+              <td style="padding:4px 6px;">${esc(_qText(rq, ra).substring(0,70))}</td>
               <td style="padding:4px 6px;">${rAns}</td>
               <td style="padding:4px 6px;font-weight:700;color:${rColor};">${rLabel2}</td>
               <td style="padding:4px 6px;text-align:center;">${autoPtsR2}/${rqP}</td>
@@ -15037,7 +15205,7 @@ function renderVersionPreview(qs, tab) {
       h += '</span></div>';
 
       // Question text
-      var qText = q.text || q.question?.text || '';
+      var qText = _qText(q);
       if (qText) h += '<div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px;">' + esc(qText.substring(0,120)) + (qText.length > 120 ? '…' : '') + '</div>';
 
       // Type-specific details
@@ -15138,7 +15306,7 @@ function renderVersionEditForm(q, i, tab) {
     var sel = ['A','B','C','D'].map(function(l, oi) { return '<option value="' + oi + '"' + (q.correct === oi ? ' selected' : '') + '>' + l + '</option>'; }).join('');
     h += fg + '<label style="font-size:11px;">Corretta</label><select id="vqf-correct" style="font-size:12px;">' + sel + '</select></div>';
   } else if (type === 'cloze' || type === 'fill-blanks') {
-    h += fg + '<label style="font-size:11px;">Testo (usa ___ per spazi)</label><textarea id="vqf-text" rows="3" style="font-size:12px;">' + esc(q.text||'') + '</textarea></div>';
+    h += fg + '<label style="font-size:11px;">Testo (usa ___ per spazi, [[a|b|c]] per una scelta)</label><textarea id="vqf-text" rows="3" style="font-size:12px;">' + esc(q.text||'') + '</textarea></div>';
     h += fg + '<label style="font-size:11px;">Risposte (una per riga, <code>|</code> per alternative)</label><textarea id="vqf-answers" rows="3" style="font-size:12px;" placeholder="go|goes|is going">' + (q.answers||[]).join('\n') + '</textarea></div>';
     h += fg + '<label style="font-size:11px;">💡 Suggerimento (opzionale)</label><input type="text" id="vqf-hint" value="' + esc(q.hint||'') + '" style="font-size:12px;"></div>';
     h += fg + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" id="vqf-hide-instruction" ' + (q.hideInstruction ? 'checked' : '') + '> Nascondi banner istruzione ("Scrivi SOLO le parole…")</label></div>';
@@ -15452,7 +15620,8 @@ async function _runAddVersionQAI() {
     '  CORRETTO: "**Completa.**\\nShe ___ (go) to school."\n' +
     '  SBAGLIATO: "**Completa.**" (manca la frase con ___!)\n' +
     '- matching: left[i] e right[i] DEVONO essere la coppia corretta (stesso indice = match). NON pre-shufflare right.\n' +
-    '- cloze/fill-blanks: usa | per alternative (es. "went|walked"). Solo se linguisticamente sensato.\n\n' +
+    '- cloze/fill-blanks: usa | per alternative (es. "went|walked"). Solo se linguisticamente sensato.\n' +
+    '- ' + _IC_AI_RULE + '\n\n' +
     'ESEMPIO DEL FORMATO RICHIESTO:\n' + formatExamples[qType] + '\n\n' +
     'Rispondi SOLO con un array JSON contenente UNA sola domanda: [{...}]\n' +
     'Nessun markdown, nessuna spiegazione, nessun testo extra.';
@@ -15740,6 +15909,7 @@ async function saveVersionQ(i) {
       q.audioData = qs[i].audioData || null;
     }
   }
+  if (!_qBlanksOK(q)) return;
 
   // Tag
   var _vTagVal = document.getElementById('vqf-tag')?.value;
@@ -16135,6 +16305,8 @@ Usa questa possibilità quando la consegna ammette davvero più risposte equival
 - forme contratte/estese: "he is|he's", "do not|don't"
 - varianti grammaticali corrette: "have been|have gone"
 Se lo spazio ha un'unica risposta naturale (es. un nome proprio, un numero, una forma verbale obbligatoria), metti una sola risposta senza pipe. NON forzare alternative quando non hanno senso linguistico.
+
+${_IC_AI_RULE}
 
 Rispondi SOLO con un array JSON valido. Nessun markdown, nessuna spiegazione.`;
 
@@ -16608,6 +16780,7 @@ ${JSON.stringify(wrongQs, null, 1).substring(0, 6000)}
 
 Crea domande SIMILI (stessa tematica, stesso tipo di esercizio, stessa difficoltà) ma con contenuto diverso.
 Mantieni lo stesso numero di domande e gli stessi punti.
+${_IC_AI_RULE}
 Rispondi SOLO con un array JSON valido, stesso formato delle domande input. Niente markdown.`;
 
   try {
@@ -16634,7 +16807,7 @@ Rispondi SOLO con un array JSON valido, stesso formato delle domande input. Nien
     // Post-processing: fix cloze/fill-blanks senza ___ (problema comune con modelli locali)
     recoveryQs = recoveryQs.map(q => {
       if ((q.type === 'cloze' || q.type === 'fill-blanks') && q.text && Array.isArray(q.answers)) {
-        if (!(q.text.includes('___'))) {
+        if (!_countBlanks(q.text)) {
           // Inserisci ___ al posto della prima risposta trovata nel testo
           let fixed = q.text;
           q.answers.forEach(ans => {
@@ -16905,7 +17078,7 @@ function renderRecoveryQuestion() {
       const ta = rArea.querySelector('#free-ans'); if (ta) ta.value = prevAns;
     } else if (Array.isArray(prevAns) && (q.type==='cloze'||q.type==='fill-blanks'||
                (q.type==='listening'&&(sub==='cloze'||sub==='fill-blanks')))) {
-      prevAns.forEach((v,bi)=>{ const el=rArea.querySelector('#blank-'+bi); if(el) el.value=v||''; });
+      prevAns.forEach((v,bi)=>_setBlankValue(rArea.querySelector('#blank-'+bi), v||''));
     } else if (Array.isArray(prevAns) && (q.type==='matching'||
                (q.type==='listening'&&sub==='matching'))) {
       // FIX: ripristina lo stato visivo del matching nel recupero.
@@ -17042,7 +17215,7 @@ function saveRecoveryAnswer() {
   } else if (q.type === 'cloze' || q.type === 'fill-blanks' ||
              (q.type === 'listening' && (sub === 'cloze' || sub === 'fill-blanks'))) {
     const text = (q.type === 'listening') ? (q.question?.text || '') : q.text;
-    const count = (text.match(/___/g) || []).length || (rArea?.querySelectorAll('.blank-input').length || 0);
+    const count = _countBlanks(text) || (rArea?.querySelectorAll('.blank-input').length || 0);
     const vals = Array.from({length: count}, (_, b) => rArea?.querySelector('#blank-' + b)?.value.trim() || '');
     if (vals.some(v => v !== '')) S.recoveryAnswers[i] = vals;
   // ── free-response ────────────────────────────────────────────
@@ -17212,7 +17385,7 @@ async function recoveryFinish() {
         ? '<div style="font-size:11px;color:#6c47ff;margin-top:5px;padding:5px 8px;background:#ede9ff;border-radius:6px;">🤖 ' + esc(x.aiFeedback) + '</div>'
         : '';
       return '<div onclick="openQuestionDetailRecoveryStudent(' + i + ')" style="padding:10px;border-radius:10px;border:2px solid ' + bdr + ';background:' + bg + ';margin-bottom:8px;cursor:pointer;" title="Clicca per vedere la domanda">' +
-        si + ' <strong>Dom.' + (i+1) + '</strong>: ' + esc((x.q.text||'').substring(0,60)) + ptsLabel + ' <span style="font-size:11px;color:#888;">🔍</span>' + fbHtml + '</div>';
+        si + ' <strong>Dom.' + (i+1) + '</strong>: ' + esc(_qText(x.q, x.a).substring(0,60)) + ptsLabel + ' <span style="font-size:11px;color:#888;">🔍</span>' + fbHtml + '</div>';
     }).join('') + retryHtml;
 
   document.getElementById('r-btn-prev').style.display = 'none';
@@ -17282,7 +17455,7 @@ function showCombinedResults() {
         si + ' <span style="flex:1;font-size:11px;font-weight:800;color:var(--muted);">'+(icons[q.type]||'')+' Dom.'+(i+1)+'</span>' +
         (ptsLabel ? '<span style="font-size:11px;font-weight:800;">'+ptsLabel+'</span>' : '') +
       '</div>' +
-      '<div style="font-size:13px;font-weight:700;">'+esc((q.text||q.question?.text||'').substring(0,80))+'</div>' +
+      '<div style="font-size:13px;font-weight:700;">'+esc(_qText(q, a).substring(0,80))+'</div>' +
       '<div style="font-size:12px;color:var(--muted);">Risposta: <em>'+ansText+'</em></div>' +
       fbHtml + '</div>';
   }).join('');
@@ -17345,7 +17518,7 @@ function showCombinedResults() {
             : '—';
           return '<div style="padding:8px 4px;border-bottom:1px solid #fde68a;font-size:12px;display:flex;align-items:center;gap:8px;">' +
             '<span>'+icon+'</span>' +
-            '<span style="flex:1;"><strong>Dom.'+(i+1)+':</strong> '+esc((q.text||q.question?.text||'').substring(0,55))+'</span>' +
+            '<span style="flex:1;"><strong>Dom.'+(i+1)+':</strong> '+esc(_qText(q, a).substring(0,55))+'</span>' +
             '<span style="font-weight:800;">'+ptsLabel+'</span>' +
             '<span style="color:var(--muted);font-size:11px;">'+ansR+'</span>' +
             '</div>';
@@ -18639,7 +18812,10 @@ function _qdRenderDetail(q, i, answer, opts) {
     statusColor = 'var(--muted)';
   }
 
-  const qText = q.text || q.question?.text || '';
+  // [[a|b|c]] → opzione scelta dallo studente (o quella giusta), in grassetto
+  const _icBold = v => '**' + v + '**';
+  const _icAns = answer == null ? [] : answer;
+  const qText = _icText(q.text || q.question?.text || '', q, _icAns, _icBold);
   const icons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️'};
 
   // Header
@@ -18664,7 +18840,8 @@ function _qdRenderDetail(q, i, answer, opts) {
       h += '<audio controls style="margin-top:10px;width:100%;"><source src="' + q.audioData + '"></audio>';
     }
     if (inner.text) {
-      h += '<div style="margin-top:10px;padding:10px;background:var(--surface2);border-radius:8px;font-size:14px;line-height:1.5;">' + (typeof richText === 'function' ? richText(inner.text) : esc(inner.text)) + '</div>';
+      const innerText = _icText(inner.text, q, _icAns, _icBold);
+      h += '<div style="margin-top:10px;padding:10px;background:var(--surface2);border-radius:8px;font-size:14px;line-height:1.5;">' + (typeof richText === 'function' ? richText(innerText) : esc(innerText)) + '</div>';
     }
   }
   h += '</div>';
@@ -19647,7 +19824,7 @@ function qeBuildBody(type, q, scope) {
     h += '</div>';
     h += '<button class="qe-addrow" onclick="qeAddOption(this)">+ Opzione</button>';
   } else if (type === 'cloze' || type === 'fill-blanks') {
-    h += qeField('text', q.text || '', 'Testo con ___ per gli spazi…', 'qe-qtext');
+    h += qeField('text', q.text || '', 'Testo con ___ per gli spazi, o [[a|b|c]] per una scelta…', 'qe-qtext');
     h += '<div class="qe-section-lbl">Risposte — una per spazio (usa <code style="font-weight:800;">|</code> per alternative)</div>';
     h += qeList('answers', q.answers || [''], 'es: go|goes|is going');
     h += '<div class="qe-count" id="qe-blankcount-'+scope+'"></div>';
@@ -20066,6 +20243,7 @@ function _qeCommit() {
   var q = qeReadCurrentQ();
   var err = qeValidate(q);
   if (err) { alert('⚠️ ' + err); return false; }
+  if (!_qBlanksOK(q)) return false;
   var qs = _qeArr();
   qs[QE.index] = q;
   _qeWriteArr(qs);
