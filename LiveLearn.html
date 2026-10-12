@@ -7520,7 +7520,18 @@ async function _llSyncStudentHistory(code, key, prevAlias, opts) {
     });
   }
   for (const c of touched) await _llRecomputeSummaryAt('livelearn/history_priv/' + c, c === ownerCode ? owner : null);
+  if (touched.length || !ownerCode) _llAgentPing();
   return { ok: true, owner, ownerCode, resp: r };
+}
+
+// ── Segnale per l'agente di MyClass ───────────────────────────────────────
+// livelearn/agentPing: un timestamp che cambia quando qui cambia qualcosa che
+// l'agente deve rielaborare (cronologie, chiusure, punteggi, modalità).
+// L'agente lo legge ogni 30 minuti (pochi byte) e salta il giro completo se
+// non e' cambiato. Solo lato docente; un errore non blocca niente.
+function _llAgentPing() {
+  if (!db) return;
+  db.ref('livelearn/agentPing').set(Date.now()).catch(() => {});
 }
 
 // Helper: ritorna le domande della versione assegnata a questo studente, oppure
@@ -8184,6 +8195,7 @@ async function deleteSession(code) {
 
     // 4. Cancella metadati sessione
     await db.ref('livelearn/sessions/' + code).remove();
+    _llAgentPing();
 
     // 5. Leggi i partecipanti e cancella le risposte studente una per una
     //    (regole Firebase potrebbero non permettere remove() sul nodo padre)
@@ -8518,6 +8530,7 @@ async function convertSessionToExercise(code) {
   try {
     // 1. Aggiorna il nodo sessione principale
     await db.ref('livelearn/sessions/' + sessKey + '/mode').set('practice');
+    _llAgentPing();
 
     // 2. Aggiorna il mode in history per ogni studente della classe
     const sessSnap = await db.ref('livelearn/sessions/' + sessKey).get();
@@ -13590,6 +13603,7 @@ async function saveScoreFromDetailModal(qi, maxPts) {
   if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
   try {
     await db.ref('livelearn/responses/' + S.liveCode + '/' + S.selectedStudent + '/manualScores/' + qi).set(val);
+    _llAgentPing();
     // Ricalcola punteggio totale
     const snap = await db.ref('livelearn/responses/' + S.liveCode + '/' + S.selectedStudent).get();
     const resp = snap.val() || {};
@@ -13649,6 +13663,7 @@ async function saveRecoveryScoreFromDetailModal(qi, maxPts) {
     // 1. Salva manualScore nella voce recoveryHistory
     await db.ref('livelearn/responses/' + S.liveCode + '/' + S.selectedStudent +
       '/recoveryHistory/' + histIdx + '/manualScores/' + qi).set(val);
+    _llAgentPing();
 
     // 2. Leggi dati aggiornati
     const snap = await db.ref('livelearn/responses/' + S.liveCode + '/' + S.selectedStudent).get();
@@ -14901,6 +14916,7 @@ async function _closeSessionAndWipeKeys(code) {
   // Ora di chiusura e riepilogo risposte azzerato (dashboard leggera): a
   // parte, così regole più strette non possono bloccare la chiusura.
   await db.ref('livelearn/sessions/' + code).update({ closedAt: Date.now(), respSummary: null }).catch(() => {});
+  _llAgentPing();
 }
 
 function _genCode() {

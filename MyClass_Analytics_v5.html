@@ -19332,20 +19332,27 @@ ${blocco.regole}`;
       return String(n || '').replace(/[.#$[\]/ ]/g, '_').toLowerCase();
     }
 
+    // Mappa costruita da livelearn/students gia' letto (nessuna lettura qui)
+    function _mcCodeMapFrom(studs) {
+      const map = {};
+      Object.entries(studs || {}).forEach(([code, s]) => {
+        if (!s || !s.name) return;
+        map[_mcSafeKey(s.name)] = code;
+        const parts = String(s.name).trim().split(/\s+/);
+        if (parts.length >= 2) {
+          const inv = _mcSafeKey(parts.slice(1).join(' ') + ' ' + parts[0]);
+          if (!map[inv]) map[inv] = code;
+        }
+      });
+      return map;
+    }
+
     async function _mcLoadCodeMap(force) {
       if (_mcCodeMap && !force && (Date.now() - _mcCodeMapAt) < 300000) return _mcCodeMap;
-      const map = {};
+      let map = {};
       try {
         const snap = await firebase.database().ref('livelearn/students').get();
-        Object.entries(snap.val() || {}).forEach(([code, s]) => {
-          if (!s || !s.name) return;
-          map[_mcSafeKey(s.name)] = code;
-          const parts = String(s.name).trim().split(/\s+/);
-          if (parts.length >= 2) {
-            const inv = _mcSafeKey(parts.slice(1).join(' ') + ' ' + parts[0]);
-            if (!map[inv]) map[inv] = code;
-          }
-        });
+        map = _mcCodeMapFrom(snap.val());
       } catch(e) {
         console.warn('[CodeMap] lettura livelearn/students fallita:', e.message);
       }
@@ -19364,15 +19371,23 @@ ${blocco.regole}`;
     // Cronologie di una classe nella forma STORICA { safe: dati }: i
     // consumatori a valle (elenco feedback, agente, statistiche) restano
     // identici e non vanno toccati.
-    async function _mcHistClass(classId) {
+    // Lettura UNICA di livelearn/history_priv + livelearn/students. Chi deve
+    // filtrare piu' classi (l'agente) la fa una volta e la passa a
+    // _mcHistClass(classId, pre): il filtro per classe avviene in memoria.
+    // Aggiorna anche la mappa nominativo → codice, senza rileggere students.
+    async function _mcHistRead() {
       const db = firebase.database();
-      const [snap, snapStud, map] = await Promise.all([
+      const [snap, snapStud] = await Promise.all([
         db.ref('livelearn/history_priv').get(),
-        db.ref('livelearn/students').get(),
-        _mcLoadCodeMap()
+        db.ref('livelearn/students').get()
       ]);
-      const all   = snap.val() || {};
       const studs = snapStud.val() || {};
+      _mcCodeMap = _mcCodeMapFrom(studs); _mcCodeMapAt = Date.now();
+      return { all: snap.val() || {}, studs };
+    }
+
+    async function _mcHistClass(classId, pre) {
+      const { all, studs } = pre || await _mcHistRead();
       const out = {};
       Object.entries(studs).forEach(([code, s]) => {
         if (!s || !s.name) return;
@@ -22663,9 +22678,12 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
     }
 
     // ── agentRun — ciclo principale ───────────────────────────────────────
-    async function agentRun() {
+    // opts.skipFirebase: giro leggero del check periodico quando su Firebase non
+    // è cambiato niente — Calendar, piano e audio sì, letture Firebase no.
+    async function agentRun(opts) {
         if (window._tabBlocked) { console.log('[Agente] ⏸️ scheda in pausa — esecuzione saltata'); return; }
         if (agentRunning) return;
+        const _fbSkip = !!(opts && opts.skipFirebase);
         agentRunning = true;
         agentAbortController = new AbortController();
         const runBtn  = document.getElementById('agentRunBtn');
@@ -22682,8 +22700,12 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
         // giorni non ancora pianificati risultano "niente da fare"
         if (typeof autoCreaLezioniVuoteDaily === 'function') autoCreaLezioniVuoteDaily();
         console.log('[Agente] 🤖 Avvio —', new Date().toLocaleTimeString('it'),
-            `| Calendar=${AGENT_DO_CALENDAR} Piano=${AGENT_DO_PIANO} Scritte=${AGENT_DO_SCRITTE} Orali=${AGENT_DO_ORALI}`);
+            `| Calendar=${AGENT_DO_CALENDAR} Piano=${AGENT_DO_PIANO} Scritte=${AGENT_DO_SCRITTE} Orali=${AGENT_DO_ORALI}` +
+            (_fbSkip ? ' | Firebase: niente di nuovo, letture saltate' : ''));
         agentRenderPanel();
+        // Giro completo: si annota lo stato "novità" di Firebase all'inizio, così il
+        // check periodico può saltare le letture finché non cambia qualcosa.
+        if (!_fbSkip) await _agentFpMark();
 
         try {
             // ── 1. Controlla Google Calendar ─────────────────────────────
@@ -22865,7 +22887,7 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
             }
 
             // ── 3. Valutazioni scritte ──────────────────────────────────────
-            if (AGENT_DO_SCRITTE) {
+            if (AGENT_DO_SCRITTE && !_fbSkip) {
                 await agentCheckLiveSessions();
             }
 
@@ -22875,7 +22897,7 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
             }
 
             // ── 5. Analisi didattiche richieste da StudentApp ──────────────────
-            try {
+            if (!_fbSkip) try {
                 const dbFire = firebase.database();
                 const arSnap = await dbFire.ref('myclass/agentRequests').get();
                 const arAll  = arSnap.val() || {};
@@ -24810,16 +24832,61 @@ ${sectionInstr}`;
         // Retry ogni 5 min per i task in errore, senza vincolo di finestra oraria:
         // il fallback Gemini→Claude può fallire a qualsiasi ora, non solo nella
         // finestra attiva (14:30→08:00). Usa un timer breve per un recupero rapido.
+        // Ripete SOLO i task falliti (prima: agentRun() completo, con tutte le
+        // letture Firebase, ogni 5 minuti finché restava un task in errore).
         setInterval(() => {
             if (agentRunning) return;
-            const hasRetryable = agentTasks.some(t =>
-                t.status === 'error' && (t.retryCount || 0) < AGENT_MAX_RETRY
-            );
-            if (hasRetryable) {
-                console.log('[Agente] 🔄 Retry automatico (5 min) — task in errore con tentativi rimanenti');
-                agentRun();
-            }
+            agentRetryFailedTasks().catch(e => console.warn('[Agente] Retry automatico:', e.message));
         }, 5 * 60 * 1000); // 5 minuti — abbastanza breve per un recupero rapido
+    }
+
+    // Stesse regole di agentRun per ogni tipo, senza la scansione completa:
+    // un tentativo in più per task (fino a AGENT_MAX_RETRY), poi stesso
+    // lavoro di "🔄 Riprova" (agentRegenerate). I tipi che agentRun non
+    // ritentava da solo (orali, dialoghi, abbinamenti audio) restano manuali.
+    async function agentRetryFailedTasks() {
+        if (agentRunning || window._tabBlocked) return;
+        const today = new Date().toISOString().split('T')[0];
+        const todo = agentTasks.filter(t => t.status === 'error' && (t.retryCount || 0) < AGENT_MAX_RETRY &&
+            ['cdc', 'glo', 'piano', 'valscritta', 'analisididattica'].includes(t.type));
+        if (!todo.length) return;
+        agentRunning = true;
+        agentAbortController = new AbortController();
+        try {
+            for (const t of todo) {
+                if (t.status !== 'error') continue;
+                // CdC/GLO: come agentRun, solo finché l'evento non è passato
+                const d = (t.type === 'cdc' || t.type === 'glo') ? (String(t.id).match(/(\d{4}-\d{2}-\d{2})$/) || [])[1] : null;
+                if (d && d < today) continue;
+                if (t.type === 'piano') {
+                    // Come agentRun: si rigenera solo se la lezione è ancora senza piano
+                    const cl = (data.classi || []).find(c => c.nome.replace(/\s+/g,'').toUpperCase() === String(t.classe || '').replace(/\s+/g,'').toUpperCase());
+                    const lz = cl && (cl.pianificazione?.piano || []).find(p => lzId(p) === t.slotId);
+                    if (!lz || lz.pianoDettagliato) continue;
+                }
+                if (t.type === 'analisididattica') {
+                    // Come agentRun: solo se la richiesta su Firebase è ancora 'pending' (lettura minuscola)
+                    let st = null;
+                    try { st = (await firebase.database().ref(`myclass/agentRequests/${t.fbClassId}/${t.stuCode || t.studentSafe}/status`).get()).val(); } catch(e) {}
+                    if (st !== 'pending') continue;
+                }
+                t.retryCount = (t.retryCount || 0) + 1;
+                if (t.type === 'valscritta') t.pendingAt = new Date().toISOString();
+                console.log(`[Agente] 🔄 Retry automatico ${t.id} (tentativo ${t.retryCount}/${AGENT_MAX_RETRY}, errore: ${t.error})`);
+                agentSaveTasks(agentTasks);
+                agentCheckAbort();
+                await agentRegenerate(t.id);   // agentRunning resta true: niente agentRun in parallelo
+            }
+        } catch(e) {
+            if (e && e.name === 'AbortError') console.log('[Agente] ⏹ Retry interrotto dall\'utente.');
+            else console.warn('[Agente] Retry automatico:', e && e.message);
+        } finally {
+            agentRunning = false;
+            agentAbortController = null;
+            try { agentSaveTasks(agentTasks); } catch(e) {}
+            agentBadgeUpdate();
+            agentRenderPanel();
+        }
     }
 
     function agentSchedule() {
@@ -24841,12 +24908,74 @@ ${sectionInstr}`;
 
     function agentSchedulePeriodicRefresh() {
         if (agentPeriodicTimer) return; // già attivo
-        agentPeriodicTimer = setInterval(() => {
+        _agentWatchRequests();
+        agentPeriodicTimer = setInterval(async () => {
             if (!agentInActiveWindow()) return;
             if (agentRunning) return;
-            console.log('[Agente] 🔄 Check periodico (ogni 30 min nella finestra attiva)');
-            agentRun().catch(e => console.warn('[Agente] Errore check periodico:', e.message));
+            // Prima una lettura minuscola: se su Firebase non è cambiato niente
+            // dall'ultimo giro completo, si saltano le letture pesanti.
+            let full = true;
+            try {
+                const fp = await _agentFingerprint();
+                const last = JSON.parse(localStorage.getItem('agent_fb_fp') || 'null');
+                full = !last || last.fp !== fp || (Date.now() - (last.at || 0)) > AGENT_FULL_MAX_MS;
+            } catch(e) { console.warn('[Agente] controllo novità non riuscito — giro completo:', e.message); }
+            if (agentRunning) return;
+            console.log('[Agente] 🔄 Check periodico (ogni 30 min nella finestra attiva) — ' +
+                (full ? 'novità su Firebase: giro completo' : 'niente di nuovo su Firebase: solo Calendar/piano/audio'));
+            agentRun(full ? undefined : { skipFirebase: true }).catch(e => console.warn('[Agente] Errore check periodico:', e.message));
         }, AGENT_PERIODIC_MS);
+    }
+
+    // ── "C'è qualcosa di nuovo su Firebase?" ──────────────────────────────
+    // Firma minuscola di ciò che fa lavorare l'agente:
+    //  • livelearn/agentPing: timestamp che LiveLearn aggiorna quando scrive
+    //    cronologie, chiude/elimina sessioni, cambia punteggi o modalità;
+    //  • livelearn/inbox: SOLO le chiavi (REST "shallow"), cioè le consegne
+    //    degli alunni non ancora smistate (compiti e recuperi fatti a casa);
+    //  • myclass/agentRequests: richieste 'pending', tenute aggiornate da un
+    //    listener (scarica solo le modifiche, non tutto a ogni giro).
+    // Anche senza novità, un giro completo almeno ogni AGENT_FULL_MAX_MS.
+    const AGENT_FULL_MAX_MS = 3 * 60 * 60 * 1000;
+    let _agentReqSig = null, _agentReqWatching = false;
+    function _agentWatchRequests() {
+        if (_agentReqWatching) return;
+        try {
+            firebase.database().ref('myclass/agentRequests').on('value', snap => {
+                const sig = [];
+                Object.entries(snap.val() || {}).forEach(([cid, st]) => Object.entries(st || {}).forEach(([k, r]) => {
+                    if (r && r.status === 'pending') sig.push(cid + '/' + k + '@' + (r.requestedAt || ''));
+                }));
+                _agentReqSig = sig.sort().join('|');
+            }, err => { console.warn('[Agente] listener richieste:', err && err.message); _agentReqSig = null; _agentReqWatching = false; });
+            _agentReqWatching = true;
+        } catch(e) { console.warn('[Agente] listener richieste non avviato:', e.message); }
+    }
+    async function _agentFingerprint() {
+        const db = firebase.database();
+        const ping = (await db.ref('livelearn/agentPing').get()).val() || 0;
+        const user = firebase.auth().currentUser;
+        if (!user || typeof fetch !== 'function') throw new Error('accesso docente non pronto');
+        const tok = encodeURIComponent(await user.getIdToken());
+        const base = firebase.app().options.databaseURL + '/livelearn/inbox';
+        const shallow = async p => {
+            const r = await fetch(base + p + '.json?shallow=true&auth=' + tok);
+            if (!r.ok) throw new Error('inbox ' + r.status);
+            return Object.keys((await r.json()) || {}).sort();
+        };
+        const inbox = [];
+        for (const c of await shallow('')) inbox.push(c + ':' + (await shallow('/' + encodeURIComponent(c))).join(','));
+        for (let i = 0; i < 50 && _agentReqSig == null && _agentReqWatching; i++) await new Promise(r => setTimeout(r, 100));
+        if (_agentReqSig == null) throw new Error('richieste non ancora lette');
+        return JSON.stringify([ping, inbox.join(';'), _agentReqSig]);
+    }
+    // Annotata all'inizio di ogni giro completo (manuale, programmato, periodico)
+    async function _agentFpMark() {
+        _agentWatchRequests();
+        try {
+            const fp = await _agentFingerprint();
+            localStorage.setItem('agent_fb_fp', JSON.stringify({ fp, at: Date.now() }));
+        } catch(e) { localStorage.removeItem('agent_fb_fp'); }
     }
 
     // ── Init agente (chiamato all'avvio di MyClass) ───────────────────────
@@ -25431,15 +25560,31 @@ ${sectionInstr}`;
 
         const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
+        // Letture memorizzate per QUESTA esecuzione: la stessa sessione o le
+        // stesse risposte servono a PATH B e ai controlli successivi, e prima
+        // venivano riscaricate ogni volta.
+        const _runResp = {}, _runSess = {};
+        const _getResp = code => _runResp[code] || (_runResp[code] =
+            db.ref('livelearn/responses/' + code).get().then(sn => sn.val()).catch(e => { delete _runResp[code]; throw e; }));
+        const _getSess = code => _runSess[code] || (_runSess[code] =
+            db.ref('livelearn/sessions/' + code).get().then(sn => sn.val()).catch(e => { delete _runSess[code]; throw e; }));
+
         // ── PATH A: history per classe ───────────────────────────────────
         // Mappa classId → gruppo di sessioni trovate via history
         const foundByHistory = {}; // classId → sessionMap
+
+        // history_priv e students si leggono UNA volta per esecuzione (prima:
+        // una lettura completa di entrambi per ogni classe); il filtro per
+        // classe avviene in memoria dentro _mcHistClass.
+        let _histPre = null, _histErr = null;
+        try { _histPre = await _mcHistRead(); } catch(e) { _histErr = e; }
 
         for (const classe of (data.classi || [])) {
             agentCheckAbort(); // ← interrompi se l'utente ha premuto Stop
             const classId = classe.nome.replace(/\s+/g, '_').toLowerCase();
             try {
-                const allStudents = await _mcHistClass(classId);
+                if (!_histPre) throw _histErr || new Error('history non disponibile');
+                const allStudents = await _mcHistClass(classId, _histPre);
                 const nStudenti = Object.keys(allStudents).length;
                 console.log(`[Agente] PATH-A  ${classe.nome} (${classId}): ${nStudenti} studenti in history`);
 
@@ -25480,8 +25625,11 @@ ${sectionInstr}`;
         // (es. classId null al lancio, oppure history non ancora aggiornata)
         const classiIds = new Set((data.classi || []).map(c => c.nome.replace(/\s+/g,'_').toLowerCase()));
         try {
-            const sessListSnap = await db.ref('livelearn/sessions').get();
+            // Solo le sessioni degli ultimi 7 giorni (indice createdAt nelle regole),
+            // non tutto il nodo
+            const sessListSnap = await db.ref('livelearn/sessions').orderByChild('createdAt').startAt(cutoff).get();
             const allSess = sessListSnap.val() || {};
+            Object.entries(allSess).forEach(([c, v]) => { _runSess[c] = Promise.resolve(v); });
             let pathBCount = 0;
             for (const [code, s] of Object.entries(allSess)) {
                 if (!s || (s.createdAt || 0) < cutoff) continue;
@@ -25501,8 +25649,7 @@ ${sectionInstr}`;
                 if (sessionMap && sessionMap[code]) continue; // già in PATH-A
                 // Leggi le responses per costruire la lista studenti
                 try {
-                    const respSnap = await db.ref('livelearn/responses/' + code).get();
-                    const responses = respSnap.val() || {};
+                    const responses = (await _getResp(code)) || {};
                     const submitted = Object.entries(responses).filter(([,r]) => r && r.submittedAt);
                     if (!submitted.length) {
                         console.log(`[Agente] PATH-B  ${classId}/${code}: nessuna consegna ancora`);
@@ -25576,8 +25723,8 @@ ${sectionInstr}`;
                             const dismissedAt = new Date(doneVal.dismissedAt || 0).getTime();
                             let hasNew = false;
                             try {
-                                const rs = await db.ref(`livelearn/responses/${code}`).get();
-                                hasNew = Object.values(rs.val()||{}).some(r =>
+                                const rs = await _getResp(code);
+                                hasNew = Object.values(rs||{}).some(r =>
                                     r && r.manualScores && Object.keys(r.manualScores).length &&
                                     (r.submittedAt||0) > dismissedAt);
                             } catch(e2) {}
@@ -25607,8 +25754,7 @@ ${sectionInstr}`;
                 // cancellati da LiveLearn. Senza la sessione non ci sono né
                 // domande né consegne: non c'è nulla da valutare.
                 try {
-                    const _sSnap = await db.ref(`livelearn/sessions/${code}`).get();
-                    const _sVal  = _sSnap.val();
+                    const _sVal  = await _getSess(code);
                     const _nQ = _sVal
                         ? (Array.isArray(_sVal.questions)
                             ? _sVal.questions.length
@@ -25617,8 +25763,7 @@ ${sectionInstr}`;
                     let _nResp = 0;
                     if (_sVal) {
                         try {
-                            const _rSnap = await db.ref(`livelearn/responses/${code}`).get();
-                            _nResp = Object.values(_rSnap.val() || {}).filter(r => r && r.submittedAt).length;
+                            _nResp = Object.values((await _getResp(code)) || {}).filter(r => r && r.submittedAt).length;
                         } catch(e2) {}
                     }
                     if (!_sVal || _nQ === 0 || _nResp === 0) {
