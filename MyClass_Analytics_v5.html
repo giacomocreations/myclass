@@ -25568,6 +25568,31 @@ ${sectionInstr}`;
             db.ref('livelearn/responses/' + code).get().then(sn => sn.val()).catch(e => { delete _runResp[code]; throw e; }));
         const _getSess = code => _runSess[code] || (_runSess[code] =
             db.ref('livelearn/sessions/' + code).get().then(sn => sn.val()).catch(e => { delete _runSess[code]; throw e; }));
+        // Sessione valutabile? null se sì, altrimenti il motivo dello scarto.
+        // Le domande stanno nell'ATTIVITÀ, non nella sessione (che non ha mai
+        // avuto un campo questions: prima ogni test risultava "senza domande").
+        // Si contano dall'indice leggero livelearn/activityIndex (pochi byte),
+        // senza scaricare l'attività con gli audio.
+        const _sessCheck = async code => {
+            const sv = await _getSess(code);
+            if (!sv) return 'sessione non più su Firebase (cancellata)';
+            let nQ;
+            if (sv.questions) nQ = Array.isArray(sv.questions) ? sv.questions.length : Object.keys(sv.questions).length;
+            else if (!sv.activityId) nQ = 0;
+            else {
+                const ix = (await db.ref('livelearn/activityIndex/' + sv.activityId).get()).val();
+                if (ix && ix.qCount != null) nQ = sv.noListening && ix.qNoListening != null ? ix.qNoListening : ix.qCount;
+                else {
+                    // Indice non ancora costruito: basta sapere che l'attività esiste
+                    const ap = 'livelearn/activities/' + sv.activityId;
+                    nQ = (await db.ref(ap + '/title').get()).exists() || (await db.ref(ap + '/createdAt').get()).exists() ? 1 : 0;
+                }
+            }
+            if (!nQ) return 'sessione senza domande (attività eliminata o vuota)';
+            let nResp = 0;
+            try { nResp = Object.values((await _getResp(code)) || {}).filter(r => r && r.submittedAt).length; } catch(e2) {}
+            return nResp ? null : 'nessuna consegna registrata';
+        };
 
         // ── PATH A: history per classe ───────────────────────────────────
         // Mappa classId → gruppo di sessioni trovate via history
@@ -25719,7 +25744,19 @@ ${sectionInstr}`;
                             console.log(`[Agente] ${tid}: già approvata su Firebase — skip`);
                             continue;
                         }
-                        if (doneVal.status === 'dismissed') {
+                        // Scartata dal vecchio controllo "senza domande" (sbagliato): se in
+                        // realtà la sessione è valutabile, il blocco si toglie e si procede.
+                        let _wrongDismiss = false;
+                        if (doneVal.status === 'dismissed' && doneVal.reason === 'session_deleted_or_empty') {
+                            try { _wrongDismiss = (await _sessCheck(code)) === null; } catch(e2) {}
+                            if (_wrongDismiss) {
+                                console.log(`[Agente] ${tid}: era stata scartata per errore come "senza domande" — la riprendo`);
+                                await db.ref(`livelearn/agentDone/${classId}/${code}`).remove().catch(()=>{});
+                                agentTasks = agentTasks.filter(t => t.id !== tid);
+                                agentSaveTasks(agentTasks);
+                            }
+                        }
+                        if (doneVal.status === 'dismissed' && !_wrongDismiss) {
                             const dismissedAt = new Date(doneVal.dismissedAt || 0).getTime();
                             let hasNew = false;
                             try {
@@ -25754,22 +25791,8 @@ ${sectionInstr}`;
                 // cancellati da LiveLearn. Senza la sessione non ci sono né
                 // domande né consegne: non c'è nulla da valutare.
                 try {
-                    const _sVal  = await _getSess(code);
-                    const _nQ = _sVal
-                        ? (Array.isArray(_sVal.questions)
-                            ? _sVal.questions.length
-                            : Object.keys(_sVal.questions || {}).length)
-                        : 0;
-                    let _nResp = 0;
-                    if (_sVal) {
-                        try {
-                            _nResp = Object.values((await _getResp(code)) || {}).filter(r => r && r.submittedAt).length;
-                        } catch(e2) {}
-                    }
-                    if (!_sVal || _nQ === 0 || _nResp === 0) {
-                        const _perche = !_sVal ? 'sessione non più su Firebase (cancellata)'
-                                      : _nQ === 0 ? 'sessione senza domande'
-                                      : 'nessuna consegna registrata';
+                    const _perche = await _sessCheck(code);
+                    if (_perche) {
                         console.log(`[Agente] ${classe.nome}: skip ${code} — ${_perche}, residuo di prova nella history`);
                         agentTasks = agentTasks.filter(t => t.id !== tid);
                         agentSaveTasks(agentTasks);
