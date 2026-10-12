@@ -228,6 +228,9 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--primary); 
 .student-assign-row.header { background: var(--surface2); font-weight: 800; color: var(--muted); position: sticky; top: 0; z-index: 1; }
 .student-assign-row label { display: flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; font-size: 11px; }
 .student-assign-name { font-weight: 700; font-size: 13px; }
+.student-assign-grid { overflow-x: auto; }
+.student-assign-row.header .sa-col { cursor: pointer; border-radius: 6px; padding: 2px 0; }
+.student-assign-row.header .sa-col:hover { background: var(--primary-light); color: var(--primary); }
 
 /* DSA LARGE TEXT */
 .vl1-mode .q-text, .vl1-mode .q-label, .vl1-mode .option-btn, .vl1-mode .cloze-text,
@@ -929,7 +932,7 @@ const CONFIG = {
     <!-- VERSIONS PANEL (below builder layout) -->
     <div class="versions-panel" id="versions-panel" style="display:none;">
       <h3>🎯 Versioni differenziate</h3>
-      <p class="text-muted mb-12" style="font-size:12px;">Crea versioni differenziate. DSA/PEI/PEI 2/Recupero/FILA si assegnano manualmente; <strong>Recupero Fast 1</strong> e <strong>2</strong> vengono serviti automaticamente agli studenti sotto il 60% senza chiamate API live. <strong>FILA B</strong> e <strong>FILA C</strong> sono varianti anti-copiatura (stessi tipi, stessi argomenti, frasi diverse; le listening restano identiche).</p>
+      <p class="text-muted mb-12" style="font-size:12px;">Crea versioni differenziate. DSA/PEI/PEI 2/Recupero/FILA si assegnano manualmente; <strong>Training DSA</strong> e <strong>Training PEI</strong> sono la simulazione (Training) adattata, da assegnare ai DSA e ai PEI quando gli altri fanno "Rec./Training"; <strong>Recupero Fast 1</strong> e <strong>2</strong> vengono serviti automaticamente agli studenti sotto il 60% senza chiamate API live. <strong>FILA B</strong> e <strong>FILA C</strong> sono varianti anti-copiatura (stessi tipi, stessi argomenti, frasi diverse; le listening restano identiche).</p>
       <div class="version-tabs" id="version-tabs">
         <div class="version-tab active" onclick="switchVersionTab('fila_b',this)">🔀 FILA B</div>
         <div class="version-tab" onclick="switchVersionTab('fila_c',this)">🔀 FILA C</div>
@@ -937,6 +940,8 @@ const CONFIG = {
         <div class="version-tab" onclick="switchVersionTab('pei_2',this)">📘 PEI 2</div>
         <div class="version-tab" onclick="switchVersionTab('dsa',this)">🔤 DSA</div>
         <div class="version-tab" onclick="switchVersionTab('recupero',this)">🔁 Recupero/Training</div>
+        <div class="version-tab" onclick="switchVersionTab('training_dsa',this)">🔤 Training DSA</div>
+        <div class="version-tab" onclick="switchVersionTab('training_pei',this)">📘 Training PEI</div>
         <div class="version-tab" onclick="switchVersionTab('recupero_1',this)">⚡ Recupero Fast 1</div>
         <div class="version-tab" onclick="switchVersionTab('recupero_2',this)">⚡ Recupero Fast 2</div>
       </div>
@@ -1574,7 +1579,7 @@ const CONFIG = {
     <!-- Student version assignment -->
     <div id="student-assign-area" style="display:none;margin-bottom:18px;">
       <label style="font-size:13px;font-weight:700;margin-bottom:8px;display:block;">🎯 Assegna versioni (opzionale)</label>
-      <p class="text-muted mb-8" style="font-size:11px;">Seleziona la versione per ogni studente. L'alunno non vedrà nessun riferimento alla versione.</p>
+      <p class="text-muted mb-8" style="font-size:11px;">Seleziona la versione per ogni studente (clic sull'intestazione di una colonna = a tutti). L'alunno non vedrà nessun riferimento alla versione.</p>
       <div class="student-assign-grid" id="student-assign-grid"></div>
     </div>
 
@@ -1988,12 +1993,24 @@ function _fbGet(ref, ms) {
 // le 6 versioni storiche (A–F): restano valide e alla prima necessita'
 // ricevono la lettera libera rimasta per pei_2 (vedi _vkEnsure).
 const _VK_CORE    = ['originale', 'fila_b', 'fila_c', 'dsa', 'pei', 'recupero'];
-const _VK_POOL    = _VK_CORE.concat(['pei_2']);
-const _VK_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
-const _VK_LAYOUT  = { dsa: 1, pei: 2, pei_2: 2 };
+// Training DSA / Training PEI (12/10/2026): la simulazione (Training) adattata.
+// Le legende già create le ricevono sulle lettere libere H e I (vedi _vkEnsure).
+const _VK_POOL    = _VK_CORE.concat(['pei_2', 'training_dsa', 'training_pei']);
+const _VK_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
+const _VK_LAYOUT  = { dsa: 1, pei: 2, pei_2: 2, training_dsa: 1, training_pei: 2 };
 const _VK_LABELS  = { originale: 'Originale', fila_b: 'Fila B', fila_c: 'Fila C', dsa: 'DSA', pei: 'PEI', pei_2: 'PEI 2',
+                      training_dsa: 'Training DSA', training_pei: 'Training PEI',
                       recupero: 'Recupero', recupero_1: 'Recupero Fast 1', recupero_2: 'Recupero Fast 2' };
-function _isPeiTab(t) { return t === 'pei' || t === 'pei_2'; }
+// Versioni con le regole PEI (semplificate, max 3 opzioni, testo molto grande) e DSA (testo grande)
+function _isPeiTab(t) { return t === 'pei' || t === 'pei_2' || t === 'training_pei'; }
+function _isDsaTab(t) { return t === 'dsa' || t === 'training_dsa'; }
+function _isTrainingTab(t) { return t === 'training_dsa' || t === 'training_pei'; }
+// Versione → array in S (editor docente)
+const _VER_STATE_KEY = { dsa: 'versionDSA', pei: 'versionPEI', pei_2: 'versionPEI2', recupero: 'versionRecupero',
+  recupero_1: 'versionRecupero1', recupero_2: 'versionRecupero2', fila_b: 'versionFilaB', fila_c: 'versionFilaC',
+  training_dsa: 'versionTrainingDSA', training_pei: 'versionTrainingPEI' };
+function _verQs(tab) { const k = _VER_STATE_KEY[tab] || 'versionRecupero'; if (!Array.isArray(S[k])) S[k] = []; return S[k]; }
+function _setVerQs(tab, qs) { S[_VER_STATE_KEY[tab] || 'versionRecupero'] = qs; }
 
 function _vkIsLetter(v) { return typeof v === 'string' && _VK_LETTERS.indexOf(v) >= 0; }
 function _vkValid(keys) {
@@ -2135,7 +2152,7 @@ async function _vkEnsure(activityId) {
 // ── Vista live docente (R1b, 16/09): etichette decodificate in locale ──
 // La schermata live è solo del docente e non si proietta: mostra DSA/PEI
 // ricostruiti dalla legenda. I valori scritti su Firebase restano lettere.
-const _VK_ORDER = ['originale', 'fila_b', 'fila_c', 'pei', 'pei_2', 'dsa', 'recupero', 'recupero_1', 'recupero_2'];
+const _VK_ORDER = ['originale', 'fila_b', 'fila_c', 'pei', 'pei_2', 'dsa', 'recupero', 'training_dsa', 'training_pei', 'recupero_1', 'recupero_2'];
 function _vkDefaultVer() {
   return _vkLetterOf('originale', S.liveVersionKeys) || 'originale';
 }
@@ -2155,7 +2172,7 @@ function _studentLayout() {
   const v = S.studentVersion || '';
   const lay = S.activity && S.activity.versionLayout;
   if (lay && lay[v] != null) return Number(lay[v]) || 0;
-  return _isPeiTab(v) ? 2 : v === 'dsa' ? 1 : 0; // attività salvate prima di R1
+  return _isPeiTab(v) ? 2 : _isDsaTab(v) ? 1 : 0; // attività salvate prima di R1
 }
 
 // Banner di errore ricaricabile — mostrato quando loadDashboard o openLive
@@ -2717,6 +2734,7 @@ function openBuilder() {
   S.editingQIndex = -1;
   S.versionDSA = []; S.versionPEI = []; S.versionPEI2 = []; S.versionRecupero = []; S.versionRecupero1 = []; S.versionRecupero2 = [];
   S.versionFilaB = []; S.versionFilaC = [];
+  S.versionTrainingDSA = []; S.versionTrainingPEI = [];
   S.versionPassages = {};
   S.currentVersionTab = 'fila_b';
   S.versionEditingIndex = -1;
@@ -2766,6 +2784,8 @@ async function editActivity(id) {
   S.versionRecupero2 = _vkDec.versions.recupero_2 || [];
   S.versionFilaB = _vkDec.versions.fila_b || [];
   S.versionFilaC = _vkDec.versions.fila_c || [];
+  S.versionTrainingDSA = _vkDec.versions.training_dsa || [];
+  S.versionTrainingPEI = _vkDec.versions.training_pei || [];
   S.versionPassages = _vkDec.versionPassages;
   S.currentVersionTab = 'fila_b';
   S.versionEditingIndex = -1;
@@ -2833,7 +2853,8 @@ async function duplicateActivity(id) {
 // { "title": "...", "topicTag": "...", "classes": ["2E"], "passageText": "...",
 //   "questions": [...],                       // originale / Fila A
 //   "versions": { "fila_b": [...], "fila_c": [...], "dsa": [...], "pei": [...], "pei_2": [...],
-//                 "recupero": [...], "recupero_1": [...], "recupero_2": [...] },
+//                 "recupero": [...], "training_dsa": [...], "training_pei": [...],
+//                 "recupero_1": [...], "recupero_2": [...] },
 //   "versionPassages": { "dsa": "...", ... } }
 // Le versioni possono stare anche al primo livello ("dsa": [...], "FILA B": [...]).
 // Un semplice array di domande viene caricato come solo originale.
@@ -2842,6 +2863,8 @@ const _UPLOAD_VER_ALIASES = {
   filac: 'fila_c', versionec: 'fila_c',
   dsa: 'dsa', pei: 'pei', pei2: 'pei_2',
   recupero: 'recupero', training: 'recupero', recuperotraining: 'recupero',
+  trainingdsa: 'training_dsa', dsatraining: 'training_dsa',
+  trainingpei: 'training_pei', peitraining: 'training_pei',
   recupero1: 'recupero_1', recuperofast1: 'recupero_1', fast1: 'recupero_1',
   recupero2: 'recupero_2', recuperofast2: 'recupero_2', fast2: 'recupero_2'
 };
@@ -2911,6 +2934,7 @@ function uploadActivityFile(event) {
     S.versionFilaB = v.fila_b || []; S.versionFilaC = v.fila_c || [];
     S.versionDSA = v.dsa || []; S.versionPEI = v.pei || []; S.versionPEI2 = v.pei_2 || [];
     S.versionRecupero = v.recupero || []; S.versionRecupero1 = v.recupero_1 || []; S.versionRecupero2 = v.recupero_2 || [];
+    S.versionTrainingDSA = v.training_dsa || []; S.versionTrainingPEI = v.training_pei || [];
     S.versionPassages = act.versionPassages;
     S.activityClasses = act.classes;
     S.activityTopic = act.topicTag;
@@ -4234,7 +4258,7 @@ function renderPreviewQuestion() {
   const q = qs[i];
 
   // Etichetta versione nel titolo del modal
-  const versionLabels = { fila_b:'FILA B', fila_c:'FILA C', pei:'📘 PEI', pei_2:'📘 PEI 2', dsa:'🔤 DSA', recupero:'Recupero', recupero_1:'Recupero Fast 1', recupero_2:'Recupero Fast 2' };
+  const versionLabels = { fila_b:'FILA B', fila_c:'FILA C', pei:'📘 PEI', pei_2:'📘 PEI 2', dsa:'🔤 DSA', recupero:'Recupero', recupero_1:'Recupero Fast 1', recupero_2:'Recupero Fast 2', training_dsa:'🔤 Training DSA', training_pei:'📘 Training PEI' };
   const vLabel = (qs !== S.questions && S.currentVersionTab) ? ' — ' + (versionLabels[S.currentVersionTab] || S.currentVersionTab.toUpperCase()) : '';
   document.getElementById('preview-title-label').textContent = 'Domanda ' + (i+1) + '/' + total + vLabel;
   document.getElementById('preview-nav-label').textContent = (i+1) + ' di ' + total;
@@ -4946,6 +4970,8 @@ async function _saveActivitySilent() {
     if (S.versionRecupero2 && S.versionRecupero2.length) versions.recupero_2 = JSON.parse(JSON.stringify(S.versionRecupero2));
     if (S.versionFilaB && S.versionFilaB.length) versions.fila_b = JSON.parse(JSON.stringify(S.versionFilaB));
     if (S.versionFilaC && S.versionFilaC.length) versions.fila_c = JSON.parse(JSON.stringify(S.versionFilaC));
+    if (S.versionTrainingDSA && S.versionTrainingDSA.length) versions.training_dsa = JSON.parse(JSON.stringify(S.versionTrainingDSA));
+    if (S.versionTrainingPEI && S.versionTrainingPEI.length) versions.training_pei = JSON.parse(JSON.stringify(S.versionTrainingPEI));
     const title = document.getElementById('activity-title')?.value.trim() || '';
     const revisionSheetRaw = (document.getElementById('activity-revision-sheet')?.value || '').trim();
     const passageRaw = (document.getElementById('activity-passage')?.value || '').trim();
@@ -4999,6 +5025,8 @@ async function saveActivity() {
   if (S.versionRecupero2 && S.versionRecupero2.length) versions.recupero_2 = JSON.parse(JSON.stringify(S.versionRecupero2));
   if (S.versionFilaB && S.versionFilaB.length) versions.fila_b = JSON.parse(JSON.stringify(S.versionFilaB));
   if (S.versionFilaC && S.versionFilaC.length) versions.fila_c = JSON.parse(JSON.stringify(S.versionFilaC));
+  if (S.versionTrainingDSA && S.versionTrainingDSA.length) versions.training_dsa = JSON.parse(JSON.stringify(S.versionTrainingDSA));
+  if (S.versionTrainingPEI && S.versionTrainingPEI.length) versions.training_pei = JSON.parse(JSON.stringify(S.versionTrainingPEI));
   const payload = { title, questions: cleanQuestions, createdAt: Date.now() };
   const topicEl2 = document.getElementById('activity-topic');
   const topicTag = topicEl2 ? topicEl2.value.trim() : '';
@@ -6040,6 +6068,8 @@ function renderLiveSidebar(responses) {
           pei:     { label: 'PEI',    bg: '#6b21a8' },
           pei_2:   { label: 'PEI 2',  bg: '#86198f' },
           recupero:{ label: 'REC.',   bg: '#0e7490' },
+          training_dsa:{ label: 'TR. DSA', bg: '#1d4ed8' },
+          training_pei:{ label: 'TR. PEI', bg: '#7e22ce' },
           fila_b:  { label: 'FILA B', bg: '#047857' },
           fila_c:  { label: 'FILA C', bg: '#b45309' }
         };
@@ -6167,6 +6197,8 @@ function renderLiveSidebar(responses) {
       pei:     { label: 'PEI',    bg: '#6b21a8' },
       pei_2:   { label: 'PEI 2',  bg: '#86198f' },
       recupero:{ label: 'REC.',   bg: '#0e7490' },
+      training_dsa:{ label: 'TR. DSA', bg: '#1d4ed8' },
+      training_pei:{ label: 'TR. PEI', bg: '#7e22ce' },
       fila_b:  { label: 'FILA B', bg: '#047857' },
       fila_c:  { label: 'FILA C', bg: '#b45309' }
     };
@@ -15122,7 +15154,7 @@ function switchVersionTab(tab, el) {
   const st = document.getElementById('version-status');
   if (st) st.style.display = 'none';
   _renderVersionPassageSection(tab);
-  const qs = tab === 'dsa' ? S.versionDSA : tab === 'pei' ? S.versionPEI : tab === 'pei_2' ? S.versionPEI2 : tab === 'recupero_1' ? S.versionRecupero1 : tab === 'recupero_2' ? S.versionRecupero2 : tab === 'fila_b' ? S.versionFilaB : tab === 'fila_c' ? S.versionFilaC : S.versionRecupero;
+  const qs = _verQs(tab);
   if (qs && qs.length) {
     ed.innerHTML = renderVersionPreview(qs, tab);
   } else {
@@ -15456,7 +15488,7 @@ function addVersionQ() {
   var qs = getVersionQs();
   var _tab = S.currentVersionTab;
   var newQ = { type: 'multiple-choice', text: '', options: ['','','',''], correct: 0, points: 10 };
-  if (_tab === 'dsa' || _isPeiTab(_tab)) newQ.dsaLargeText = true;
+  if (_isDsaTab(_tab) || _isPeiTab(_tab)) newQ.dsaLargeText = true;
   if (_isPeiTab(_tab)) newQ.options = ['','','']; // max 3 opzioni per PEI
   qs.push(newQ);
   setVersionQs(qs);
@@ -15472,7 +15504,7 @@ function addVersionQAI() {
   const origQs = S.questions;
   if (!origQs.length) return alert('Aggiungi prima le domande originali.');
 
-  const tabLabel = {dsa:'DSA',pei:'PEI',pei_2:'PEI 2',recupero:'Recupero/Training',recupero_1:'Recupero Fast 1',recupero_2:'Recupero Fast 2',fila_b:'Fila B',fila_c:'Fila C'}[tab] || tab;
+  const tabLabel = {dsa:'DSA',pei:'PEI',pei_2:'PEI 2',training_dsa:'Training DSA',training_pei:'Training PEI',recupero:'Recupero/Training',recupero_1:'Recupero Fast 1',recupero_2:'Recupero Fast 2',fila_b:'Fila B',fila_c:'Fila C'}[tab] || tab;
   const avgPts = existingQs.length
     ? Math.round(existingQs.reduce(function(s,q){return s+(q.points||10);},0)/existingQs.length)
     : (origQs[0]?.points || 10);
@@ -15498,8 +15530,8 @@ function addVersionQAI() {
 
   const versionHint = tab === 'fila_b' || tab === 'fila_c'
     ? '⚠️ La domanda sarà una variante anti-copiatura: stesso argomento, frasi/opzioni diverse.'
-    : tab === 'dsa' ? '⚠️ Versione DSA: domanda con font grande, preferibilmente MC.'
-    : _isPeiTab(tab) ? '⚠️ Versione ' + (tab === 'pei_2' ? 'PEI 2' : 'PEI') + ': domanda semplificata, max 3 opzioni.'
+    : _isDsaTab(tab) ? '⚠️ Versione ' + (tab === 'training_dsa' ? 'Training DSA' : 'DSA') + ': domanda con font grande, preferibilmente MC.'
+    : _isPeiTab(tab) ? '⚠️ Versione ' + (tab === 'pei_2' ? 'PEI 2' : tab === 'training_pei' ? 'Training PEI' : 'PEI') + ': domanda semplificata, max 3 opzioni.'
     : '';
 
   const ed = document.getElementById('version-editor');
@@ -15568,7 +15600,7 @@ async function _runAddVersionQAI() {
     : ' via ☁️ Gemini';
   statusEl.textContent = '⏳ Generazione in corso' + _provLabel + '…';
 
-  const tabLabel = {dsa:'DSA',pei:'PEI',pei_2:'PEI 2',recupero:'Recupero/Training',recupero_1:'Recupero Fast 1',recupero_2:'Recupero Fast 2',fila_b:'Fila B',fila_c:'Fila C'}[tab] || tab;
+  const tabLabel = {dsa:'DSA',pei:'PEI',pei_2:'PEI 2',training_dsa:'Training DSA',training_pei:'Training PEI',recupero:'Recupero/Training',recupero_1:'Recupero Fast 1',recupero_2:'Recupero Fast 2',fila_b:'Fila B',fila_c:'Fila C'}[tab] || tab;
 
   function _compactQ(q) {
     var c = Object.assign({}, q);
@@ -15581,10 +15613,10 @@ async function _runAddVersionQAI() {
   const versionRules =
     (tab === 'fila_b' || tab === 'fila_c')
       ? 'REGOLA VERSIONE: variante ANTI-COPIATURA. Stesso argomento grammaticale/lessicale dell\'originale, ma frasi, nomi, numeri e opzioni COMPLETAMENTE DIVERSI. NON semplificare. NON aggiungere dsaLargeText.'
-    : tab === 'dsa'
-      ? 'REGOLA VERSIONE DSA: aggiungi "dsaLargeText": true. Domanda adatta a studenti con DSA.'
+    : _isDsaTab(tab)
+      ? 'REGOLA VERSIONE DSA: aggiungi "dsaLargeText": true. Domanda adatta a studenti con DSA.' + (_isTrainingTab(tab) ? ' È la simulazione (Training) per gli alunni DSA: stesso argomento del Training, frasi diverse dalla prova vera.' : '')
     : _isPeiTab(tab)
-      ? 'REGOLA VERSIONE PEI: aggiungi "dsaLargeText": true. Domanda molto semplificata, massimo 3 opzioni se MC.'
+      ? 'REGOLA VERSIONE PEI: aggiungi "dsaLargeText": true. Domanda molto semplificata, massimo 3 opzioni se MC.' + (_isTrainingTab(tab) ? ' È la simulazione (Training) per gli alunni con PEI: stesso argomento del Training, frasi diverse dalla prova vera.' : '')
     : 'REGOLA VERSIONE RECUPERO: stessa tematica degli originali, frasi diverse, stessa difficoltà.';
 
   // Formato JSON richiesto in base al tipo scelto
@@ -15658,7 +15690,7 @@ async function _runAddVersionQAI() {
     if (lastErr) throw lastErr;
 
     // Applica regole versione
-    if (tab === 'dsa' || _isPeiTab(tab)) newQ.dsaLargeText = true;
+    if (_isDsaTab(tab) || _isPeiTab(tab)) newQ.dsaLargeText = true;
     if (tab === 'fila_b' || tab === 'fila_c') delete newQ.dsaLargeText;
     newQ.points = pts;
     newQ.type = qType; // forza il tipo selezionato dall'utente
@@ -15759,7 +15791,7 @@ async function runAiModifyVersionQ(i) {
     var newQ = await _aiModifySingleQuestion(q, hint, tab);
     newQ.points = q.points || 10;
     if (q.tag) newQ.tag = q.tag;
-    if (tab === 'dsa' || _isPeiTab(tab)) newQ.dsaLargeText = true;
+    if (_isDsaTab(tab) || _isPeiTab(tab)) newQ.dsaLargeText = true;
     if (tab === 'fila_b' || tab === 'fila_c') delete newQ.dsaLargeText;
     qs[i] = newQ;
     setVersionQs(qs);
@@ -15943,19 +15975,12 @@ async function saveVersionQ(i) {
 // ── Helpers for version qs ──
 function getVersionQs() {
   var tab = S.currentVersionTab;
-  return tab === 'dsa' ? S.versionDSA : tab === 'pei' ? S.versionPEI : tab === 'pei_2' ? S.versionPEI2 : tab === 'recupero_1' ? S.versionRecupero1 : tab === 'recupero_2' ? S.versionRecupero2 : tab === 'fila_b' ? S.versionFilaB : tab === 'fila_c' ? S.versionFilaC : S.versionRecupero;
+  return _verQs(tab);
 }
 
 function setVersionQs(qs) {
   var tab = S.currentVersionTab;
-  if (tab === 'dsa') S.versionDSA = qs;
-  else if (tab === 'pei') S.versionPEI = qs;
-  else if (tab === 'pei_2') S.versionPEI2 = qs;
-  else if (tab === 'recupero_1') S.versionRecupero1 = qs;
-  else if (tab === 'recupero_2') S.versionRecupero2 = qs;
-  else if (tab === 'fila_b') S.versionFilaB = qs;
-  else if (tab === 'fila_c') S.versionFilaC = qs;
-  else S.versionRecupero = qs;
+  _setVerQs(tab, qs);
 }
 
 // Aggiorna un campo (points o tag) della domanda i-esima della versione corrente,
@@ -16002,7 +16027,7 @@ function refreshVersionPreview() {
 
 function exportVersionJSON() {
   var tab = S.currentVersionTab;
-  var qs = tab === 'dsa' ? S.versionDSA : tab === 'pei' ? S.versionPEI : tab === 'pei_2' ? S.versionPEI2 : tab === 'recupero_1' ? S.versionRecupero1 : tab === 'recupero_2' ? S.versionRecupero2 : tab === 'fila_b' ? S.versionFilaB : tab === 'fila_c' ? S.versionFilaC : S.versionRecupero;
+  var qs = _verQs(tab);
   if (!qs || !qs.length) return alert('Nessuna domanda da esportare.');
   var blob = new Blob([JSON.stringify(qs, null, 2)], {type:'application/json'});
   var a = document.createElement('a');
@@ -16014,7 +16039,7 @@ function exportVersionJSON() {
 
 function editVersionJSON() {
   var tab = S.currentVersionTab;
-  var qs = tab === 'dsa' ? S.versionDSA : tab === 'pei' ? S.versionPEI : tab === 'pei_2' ? S.versionPEI2 : tab === 'recupero_1' ? S.versionRecupero1 : tab === 'recupero_2' ? S.versionRecupero2 : tab === 'fila_b' ? S.versionFilaB : tab === 'fila_c' ? S.versionFilaC : S.versionRecupero;
+  var qs = _verQs(tab);
   var ed = document.getElementById('version-editor');
   ed.innerHTML = '<div class="alert alert-info">📋 Modifica il JSON della versione <strong>' + tab.toUpperCase() + '</strong>. Clicca "Salva" quando hai finito.</div>' +
     '<textarea id="version-manual-json" rows="14" style="width:100%;font-size:11px;font-family:monospace;">' + JSON.stringify(qs || [], null, 2) + '</textarea>' +
@@ -16026,40 +16051,27 @@ function editVersionJSON() {
 
 function updateVersionTabBadges() {
   const tabs = document.querySelectorAll('.version-tab');
-  const data = { dsa: S.versionDSA, pei: S.versionPEI, pei_2: S.versionPEI2, recupero: S.versionRecupero, recupero_1: S.versionRecupero1, recupero_2: S.versionRecupero2, fila_b: S.versionFilaB, fila_c: S.versionFilaC };
   tabs.forEach(t => {
-    const txt = t.textContent;
-    const key = txt.includes('DSA') ? 'dsa'
-      : txt.includes('PEI 2') ? 'pei_2'
-      : txt.includes('PEI') ? 'pei'
-      : txt.includes('Fast 2') ? 'recupero_2'
-      : txt.includes('Fast 1') ? 'recupero_1'
-      : txt.includes('FILA B') ? 'fila_b'
-      : txt.includes('FILA C') ? 'fila_c'
-      : 'recupero';
-    t.classList.toggle('has-data', data[key] && data[key].length > 0);
+    // La chiave viene dall'onclick: il testo non basta ("Training DSA" contiene "DSA")
+    const m = (t.getAttribute('onclick') || '').match(/switchVersionTab\('(\w+)'/);
+    const key = m ? m[1] : 'recupero';
+    const qs = S[_VER_STATE_KEY[key] || 'versionRecupero'];
+    t.classList.toggle('has-data', !!(qs && qs.length > 0));
   });
 }
 
 function clearVersion() {
   const tab = S.currentVersionTab;
-  if (tab === 'dsa') S.versionDSA = [];
-  else if (tab === 'pei') S.versionPEI = [];
-  else if (tab === 'pei_2') S.versionPEI2 = [];
-  else if (tab === 'recupero_1') S.versionRecupero1 = [];
-  else if (tab === 'recupero_2') S.versionRecupero2 = [];
-  else if (tab === 'fila_b') S.versionFilaB = [];
-  else if (tab === 'fila_c') S.versionFilaC = [];
-  else S.versionRecupero = [];
+  _setVerQs(tab, []);
   switchVersionTab(tab, document.querySelector('.version-tab.active'));
   updateVersionTabBadges();
 }
 
 function versionManual() {
   var tab = S.currentVersionTab;
-  var qs = tab === 'dsa' ? S.versionDSA : tab === 'pei' ? S.versionPEI : tab === 'pei_2' ? S.versionPEI2 : tab === 'fila_b' ? S.versionFilaB : tab === 'fila_c' ? S.versionFilaC : S.versionRecupero;
-  // If no version yet, start from a copy of the originals
-  if (!qs || !qs.length) qs = JSON.parse(JSON.stringify(S.questions));
+  var qs = _verQs(tab);
+  // If no version yet, start from a copy of the originals (Training DSA/PEI: dal Training, se c'è)
+  if (!qs || !qs.length) qs = JSON.parse(JSON.stringify(_isTrainingTab(tab) && S.versionRecupero && S.versionRecupero.length ? S.versionRecupero : S.questions));
   var ed = document.getElementById('version-editor');
   ed.innerHTML = '<div class="alert alert-info">📋 Modifica le domande per la versione <strong>' + tab.toUpperCase() + '</strong>. Il JSON parte da una copia dell\'originale. Clicca "Salva" quando hai finito.</div>' +
     '<textarea id="version-manual-json" rows="14" style="width:100%;font-size:11px;font-family:monospace;">' + JSON.stringify(qs, null, 2) + '</textarea>' +
@@ -16074,14 +16086,7 @@ function saveManualVersion() {
     const qs = JSON.parse(document.getElementById('version-manual-json').value);
     if (!Array.isArray(qs) || !qs.length) return alert('JSON non valido: deve essere un array di domande.');
     const tab = S.currentVersionTab;
-    if (tab === 'dsa') S.versionDSA = qs;
-    else if (tab === 'pei') S.versionPEI = qs;
-    else if (tab === 'pei_2') S.versionPEI2 = qs;
-    else if (tab === 'recupero_1') S.versionRecupero1 = qs;
-    else if (tab === 'recupero_2') S.versionRecupero2 = qs;
-    else if (tab === 'fila_b') S.versionFilaB = qs;
-    else if (tab === 'fila_c') S.versionFilaC = qs;
-    else S.versionRecupero = qs;
+    _setVerQs(tab, qs);
     switchVersionTab(tab, document.querySelector('.version-tab.active'));
     updateVersionTabBadges();
   } catch(e) { alert('Errore JSON: ' + e.message); }
@@ -16100,14 +16105,7 @@ function versionImportFile(event) {
       const qs = JSON.parse(e.target.result);
       if (!Array.isArray(qs) || !qs.length) return alert('Il file deve contenere un array JSON di domande.');
       const tab = S.currentVersionTab;
-      if (tab === 'dsa') S.versionDSA = qs;
-      else if (tab === 'pei') S.versionPEI = qs;
-      else if (tab === 'pei_2') S.versionPEI2 = qs;
-      else if (tab === 'recupero_1') S.versionRecupero1 = qs;
-      else if (tab === 'recupero_2') S.versionRecupero2 = qs;
-      else if (tab === 'fila_b') S.versionFilaB = qs;
-      else if (tab === 'fila_c') S.versionFilaC = qs;
-      else S.versionRecupero = qs;
+      _setVerQs(tab, qs);
       switchVersionTab(tab, document.querySelector('.version-tab.active'));
       updateVersionTabBadges();
     } catch(e) { alert('Errore nel file: ' + e.message); }
@@ -16131,6 +16129,11 @@ async function versionGenerateAI() {
   }
 
   const tab = S.currentVersionTab;
+  // Training DSA / Training PEI: si parte dalla versione Training, non dalla prova vera
+  const _fromTraining = _isTrainingTab(tab) && S.versionRecupero && S.versionRecupero.length > 0;
+  if (_isTrainingTab(tab) && !_fromTraining &&
+      !confirm('⚠️ La versione "Recupero/Training" è vuota.\n\nIl ' + (tab === 'training_dsa' ? 'Training DSA' : 'Training PEI') + ' verrà generato dalle domande ORIGINALI (quindi simile alla prova vera).\n\nConsiglio: crea prima il Training, poi genera questa versione.\n\nContinuare comunque?')) return;
+  const _srcQs = _fromTraining ? S.versionRecupero : S.questions;
   const st = document.getElementById('version-status');
   st.style.display = 'block'; st.className = 'alert alert-info';
   const _provLabel = _AI_PROVIDER === 'gemini' ? ' via ☁️ Gemini'
@@ -16147,13 +16150,13 @@ async function versionGenerateAI() {
     if (c.question)  c.question  = Object.assign({}, c.question);
     return c;
   }
-  const compactQs     = S.questions.map(_compactQ);
+  const compactQs     = _srcQs.map(_compactQ);
   const questionsJson = JSON.stringify(compactQs, null, 1);
   const qJsonTrunc    = questionsJson.substring(0, 30000);
   const wasClipped    = questionsJson.length > 30000;
 
   // Mapping esplicito domanda-per-domanda per tutti i tab
-  const qMapAll = S.questions.map((q, i) =>
+  const qMapAll = _srcQs.map((q, i) =>
     `  Q${i+1}: type="${q.type}", topic="${(q.text||q.question?.text||'').substring(0,50).replace(/\n/g,' ')}", points=${q.points||1}`
   ).join('\n');
 
@@ -16166,7 +16169,7 @@ FORMATTAZIONE DEL TESTO (OBBLIGATORIA):
 - Puoi usare [red]parola[/red], [blue], [green] per evidenziare`;
 
   // Testo di riferimento: usa quello specifico della versione, altrimenti il principale
-  const _verPassageForAI = (S.versionPassages || {})[tab] || '';
+  const _verPassageForAI = (S.versionPassages || {})[tab] || (_isTrainingTab(tab) ? (S.versionPassages || {}).recupero || '' : '');
   const _mainPassageForAI = (document.getElementById('activity-passage')?.value || '').trim();
   const _passageForPrompt = (_verPassageForAI || _mainPassageForAI).substring(0, 3000);
   const _passageBlock = _passageForPrompt
@@ -16175,6 +16178,10 @@ FORMATTAZIONE DEL TESTO (OBBLIGATORIA):
     : '';
 
   let instructions = '';
+  const _trainingNote = !_isTrainingTab(tab) ? ''
+    : _fromTraining
+      ? `\nQuesta è la SIMULAZIONE (Training) per ${tab === 'training_dsa' ? 'gli alunni con DSA' : 'gli alunni con PEI'}: trasforma le domande del TRAINING qui sotto (NON la prova vera), con gli stessi criteri della versione ${tab === 'training_dsa' ? 'DSA' : 'PEI'}.`
+      : `\nQuesta è la SIMULAZIONE (Training) per ${tab === 'training_dsa' ? 'gli alunni con DSA' : 'gli alunni con PEI'}: stesso argomento delle domande qui sotto ma frasi, nomi ed esempi DIVERSI, perché non sia la prova vera.`;
 
   if (tab === 'recupero_1' || tab === 'recupero_2') {
     const num = tab === 'recupero_1' ? '1' : '2';
@@ -16211,10 +16218,10 @@ ${qMapNL}
 ${tab === 'fila_c' ? '6. FILA C: diversa da FILA B — usa nomi/numeri/situazioni diversi.' : ''}
 ${RICH_TEXT_RULE}`;
 
-  } else if (tab === 'dsa') {
-    instructions = `═══ VERSIONE: DSA (Disturbi Specifici dell'Apprendimento) ═══
-OBIETTIVO: domande più accessibili per studenti con DSA.
-HAI ${S.questions.length} DOMANDE. COPRILE TUTTE, stesso ordine.
+  } else if (_isDsaTab(tab)) {
+    instructions = `═══ VERSIONE: ${tab === 'training_dsa' ? 'TRAINING DSA' : 'DSA'} (Disturbi Specifici dell'Apprendimento) ═══
+OBIETTIVO: domande più accessibili per studenti con DSA.${_trainingNote}
+HAI ${_srcQs.length} DOMANDE. COPRILE TUTTE, stesso ordine.
 ${qMapAll}
 
 TRASFORMAZIONI OBBLIGATORIE:
@@ -16238,10 +16245,10 @@ NON generare domande simili all'originale. SEMPLIFICA AL MASSIMO.`;
     const _pei2Note = tab === 'pei_2'
       ? `\nQuesta è la SECONDA prova PEI (PEI 2), per un altro alunno con PEI: frasi ed esempi diversi dalla prima versione PEI, stessi criteri di semplificazione.`
       : '';
-    instructions = `═══ VERSIONE: ${tab === 'pei_2' ? 'PEI 2' : 'PEI'} (Piano Educativo Individualizzato) ═══
-${_peiBaseNote}${_pei2Note}
+    instructions = `═══ VERSIONE: ${tab === 'pei_2' ? 'PEI 2' : tab === 'training_pei' ? 'TRAINING PEI' : 'PEI'} (Piano Educativo Individualizzato) ═══
+${_peiBaseNote}${_pei2Note}${_trainingNote}
 
-HAI ${S.questions.length} DOMANDE. COPRILE TUTTE, stesso ordine.
+HAI ${_srcQs.length} DOMANDE. COPRILE TUTTE, stesso ordine.
 ${qMapAll}
 
 TRASFORMAZIONI OBBLIGATORIE — applica TUTTE SENZA ECCEZIONI:
@@ -16277,7 +16284,7 @@ ${RICH_TEXT_RULE}`;
 
 ${instructions}
 ${_passageBlock}
-${(_isPeiTab(tab) && _verPassageForAI) ? 'Domande originali (SOLO come riferimento per TIPI/NUMERO — il contenuto viene dal testo PEI sopra):' : 'Domande originali da trasformare (audioData/immagini omesse):'}
+${(_isPeiTab(tab) && _verPassageForAI) ? 'Domande ' + (_fromTraining ? 'del Training' : 'originali') + ' (SOLO come riferimento per TIPI/NUMERO — il contenuto viene dal testo PEI sopra):' : 'Domande ' + (_fromTraining ? 'del TRAINING' : 'originali') + ' da trasformare (audioData/immagini omesse):'}
 ${qJsonTrunc}${wasClipped ? '\n[troncato — ma il mapping sopra copre TUTTE le domande]' : ''}
 
 FORMATI JSON:
@@ -16418,27 +16425,20 @@ Rispondi SOLO con un array JSON valido. Nessun markdown, nessuna spiegazione.`;
     }
 
     // Validazione numero minimo per DSA/PEI/Recupero
-    if (['dsa','pei','pei_2','recupero'].includes(tab)) {
-      if (generated.length < Math.ceil(S.questions.length * 0.8)) {
+    if (['dsa','pei','pei_2','recupero','training_dsa','training_pei'].includes(tab)) {
+      if (generated.length < Math.ceil(_srcQs.length * 0.8)) {
         throw new Error(
-          `Generati solo ${generated.length} esercizi su ${S.questions.length} originali. ` +
+          `Generati solo ${generated.length} esercizi su ${_srcQs.length} ${_fromTraining ? 'del Training' : 'originali'}. ` +
           `Alcune domande sono state saltate. Riprova.`
         );
       }
     }
 
-    if (tab === 'dsa' || _isPeiTab(tab)) generated.forEach(q => { q.dsaLargeText = true; });
-    if (tab === 'dsa') S.versionDSA = generated;
-    else if (tab === 'pei') S.versionPEI = generated;
-    else if (tab === 'pei_2') S.versionPEI2 = generated;
-    else if (tab === 'recupero_1') S.versionRecupero1 = generated;
-    else if (tab === 'recupero_2') S.versionRecupero2 = generated;
-    else if (tab === 'fila_b') S.versionFilaB = generated;
-    else if (tab === 'fila_c') S.versionFilaC = generated;
-    else S.versionRecupero = generated;
+    if (_isDsaTab(tab) || _isPeiTab(tab)) generated.forEach(q => { q.dsaLargeText = true; });
+    _setVerQs(tab, generated);
 
     st.className = 'alert alert-success';
-    const tabLabel = {'dsa':'DSA','pei':'PEI','pei_2':'PEI 2','recupero':'RECUPERO/TRAINING','recupero_1':'RECUPERO FAST 1','recupero_2':'RECUPERO FAST 2','fila_b':'FILA B','fila_c':'FILA C'}[tab] || tab.toUpperCase();
+    const tabLabel = {'dsa':'DSA','pei':'PEI','pei_2':'PEI 2','training_dsa':'TRAINING DSA','training_pei':'TRAINING PEI','recupero':'RECUPERO/TRAINING','recupero_1':'RECUPERO FAST 1','recupero_2':'RECUPERO FAST 2','fila_b':'FILA B','fila_c':'FILA C'}[tab] || tab.toUpperCase();
     const _pw = versionGenerateAI._partialWarning || null;
     versionGenerateAI._partialWarning = null;
     st.className = _pw ? 'alert alert-warning' : 'alert alert-success';
@@ -16453,6 +16453,11 @@ Rispondi SOLO con un array JSON valido. Nessun markdown, nessuna spiegazione.`;
 // ═══════════════════════════════════════════════════════════════
 // STUDENT VERSION ASSIGNMENT IN SESSION START MODAL
 // ═══════════════════════════════════════════════════════════════
+// Intestazione di colonna cliccata: quella versione a tutta la classe
+// (es. simulazione: "Rec." a tutti, poi Tr. DSA / Tr. PEI ai singoli alunni)
+function _assignAllVersion(ver) {
+  document.querySelectorAll('#student-assign-grid input[data-student-version][value="' + ver + '"]').forEach(r => { r.checked = true; });
+}
 async function onClassSelectForSession() {
   const classId = document.getElementById('start-session-class').value;
   const area = document.getElementById('student-assign-area');
@@ -16486,7 +16491,7 @@ async function onClassSelectForSession() {
     }
     activity = Object.assign({}, activity, _vkDecodeActivity(activity, S.pendingVersionKeys));
   }
-  const hasVersions = activity?.versions && (activity.versions.dsa || activity.versions.pei || activity.versions.pei_2 || activity.versions.recupero || activity.versions.fila_b || activity.versions.fila_c); // recupero_1/2 are automatic, not shown here
+  const hasVersions = activity?.versions && (activity.versions.dsa || activity.versions.pei || activity.versions.pei_2 || activity.versions.recupero || activity.versions.training_dsa || activity.versions.training_pei || activity.versions.fila_b || activity.versions.fila_c); // recupero_1/2 are automatic, not shown here
   if (!hasVersions) { area.style.display = 'none'; return; }
 
   // Get roster
@@ -16501,18 +16506,24 @@ async function onClassSelectForSession() {
   const vRec = activity.versions?.recupero?.length ? true : false;
   const vFilaB = activity.versions?.fila_b?.length ? true : false;
   const vFilaC = activity.versions?.fila_c?.length ? true : false;
+  const vTrDsa = activity.versions?.training_dsa?.length ? true : false;
+  const vTrPei = activity.versions?.training_pei?.length ? true : false;
 
-  let h = '<div class="student-assign-row header"><span>Studente</span><span style="text-align:center;">FILA A</span>';
-  if (vDsa) h += '<span style="text-align:center;">DSA</span>';
-  if (vPei) h += '<span style="text-align:center;">PEI</span>';
-  if (vPei2) h += '<span style="text-align:center;">PEI 2</span>';
-  if (vRec) h += '<span style="text-align:center;">Rec.</span>';
-  if (vFilaB) h += '<span style="text-align:center;">FILA B</span>';
-  if (vFilaC) h += '<span style="text-align:center;">FILA C</span>';
+  let h = '<div class="student-assign-row header"><span>Studente</span><span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'originale\')" title="Clicca per assegnare a tutti">FILA A</span>';
+  if (vDsa) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'dsa\')" title="Clicca per assegnare a tutti">DSA</span>';
+  if (vPei) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'pei\')" title="Clicca per assegnare a tutti">PEI</span>';
+  if (vPei2) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'pei_2\')" title="Clicca per assegnare a tutti">PEI 2</span>';
+  if (vRec) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'recupero\')" title="Clicca per assegnare a tutti">Rec.</span>';
+  if (vTrDsa) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'training_dsa\')" title="Training DSA — clicca per assegnare a tutti">Tr. DSA</span>';
+  if (vTrPei) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'training_pei\')" title="Training PEI — clicca per assegnare a tutti">Tr. PEI</span>';
+  if (vFilaB) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'fila_b\')" title="Clicca per assegnare a tutti">FILA B</span>';
+  if (vFilaC) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'fila_c\')" title="Clicca per assegnare a tutti">FILA C</span>';
   h += '</div>';
   // Adjust grid columns
-  const cols = 2 + (vDsa?1:0) + (vPei?1:0) + (vPei2?1:0) + (vRec?1:0) + (vFilaB?1:0) + (vFilaC?1:0);
-  const colTemplate = '1fr ' + Array(cols-1).fill('80px').join(' ');
+  const cols = 2 + (vDsa?1:0) + (vPei?1:0) + (vPei2?1:0) + (vRec?1:0) + (vTrDsa?1:0) + (vTrPei?1:0) + (vFilaB?1:0) + (vFilaC?1:0);
+  // Con tante versioni (simulazione: Rec. + Tr. DSA + Tr. PEI) le colonne si stringono per restare nel riquadro
+  const colW = cols <= 5 ? '80px' : cols <= 7 ? '62px' : '52px';
+  const colTemplate = 'minmax(110px,1fr) ' + Array(cols-1).fill(colW).join(' ');
 
   roster.forEach(name => {
     const safe = name.replace(/[.#$\[\]\/'"]/g, '_');
@@ -16523,6 +16534,8 @@ async function onClassSelectForSession() {
     if (vPei) h += '<label><input type="radio" name="ver_' + safe + '" value="pei" data-student-version data-student-name="' + esc(name) + '"></label>';
     if (vPei2) h += '<label><input type="radio" name="ver_' + safe + '" value="pei_2" data-student-version data-student-name="' + esc(name) + '"></label>';
     if (vRec) h += '<label><input type="radio" name="ver_' + safe + '" value="recupero" data-student-version data-student-name="' + esc(name) + '"></label>';
+    if (vTrDsa) h += '<label><input type="radio" name="ver_' + safe + '" value="training_dsa" data-student-version data-student-name="' + esc(name) + '"></label>';
+    if (vTrPei) h += '<label><input type="radio" name="ver_' + safe + '" value="training_pei" data-student-version data-student-name="' + esc(name) + '"></label>';
     if (vFilaB) h += '<label><input type="radio" name="ver_' + safe + '" value="fila_b" data-student-version data-student-name="' + esc(name) + '"></label>';
     if (vFilaC) h += '<label><input type="radio" name="ver_' + safe + '" value="fila_c" data-student-version data-student-name="' + esc(name) + '"></label>';
     h += '</div>';
@@ -19246,7 +19259,7 @@ function _renderVersionPassageSection(tab) {
   if (!S.versionPassages) S.versionPassages = {};
   const currentText = S.versionPassages[tab] || '';
   const isPEI = _isPeiTab(tab);
-  const tabLabels = {pei:'PEI', pei_2:'PEI 2', dsa:'DSA', fila_b:'FILA B', fila_c:'FILA C', recupero:'Recupero', recupero_1:'Recupero Fast 1', recupero_2:'Recupero Fast 2'};
+  const tabLabels = {pei:'PEI', pei_2:'PEI 2', dsa:'DSA', training_dsa:'Training DSA', training_pei:'Training PEI', fila_b:'FILA B', fila_c:'FILA C', recupero:'Recupero', recupero_1:'Recupero Fast 1', recupero_2:'Recupero Fast 2'};
   const tabLabel = tabLabels[tab] || tab.toUpperCase();
 
   const bgColor = isPEI ? '#fffbeb' : '#f5f3ff';
@@ -19653,7 +19666,7 @@ var QE_TYPES = [
   ['reorder','🔀 Riordina frasi'],['categorization','🗂️ Categorizzazione'],
   ['listening','🎧 Listening']
 ];
-var QE_FILA_LABELS = { '':'Originale', dsa:'DSA', pei:'PEI', pei_2:'PEI 2', recupero:'Recupero', recupero_1:'Recupero Fast 1', recupero_2:'Recupero Fast 2', fila_b:'Fila B', fila_c:'Fila C' };
+var QE_FILA_LABELS = { '':'Originale', dsa:'DSA', pei:'PEI', pei_2:'PEI 2', training_dsa:'Training DSA', training_pei:'Training PEI', recupero:'Recupero', recupero_1:'Recupero Fast 1', recupero_2:'Recupero Fast 2', fila_b:'Fila B', fila_c:'Fila C' };
 
 // ── Accesso all'array di domande del contesto corrente ──
 function _qeArr() {
