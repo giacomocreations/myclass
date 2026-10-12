@@ -1962,6 +1962,21 @@ function switchDashTab(id, el) {
 // chiaro invece di restare appesa per sempre.
 // Usare SEMPRE questo wrapper al posto di db.ref(...).get() diretto
 // per tutte le letture non-realtime critiche per la UI.
+// Come _fbGet ma paziente: dopo slowMs chiama onSlow (avviso), e rinuncia
+// solo dopo maxMs. La lettura in corso non viene buttata via a slowMs.
+function _fbGetPatient(ref, slowMs, maxMs, onSlow) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = () => { done = true; clearTimeout(tSlow); clearTimeout(tMax); };
+    const tSlow = setTimeout(() => { if (!done && onSlow) { try { onSlow(); } catch(e) {} } }, slowMs);
+    const tMax = setTimeout(() => {
+      if (done) return;
+      finish();
+      reject(new Error('⏱ Firebase non risponde dopo ' + (maxMs/1000) + 's — controlla la connessione.'));
+    }, maxMs);
+    ref.get().then(v => { if (!done) { finish(); resolve(v); } }, e => { if (!done) { finish(); reject(e); } });
+  });
+}
 function _fbGet(ref, ms) {
   ms = ms || 8000;
   return Promise.race([
@@ -2204,82 +2219,113 @@ async function loadDashboard() {
     return;
   }
 
-  // ── Letture Firebase in parallelo ──────────────────────────
-  let aSnap, cSnapRaw, sSnap;
-  try {
-    [aSnap, cSnapRaw, sSnap] = await Promise.all([
-      _fbGet(db.ref('livelearn/activities'), 10000),
-      _fbGet(db.ref('livelearn/classes'), 10000).catch(() => null),
-      _fbGet(db.ref('livelearn/sessions'), 10000)
-    ]);
-  } catch(e) {
-    console.error('[loadDashboard] lettura iniziale timeout:', e.message);
-    _showFbTimeoutBanner('activity-grid', 'loadDashboard');
-    // Mostra le sezioni vuote invece di restare congelate
-    document.getElementById('activity-grid').innerHTML = '<div class="alert" style="background:#fef2f2;border-color:#ef4444;color:#991b1b;">⚠️ Impossibile caricare le attività — ' + e.message + '</div>';
-    document.getElementById('session-list').innerHTML = '<div class="alert" style="background:#fef2f2;border-color:#ef4444;color:#991b1b;">⚠️ Impossibile caricare le sessioni. <button class="btn btn-sm" onclick="loadDashboard()" style="margin-left:8px;">🔄 Riprova</button></div>';
-    return;
-  }
+  // ── Letture Firebase indipendenti ──────────────────────────
+  // Le attività sono il nodo più pesante (contengono anche gli MP3 dei
+  // listening, copiati in ogni versione): le sessioni NON le aspettano più.
+  // Dopo 10s si avvisa che Firebase è lento ma si continua ad aspettare la
+  // stessa lettura (fino a 90s) invece di buttarla e mostrare un errore.
+  const _t0 = Date.now();
+  const _dashSlow = (id, what) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<div class="alert alert-info">⏳ Firebase è lento: sto ancora caricando ' + what + '…</div>';
+  };
+  const _dashErr = (id, what, e) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<div class="alert" style="background:#fef2f2;border-color:#ef4444;color:#991b1b;">⚠️ Impossibile caricare ' + what + ' — ' + esc(e && e.message || String(e)) +
+      ' <button class="btn btn-sm" onclick="loadDashboard()" style="margin-left:8px;">🔄 Riprova</button>' +
+      '<div style="font-size:11px;margin-top:6px;font-weight:600;">Se succede di continuo: console Firebase → Realtime Database → <em>Utilizzo</em>, controlla che non sia stato superato il limite di download del piano.</div></div>';
+  };
+  const pAct  = _fbGetPatient(db.ref('livelearn/activities'), 10000, 90000, () => _dashSlow('activity-grid', 'le attività'));
+  const pCls  = _fbGetPatient(db.ref('livelearn/classes'), 10000, 90000).catch(() => null);
+  const pSess = _fbGetPatient(db.ref('livelearn/sessions'), 10000, 90000, () => _dashSlow('session-list', 'le sessioni'));
 
   // Activities
-  const acts = aSnap.val() || {};
-  // Ordine cronologico: dalla più recente alla più vecchia (a parità di data,
-  // vale l'ordine delle chiavi push di Firebase, anch'esse cronologiche)
-  const actArr = Object.entries(acts).reverse()
-    .sort(([, a], [, b]) => ((b && b.createdAt) || 0) - ((a && a.createdAt) || 0));
-  document.getElementById('stat-activities').textContent = actArr.length;
-
-  // Store for filtering
-  S._allActivities = actArr;
-  S._activeClassFilter = S._activeClassFilter || 'TUTTE';
-  renderActivitiesGrouped(actArr, S._activeClassFilter);
+  const actsDone = pAct.then(aSnap => {
+    const acts = aSnap.val() || {};
+    // Diagnostica: tempo e peso del nodo attività (aiuta a capire la lentezza)
+    setTimeout(() => {
+      let mb = '?';
+      try { mb = (JSON.stringify(acts).length / 1048576).toFixed(1); } catch(e) {}
+      console.info('[loadDashboard] attività: ' + ((Date.now() - _t0) / 1000).toFixed(1) + 's, ~' + mb + ' MB');
+    }, 0);
+    // Ordine cronologico: dalla più recente alla più vecchia (a parità di data,
+    // vale l'ordine delle chiavi push di Firebase, anch'esse cronologiche)
+    const actArr = Object.entries(acts).reverse()
+      .sort(([, a], [, b]) => ((b && b.createdAt) || 0) - ((a && a.createdAt) || 0));
+    document.getElementById('stat-activities').textContent = actArr.length;
+    // Store for filtering
+    S._allActivities = actArr;
+    S._activeClassFilter = S._activeClassFilter || 'TUTTE';
+    renderActivitiesGrouped(actArr, S._activeClassFilter);
+    return acts;
+  }).catch(e => {
+    console.error('[loadDashboard] attività:', e.message);
+    _dashErr('activity-grid', 'le attività', e);
+    return null;
+  });
 
   // Classes count
-  let classesCount = cSnapRaw && cSnapRaw.val() ? Object.keys(cSnapRaw.val()).length : 0;
-  if (!classesCount) {
-    const local = localStorage.getItem('livelearn_classes');
-    if (local) try { classesCount = Object.keys(JSON.parse(local)).length; } catch(e) {}
-  }
-  document.getElementById('stat-classes').textContent = classesCount;
+  const clsDone = pCls.then(cSnapRaw => {
+    let classesCount = cSnapRaw && cSnapRaw.val() ? Object.keys(cSnapRaw.val()).length : 0;
+    if (!classesCount) {
+      const local = localStorage.getItem('livelearn_classes');
+      if (local) try { classesCount = Object.keys(JSON.parse(local)).length; } catch(e) {}
+    }
+    document.getElementById('stat-classes').textContent = classesCount;
+    return cSnapRaw;
+  });
 
   // Sessions
-  const sess = sSnap.val() || {};
-  const sessArr = Object.entries(sess).sort(([, a], [, b]) => (b.createdAt || 0) - (a.createdAt || 0));
-  document.getElementById('stat-sessions').textContent = sessArr.length;
+  const sessDone = pSess.then(async sSnap => {
+    const sess = sSnap.val() || {};
+    const sessArr = Object.entries(sess).sort(([, a], [, b]) => (b.createdAt || 0) - (a.createdAt || 0));
+    document.getElementById('stat-sessions').textContent = sessArr.length;
+    // Lista subito (senza conteggio risposte), poi completata quando arrivano le risposte
+    S._allSessions = sessArr;
+    S._sessionRespVals = S._sessionRespVals || {};
+    S._sessionFilter = S._sessionFilter || 'all';
+    S._sessionStatusFilter = S._sessionStatusFilter || 'all';
+    S._sessionClassFilter = S._sessionClassFilter || 'all';
+    S._sessionSearch = S._sessionSearch || '';
+    renderSessionList();
 
-  let totalResp = 0;
-  const respVals = {};
-  if (sessArr.length > 0) {
-    // Leggi tutte le risposte in parallelo invece di una alla volta
-    // Timeout individuale per sessione: se una sola va in timeout non blocca le altre
-    const respSnaps = await Promise.all(
-      sessArr.map(([code]) => _fbGet(db.ref('livelearn/responses/' + code), 8000).catch(e => {
-        console.warn('[loadDashboard] timeout risposte sessione', code, e.message);
-        return { val: () => null }; // snapshot fittizio: 0 studenti invece di blocco
-      }))
-    );
-    for (let i = 0; i < sessArr.length; i++) {
-      const [code] = sessArr[i];
-      const rVal = respSnaps[i].val() || {};
-      respVals[code] = rVal;
-      totalResp += Object.keys(rVal).length;
+    let totalResp = 0;
+    const respVals = {};
+    if (sessArr.length > 0) {
+      // Leggi tutte le risposte in parallelo invece di una alla volta
+      // Timeout individuale per sessione: se una sola va in timeout non blocca le altre
+      const respSnaps = await Promise.all(
+        sessArr.map(([code]) => _fbGet(db.ref('livelearn/responses/' + code), 15000).catch(e => {
+          console.warn('[loadDashboard] timeout risposte sessione', code, e.message);
+          return { val: () => null }; // snapshot fittizio: 0 studenti invece di blocco
+        }))
+      );
+      for (let i = 0; i < sessArr.length; i++) {
+        const [code] = sessArr[i];
+        const rVal = respSnaps[i].val() || {};
+        respVals[code] = rVal;
+        totalResp += Object.keys(rVal).length;
+      }
     }
-  }
-  document.getElementById('stat-responses').textContent = totalResp;
+    document.getElementById('stat-responses').textContent = totalResp;
+    // Memorizza per il filtro (evita di rileggere Firebase ad ogni cambio filtro)
+    S._sessionRespVals = respVals;
+    renderSessionList();
+    return { sessArr, respVals };
+  }).catch(e => {
+    console.error('[loadDashboard] sessioni:', e.message);
+    _showFbTimeoutBanner('session-list', 'loadDashboard');
+    _dashErr('session-list', 'le sessioni', e);
+    return null;
+  });
 
-  // Memorizza per il filtro (evita di rileggere Firebase ad ogni cambio filtro)
-  S._allSessions = sessArr;
-  S._sessionRespVals = respVals;
-  S._sessionFilter = S._sessionFilter || 'all';
-  S._sessionStatusFilter = S._sessionStatusFilter || 'all';
-  S._sessionClassFilter = S._sessionClassFilter || 'all';
-  S._sessionSearch = S._sessionSearch || '';
-  renderSessionList();
+  const [acts, sessRes, cSnapRaw] = await Promise.all([actsDone, sessDone, clsDone]);
+  if (!acts || !sessRes) return;
 
   // Cronologie personali (StudentApp) allineate anche per le sessioni chiuse
   // dalla lista o mai riaperte. In background: la dashboard non aspetta.
   setTimeout(() => {
-    _llBackgroundHistorySync(sessArr, respVals, acts, (cSnapRaw && cSnapRaw.val()) || null)
+    _llBackgroundHistorySync(sessRes.sessArr, sessRes.respVals, acts, (cSnapRaw && cSnapRaw.val()) || null)
       .catch(e => console.warn('[Cronologie] background:', e.message));
   }, 1500);
 }
