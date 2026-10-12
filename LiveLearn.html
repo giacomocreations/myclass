@@ -753,6 +753,7 @@ const CONFIG = {
         <button class="btn btn-sm" onclick="document.getElementById('activity-upload-file').click()" title="Carica un'attività già pronta (file JSON) con originale e tutte le versioni differenziate">📂 Carica attività</button>
         <input type="file" id="activity-upload-file" accept=".json,application/json" style="display:none" onchange="uploadActivityFile(event)">
         <button class="btn btn-sm" onclick="optimizeActivitiesStorage()" title="Salva ogni MP3/immagine una sola volta per attività invece di copiarli in ogni versione: la dashboard si apre più in fretta. Prima scarica un backup.">🧹 Ottimizza spazio</button>
+        <button class="btn btn-sm" onclick="rebuildActivityIndex()" title="Rigenera l'elenco leggero delle attività usato dalla dashboard (scarica una volta tutte le attività). Serve solo se l'elenco sembra incompleto o sbagliato.">🗂 Ricostruisci indice</button>
       </div>
       <div id="optimize-status" style="display:none;margin-bottom:12px;" class="alert alert-info"></div>
       <div id="activity-grid" class="activity-grid"></div>
@@ -2183,17 +2184,110 @@ function _mediaResolveQs(qs, act) {
   });
   return qs;
 }
-// Scrittura di un'attività: se le regole rifiutano "media", si riprova col formato di prima
+// Scrittura di un'attività: se le regole rifiutano "media", si riprova col formato di prima.
+// Dopo la scrittura allinea anche l'indice leggero e la cache in memoria.
 async function _actSet(ref, payload) {
-  try { return await ref.set(payload); }
+  try { await ref.set(payload); }
   catch (e) {
     if (payload && payload.media && _isPermDenied(e)) {
       console.warn('[media] le regole Firebase non accettano "media": salvo l\'audio dentro le domande come prima');
       _mediaInline(payload);
-      return await ref.set(payload);
-    }
-    throw e;
+      await ref.set(payload);
+    } else throw e;
   }
+  _actCacheSet(ref.key, payload);
+  await _actIdxPut(ref.key, payload);
+}
+
+// ── Indice leggero delle attività (12/10/2026) ──────────────────────────
+// La dashboard leggeva tutto livelearn/activities (MP3 e immagini compresi):
+// decine di MB a ogni apertura. Ora legge solo livelearn/activityIndex/<id>,
+// pochi campi per scheda (niente media, niente testo delle domande).
+// L'attività completa si scarica solo quando serve davvero (editor, avvio,
+// copia, risultati, PDF…) con _actGet, che la tiene in memoria per id.
+// OGNI scrittura su livelearn/activities/<id> deve aggiornare anche l'indice
+// e la cache: _actSet lo fa da sé; chi scrive in altro modo usa
+// _actIdxPut / _actIdxDel e _actCacheSet / _actCacheDrop.
+const _ACT_IDX = 'livelearn/activityIndex';
+function _actIdxEntry(a) {
+  if (!a || typeof a !== 'object') return null;
+  const qs = a.questions ? Object.values(a.questions).filter(q => q && typeof q === 'object') : [];
+  const tagPts = [];
+  let totalPts = 0;
+  qs.forEach(q => {
+    const p = q.points || 1;
+    totalPts += p;
+    if (!q.tag) return;
+    const t = tagPts.find(x => x.t === q.tag);
+    if (t) t.p += p; else tagPts.push({ t: q.tag, p });
+  });
+  const e = {
+    title: a.title || '', createdAt: a.createdAt || 0,
+    qCount: qs.length, totalPts,
+    hasListening: _sessActHasListening(a),
+    qNoListening: qs.filter(q => q.type !== 'listening').length
+  };
+  if (a.topicTag) e.topicTag = a.topicTag;
+  const cls = Array.isArray(a.classes) ? a.classes : (a.classes && typeof a.classes === 'object' ? Object.values(a.classes) : []);
+  if (cls.length) e.classes = cls;
+  if (tagPts.length) e.tagPts = tagPts;
+  const nv = a.versions && typeof a.versions === 'object' ? Object.keys(a.versions).length : 0;
+  if (nv) e.nVersions = nv;
+  return e;
+}
+// Voce dell'indice dopo una scrittura dell'attività. Mai bloccante: se
+// fallisce, il controllo in background della dashboard la rimette a posto.
+async function _actIdxPut(id, a) {
+  const e = _actIdxEntry(a);
+  if (!db || !id || !e) return;
+  try { await db.ref(_ACT_IDX + '/' + id).set(e); }
+  catch (err) { console.warn('[activityIndex] aggiornamento fallito per', id, err.message); }
+}
+async function _actIdxDel(id) {
+  if (!db || !id) return;
+  try { await db.ref(_ACT_IDX + '/' + id).remove(); }
+  catch (err) { console.warn('[activityIndex] rimozione fallita per', id, err.message); }
+}
+// Indice completo da una mappa { id: attività } (migrazione / ricostruzione)
+function _actIdxFromActs(acts) {
+  const idx = {};
+  Object.entries(acts || {}).forEach(([id, a]) => { const e = _actIdxEntry(a); if (e) idx[id] = e; });
+  return idx;
+}
+// Cache in memoria delle attività complete (valore grezzo, come su Firebase).
+// Ogni lettura restituisce una copia: chi la idrata o la modifica non tocca la cache.
+const _actFull = new Map();
+const _actFullPending = new Map();
+function _actClone(v) {
+  if (v == null) return v;
+  try { if (typeof structuredClone === 'function') return structuredClone(v); } catch (e) {}
+  return JSON.parse(JSON.stringify(v));
+}
+function _actCacheSet(id, v) { if (id && v) _actFull.set(id, _actClone(v)); }
+function _actCacheDrop(id) { _actFull.delete(id); }
+// Attività completa per id (null se non esiste). Se è già in memoria, una
+// lettura minuscola di createdAt (cambia a ogni salvataggio) conferma che la
+// copia non è stata superata da un salvataggio fatto su un altro dispositivo.
+// ms: timeout come _fbGet (senza, lettura senza limite come .get()).
+async function _actGet(id, ms) {
+  if (!db || !id) return null;
+  const read = ref => ms ? _fbGet(ref, ms) : ref.get();
+  if (_actFull.has(id)) {
+    const cached = _actFull.get(id);
+    try {
+      const ca = (await read(db.ref('livelearn/activities/' + id + '/createdAt'))).val();
+      if ((ca || null) === (cached.createdAt || null)) return _actClone(cached);
+      _actFull.delete(id);
+    } catch (e) {
+      return _actClone(cached); // rete lenta: meglio la copia in memoria che niente
+    }
+  }
+  if (!_actFullPending.has(id)) {
+    _actFullPending.set(id, read(db.ref('livelearn/activities/' + id))
+      .then(s => { const v = s.val(); if (v) _actFull.set(id, v); return v; })
+      .finally(() => _actFullPending.delete(id)));
+  }
+  return _actClone(await _actFullPending.get(id));
 }
 
 // Nomi interni → lettere (muta e restituisce il payload destinato a Firebase)
@@ -2344,11 +2438,15 @@ async function loadDashboard() {
   }
 
   // ── Letture Firebase indipendenti ──────────────────────────
-  // Le attività sono il nodo più pesante (contengono anche gli MP3 dei
-  // listening, copiati in ogni versione): le sessioni NON le aspettano più.
-  // Dopo 10s si avvisa che Firebase è lento ma si continua ad aspettare la
-  // stessa lettura (fino a 90s) invece di buttarla e mostrare un errore.
+  // Attività: solo l'indice leggero (livelearn/activityIndex), mai il nodo
+  // completo con gli MP3. Sessioni: solo le recenti e quelle ancora aperte.
+  // Risposte: non si riscaricano per le sessioni chiuse che hanno già il
+  // riepilogo (respSummary). Dopo 10s si avvisa che Firebase è lento ma si
+  // continua ad aspettare la stessa lettura (fino a 90s).
   const _t0 = Date.now();
+  // Diagnostica: byte scaricati per percorso (stima: dimensione del JSON ricevuto)
+  const _dl = {};
+  const _note = (k, v) => { try { _dl[k] = (_dl[k] || 0) + (v == null ? 4 : JSON.stringify(v).length); } catch(e) {} return v; };
   const _dashSlow = (id, what) => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = '<div class="alert alert-info">⏳ Firebase è lento: sto ancora caricando ' + what + '…</div>';
@@ -2359,28 +2457,44 @@ async function loadDashboard() {
       ' <button class="btn btn-sm" onclick="loadDashboard()" style="margin-left:8px;">🔄 Riprova</button>' +
       '<div style="font-size:11px;margin-top:6px;font-weight:600;">Se succede di continuo: console Firebase → Realtime Database → <em>Utilizzo</em>, controlla che non sia stato superato il limite di download del piano.</div></div>';
   };
-  const pAct  = _fbGetPatient(db.ref('livelearn/activities'), 10000, 90000, () => _dashSlow('activity-grid', 'le attività'));
-  const pCls  = _fbGetPatient(db.ref('livelearn/classes'), 10000, 90000).catch(() => null);
-  const pSess = _fbGetPatient(db.ref('livelearn/sessions'), 10000, 90000, () => _dashSlow('session-list', 'le sessioni'));
+  const _actSlow = () => _dashSlow('activity-grid', 'le attività');
+  const pAct  = _fbGetPatient(db.ref(_ACT_IDX), 10000, 90000, _actSlow).then(s => {
+    const idx = _note('activityIndex', s.val());
+    if (idx && Object.keys(idx).length) return idx;
+    // Indice assente (prima apertura dopo l'aggiornamento): si costruisce UNA volta
+    return _actIdxMigrate(_note, _actSlow);
+  });
+  const pCls  = _fbGetPatient(db.ref('livelearn/classes'), 10000, 90000).then(s => { _note('classes', s.val()); return s; }).catch(() => null);
+  const _sessRef = db.ref('livelearn/sessions');
+  const _sessSlow = () => _dashSlow('session-list', 'le sessioni');
+  const pSess = S._sessShowAll
+    ? _fbGetPatient(_sessRef, 10000, 90000, _sessSlow).then(s => _note('sessions', s.val()) || {})
+    : Promise.all([
+        _fbGetPatient(_sessRef.orderByChild('createdAt').startAt(Date.now() - _SESS_RECENT_DAYS * 86400000), 10000, 90000, _sessSlow),
+        // Sessioni più vecchie ma ancora aperte (assegnate con scadenza lunga, dimenticate attive)
+        _fbGet(_sessRef.orderByChild('status').equalTo('active'), 20000).catch(() => null),
+        _fbGet(_sessRef.orderByChild('status').equalTo('assigned'), 20000).catch(() => null)
+      ]).then(snaps => {
+        const out = {};
+        snaps.forEach(s => { const v = s ? s.val() : null; _note('sessions', v); Object.assign(out, v || {}); });
+        return out;
+      });
 
   // Activities
-  const actsDone = pAct.then(aSnap => {
-    const acts = aSnap.val() || {};
-    // Diagnostica: tempo e peso del nodo attività (aiuta a capire la lentezza)
-    setTimeout(() => {
-      let mb = '?';
-      try { mb = (JSON.stringify(acts).length / 1048576).toFixed(1); } catch(e) {}
-      console.info('[loadDashboard] attività: ' + ((Date.now() - _t0) / 1000).toFixed(1) + 's, ~' + mb + ' MB');
-    }, 0);
+  const actsDone = pAct.then(acts => {
+    acts = acts || {};
     // Ordine cronologico: dalla più recente alla più vecchia (a parità di data,
     // vale l'ordine delle chiavi push di Firebase, anch'esse cronologiche)
     const actArr = Object.entries(acts).reverse()
       .sort(([, a], [, b]) => ((b && b.createdAt) || 0) - ((a && a.createdAt) || 0));
     document.getElementById('stat-activities').textContent = actArr.length;
-    // Store for filtering
+    // Store for filtering (voci dell'indice, non attività complete)
     S._allActivities = actArr;
     S._activeClassFilter = S._activeClassFilter || 'TUTTE';
     renderActivitiesGrouped(actArr, S._activeClassFilter);
+    // Controllo in background: attività create/eliminate da una versione vecchia
+    // della pagina (altro dispositivo) che l'indice non conosce
+    setTimeout(() => _actIdxSelfCheck(acts).catch(e => console.warn('[activityIndex] controllo:', e.message)), 4000);
     return acts;
   }).catch(e => {
     console.error('[loadDashboard] attività:', e.message);
@@ -2400,9 +2514,9 @@ async function loadDashboard() {
   });
 
   // Sessions
-  const sessDone = pSess.then(async sSnap => {
-    const sess = sSnap.val() || {};
-    const sessArr = Object.entries(sess).sort(([, a], [, b]) => (b.createdAt || 0) - (a.createdAt || 0));
+  const sessDone = pSess.then(async sess => {
+    const sessArr = Object.entries(sess).filter(([, s]) => s && typeof s === 'object')
+      .sort(([, a], [, b]) => (b.createdAt || 0) - (a.createdAt || 0));
     document.getElementById('stat-sessions').textContent = sessArr.length;
     // Lista subito (senza conteggio risposte), poi completata quando arrivano le risposte
     S._allSessions = sessArr;
@@ -2415,20 +2529,30 @@ async function loadDashboard() {
 
     let totalResp = 0;
     const respVals = {};
-    if (sessArr.length > 0) {
+    // Sessioni chiuse con il riepilogo già salvato: niente download delle risposte
+    const toRead = sessArr.filter(([, s]) => !_sessRespSummaryOk(s));
+    sessArr.forEach(([, s]) => { if (_sessRespSummaryOk(s)) totalResp += s.respSummary.n || 0; });
+    if (toRead.length > 0) {
       // Leggi tutte le risposte in parallelo invece di una alla volta
       // Timeout individuale per sessione: se una sola va in timeout non blocca le altre
       const respSnaps = await Promise.all(
-        sessArr.map(([code]) => _fbGet(db.ref('livelearn/responses/' + code), 15000).catch(e => {
+        toRead.map(([code]) => _fbGet(db.ref('livelearn/responses/' + code), 15000).catch(e => {
           console.warn('[loadDashboard] timeout risposte sessione', code, e.message);
-          return { val: () => null }; // snapshot fittizio: 0 studenti invece di blocco
+          return { val: () => null, _failed: true }; // snapshot fittizio: 0 studenti invece di blocco
         }))
       );
-      for (let i = 0; i < sessArr.length; i++) {
-        const [code] = sessArr[i];
-        const rVal = respSnaps[i].val() || {};
+      for (let i = 0; i < toRead.length; i++) {
+        const [code, s] = toRead[i];
+        const rVal = _note('responses', respSnaps[i].val()) || {};
         respVals[code] = rVal;
         totalResp += Object.keys(rVal).length;
+        // Sessione chiusa da un po': il riepilogo evita di riscaricarla le prossime volte
+        if (!respSnaps[i]._failed && _sessRespSummaryWritable(s)) {
+          const sum = _sessRespSummaryOf(rVal);
+          s.respSummary = sum;
+          db.ref('livelearn/sessions/' + code + '/respSummary').set(sum)
+            .catch(e => console.warn('[loadDashboard] riepilogo risposte', code, e.message));
+        }
       }
     }
     document.getElementById('stat-responses').textContent = totalResp;
@@ -2444,14 +2568,106 @@ async function loadDashboard() {
   });
 
   const [acts, sessRes, cSnapRaw] = await Promise.all([actsDone, sessDone, clsDone]);
+  // Diagnostica: quanto ha scaricato questa apertura della dashboard
+  const _dlTot = Object.values(_dl).reduce((a, b) => a + b, 0);
+  console.info('[loadDashboard] scaricati ~' + (_dlTot / 1024).toFixed(1) + ' KB in ' + ((Date.now() - _t0) / 1000).toFixed(1) + 's — ' +
+    Object.entries(_dl).map(([k, v]) => k + ' ' + (v / 1024).toFixed(1) + ' KB').join(', '));
   if (!acts || !sessRes) return;
 
   // Cronologie personali (StudentApp) allineate anche per le sessioni chiuse
   // dalla lista o mai riaperte. In background: la dashboard non aspetta.
+  // Attività e risposte si scaricano lì solo per le sessioni da riallineare.
   setTimeout(() => {
-    _llBackgroundHistorySync(sessRes.sessArr, sessRes.respVals, acts, (cSnapRaw && cSnapRaw.val()) || null)
+    _llBackgroundHistorySync(sessRes.sessArr, sessRes.respVals, null, (cSnapRaw && cSnapRaw.val()) || null)
       .catch(e => console.warn('[Cronologie] background:', e.message));
   }, 1500);
+}
+
+// Lista sessioni: di default solo gli ultimi giorni (più quelle ancora aperte).
+// "Mostra anche le più vecchie" scarica l'elenco completo, solo su richiesta.
+const _SESS_RECENT_DAYS = 30;
+function showOlderSessions() {
+  S._sessShowAll = true;
+  loadDashboard();
+}
+
+// Riepilogo delle risposte di una sessione chiusa (partecipanti, forzati,
+// ultima consegna/associazione). Le risposte di una sessione chiusa non
+// cambiano più da sole: la dashboard le riscarica solo se il riepilogo manca.
+// Lo cancellano la chiusura (_closeSessionAndWipeKeys), l'apertura nei
+// Risultati (dove il docente può modificarle) e il riallineamento cronologie.
+function _sessRespSummaryOk(s) {
+  return !!(s && s.respSummary && s.respSummary.v === 1 && _sessionStatusOf(s) === 'closed');
+}
+// Si scrive solo a sessione chiusa da almeno 15 minuti (consegne forzate e
+// ritardatarie già arrivate); senza closedAt (chiuse prima di questa
+// versione) si aspetta un giorno dalla creazione.
+function _sessRespSummaryWritable(s) {
+  if (!s || _sessionStatusOf(s) !== 'closed') return false;
+  return s.closedAt ? Date.now() - s.closedAt > 15 * 60000
+                    : Date.now() - (s.createdAt || 0) > 24 * 3600000;
+}
+function _sessRespSummaryOf(rVal) {
+  const rs = Object.values(rVal || {});
+  return {
+    v: 1, at: Date.now(), n: rs.length,
+    forced: rs.filter(r => r && r.forcedSubmit).length,
+    last: Math.max(0, ...rs.map(r => Math.max((r && r.submittedAt) || 0, (r && r.regularizedAt) || 0)))
+  };
+}
+
+// Prima costruzione dell'indice: legge UNA volta tutte le attività e lo scrive.
+async function _actIdxMigrate(note, onSlow) {
+  const snap = await _fbGetPatient(db.ref('livelearn/activities'), 10000, 120000, onSlow);
+  const acts = snap.val() || {};
+  if (note) note('activities (costruzione indice)', acts);
+  const idx = _actIdxFromActs(acts);
+  if (Object.keys(idx).length) {
+    try {
+      await db.ref(_ACT_IDX).set(idx);
+      console.info('[activityIndex] indice creato: ' + Object.keys(idx).length + ' attività');
+    } catch (e) {
+      console.warn('[activityIndex] ⚠️ indice NON salvato (' + e.message + '): pubblica le regole Firebase per livelearn/activityIndex, altrimenti ogni apertura riscarica tutte le attività.');
+    }
+  }
+  return idx;
+}
+
+// Pulsante "Ricostruisci indice" (per i casi strani: elenco incompleto o sbagliato)
+async function rebuildActivityIndex() {
+  if (!db) return alert('⚠️ Firebase non configurato.');
+  if (!confirm('🗂 Ricostruisci indice\n\nScarica UNA volta tutte le attività (può pesare parecchi MB) e rigenera l\'elenco leggero usato dalla dashboard.\nServe solo se l\'elenco delle attività sembra incompleto o sbagliato.\n\nContinuare?')) return;
+  const st = document.getElementById('optimize-status');
+  const say = (html, cls) => { if (st) { st.style.display = 'block'; st.className = 'alert ' + (cls || 'alert-info'); st.innerHTML = html; } };
+  try {
+    say('⏳ Leggo tutte le attività e ricostruisco l\'indice…');
+    const snap = await _fbGetPatient(db.ref('livelearn/activities'), 10000, 120000);
+    const idx = _actIdxFromActs(snap.val() || {});
+    await db.ref(_ACT_IDX).set(Object.keys(idx).length ? idx : null);
+    say('✅ Indice ricostruito: ' + Object.keys(idx).length + ' attività.', 'alert-success');
+    loadDashboard();
+  } catch (e) {
+    say('❌ ' + esc(e.message), 'alert-danger');
+  }
+}
+
+// Controllo leggero, una volta per apertura della pagina: confronta le chiavi
+// dell'indice con quelle delle attività (lettura REST "shallow": solo le
+// chiavi, pochi byte) e rimette a posto le voci mancanti o in più.
+async function _actIdxSelfCheck(idx) {
+  if (S._actIdxChecked || !db || !auth || !auth.currentUser || typeof fetch !== 'function') return;
+  S._actIdxChecked = true;
+  const tok = await auth.currentUser.getIdToken();
+  const res = await fetch(CONFIG.firebase.databaseURL + '/livelearn/activities.json?shallow=true&auth=' + encodeURIComponent(tok));
+  if (!res.ok) return;
+  const keys = (await res.json()) || {};
+  const missing = Object.keys(keys).filter(k => !idx[k]);
+  const extra = Object.keys(idx).filter(k => !keys[k]);
+  if (!missing.length && !extra.length) return;
+  for (const id of missing) { const a = await _actGet(id, 30000); if (a) await _actIdxPut(id, a); }
+  for (const id of extra) await _actIdxDel(id);
+  console.info('[activityIndex] riallineato: ' + missing.length + ' aggiunte, ' + extra.length + ' rimosse');
+  loadDashboard();
 }
 
 // ── 🧹 Ottimizza spazio: converte le attività già salvate al formato "media
@@ -2504,6 +2720,7 @@ async function optimizeActivitiesStorage() {
       }
       try {
         await db.ref('livelearn/activities/' + id).set(copy);
+        _actCacheSet(id, copy);
         done++; before += b; after += c;
       } catch (e) {
         if (_isPermDenied(e)) {
@@ -2514,6 +2731,9 @@ async function optimizeActivitiesStorage() {
       }
       say('⏳ ' + (done + skipped + unchanged) + '/' + ids.length + ' attività controllate…');
     }
+    // Le attività sono già tutte in mano: si riallinea anche l'indice leggero
+    // (i contenuti non cambiano, ma così eventuali voci mancanti tornano)
+    await db.ref(_ACT_IDX).set(_actIdxFromActs(acts)).catch(e => console.warn('[activityIndex] riallineamento:', e.message));
     say('✅ Fatto: ' + done + ' attività ottimizzate' + (unchanged ? ', ' + unchanged + ' già leggere' : '') + (skipped ? ', ' + skipped + ' lasciate com\'erano' : '') +
       '.<br>Peso delle attività: <strong>' + (before / 1048576).toFixed(1) + ' MB → ' + (after / 1048576).toFixed(1) + ' MB</strong>.', 'alert-success');
     loadDashboard();
@@ -2597,19 +2817,22 @@ function renderSessionList() {
     else if (modeF === 'all' && statusF === 'all' && classF === 'all') msg = 'Nessuna sessione ancora.<br><small>Avvia un\'attività per creare una sessione.</small>';
     else msg = 'Nessuna sessione con questi filtri.';
     sl.innerHTML = `<div class="empty-state"><div class="es-icon">📡</div><p>${msg}</p></div>`;
+    _sessOlderFooter(sl);
     return;
   }
 
   for (let i = 0; i < shown.length; i++) {
     const [code, s] = shown[i];
+    // Sessioni chiuse col riepilogo: conteggi dal riepilogo, risposte non scaricate
+    const rSum = !respVals[code] && _sessRespSummaryOk(s) ? s.respSummary : null;
     const rVal = respVals[code] || {};
-    const rc = Object.keys(rVal).length;
+    const rc = rSum ? (rSum.n || 0) : Object.keys(rVal).length;
     const isActive = s.status === 'active';
     const isAssigned = s.status === 'assigned';
     const mode = s.mode || 'test';
 
     // Conta forzati (solo per sessioni chiuse)
-    const forcedCount = (!isActive && !isAssigned) ? Object.values(rVal).filter(r => r && r.forcedSubmit).length : 0;
+    const forcedCount = (!isActive && !isAssigned) ? (rSum ? (rSum.forced || 0) : Object.values(rVal).filter(r => r && r.forcedSubmit).length) : 0;
     const forcedBadge = forcedCount > 0
       ? `<span class="badge" style="background:#cffafe;color:#0e7490;font-size:10px;margin-left:4px;" title="${forcedCount} studenti valutati automaticamente alla chiusura">⏱ ${forcedCount} forzati</span>`
       : '';
@@ -2676,6 +2899,16 @@ function renderSessionList() {
     `;
     sl.appendChild(row);
   }
+  _sessOlderFooter(sl);
+}
+// Fondo della lista: le sessioni più vecchie si scaricano solo su richiesta
+function _sessOlderFooter(sl) {
+  if (S._sessShowAll) return;
+  const f = document.createElement('div');
+  f.style.cssText = 'text-align:center;padding:12px 0;font-size:12px;color:var(--muted);';
+  f.innerHTML = 'Sono mostrate le sessioni degli ultimi ' + _SESS_RECENT_DAYS + ' giorni e quelle ancora aperte. ' +
+    '<button class="btn btn-sm" onclick="showOlderSessions()" style="margin-left:6px;">📜 Mostra anche le più vecchie</button>';
+  sl.appendChild(f);
 }
 
 // Aggiorna conteggi e stato attivo di entrambe le barre + casella ricerca
@@ -2760,14 +2993,14 @@ async function exportSessionAllPDF(code, activityId) {
     classId: S.liveClassId, roster: S.liveRoster
   };
   try {
-    const [aSnap, sSnap] = await Promise.all([
-      _fbGet(db.ref('livelearn/activities/' + activityId), 8000),
+    const [aVal, sSnap] = await Promise.all([
+      _actGet(activityId, 8000),
       _fbGet(db.ref('livelearn/sessions/' + code), 8000)
     ]);
-    let act = aSnap.val();
+    let act = aVal;
     const sess = sSnap.val() || {};
     if (!act && sess.activityId && sess.activityId !== activityId) {
-      try { const a2 = await _fbGet(db.ref('livelearn/activities/' + sess.activityId), 6000); act = a2.val(); } catch(e) {}
+      try { act = await _actGet(sess.activityId, 6000); } catch(e) {}
     }
     if (!act) { alert('Attività non trovata per questa sessione (potrebbe essere stata eliminata).'); return; }
     // Stato minimo richiesto da exportAllPDFCorretto + getStudentAssignedQuestions
@@ -2775,7 +3008,7 @@ async function exportSessionAllPDF(code, activityId) {
     S.liveActivity = _sessFilterActivity(act, sess);
     S.liveActivityId = activityId;
     S.liveStudentVersions = sess.studentVersions || {};
-    S.liveVersionKeys = _vkNeedsKeys(act) ? await _vkLoad(aSnap.val() ? activityId : sess.activityId) : null; // R1
+    S.liveVersionKeys = _vkNeedsKeys(act) ? await _vkLoad(aVal ? activityId : sess.activityId) : null; // R1
     await exportAllPDFCorretto();
   } catch(e) {
     alert('Errore nel caricamento della sessione: ' + e.message);
@@ -2873,11 +3106,12 @@ function renderActivitiesGrouped(actArr, activeFilter) {
     const items = topicMap[topic];
   const cardsHtml = items.map(([id, a]) => {
       const badges = (a.classes || []).map(classBadgeHtml).join('');
-      const qCount = a.questions ? a.questions.length : 0;
-      const totalPts = a.questions ? a.questions.reduce((s, q) => s + (q.points || 1), 0) : 0;
+      // a = voce dell'indice leggero (qCount/totalPts/tagPts); a.questions solo per compatibilità
+      const qCount = a.questions ? a.questions.length : (a.qCount || 0);
+      const totalPts = a.questions ? a.questions.reduce((s, q) => s + (q.points || 1), 0) : (a.totalPts || 0);
       const safeId = id.replace(/['"]/g, '');
       const tagVal = esc(a.topicTag || '');
-      const tagPillsHtml = _actTagPills(a.questions);
+      const tagPillsHtml = _actTagPills(a.questions, a.tagPts);
       return `<div class="activity-card">
         <h3 style="margin:0 0 8px;">${esc(a.title)}</h3>
         ${tagPillsHtml}
@@ -2950,8 +3184,14 @@ function typeTags(questions) {
 }
 
 // ── Tag pills for activity card (punti per categoria, senza aprire l'editor) ──
-function _actTagPills(questions) {
-  if (!questions || !questions.length) return '';
+// tagPts: in alternativa alle domande, i totali già calcolati dell'indice leggero
+function _actTagPills(questions, tagPts) {
+  if (!questions || !questions.length) {
+    if (!tagPts) return '';
+    questions = [];
+    Object.values(tagPts).forEach(x => { if (x && x.t) questions.push({ tag: x.t, points: x.p || 0 }); });
+    if (!questions.length) return '';
+  }
   const tagMeta = {
     'GRAMMAR':    { label: '📐 Grammar',    bg: '#dbeafe', color: '#1e3a8a' },
     'VOCABULARY': { label: '📚 Vocabulary', bg: '#d1fae5', color: '#065f46' },
@@ -3014,8 +3254,7 @@ function openBuilder() {
 }
 
 async function editActivity(id) {
-  const snap = await db.ref('livelearn/activities/' + id).get();
-  const a = _actHydrate(snap.val());
+  const a = _actHydrate(await _actGet(id));
   // R1: decodifica lettere → nomi interni. Senza legenda l'editor non si apre:
   // salvando si perderebbero le versioni differenziate.
   let _vkKeys = null;
@@ -3075,13 +3314,14 @@ async function editActivity(id) {
 async function deleteActivity(id) {
   if (!confirm('Eliminare questa attività?\n\n(I test già svolti dagli alunni restano: per rimuoverli elimina la singola sessione.)')) return;
   await db.ref('livelearn/activities/' + id).remove();
+  _actCacheDrop(id);
+  await _actIdxDel(id);
   await db.ref('livelearn/versionKeys/' + id).remove().catch(() => {}); // R1
   loadDashboard();
 }
 
 async function duplicateActivity(id) {
-  const snap = await db.ref('livelearn/activities/' + id).get();
-  const a = snap.val();
+  const a = await _actGet(id);
   if (!a) return;
   const copy = JSON.parse(JSON.stringify(a));
   copy.title = 'Copia di ' + (copy.title || 'Attività');
@@ -3225,6 +3465,11 @@ async function saveActivityTag(id, inputEl) {
     // Aggiorna anche la struttura in memoria per non ricaricare tutto
     const cached = (S._allActivities || []).find(([aid]) => aid === id);
     if (cached) cached[1].topicTag = newTag || '';
+    // Indice leggero (solo se la voce c'è già: niente voci a metà) e copia in memoria
+    if (cached) await db.ref(_ACT_IDX + '/' + id + '/topicTag').set(newTag || null)
+      .catch(e => console.warn('[activityIndex] topicTag:', e.message));
+    const full = _actFull.get(id);
+    if (full) { if (newTag) full.topicTag = newTag; else delete full.topicTag; }
     inputEl.classList.add('tag-saved');
     setTimeout(() => inputEl.classList.remove('tag-saved'), 1200);
   } catch(e) { console.warn('saveActivityTag:', e.message); }
@@ -5346,7 +5591,9 @@ async function startSession(activityId, title) {
   if (_nlChk) _nlChk.checked = false;
   if (_nlRow) {
     const _cachedAct = ((S._allActivities || []).find(([aid]) => aid === activityId) || [])[1];
-    _nlRow.style.display = _sessActHasListening(_cachedAct) ? 'flex' : 'none';
+    // Voce dell'indice leggero: il flag hasListening basta, niente download
+    const _hasL = _cachedAct && _cachedAct.hasListening != null ? !!_cachedAct.hasListening : _sessActHasListening(_cachedAct);
+    _nlRow.style.display = _hasL ? 'flex' : 'none';
   }
   const _ao = document.getElementById('assigned-options');
   if (_ao) _ao.style.display = 'none';
@@ -5510,8 +5757,16 @@ async function confirmStartSession() {
   const shuffleOpts = document.getElementById('launch-shuffleOpts').checked;
   const noListening = !!document.getElementById('launch-noListening')?.checked;
   if (noListening) {
-    const _a = ((S._allActivities || []).find(([aid]) => aid === S.pendingActivityId) || [])[1];
-    if (_a && !(_sessFilterActivity(_a, { noListening: true }).questions || []).length)
+    // Voce dell'indice: basta qNoListening; se manca, l'attività completa (cache)
+    const _ai = ((S._allActivities || []).find(([aid]) => aid === S.pendingActivityId) || [])[1];
+    let _noLOnly;
+    if (_ai && _ai.qNoListening != null) _noLOnly = !_ai.qNoListening;
+    else {
+      let _a = null;
+      try { _a = await _actGet(S.pendingActivityId, 15000); } catch(e) {}
+      _noLOnly = !!_a && !(_sessFilterActivity(_a, { noListening: true }).questions || []).length;
+    }
+    if (_noLOnly)
       return alert('⚠️ Questa attività contiene solo domande di ascolto: escludendo il listening non resterebbe nessuna domanda.');
   }
   const classId = document.getElementById('start-session-class').value;
@@ -5570,8 +5825,7 @@ async function confirmStartSession() {
     }
 
     // ── Scheda di ripasso in lobby ──────────────────────────────────────────
-    const _actSnap = await db.ref('livelearn/activities/' + S.pendingActivityId).get();
-    const _actData = _actSnap.val() || {};
+    const _actData = (await _actGet(S.pendingActivityId)) || {};
     if (_actData.revisionSheet) {
       await db.ref('livelearn/sessions/' + code + '/revisionSheet').set(_actData.revisionSheet).catch(()=>{});
     } else {
@@ -5764,10 +6018,14 @@ async function openLive(code, activityId, roster, silent) {
     if (_cnt) _cnt.textContent = '0';
   }
 
+  // Il docente può modificare le risposte da qui: il riepilogo usato dalla
+  // dashboard per le sessioni chiuse va ricalcolato alla prossima apertura.
+  db.ref('livelearn/sessions/' + code + '/respSummary').remove().catch(() => {});
   let aSnap, sSnap;
   try {
+    // Attività completa dalla cache in memoria (scaricata una volta sola per pagina)
     [aSnap, sSnap] = await Promise.all([
-      _fbGet(db.ref('livelearn/activities/' + activityId), 8000),
+      _actGet(activityId, 8000).then(v => ({ val: () => v })),
       _fbGet(db.ref('livelearn/sessions/' + code), 8000)
     ]);
   } catch(e) {
@@ -5787,8 +6045,7 @@ async function openLive(code, activityId, roster, silent) {
   if (!S.liveActivity && sess.activityId && sess.activityId !== activityId) {
     console.warn('[openLive] attività non trovata con id parametro "' + activityId + '", provo con sess.activityId:', sess.activityId);
     try {
-      const aSnap2 = await _fbGet(db.ref('livelearn/activities/' + sess.activityId), 6000);
-      S.liveActivity = _actHydrate(aSnap2.val());
+      S.liveActivity = _actHydrate(await _actGet(sess.activityId, 6000));
       if (S.liveActivity) console.log('[openLive] attività recuperata dal fallback ✅');
     } catch(e) { console.warn('[openLive] fallback attività timeout:', e.message); }
   }
@@ -7105,19 +7362,31 @@ async function _llBackgroundHistorySync(sessArr, respVals, acts, classes) {
   try {
     for (const [code, sess] of sessArr) {
       if (!sess || !sess.classId || !sess.activityId || (sess.createdAt || 0) < limite) continue;
-      const resp = respVals[code] || {};
+      // Sessioni chiuse col riepilogo: le risposte non sono state scaricate,
+      // l'ultima consegna sta nel riepilogo e si scaricano solo se serve
+      let resp = respVals[code];
       const hs = sess.historySync || null;
-      const ultimo = Math.max(0, ...Object.values(resp).map(r => Math.max((r && r.submittedAt) || 0, (r && r.regularizedAt) || 0)));
+      const ultimo = resp
+        ? Math.max(0, ...Object.values(resp).map(r => Math.max((r && r.submittedAt) || 0, (r && r.regularizedAt) || 0)))
+        : ((sess.respSummary && sess.respSummary.last) || 0);
       if (!ultimo) continue;
       if (hs && hs.status === (sess.status || 'active') && hs.at >= ultimo) continue;
       if (code === S.liveCode) continue; // la vista live se ne occupa da se'
-      const act = acts[sess.activityId];
+      // Attività completa solo per le sessioni da riallineare (cache in memoria)
+      let act = acts && acts[sess.activityId];
+      if (!act) { try { act = await _actGet(sess.activityId, 30000); } catch(e) { act = null; } }
       if (!act) continue;
+      if (!resp) {
+        try { resp = (await _fbGet(db.ref('livelearn/responses/' + code), 15000)).val() || {}; }
+        catch(e) { continue; }
+      }
       const cl = (classes && classes[sess.classId]) || localCls[sess.classId] || {};
       const ctx = { activity: _sessFilterActivity(act, sess), studentVersions: sess.studentVersions || {},
                     roster: cl.studenti || [], classId: sess.classId };
       try { _llNotifySync(await _llSyncSessionHistories(code, { ctx, sess, responses: resp })); }
       catch(e) { console.warn('[Cronologie] sessione', code, e.message); }
+      // Le associazioni automatiche cambiano le risposte: riepilogo da rifare
+      if (sess.respSummary) db.ref('livelearn/sessions/' + code + '/respSummary').remove().catch(() => {});
     }
   } finally { S._llBgSyncBusy = false; }
 }
@@ -8148,10 +8417,8 @@ async function _retroForcedSubmit(code) {
   const sessData = sessSnap.val() || {};
   if (sessData.status === 'active') return; // sessione ancora attiva, nessun intervento
 
-  const actSnap = sessData.activityId
-    ? await db.ref('livelearn/activities/' + sessData.activityId).get()
-    : null;
-  const questions = _sessFilterActivity(actSnap?.val(), sessData)?.questions || S.liveActivity?.questions || [];
+  const actVal = sessData.activityId ? await _actGet(sessData.activityId) : null;
+  const questions = _sessFilterActivity(actVal, sessData)?.questions || S.liveActivity?.questions || [];
   const maxPts = questions.reduce((s, q) => s + (q.points || 1), 0);
 
   const respSnap = await db.ref('livelearn/responses/' + code).get();
@@ -14631,6 +14898,9 @@ async function _closeSessionAndWipeKeys(code) {
     sharedApiKey:       null,
     sharedAnthropicKey: null
   });
+  // Ora di chiusura e riepilogo risposte azzerato (dashboard leggera): a
+  // parte, così regole più strette non possono bloccare la chiusura.
+  await db.ref('livelearn/sessions/' + code).update({ closedAt: Date.now(), respSummary: null }).catch(() => {});
 }
 
 function _genCode() {
@@ -16817,7 +17087,7 @@ async function onClassSelectForSession() {
   // Check if activity has versions
   let activity = null;
   if (S.pendingActivityId && db) {
-    try { const snap = await db.ref('livelearn/activities/' + S.pendingActivityId).get(); activity = snap.val(); } catch(e) {}
+    try { activity = await _actGet(S.pendingActivityId); } catch(e) {}
   }
   // R1: il docente vede DSA/PEI nella griglia; su Firebase andranno solo lettere.
   S.pendingVersionKeys = null;
