@@ -752,7 +752,9 @@ const CONFIG = {
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;">
         <button class="btn btn-sm" onclick="document.getElementById('activity-upload-file').click()" title="Carica un'attività già pronta (file JSON) con originale e tutte le versioni differenziate">📂 Carica attività</button>
         <input type="file" id="activity-upload-file" accept=".json,application/json" style="display:none" onchange="uploadActivityFile(event)">
+        <button class="btn btn-sm" onclick="optimizeActivitiesStorage()" title="Salva ogni MP3/immagine una sola volta per attività invece di copiarli in ogni versione: la dashboard si apre più in fretta. Prima scarica un backup.">🧹 Ottimizza spazio</button>
       </div>
+      <div id="optimize-status" style="display:none;margin-bottom:12px;" class="alert alert-info"></div>
       <div id="activity-grid" class="activity-grid"></div>
     </div>
     <div id="tab-sessions" class="tab-panel">
@@ -1545,6 +1547,10 @@ const CONFIG = {
         </div>
         <p class="text-muted" style="font-size:11px;margin-bottom:0;flex:2;min-width:160px;">Lascia vuota per nessuna scadenza. Gli studenti non potranno consegnare dopo la data indicata.</p>
       </div>
+      <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;margin-top:10px;">
+        <input type="checkbox" id="launch-repeatable" checked style="margin-top:3px;">
+        <span><strong>🔁 Ripetibile</strong> — dopo la consegna l'alunno può rifarla quante volte vuole. Vedi l'ultimo tentativo e lo storico dei precedenti.</span>
+      </label>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px;background:#f9f8f6;border-radius:10px;margin-bottom:14px;">
@@ -2073,8 +2079,126 @@ function _vkQs(qs, from, to) {
   Object.keys(qs).forEach(k => { out[k] = fix(qs[k]); });
   return out;
 }
+// ── Media una volta sola (13/10/2026) ───────────────────────────────────
+// Gli MP3 dei listening (e le immagini base64) venivano copiati dentro ogni
+// versione (FILA B/C, Fast 1/2, Training…): la stessa traccia anche 6 volte
+// nel nodo attività, scaricato per intero a ogni apertura della dashboard.
+// Ora al salvataggio ogni file sta UNA volta in activity.media[chiave] e le
+// domande portano solo audioKey / imageKey. Alla lettura (_actHydrate) i dati
+// tornano dentro le domande: tutto il resto del codice vede il formato di
+// sempre. Le attività vecchie (audio dentro le domande) restano leggibili.
+const _MEDIA_FIELDS = [['audioData', 'audioKey'], ['image', 'imageKey']];
+const _mediaKeyCache = new Map();
+function _mediaKey(str) {
+  const c = _mediaKeyCache.get(str);
+  if (c) return c;
+  if (_mediaKeyCache.size > 300) _mediaKeyCache.clear();
+  // Due hash a 32 bit (FNV-1a e djb2) + lunghezza: collisioni praticamente impossibili
+  let h1 = 0x811c9dc5, h2 = 5381;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 16777619);
+    h2 = (Math.imul(h2, 33) + ch) | 0;
+  }
+  const k = 'm' + (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36) + str.length.toString(36);
+  _mediaKeyCache.set(str, k);
+  return k;
+}
+function _mediaBig(v) { return typeof v === 'string' && v.length > 2000 && v.startsWith('data:'); }
+function _mediaEachQ(act, fn) {
+  if (!act || typeof act !== 'object') return;
+  const each = qs => { if (qs && typeof qs === 'object') Object.values(qs).forEach(q => { if (q && typeof q === 'object') fn(q); }); };
+  each(act.questions);
+  if (act.versions && typeof act.versions === 'object') Object.values(act.versions).forEach(each);
+}
+// Payload destinato a Firebase (già copia profonda): dati → chiavi + media
+function _mediaDehydrate(payload) {
+  const prev = (payload && payload.media) || {};
+  const store = {};
+  _mediaEachQ(payload, q => {
+    _MEDIA_FIELDS.forEach(([field, keyField]) => {
+      if (_mediaBig(q[field])) {
+        const k = _mediaKey(q[field]);
+        store[k] = q[field];
+        q[keyField] = k;
+        delete q[field];
+      } else if (q[keyField] && !q[field]) {
+        if (prev[q[keyField]]) store[q[keyField]] = prev[q[keyField]];
+        else delete q[keyField];          // chiave orfana: niente da ricollegare
+      } else if (q[keyField]) {
+        delete q[keyField];               // dato piccolo/URL: resta dentro la domanda
+      }
+    });
+  });
+  if (Object.keys(store).length) payload.media = store; else delete payload.media;
+  return payload;
+}
+// Ripiego se le regole Firebase non accettano "media": tutto di nuovo dentro le domande
+function _mediaInline(payload) {
+  const media = (payload && payload.media) || {};
+  _mediaEachQ(payload, q => {
+    _MEDIA_FIELDS.forEach(([field, keyField]) => {
+      if (q[keyField] && media[q[keyField]] && !q[field]) q[field] = media[q[keyField]];
+      delete q[keyField];
+    });
+  });
+  delete payload.media;
+  return payload;
+}
+// Attività letta da Firebase → dati di nuovo dentro le domande (stesso oggetto).
+// Le chiavi restano sulle domande: servono a rimettere l'audio nelle copie
+// leggere (recupero) salvate nelle risposte.
+function _actHydrate(act) {
+  if (!act || !act.media) return act;
+  const media = act.media;
+  _mediaEachQ(act, q => {
+    _MEDIA_FIELDS.forEach(([field, keyField]) => {
+      if (q[keyField] && !q[field] && media[q[keyField]]) q[field] = media[q[keyField]];
+    });
+  });
+  return act;
+}
+// Copia leggera di una lista di domande (per le risposte degli alunni):
+// l'audio/immagine pesante diventa solo la chiave.
+function _mediaLiteQs(qs) {
+  const arr = Array.isArray(qs) ? qs : (qs && typeof qs === 'object' ? Object.values(qs) : []);
+  return arr.map(q => {
+    if (!q || typeof q !== 'object') return q;
+    const c = Object.assign({}, q);
+    _MEDIA_FIELDS.forEach(([field, keyField]) => {
+      if (_mediaBig(c[field])) { c[keyField] = _mediaKey(c[field]); delete c[field]; }
+    });
+    return c;
+  });
+}
+// Rimette audio/immagini in domande leggere usando un'attività (con media o vecchia)
+function _mediaResolveQs(qs, act) {
+  if (!Array.isArray(qs) || !act) return qs;
+  if (!qs.some(q => q && (q.audioKey || q.imageKey) && !(q.audioData && q.image))) return qs;
+  const idx = Object.assign({}, act.media || {});
+  _mediaEachQ(act, q => { _MEDIA_FIELDS.forEach(([field]) => { if (_mediaBig(q[field])) idx[_mediaKey(q[field])] = q[field]; }); });
+  qs.forEach(q => {
+    if (!q || typeof q !== 'object') return;
+    _MEDIA_FIELDS.forEach(([field, keyField]) => { if (q[keyField] && !q[field] && idx[q[keyField]]) q[field] = idx[q[keyField]]; });
+  });
+  return qs;
+}
+// Scrittura di un'attività: se le regole rifiutano "media", si riprova col formato di prima
+async function _actSet(ref, payload) {
+  try { return await ref.set(payload); }
+  catch (e) {
+    if (payload && payload.media && _isPermDenied(e)) {
+      console.warn('[media] le regole Firebase non accettano "media": salvo l\'audio dentro le domande come prima');
+      _mediaInline(payload);
+      return await ref.set(payload);
+    }
+    throw e;
+  }
+}
+
 // Nomi interni → lettere (muta e restituisce il payload destinato a Firebase)
 function _vkEncodePayload(payload, keys) {
+  _mediaDehydrate(payload);
   if (payload.questions) payload.questions = _vkQs(payload.questions, 'dsaLargeText', 'lt');
   if (payload.versions) {
     const out = {};
@@ -2330,6 +2454,84 @@ async function loadDashboard() {
   }, 1500);
 }
 
+// ── 🧹 Ottimizza spazio: converte le attività già salvate al formato "media
+// una volta sola". Sicurezza: 1) scarica prima un backup JSON di tutte le
+// attività sul computer; 2) per ogni attività controlla che, rileggendo il
+// formato nuovo, si ottengano ESATTAMENTE le stesse domande; solo allora la
+// riscrive. Se qualcosa non torna, quell'attività resta com'è.
+function _stableJSON(v) {
+  if (Array.isArray(v)) return '[' + v.map(_stableJSON).join(',') + ']';
+  if (v && typeof v === 'object') return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + _stableJSON(v[k])).join(',') + '}';
+  return JSON.stringify(v === undefined ? null : v);
+}
+function _mediaNormForCheck(act) {
+  const y = _actHydrate(JSON.parse(JSON.stringify(act)));
+  _mediaEachQ(y, q => { delete q.audioKey; delete q.imageKey; });
+  delete y.media;
+  return _stableJSON(y);
+}
+async function optimizeActivitiesStorage() {
+  if (!db) return alert('⚠️ Firebase non configurato.');
+  if (!confirm('🧹 Ottimizza spazio\n\nOgni MP3 e immagine verrà salvato UNA volta per attività, invece di essere copiato in ogni versione (FILA B/C, Fast, Training…). Le domande non cambiano.\n\n1. Prima viene scaricato sul computer un BACKUP di tutte le attività (file .json).\n2. Ogni attività viene controllata: se la versione nuova non è identica nei contenuti, resta com\'è.\n\nContinuare?')) return;
+  const st = document.getElementById('optimize-status');
+  const say = (html, cls) => { if (st) { st.style.display = 'block'; st.className = 'alert ' + (cls || 'alert-info'); st.innerHTML = html; } };
+  try {
+    say('⏳ Leggo tutte le attività (può volerci qualche secondo)…');
+    const snap = await _fbGetPatient(db.ref('livelearn/activities'), 10000, 120000);
+    const acts = snap.val() || {};
+    const ids = Object.keys(acts);
+    if (!ids.length) return say('Nessuna attività da ottimizzare.');
+    // 1) Backup sul computer
+    const backup = JSON.stringify(acts);
+    const blob = new Blob([backup], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'livelearn-backup-attivita-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    say('💾 Backup scaricato (' + (backup.length / 1048576).toFixed(1) + ' MB). Controllo e ottimizzo ' + ids.length + ' attività…');
+    // 2) Conversione verificata, una attività alla volta
+    let done = 0, skipped = 0, unchanged = 0, before = 0, after = 0;
+    for (const id of ids) {
+      const act = acts[id];
+      const b = JSON.stringify(act).length;
+      const copy = _mediaDehydrate(JSON.parse(JSON.stringify(act)));
+      const c = JSON.stringify(copy).length;
+      if (c >= b * 0.97) { unchanged++; before += b; after += b; continue; }   // niente da guadagnare
+      if (_mediaNormForCheck(copy) !== _mediaNormForCheck(act)) {
+        console.warn('[ottimizza] contenuti diversi dopo la conversione, salto:', id);
+        skipped++; before += b; after += b; continue;
+      }
+      try {
+        await db.ref('livelearn/activities/' + id).set(copy);
+        done++; before += b; after += c;
+      } catch (e) {
+        if (_isPermDenied(e)) {
+          return say('⚠️ Le regole di Firebase non permettono il nuovo formato: nessun danno, le attività restano come prima (' + done + ' già convertite funzionano normalmente).', 'alert-warning');
+        }
+        console.warn('[ottimizza] scrittura fallita, salto:', id, e.message);
+        skipped++; before += b; after += b;
+      }
+      say('⏳ ' + (done + skipped + unchanged) + '/' + ids.length + ' attività controllate…');
+    }
+    say('✅ Fatto: ' + done + ' attività ottimizzate' + (unchanged ? ', ' + unchanged + ' già leggere' : '') + (skipped ? ', ' + skipped + ' lasciate com\'erano' : '') +
+      '.<br>Peso delle attività: <strong>' + (before / 1048576).toFixed(1) + ' MB → ' + (after / 1048576).toFixed(1) + ' MB</strong>.', 'alert-success');
+    loadDashboard();
+  } catch (e) {
+    say('❌ ' + esc(e.message) + ' — nessuna attività è stata modificata oltre a quelle già segnalate.', 'alert-danger');
+  }
+}
+
+async function toggleSessionRepeatable(code, on) {
+  if (!db || !code) return;
+  try {
+    await db.ref('livelearn/sessions/' + code + '/repeatable').set(on ? true : null);
+    const row = (S._allSessions || []).find(([c]) => c === code);
+    if (row) { if (on) row[1].repeatable = true; else delete row[1].repeatable; }
+    renderSessionList();
+  } catch (e) { alert('⚠️ Non riesco a modificare la sessione: ' + e.message); }
+}
+
 // Render della lista sessioni, filtrabile per modalità, stato e ricerca titolo.
 // L'ordine resta cronologico (dal più recente al più vecchio).
 function _sessionStatusOf(s) {
@@ -2442,6 +2644,11 @@ function renderSessionList() {
       ? `<button class="btn btn-sm" onclick="exportSessionAllPDF('${code}', '${s.activityId}')" title="Scarica i PDF di tutti gli studenti (stessa funzione di Risultati)" style="white-space:nowrap;">📥 PDF tutti</button>`
       : '';
 
+    // Assegnate: interruttore "ripetibile" (l'alunno può rifarla quante volte vuole)
+    const repeatBtn = isAssigned
+      ? `<button class="btn btn-sm" onclick="toggleSessionRepeatable('${code}', ${s.repeatable ? 'false' : 'true'})" title="${s.repeatable ? 'Gli alunni possono rifarla quante volte vogliono — clicca per permettere un solo tentativo' : 'Un solo tentativo — clicca per permettere di rifarla quante volte vogliono'}" style="white-space:nowrap;${s.repeatable ? 'background:#ede9fe;color:#5b21b6;border-color:#c4b5fd;' : ''}">🔁 ${s.repeatable ? 'Ripetibile' : 'Una volta'}</button>`
+      : '';
+
     const statusLabel = isActive ? '● Attiva' : isAssigned ? '📋 Assegnata' : 'Chiusa';
     const statusClass = isActive ? 'badge-green' : isAssigned ? 'badge-purple' : 'badge-gray';
 
@@ -2460,6 +2667,7 @@ function renderSessionList() {
         <span class="badge ${statusClass}">${statusLabel}</span>
         <button class="btn btn-sm" onclick="openLive('${code}', '${s.activityId}')">📊 Risultati</button>
         ${pdfAllBtn}
+        ${repeatBtn}
         <button class="btn btn-sm" onclick="renameSession('${code}')" title="Rinomina sessione">✏️</button>
         ${convertBtn}
         ${(isActive || isAssigned) ? `<button class="btn btn-danger btn-sm" onclick="forceCloseSession('${code}')">Chiudi</button>` : ''}
@@ -2807,7 +3015,7 @@ function openBuilder() {
 
 async function editActivity(id) {
   const snap = await db.ref('livelearn/activities/' + id).get();
-  const a = snap.val();
+  const a = _actHydrate(snap.val());
   // R1: decodifica lettere → nomi interni. Senza legenda l'editor non si apre:
   // salvando si perderebbero le versioni differenziate.
   let _vkKeys = null;
@@ -2890,7 +3098,7 @@ async function duplicateActivity(id) {
   }
   const _vkCopyRef = db.ref('livelearn/activities').push();
   _vkEncodePayload(copy, _vkHasVersions(copy) ? await _vkEnsure(_vkCopyRef.key) : null);
-  await _vkCopyRef.set(copy);
+  await _actSet(_vkCopyRef, copy);
   loadDashboard();
 }
 
@@ -5036,7 +5244,7 @@ async function _saveActivitySilent() {
   const _vpsSilentClean = Object.fromEntries(Object.entries(_vpsSilent).filter(([,v]) => v && v.trim()));
   if (Object.keys(_vpsSilentClean).length) payload.versionPassages = _vpsSilentClean;
     _vkEncodePayload(payload, _vkHasVersions(payload) ? await _vkEnsure(S.editingId) : null); // R1
-    await db.ref('livelearn/activities/' + S.editingId).set(payload);
+    await _actSet(db.ref('livelearn/activities/' + S.editingId), payload);
   } catch(e) {
     console.warn('_saveActivitySilent failed:', e);
   }
@@ -5101,7 +5309,7 @@ async function saveActivity() {
     const _vkRef = S.editingId ? db.ref('livelearn/activities/' + S.editingId) : db.ref('livelearn/activities').push();
     const _vkKeysSave = _vkHasVersions(payload) ? await withTimeout(_vkEnsure(_vkRef.key), 8000) : null;
     _vkEncodePayload(payload, _vkKeysSave);
-    await withTimeout(_vkRef.set(payload), 8000);
+    await withTimeout(_actSet(_vkRef, payload), 15000);
     if (!S.editingId) S.editingId = _vkRef.key; // store new ID so re-save works if user saves again
     if (btn) { btn.textContent = '✅ Salvato!'; btn.disabled = false; btn.style.background = 'var(--success)'; btn.style.borderColor = 'var(--success)'; }
     setTimeout(async () => {
@@ -5339,6 +5547,7 @@ async function confirmStartSession() {
       aiProvider: _AI_PROVIDER
     };
     if (_deadline) sessionPayload.deadline = _deadline;
+    if (_isAssigned && document.getElementById('launch-repeatable')?.checked) sessionPayload.repeatable = true;
     if (noListening) sessionPayload.noListening = true;
     if (Object.keys(studentVersions).length) sessionPayload.studentVersions = studentVersions;
     const _tchrKey = localStorage.getItem('gemini_api_key');
@@ -5569,7 +5778,7 @@ async function openLive(code, activityId, roster, silent) {
     showView('teacher-live');
     return;
   }
-  S.liveActivity = aSnap.val();
+  S.liveActivity = _actHydrate(aSnap.val());
   const sess = sSnap.val() || {};
 
   // ── Fallback attività ────────────────────────────────────────────────────
@@ -5579,7 +5788,7 @@ async function openLive(code, activityId, roster, silent) {
     console.warn('[openLive] attività non trovata con id parametro "' + activityId + '", provo con sess.activityId:', sess.activityId);
     try {
       const aSnap2 = await _fbGet(db.ref('livelearn/activities/' + sess.activityId), 6000);
-      S.liveActivity = aSnap2.val();
+      S.liveActivity = _actHydrate(aSnap2.val());
       if (S.liveActivity) console.log('[openLive] attività recuperata dal fallback ✅');
     } catch(e) { console.warn('[openLive] fallback attività timeout:', e.message); }
   }
@@ -7092,6 +7301,18 @@ function getStudentAssignedQuestions(studentKey, studentDisplayName, aliasOf, re
   return (Array.isArray(verQs) && verQs.length) ? verQs : origQs;
 }
 
+// Assegnate ripetibili: tentativi precedenti (quello mostrato è l'ultimo)
+function _attemptsBadge(response) {
+  const att = response && response.attempts ? (fbArr(response.attempts) || []).filter(Boolean) : [];
+  if (!att.length) return '';
+  const pcts = att.map(t => t.pct).filter(p => p != null);
+  const title = 'Tentativi precedenti: ' + att.map((t, i) => (i + 1) + ') ' + (t.pct != null ? t.pct + '%' : (t.score + ' pt')) +
+    (t.submittedAt ? ' — ' + new Date(t.submittedAt).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '')).join(' · ') +
+    '. Qui sotto vedi l\'ultimo tentativo.';
+  return '<span class="badge" style="background:#ede9fe;color:#5b21b6;font-weight:800;" title="' + esc(title) + '">🔁 ' + (att.length + 1) + ' tentativi' +
+    (pcts.length ? ' · prima: ' + pcts.join('%, ') + '%' : '') + '</span>';
+}
+
 function renderStudentResultsTeacher(name, response) {
   const main = document.getElementById('live-main-content');
   // Guard: se l'attività non è caricata mostra un messaggio diagnostico
@@ -7401,7 +7622,7 @@ function renderStudentResultsTeacher(name, response) {
         aliasBadge +
         statusBadge +
         '<span class="badge badge-blue">' + answeredCount + '/' + questions.length + ' risposte</span>' +
-        scoreBadge + pctBadgeCenter + timeBadge + focusBadgeCenter +
+        scoreBadge + pctBadgeCenter + _attemptsBadge(response) + timeBadge + focusBadgeCenter +
       '</div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
         aiAllBtn +
@@ -8197,8 +8418,10 @@ async function studentEnter() {
       }
     }
   } catch(e) {}
-  S.studentName = studentName; S.sessionCode = code; S.activity = _sessFilterActivity(aSnap.val(), session);
+  S.studentName = studentName; S.sessionCode = code; S.activity = _sessFilterActivity(_actHydrate(aSnap.val()), session);
   S.sessionMode = session.mode || 'test';
+  S.sessionRepeatable = session.status === 'assigned' && !!session.repeatable;
+  S._attempts = null; S._retryLocal = false;
   _syncPassageBtn(); // mostra/nascondi il pulsante 📄 Testo
   // Legge il provider AI scelto dal docente per questa sessione
   _SESSION_AI_PROVIDER = session.aiProvider || 'gemma';
@@ -8341,6 +8564,8 @@ async function studentEnter() {
     const respSnap = await db.ref('livelearn/responses/' + code + '/' + safeName).get();
     existingResp = respSnap.val();
   } catch(e) { console.warn('Pre-check responses failed:', e.message); }
+  // Assegnate ripetibili: tentativi precedenti (riportati nel set() della consegna)
+  if (existingResp && existingResp.attempts) S._attempts = (fbArr(existingResp.attempts) || []).filter(Boolean);
 
   // ── Controlla se lo studente è già stato espulso dal docente ──────────
   if (existingResp && existingResp.removed === true) {
@@ -8360,7 +8585,7 @@ async function studentEnter() {
     S.recoveryAttempt = existingResp.recoveryAttempt || 0;
     S.recoveryTeacherGranted = existingResp.recoveryTeacherGranted || false;
     if (Array.isArray(existingResp.recoveryHistory))  S.recoveryHistory   = existingResp.recoveryHistory;
-    if (Array.isArray(existingResp.recoveryQuestions)) S.recoveryQuestions = existingResp.recoveryQuestions;
+    if (Array.isArray(existingResp.recoveryQuestions)) S.recoveryQuestions = _mediaResolveQs(existingResp.recoveryQuestions, S.activity);
     if (Array.isArray(existingResp.recoveryAnswers))   S.recoveryAnswers   = existingResp.recoveryAnswers;
     const recDone = existingResp.status === 'recovery_done' || (S.recoveryAttempt > 0 && existingResp.status === 'submitted');
     if (recDone && S.recoveryAttempt > 0) {
@@ -9704,7 +9929,7 @@ async function submitAnswers(auto) {
 
   // Mark as submitted immediately (teacher sees "consegnato" right away)
   const submittedAt = Date.now();
-  if (db && S.sessionCode) {
+  if (db && S.sessionCode && !S._retryLocal) {
     try {
       await db.ref('livelearn/responses/' + S.sessionCode + '/' + safeName).update({
         submittedAt,
@@ -9767,7 +9992,9 @@ async function submitAnswers(auto) {
     status: 'submitted'
   };
   if (S._aliasOf) payload.aliasOf = S._aliasOf;
-  if (db && S.sessionCode) {
+  // Assegnate ripetibili: il set() riscrive il record, i tentativi precedenti vanno riportati
+  if (Array.isArray(S._attempts) && S._attempts.length) payload.attempts = S._attempts;
+  if (db && S.sessionCode && !S._retryLocal) {
     try {
       await db.ref('livelearn/responses/' + S.sessionCode + '/' + safeName).set(payload);
     } catch(e) {
@@ -9786,7 +10013,7 @@ async function submitAnswers(auto) {
   S.aiScores = aiScores;
   S.aiFeedbacks = aiFeedbacks;
   // Salva dati storici per statistiche classe (Opzione A)
-  _writeStudentHistory(finalScore, aiScores, questionTimes, submittedAt);
+  if (!S._retryLocal) _writeStudentHistory(finalScore, aiScores, questionTimes, submittedAt);
   // Piano Personalizzato: scrivi risultato se siamo in una sessione REC-/CON-/APP-
   if (S._planCode) {
     const _totalPlanPts = (S.activity.questions||[]).reduce((s,q)=>s+(q.points||1),0);
@@ -10054,6 +10281,7 @@ function pushProgress() {
   _saveLocalBackup();
   if (!db || !S.sessionCode) return;
   if (S.submitted) return;
+  if (S._retryLocal) return;   // ripetizione non salvabile (regole Firebase): solo in locale
   // Costruisci la patch fresca (ogni chiamata sovrascrive la pendente)
   S._pushPending = {
     name: S.studentName,
@@ -12019,9 +12247,15 @@ async function showStudentDone() {
   // La sezione AI viene nascosta del tutto (come per le risposte libere).
   if (mode === 'assigned') {
     document.getElementById('done-title').textContent = '📋 Compito consegnato!';
-    document.getElementById('done-subtitle').textContent = 'Il professore analizzerà le tue risposte. Ottimo lavoro!';
+    document.getElementById('done-subtitle').textContent = S._retryLocal
+      ? (pct !== null ? pct + '% — ' : '') + 'Questo tentativo non è stato salvato: puoi comunque riprovare.'
+      : S.sessionRepeatable
+      ? (pct !== null ? pct + '% — ' : '') + 'Puoi rifarla quante volte vuoi per esercitarti.'
+      : 'Il professore analizzerà le tue risposte. Ottimo lavoro!';
     const _aiEl = document.getElementById('done-ai-analysis');
     if (_aiEl) _aiEl.style.display = 'none';
+    document.getElementById('assigned-retry-box')?.remove();
+    if (S.sessionRepeatable) _showAssignedRetryButton();
     return;
   }
 
@@ -12057,6 +12291,76 @@ function _showPlanRetryButton() {
     '<button class="btn btn-primary" onclick="restartPlanActivity()" style="font-size:15px;font-weight:700;">🔄 Riprova il test</button>' +
     '</div>';
   anchor.parentNode.insertBefore(box, anchor.nextSibling);
+}
+
+// ── Assegnate ripetibili: pulsante "Rifai" (session.repeatable) ──────────
+function _showAssignedRetryButton() {
+  const anchor = document.getElementById('done-ai-analysis');
+  if (!anchor || !anchor.parentNode) return;
+  document.getElementById('assigned-retry-box')?.remove();
+  const prev = Array.isArray(S._attempts) ? S._attempts.filter(Boolean) : [];
+  const prevPcts = prev.map(t => t.pct).filter(p => p != null);
+  const box = document.createElement('div');
+  box.id = 'assigned-retry-box';
+  box.style.cssText = 'margin-top:20px;text-align:center;';
+  box.innerHTML = '<div style="background:#f5f3ff;border:2px solid #c4b5fd;border-radius:14px;padding:20px;">' +
+    '<div style="font-size:15px;font-weight:700;color:#6c47ff;margin-bottom:4px;">Vuoi esercitarti ancora?</div>' +
+    '<div style="font-size:13px;color:#777;margin-bottom:14px;">Rifai l\'esercitazione da capo quante volte vuoi. Il professore vede tutti i tentativi.' +
+    (prevPcts.length ? '<br>Tentativi precedenti: <strong>' + prevPcts.map(p => p + '%').join(' · ') + '</strong>' : '') + '</div>' +
+    '<button class="btn btn-primary" onclick="restartAssignedActivity()" style="font-size:15px;font-weight:700;">🔁 Rifai l\'esercitazione</button>' +
+    '</div>';
+  anchor.parentNode.insertBefore(box, anchor.nextSibling);
+}
+
+// Archivia il tentativo consegnato in "attempts" e riparte da capo. Se le regole
+// Firebase non permettono di riaprire il record, il nuovo tentativo resta solo
+// sul dispositivo (S._retryLocal) e il risultato salvato non viene toccato.
+async function restartAssignedActivity() {
+  if (S.removed) return;
+  if (!confirm('Vuoi rifare l\'esercitazione da capo?\nIl risultato di adesso resta salvato tra i tentativi.')) return;
+  document.getElementById('assigned-retry-box')?.remove();
+  const qs = (S.activity && S.activity.questions) || [];
+  if (db && S.sessionCode && S.safeName && !S._retryLocal) {
+    const ref = db.ref('livelearn/responses/' + S.sessionCode + '/' + S.safeName);
+    try {
+      const r = (await ref.get()).val() || {};
+      const prev = r.attempts ? (fbArr(r.attempts) || []).filter(Boolean) : [];
+      if (r.submittedAt) {
+        const maxPts = qs.reduce((t, q) => t + (q.points || 1), 0);
+        const sc = Number(r.score) || 0;
+        prev.push({
+          score: sc, maxScore: maxPts, pct: maxPts > 0 ? Math.round(sc / maxPts * 100) : null,
+          submittedAt: r.submittedAt, answers: r.answers || null,
+          aiScores: r.aiScores || null, manualScores: r.manualScores || null
+        });
+      }
+      await ref.update({
+        attempts: prev.length ? prev : null,
+        submittedAt: null, status: null, answers: null, score: 0,
+        aiScores: null, aiFeedbacks: null, manualScores: null, aiScoringPending: null,
+        questionTimes: null, joinedAt: Date.now(), retryStartedAt: Date.now()
+      });
+      S._attempts = prev;
+    } catch (e) {
+      console.warn('[ripeti] il record non si può riaprire, tentativo solo locale:', e.message);
+      S._retryLocal = true;
+    }
+  }
+  // Stato pulito (anche le cache di drag-drop, matching, riordino, categorie)
+  Object.keys(S).forEach(k => { if (/^(ddState_|matchShuffle_|matchColors_|roState_|reorderState_|catState_)/.test(k)) delete S[k]; });
+  S.qIndex = 0;
+  S.studentScore = 0;
+  S.answers = new Array(qs.length).fill(undefined);
+  S.skipped = [];
+  S.questionStartTimes = [];
+  S.questionEndTimes = [];
+  S.joinedAt = Date.now();
+  S.submitted = false;
+  S.aiScores = {};
+  S.aiFeedbacks = {};
+  S.aiAnalysisDone = false;
+  showView('student-activity');
+  renderQuestion();
 }
 
 // Riavvia il test del piano personalizzato dall'inizio (riprova illimitata).
@@ -16526,7 +16830,7 @@ async function onClassSelectForSession() {
         const k = await _vkEnsure(S.pendingActivityId);
         const conv = JSON.parse(JSON.stringify(activity));
         _vkEncodePayload(conv, k);
-        await db.ref('livelearn/activities/' + S.pendingActivityId).set(conv);
+        await _actSet(db.ref('livelearn/activities/' + S.pendingActivityId), conv);
         S.pendingVersionKeys = k;
       }
     } catch(e) { console.warn('[R1] legenda versioni:', e.message); }
@@ -17244,7 +17548,7 @@ function _pushRecoveryProgress(qIdx) {
   db.ref('livelearn/responses/' + S.sessionCode + '/' + S.safeName).update({
     recoveryAnswers:   partialAnswers,
     recoveryCurrentQ:  qIdx,
-    recoveryQuestions: S.recoveryQuestions || []
+    recoveryQuestions: _mediaLiteQs(S.recoveryQuestions || [])   // senza MP3: solo la chiave
   }).catch(e => {});
 }
 
@@ -17370,7 +17674,7 @@ async function recoveryFinish() {
   if (!Array.isArray(S.recoveryHistory)) S.recoveryHistory = [];
   S.recoveryHistory[recAttempt - 1] = {
     attempt:     recAttempt,
-    questions:   JSON.parse(JSON.stringify(qs)),
+    questions:   JSON.parse(JSON.stringify(_mediaLiteQs(qs))),   // senza MP3: solo la chiave
     answers:     ans.map(a => a !== undefined ? a : null),
     aiScores:    Object.keys(recAiScores).length    > 0 ? recAiScores    : null,
     aiFeedbacks: Object.keys(recAiFeedbacks).length > 0 ? recAiFeedbacks : null,
@@ -17384,7 +17688,7 @@ async function recoveryFinish() {
     recData['recScore' + recAttempt] = pct;
     recData['recoveryHistory']   = S.recoveryHistory;
     recData['recoveryAnswers']   = ans.map(a => a !== undefined ? a : null);
-    recData['recoveryQuestions'] = JSON.parse(JSON.stringify(qs));
+    recData['recoveryQuestions'] = JSON.parse(JSON.stringify(_mediaLiteQs(qs)));
     recData['recoveryCurrentQ']  = qs.length - 1;
     recData['recoveryAiScores']  = _canonicalIndexedForServer(recAiScores);
     recData['status']            = 'recovery_done';
@@ -19163,7 +19467,7 @@ function openQuestionDetailRecoveryTeacher(histIdx, qIdx) {
     openQuestionDetail(qIdx, {
       mode: 'teacher-recovery',
       recoveryHistIdx: histIdx,
-      questions:    entry.questions    || [],
+      questions:    _mediaResolveQs(fbArr(entry.questions) || [], S.liveActivity),
       answers:      entry.answers      || [],
       aiScores:     entry.aiScores     || {},
       manualScores: entry.manualScores || {},
