@@ -25176,7 +25176,8 @@ ${sectionInstr}`;
                 fuzzyLookup[_agNorm(entry.aliasOf)] = entry;
                 fuzzyLookup[_agWords(entry.aliasOf)] = entry;
             }
-            return { questions, responses, fuzzyLookup, _agNorm, _agWords, studentVersions, actVersions };
+            return { questions, responses, fuzzyLookup, _agNorm, _agWords, studentVersions, actVersions,
+                     activityId: sess.activityId, versionLayout: act.versionLayout || {} };
         } catch(e) {
             console.warn('[Agente] fetchSessionDetail', sessionCode, e.message);
             return null;
@@ -29634,7 +29635,12 @@ ${righe.join('\n')}
 ══════════════════════════════════════════════`;
     }
 
-    async function _pianoGenerateActivity(studente, voto, unit, prefix, errorDetails = '', tagBreakdown = {}, classeNome = '') {
+    // verInfo (da _ppDetectTestVersion): l'alunno ha svolto la verifica in versione
+    // DSA / PEI / PEI 2 → il piano NON è quello standard: stesso percorso REC/CON/APP
+    // degli altri, ma costruito sulle sue competenze e con le regole della sua versione.
+    async function _pianoGenerateActivity(studente, voto, unit, prefix, errorDetails = '', tagBreakdown = {}, classeNome = '', verInfo = null) {
+        const isPei = verInfo?.layout === 2, isDsa = verInfo?.layout === 1;
+        const nQ = isPei ? 10 : 15;   // PEI: attività più breve, come la sua verifica
 
         // Descrizione della prestazione nel test (non livello CEFR globale)
         const prestazioneDesc =
@@ -29664,6 +29670,42 @@ ${righe.join('\n')}
 - Includi almeno 3 domande con distrattori plausibili (errori comuni di chi conosce bene ma non ancora perfettamente).
 - Almeno 2 domande che richiedono transfer: usare la struttura in un contesto nuovo/inaspettato.`;
 
+        // ── Versione adattata (DSA / PEI) svolta nella verifica ──────────────
+        let adattamentoSection = '';
+        if (verInfo) {
+            // Esempi delle domande che ha DAVVERO affrontato: fissano il livello di partenza
+            const _ex = (verInfo.qs || []).filter(q => q && q.type !== 'listening').slice(0, 6).map((q, i) => {
+                const t = String(typeof q.question === 'string' ? q.question : (q.text || '')).replace(/\s+/g, ' ').slice(0, 160);
+                const o = Array.isArray(q.options) ? ' [opzioni: ' + q.options.join(' / ').slice(0, 90) + ']' : '';
+                return `  ${i + 1}. (${q.type}) ${t}${o}`;
+            }).join('\n');
+            const _src = verInfo.source === 'verifica'
+                ? `Nella verifica di questa unità lo studente NON ha svolto la prova standard ma la versione ${verInfo.label}.`
+                : `Lo studente ha un ${verInfo.layout === 2 ? 'PEI' : 'PDP per DSA'}: le sue verifiche sono in versione ${verInfo.label}.`;
+            const _regole = isPei
+                ? `REGOLE VERSIONE PEI (obbligatorie, come nella sua verifica):
+- Livello A1/A2, frasi cortissime, una sola richiesta per domanda, lessico di base dell'unità.
+- Tipi ammessi: SOLO "multiple-choice" con 3 opzioni semplici (NON 4), "matching" con massimo 4 coppie, "drag-drop" con una frase brevissima e al massimo 4 parole. NIENTE fill-blanks, cloze o risposta libera.
+- OBBLIGATORIO su ogni domanda: "dsaLargeText": true e "referenceTable": "regola grammaticale breve (es. Past Simple: go→went)".
+- Distrattori chiaramente diversi dalla risposta giusta.`
+                : `REGOLE VERSIONE DSA (obbligatorie, come nella sua verifica):
+- Le domande di completamento diventano "multiple-choice" con 4 opzioni (una domanda per ogni spazio): NIENTE fill-blanks, cloze o risposta libera.
+- Frasi brevi e chiare, una richiesta per domanda, istruzioni in grassetto, nessun trabocchetto ortografico.
+- Mantieni "matching" e "drag-drop" (frasi brevi, poche parole).
+- OBBLIGATORIO su ogni domanda: "dsaLargeText": true.`;
+            adattamentoSection = `
+══════════════════════════════════════════════
+⚠️ STUDENTE CON VERSIONE ${verInfo.label.toUpperCase()} — NON GENERARE UN PIANO STANDARD
+${_src}
+Il voto ${voto}/10 si riferisce a QUELLA versione: il piano (${prefix === 'REC' ? 'recupero' : prefix === 'CON' ? 'consolidamento' : 'approfondimento'}) va calibrato sulle SUE competenze reali, non sul livello della classe.
+- Parti dal livello della versione che ha svolto${_ex ? ' (esempi qui sotto)' : ''} e resta alla sua portata${prefix === 'APP' ? ': per l\'approfondimento alza la difficoltà solo di un piccolo passo rispetto alla sua verifica' : ''}.
+- Stessi argomenti dell'unità, stesso percorso degli altri (${prefix}), ma con le regole della sua versione.
+${_ex ? `DOMANDE CHE HA AFFRONTATO NELLA VERIFICA (versione ${verInfo.label}):\n${_ex}\n` : ''}
+${_regole}
+Le regole di questa sezione PREVALGONO sui tipi, sulla distribuzione e sul livello indicati sopra.
+══════════════════════════════════════════════`;
+        }
+
         const hasErrors = errorDetails.trim().length > 0;
         // Per APP: errorDetails può contenere note discorsive multi-unit o aree deboli da unit precedenti
         const isNotesContext   = prefix === 'APP' && hasErrors && errorDetails.startsWith('NOTE DISCORSIVE');
@@ -29677,7 +29719,7 @@ ERRORI REALI COMMESSI DALLO STUDENTE NELLA VERIFICA (unità: "${unit || 'English
 ${errorDetails}
 
 ⚠️ ISTRUZIONI VINCOLANTI:
-1. Almeno 10 delle 15 domande devono esercitare DIRETTAMENTE le strutture in cui ha sbagliato sopra.
+1. Almeno ${Math.ceil(nQ * 2 / 3)} delle ${nQ} domande devono esercitare DIRETTAMENTE le strutture in cui ha sbagliato sopra.
 2. Usa gli errori come base per costruire ogni domanda — NON generare domande generiche.
 3. RIMANI STRETTAMENTE nell'unità "${unit || 'English Grammar'}". NON introdurre strutture di altre unità o anni precedenti, anche se gli errori del test le menzionano come confronto.
 4. Se un errore riguarda una struttura di una unit diversa, IGNORALA — è contesto, non argomento.
@@ -29688,7 +29730,7 @@ ${errorDetails}
 ${errorDetails}
 
 ⚠️ ISTRUZIONE VINCOLANTE — COPERTURA MULTI-UNIT:
-- Distribuisci le 15 domande su TUTTE le unit elencate sopra (non concentrarti solo sull'unit corrente).
+- Distribuisci le ${nQ} domande su TUTTE le unit elencate sopra (non concentrarti solo sull'unit corrente).
 - Usa le note discorsive per ogni unit per capire cosa è stato svolto e quali strutture testare.
 - Per ogni unit con note, genera almeno 2-3 domande sui contenuti specifici citati.
 - Se una nota menziona difficoltà, quella struttura merita più domande di rinforzo.
@@ -29699,7 +29741,7 @@ ${errorDetails}
 ══════════════════════════════════════════════
 ${errorDetails}
 
-DISTRIBUZIONE SUGGERITA: 10-11 domande sull'unità corrente ("${unit}") + 4-5 domande sulle aree deboli elencate sopra.
+DISTRIBUZIONE SUGGERITA: ${nQ - 5}-${nQ - 4} domande sull'unità corrente ("${unit}") + 4-5 domande sulle aree deboli elencate sopra.
 Per le domande sulle unit precedenti: usa strutture grammaticali e lessico di quelle unit, non dell'unità corrente.
 ══════════════════════════════════════════════`
             : '\n' + (prefix === 'REC'
@@ -29717,20 +29759,20 @@ Per le domande sulle unit precedenti: usa strutture grammaticali e lessico di qu
 
         const _classCtx = _ppBuildClassContext(classeNome, unit);
         const prompt = `Sei un docente esperto di inglese per scuola media italiana.
-Genera ESATTAMENTE 15 domande per uno studente, unità: "${isNotesContext ? 'tutte le unit svolte (vedi note sotto)' : (unit || 'English Grammar')}".
+Genera ESATTAMENTE ${nQ} domande per uno studente, unità: "${isNotesContext ? 'tutte le unit svolte (vedi note sotto)' : (unit || 'English Grammar')}".
 Prestazione nel test: ${prestazioneDesc}.
 ${_classCtx}
 
 ${difficoltaSpec}
 
-TIPI DI DOMANDA DA USARE (mix obbligatorio — usa tutti e 5 i tipi):
+${verInfo ? 'TIPI DI DOMANDA: vedi le REGOLE DELLA VERSIONE ' + verInfo.label + ' in fondo (prevalgono su questo elenco). Formati di riferimento:' : 'TIPI DI DOMANDA DA USARE (mix obbligatorio — usa tutti e 5 i tipi):'}
 1. "multiple-choice" — scelta multipla con 4 opzioni (usa per strutture grammaticali ambigue)
 2. "fill-blanks" — completa la frase con una o più parole (usa per forme verbali, spelling)
 3. "cloze" — come fill-blanks ma con word bank visibile (usa per lessico e preposizioni)
 4. "matching" — abbina elementi colonna sinistra a colonna destra (usa per coppie irregolari, definizioni)
 5. "drag-drop" — trascina le parole nella posizione giusta in una frase (usa per word order, sintassi)
 
-DISTRIBUZIONE: 4 multiple-choice + 4 fill-blanks + 3 cloze + 2 matching + 2 drag-drop = 15 totali.
+${isPei ? 'DISTRIBUZIONE: 6 multiple-choice (3 opzioni) + 2 matching + 2 drag-drop = 10 totali.' : isDsa ? 'DISTRIBUZIONE: 9 multiple-choice + 3 matching + 3 drag-drop = 15 totali.' : 'DISTRIBUZIONE: 4 multiple-choice + 4 fill-blanks + 3 cloze + 2 matching + 2 drag-drop = 15 totali.'}
 Domande mescolate (non raggruppare per tipo). Difficoltà variata, non progressiva.
 Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni di tipo ("Scegli", "Completa", "Abbina", "Trascina").
 
@@ -29747,6 +29789,7 @@ IMPORTANTE per fill-blanks multi-blank: "answers" è array con un elemento per o
 IMPORTANTE per matching: "left" e "right" hanno stesso numero di elementi, abbinamento posizionale (left[0]↔right[0] ecc.).
 IMPORTANTE per drag-drop: "sentences" ha ___ per ogni parola da inserire, "answers" è array ordinato delle parole corrette.
 ${erroriSection}
+${adattamentoSection}
 Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdown.`;
 
         let raw = '';
@@ -29825,7 +29868,7 @@ Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdow
             };
             let questions = JSON.parse(_sanitizeJsonCtrl(clean.slice(start, end + 1)));
             if (!Array.isArray(questions) || !questions.length) throw new Error('Empty array');
-            if (questions.length < 10) console.warn(`[Piano] ⚠️ Quiz incompleto: ${questions.length}/15 domande`);
+            if (questions.length < Math.min(10, nQ)) console.warn(`[Piano] ⚠️ Quiz incompleto: ${questions.length}/${nQ} domande`);
             else console.log(`[Piano] ✅ Quiz OK: ${questions.length} domande, tipi: ${[...new Set(questions.map(q=>q.type))].join(', ')}`);
 
             // ── Listening extra: se ci sono errori LISTENING, aggiungi un esercizio TTS ──
@@ -29838,7 +29881,7 @@ Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdow
             const listeningErrorLines = (isCurrentErrors && errorDetails)
                 ? errorDetails.split('\n').filter(l => /\[listening[\s,\]]/i.test(l) && /\b(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)pt/.test(l))
                 : [];
-            const hasListeningErrors = prefix === 'REC' && (
+            const hasListeningErrors = prefix === 'REC' && !isPei && (
                 listeningErrorLines.length > 0 ||
                 (listeningPct !== null && listeningPct < 60)
             );
@@ -29854,6 +29897,12 @@ Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdow
                 } catch(le) { console.warn('[Piano] Listening gen error:', le.message); }
             }
 
+            if (verInfo) {
+                // Testo grande su ogni domanda + impaginazione della versione in LiveLearn
+                // (il piano si apre come 'originale': layout 1 = DSA, 2 = PEI)
+                questions.forEach(q => { if (q && typeof q === 'object') q.dsaLargeText = true; });
+                return { questions, versionLayout: { originale: verInfo.layout } };
+            }
             return { questions };
         } catch(e) {
             console.warn('[Piano] JSON parse error:', e.message, '| raw preview:', raw.slice(0, 300));
@@ -30084,11 +30133,14 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             const code = _pianoGenCode(prefix);
             // Mostra spinner nel pannello
             _ppShowGenerating(studentName, prefix, unitEff);
-            const activity = await _pianoGenerateActivity(studente, voto, unitEff, prefix, errorDetails, tagBreakdown, classeNome);
+            // Verifica svolta in versione DSA / PEI / PEI 2? → piano adattato, non standard
+            const verInfo = await _ppDetectTestVersion(studente, studentSafe, unitEff);
+            if (verInfo) console.log(`[Piano] ${studentName}: verifica in versione ${verInfo.label} (${verInfo.source}) → piano adattato`);
+            const activity = await _pianoGenerateActivity(studente, voto, unitEff, prefix, errorDetails, tagBreakdown, classeNome, verInfo);
             if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return { outcome: 'error', reason: 'Generazione quiz fallita' }; }
             // ── BOZZA: salva per anteprima docente prima dell'invio ──────────
             const draftId = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-            _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix, activity, unit: unitEff, voto, classeNome, createdAt: Date.now() });
+            _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix, activity, unit: unitEff, voto, classeNome, createdAt: Date.now(), ...(verInfo ? { versione: verInfo.label } : {}) });
             _ppSavDraftScritto();
             ppSwitchTab(0);  // porta docente sul tab scritto
             renderPianoPersPanel();
@@ -30261,14 +30313,16 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             ? notesCtx + (previousWeak ? '\n\n' + previousWeak : '')
             : previousWeak;
 
-        const activity = await _pianoGenerateActivity(studente, media, unit, 'APP', appContext, {}, classeNome);
+        const verInfo = await _ppDetectTestVersion(studente, studentSafe, unit);
+        if (verInfo) console.log(`[Piano] ${studentName}: verifica in versione ${verInfo.label} (${verInfo.source}) → APP adattato`);
+        const activity = await _pianoGenerateActivity(studente, media, unit, 'APP', appContext, {}, classeNome, verInfo);
         const speaking = await _pianoGenerateSpeakingPrompt(unit);
         if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return 'error'; }
         // Aggiungi speaking prompt come item extra nel piano (incluso nella bozza)
         if (speaking) activity.speakingPrompt = speaking;
         // ── BOZZA: come per REC/CON, passa per approvazione docente prima dell'invio ──
         const draftId = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-        _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix: 'APP', activity, unit: unit, voto: media, classeNome, createdAt: Date.now() });
+        _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix: 'APP', activity, unit: unit, voto: media, classeNome, createdAt: Date.now(), ...(verInfo ? { versione: verInfo.label } : {}) });
         _ppSavDraftScritto();
         ppSwitchTab(0);  // porta docente sul tab scritto/bozze
         renderPianoPersPanel();
@@ -30289,6 +30343,105 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         if (el) el.insertAdjacentHTML('afterbegin', `<div style="padding:10px 12px;background:#ffebee;border-radius:8px;border:1px solid #f48fb1;font-size:12px;color:#c62828;margin-bottom:8px;">❌ ${name}: ${msg}</div>`);
     }
 
+    // Sessione LiveLearn più recente dell'alunno per la unit indicata (history Firebase).
+    // Nessun fallback su un'altra unit: contaminerebbe il piano. null se non trovata.
+    async function _ppFindUnitSession(studentSafe, unitTarget, db) {
+        const _ppB = await _mcHistBase(studentSafe);
+        const histSnap = _ppB
+          ? await db.ref(`${_ppB}/sessions`).get()
+          : { val: () => null };
+        const sessions = histSnap.val();
+        if (!sessions) {
+            console.log(`[Piano] Firebase: nessuna sessione nella history di ${studentSafe}`);
+            return null;
+        }
+        // Ordina per timestamp decrescente
+        const sessArr = Object.entries(sessions)
+            .map(([code, s]) => ({ code, ...(typeof s === 'object' && s !== null ? s : { ts: 0 }) }))
+            .filter(s => s.ts)
+            .sort((a, b) => b.ts - a.ts);
+        if (!sessArr.length) return null;
+
+        // 1. Cerca la sessione più recente che corrisponde alla unit target.
+        // Match in due passaggi: prima esatto (substring bidirezionale), poi per numero di unit.
+        // Questo evita che "Unit 3" matchi erroneamente sessioni di "Unit 3.1" o "Unit 13".
+        let targetSess = null;
+        if (unitTarget) {
+            const normUnit = unitTarget.trim().toLowerCase();
+            // Passaggio A: match substring bidirezionale (es. "unit 4" ↔ "unit 4 - present perfect")
+            targetSess = sessArr.find(s => {
+                const title = (s.activityTitle || '').toLowerCase().trim();
+                return title.includes(normUnit) || normUnit.includes(title);
+            });
+            // Passaggio B: se non trovato, prova a estrarre e confrontare solo il numero di unit
+            // (es. "Unit 4" → "4", abbina sessioni che contengono "unit 4" ma non "unit 14")
+            if (!targetSess) {
+                const unitNum = normUnit.match(/\b(\d+)\b/)?.[1];
+                if (unitNum) {
+                    targetSess = sessArr.find(s => {
+                        const title = (s.activityTitle || '').toLowerCase();
+                        // Deve contenere "unit N" con lo stesso N (word boundary)
+                        return new RegExp(`\\bunit\\s*${unitNum}\\b`).test(title);
+                    });
+                    if (targetSess) console.log(`[Piano] Firebase: match per numero unit "${unitNum}" → "${targetSess.activityTitle||'?'}"`);
+                }
+            }
+        }
+        // 2. Se non trovata per unit → NON usare fallback su sessione diversa.
+        // Iniettare errori di un'altra unità (es. Past Simple di settembre per una unit
+        // corrente diversa) contamina il prompt e genera domande fuori programma.
+        // Meglio restituire null e lasciare che il ramo "senza dati errori" usi le
+        // istruzioni generiche ma correttamente vincolate alla unit target.
+        if (!targetSess) {
+            console.log(`[Piano] Firebase: unit "${unitTarget}" non trovata nella storia di ${studentSafe} — nessun fallback (evito contaminazione da altra unità)`);
+            return null;
+        }
+        return targetSess;
+    }
+
+    // Versione della verifica svolta dall'alunno per la unit (DSA, PEI, PEI 2…).
+    // Fonte primaria: la sessione LiveLearn della unit (versione assegnata + legenda
+    // R1 delle lettere). Se la sessione non c'è: profilo alunno (supporto PEI / PDP DSA).
+    // Ritorna null per la prova standard, altrimenti
+    //   { name, label, layout (1 = DSA, 2 = PEI), source, qs (domande svolte) }.
+    const _PP_VER_LABELS = { dsa: 'DSA', pei: 'PEI', pei_2: 'PEI 2', training_dsa: 'Training DSA', training_pei: 'Training PEI' };
+    async function _ppDetectTestVersion(studente, studentSafe, unit) {
+        const _fromProfile = () => {
+            if (studente?.supporto === 'PEI')     return { name: 'pei', label: 'PEI', layout: 2, source: 'profilo', qs: [] };
+            if (studente?.supporto === 'PDP_DSA') return { name: 'dsa', label: 'DSA', layout: 1, source: 'profilo', qs: [] };
+            return null;
+        };
+        let db;
+        try { db = firebase.database(); } catch(e) { return _fromProfile(); }
+        try {
+            const sess = await _ppFindUnitSession(studentSafe, unit, db);
+            if (!sess) return _fromProfile();
+            const detail = await agentFetchSessionDetail(sess.code, db);
+            if (!detail) return _fromProfile();
+            const sv = detail.studentVersions || {};
+            const nk = k => String(k || '').toLowerCase().replace(/[.#$[\]\/\s]/g, '_');
+            let ver = sv[studentSafe];
+            if (!ver) { const e = Object.entries(sv).find(([k]) => nk(k) === nk(studentSafe)); if (e) ver = e[1]; }
+            if (!ver || ver === 'originale') return null;           // prova standard
+            // R1: lettera neutra → nome versione tramite la legenda (solo docente)
+            let name = ver;
+            if (/^[A-I]$/.test(ver) && detail.activityId) {
+                try {
+                    const keys = (await db.ref('livelearn/versionKeys/' + detail.activityId).get()).val() || {};
+                    if (keys[ver]) name = keys[ver];
+                } catch(e) { console.warn('[Piano] legenda versioni non leggibile:', e.message); }
+            }
+            let layout = Number((detail.versionLayout || {})[ver]) || 0;
+            if (!layout) layout = /pei/.test(name) ? 2 : /dsa/.test(name) ? 1 : 0;
+            if (!layout) return null;                                // Fila B/C, Training: standard
+            const label = _PP_VER_LABELS[name] || (layout === 2 ? 'PEI' : 'DSA');
+            return { name, label, layout, source: 'verifica', qs: detail.actVersions?.[ver] || [] };
+        } catch(e) {
+            console.warn('[Piano] _ppDetectTestVersion:', e.message);
+            return _fromProfile();
+        }
+    }
+
     // Recupera errorDetails dall'ULTIMA sessione Firebase per lo studente (con o senza filtro unit).
     // Usato quando il trigger arriva dallo storico voti senza dati task (es. cancella/reinserisci voto).
     // 1. Cerca sessioni per questa unit nel history Firebase dell'alunno
@@ -30296,57 +30449,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
     async function _ppFetchLastTestErrorsFromFirebase(studentSafe, classeNome, unitTarget) {
         try {
             const db = firebase.database();
-            const classId = classeNome.replace(/\s+/g,'_').toLowerCase();
-            const _ppB = await _mcHistBase(studentSafe);
-            const histSnap = _ppB
-              ? await db.ref(`${_ppB}/sessions`).get()
-              : { val: () => null };
-            const sessions = histSnap.val();
-            if (!sessions) {
-                console.log(`[Piano] Firebase: nessuna sessione in history/${classId}/${studentSafe}/sessions`);
-                return '';
-            }
-            // Ordina per timestamp decrescente
-            const sessArr = Object.entries(sessions)
-                .map(([code, s]) => ({ code, ...(typeof s === 'object' && s !== null ? s : { ts: 0 }) }))
-                .filter(s => s.ts)
-                .sort((a, b) => b.ts - a.ts);
-            if (!sessArr.length) return '';
-
-            // 1. Cerca la sessione più recente che corrisponde alla unit target.
-            // Match in due passaggi: prima esatto (substring bidirezionale), poi per numero di unit.
-            // Questo evita che "Unit 3" matchi erroneamente sessioni di "Unit 3.1" o "Unit 13".
-            let targetSess = null;
-            if (unitTarget) {
-                const normUnit = unitTarget.trim().toLowerCase();
-                // Passaggio A: match substring bidirezionale (es. "unit 4" ↔ "unit 4 - present perfect")
-                targetSess = sessArr.find(s => {
-                    const title = (s.activityTitle || '').toLowerCase().trim();
-                    return title.includes(normUnit) || normUnit.includes(title);
-                });
-                // Passaggio B: se non trovato, prova a estrarre e confrontare solo il numero di unit
-                // (es. "Unit 4" → "4", abbina sessioni che contengono "unit 4" ma non "unit 14")
-                if (!targetSess) {
-                    const unitNum = normUnit.match(/(\d+)/)?.[1];
-                    if (unitNum) {
-                        targetSess = sessArr.find(s => {
-                            const title = (s.activityTitle || '').toLowerCase();
-                            // Deve contenere "unit N" con lo stesso N (word boundary)
-                            return new RegExp(`\bunit\s*${unitNum}\b`).test(title);
-                        });
-                        if (targetSess) console.log(`[Piano] Firebase: match per numero unit "${unitNum}" → "${targetSess.activityTitle||'?'}"`);
-                    }
-                }
-            }
-            // 2. Se non trovata per unit → NON usare fallback su sessione diversa.
-            // Iniettare errori di un'altra unità (es. Past Simple di settembre per una unit
-            // corrente diversa) contamina il prompt e genera domande fuori programma.
-            // Meglio restituire '' e lasciare che il ramo "senza dati errori" usi le
-            // istruzioni generiche ma correttamente vincolate alla unit target.
-            if (!targetSess) {
-                console.log(`[Piano] Firebase: unit "${unitTarget}" non trovata nella storia di ${studentSafe} — nessun fallback (evito contaminazione da altra unità)`);
-                return '';
-            }
+            const targetSess = await _ppFindUnitSession(studentSafe, unitTarget, db);
+            if (!targetSess) return '';
             console.log(`[Piano] Firebase: sessione trovata per unit "${unitTarget}": ${targetSess.code} ("${targetSess.activityTitle||'?'}")`);
 
             const detail = await agentFetchSessionDetail(targetSess.code, db);
@@ -30458,6 +30562,13 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         return String(q.text || '');
     }
 
+    // Attività della bozza con le domande aggiornate, senza perdere gli altri campi
+    // (versionLayout della versione DSA/PEI, speakingPrompt dell'approfondimento).
+    function _ppWithQuestions(activity, questions) {
+        const base = (activity && !Array.isArray(activity) && typeof activity === 'object') ? activity : {};
+        return { ...base, questions };
+    }
+
     function _ppReadDraftEdits(id) {
         const item = _ppDraftScritto.find(x => x.id === id);
         if (!item) return [];
@@ -30515,7 +30626,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         if (!item) return;
         // Mantieni aperta la card dopo il salvataggio
         _ppDraftOpenId = id;
-        item.activity = { questions: _ppReadDraftEdits(id) };
+        item.activity = _ppWithQuestions(item.activity, _ppReadDraftEdits(id));
         _ppSavDraftScritto();
         renderPianoPersPanel();
         // Feedback visivo sul pulsante (la card è stata ri-renderizzata)
@@ -30549,7 +30660,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
     async function _ppApproveScrittoCore(item) {
         const id = item.id;
         // ── Leggi eventuali modifiche dal DOM (editor inline, tutti i tipi) ──
-        item.activity = { questions: _ppReadDraftEdits(id) };
+        item.activity = _ppWithQuestions(item.activity, _ppReadDraftEdits(id));
         _ppSavDraftScritto();
         // ─────────────────────────────────────────────────────────────────────
 
@@ -30661,12 +30772,19 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
 
         const tipoDesc = qTypeLabels[q.type] || q.type;
         const argomento = topicOverride || draft.unit || 'English Grammar';
-        const livello = draft.voto < 5 ? 'A1-A2 (elementare)' : draft.voto < 7 ? 'A2-B1 (pre-intermedio)' : 'B1-B2 (intermedio)';
+        const _lay = Number(draft.activity?.versionLayout?.originale) || 0;
+        const livello = _lay === 2 ? 'A1-A2 (versione PEI: frasi cortissime, lessico di base)'
+            : draft.voto < 5 ? 'A1-A2 (elementare)' : draft.voto < 7 ? 'A2-B1 (pre-intermedio)' : 'B1-B2 (intermedio)';
+        const _verRule = _lay === 2
+            ? `\nVERSIONE PEI dello studente: domanda molto semplificata${q.type === 'multiple-choice' ? ', ESATTAMENTE 3 opzioni (campo "correct" = indice 0-2)' : ''}; aggiungi "dsaLargeText": true e "referenceTable": "regola grammaticale breve".`
+            : _lay === 1
+            ? '\nVERSIONE DSA dello studente: frase breve e chiara, una sola richiesta, nessun trabocchetto ortografico; aggiungi "dsaLargeText": true.'
+            : '';
 
         const prompt = `Sei un docente esperto di inglese per scuola media italiana.
 Genera UNA SOLA domanda di tipo "${q.type}" (${tipoDesc}) per uno studente di livello ${livello}.
 Argomento: "${argomento}".
-La domanda deve essere diversa da questa (che viene sostituita): "${_ppQStr(q).replace(/\n/g,' ')}".
+La domanda deve essere diversa da questa (che viene sostituita): "${_ppQStr(q).replace(/\n/g,' ')}".${_verRule}
 
 Rispondi SOLO con il JSON dell'oggetto domanda, senza testo prima o dopo, senza backtick markdown.
 
@@ -30738,7 +30856,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             else console.log(`[Piano Regen] ⚠️ Nessun errore Firebase — generazione generica per unit "${item.unit}"`);
         } catch(e) { console.warn('[Piano Regen] Firebase fetch:', e.message); }
 
-        const activity = await _pianoGenerateActivity(stu, item.voto, item.unit, prefix, errorDetails, item.tagBreakdown || {}, item.classeNome);
+        const verInfo = await _ppDetectTestVersion(stu, item.studentSafe, item.unit);
+        const activity = await _pianoGenerateActivity(stu, item.voto, item.unit, prefix, errorDetails, item.tagBreakdown || {}, item.classeNome, verInfo);
         const genEl = document.getElementById('ppGen_' + _mcToSafe(item.studentName));
         if (genEl) genEl.remove();
         if (!activity) { _ppShowError(item.studentName, 'Rigenerazione quiz fallita'); return; }
@@ -30749,7 +30868,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             id: draftId, studentSafe: item.studentSafe, studentName: item.studentName,
             code: newCode, prefix, activity,
             unit: item.unit, voto: item.voto, classeNome: item.classeNome,
-            createdAt: Date.now()
+            createdAt: Date.now(), ...(verInfo ? { versione: verInfo.label } : {})
         });
         _ppSavDraftScritto();
         renderPianoPersPanel();
@@ -31102,6 +31221,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                           <div style="display:flex;align-items:center;gap:8px;">
                             <span style="font-size:16px;color:#B45309;user-select:none;">${isCollapsed ? '▶' : '▼'}</span>
                             <div style="font-size:14px;font-weight:700;color:#78350F;">${d.studentName}</div>
+                            ${d.versione ? `<span title="Piano adattato: nella verifica ha svolto la versione ${d.versione}" style="background:${/PEI/.test(d.versione)?'#dbeafe':'#ffedd5'};color:${/PEI/.test(d.versione)?'#1e40af':'#9a3412'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">${/PEI/.test(d.versione)?'📘':'🔤'} ${d.versione}</span>` : ''}
                           </div>
                           <div style="font-size:12px;color:#B45309;margin-top:3px;margin-left:24px;">${d.unit||''} · voto ${d.voto} · ${new Date(d.createdAt).toLocaleString('it',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})} · codice: <strong>${d.code}</strong></div>
                           <div style="margin-top:5px;margin-left:24px;display:flex;flex-wrap:wrap;gap:4px;">${typeBar}</div>
