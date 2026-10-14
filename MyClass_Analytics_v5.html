@@ -29215,7 +29215,10 @@ ${blocchiPerAlunno}`;
         catch { return []; }
     })());
     let _ppTabActive = 0;
-    let _ppDraftCollapsed = {}; // { [draftId]: true/false } — stato collapse bozze (sessione)
+    // Bozze a fisarmonica: tutte chiuse, se ne apre una alla volta (sessione).
+    // Prima erano tutte aperte insieme con l'editor del quiz: lista ingestibile.
+    let _ppDraftOpenId = null;
+    let _ppOraleOpenId = null;   // stesso comportamento per i testi orali
 
     // Salva una chiave PP critica (non rigenerabile) resistendo a QuotaExceededError:
     // tenta di liberare spazio cancellando prima le chiavi sacrificabili.
@@ -30501,7 +30504,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         const item = _ppDraftScritto.find(x => x.id === id);
         if (!item) return;
         // Mantieni aperta la card dopo il salvataggio
-        _ppDraftCollapsed[id] = false;
+        _ppDraftOpenId = id;
         item.activity = { questions: _ppReadDraftEdits(id) };
         _ppSavDraftScritto();
         renderPianoPersPanel();
@@ -30753,7 +30756,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
     function _ppBuildPreview(q, idx) {
         const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         const previewWrap = (inner) => `<details style="margin-top:8px;"><summary style="font-size:15px;font-weight:700;color:#6c47ff;cursor:pointer;user-select:none;padding:4px 0;">👁 Anteprima studente</summary><div style="margin-top:7px;background:#f5f3ff;border:1px dashed #c4b5fd;border-radius:8px;padding:12px 14px;font-size:16px;">${inner}</div></details>`;
-        const qText = (q.question || q.text || '').replace(/\n/g,'<br>');
+        // q.question e' un oggetto negli esercizi di listening: solo testo qui
+        const qText = String(typeof q.question === 'string' ? q.question : (q.text || '')).replace(/\n/g,'<br>');
         const eSty = 'display:inline-block;background:#fff;border:1.5px solid #d1d5db;border-radius:6px;padding:3px 10px;margin:3px;font-size:15px;cursor:default;';
 
         if (q.type === 'multiple-choice') {
@@ -30803,9 +30807,48 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         return '';
     }
 
-    function ppToggleDraftCollapse(id) {
-        _ppDraftCollapsed[id] = !_ppDraftCollapsed[id];
+    // Anteprima dell'attivita' INTERA come la vede lo studente (tutti gli esercizi
+    // in fila), invece di aprire un'anteprima per domanda.
+    function _ppFullPreview(qList) {
+        if (!qList.length) return '<div style="color:#999;font-size:13px;">Nessuna domanda.</div>';
+        return qList.map((q, i) => {
+            let raw = '';
+            try { raw = _ppBuildPreview(q, i) || ''; } catch(e) { console.warn('[Piano] anteprima esercizio', i + 1, e.message); }
+            const inner = raw.replace(/^<details[^>]*><summary[^>]*>[^<]*<\/summary>/, '').replace(/<\/details>$/, '');
+            return `<div style="margin-bottom:14px;">
+              <div style="font-size:12px;font-weight:800;color:#6c47ff;letter-spacing:.3px;margin-bottom:4px;">ESERCIZIO ${i+1}</div>
+              ${inner || '<div style="font-size:13px;color:#999;">(anteprima non disponibile per questo tipo)</div>'}
+            </div>`;
+        }).join('');
+    }
+
+    // Vista della bozza aperta: anteprima completa (default) o modifica domande.
+    // Cambia solo la visibilita' (l'editor resta nella pagina): le modifiche
+    // non salvate non si perdono passando da una vista all'altra.
+    let _ppDraftView = {};
+    function ppSetDraftView(id, view) {
+        _ppDraftView[id] = view;
+        const pv = document.getElementById('ppDraftPrev_' + id), ed = document.getElementById('ppDraftEdit_' + id);
+        if (pv) pv.style.display = view === 'edit' ? 'none' : 'block';
+        if (ed) ed.style.display = view === 'edit' ? 'block' : 'none';
+        ['preview','edit'].forEach(v => {
+            const b = document.getElementById(`ppDraftViewBtn_${v}_${id}`);
+            if (b) { b.style.background = v === view ? '#6c47ff' : '#fff'; b.style.color = v === view ? '#fff' : '#6c47ff'; }
+        });
+    }
+
+    function ppToggleOraleCollapse(id) {
+        _ppOraleOpenId = (_ppOraleOpenId === id) ? null : id;
         renderPianoPersPanel();
+    }
+
+    function ppToggleDraftCollapse(id) {
+        _ppDraftOpenId = (_ppDraftOpenId === id) ? null : id;   // aprirne una chiude le altre
+        renderPianoPersPanel().then(() => {
+            if (!_ppDraftOpenId) return;
+            const c = document.getElementById('ppDraftCard_' + id);
+            if (c) c.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        });
     }
 
     async function renderPianoPersPanel() {
@@ -30915,7 +30958,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                           ${_ppBuildPreview(q, i)}
                         </div>`;
                     }).join('');
-                    const isCollapsed = !!_ppDraftCollapsed[d.id];
+                    const isCollapsed = d.id !== _ppDraftOpenId;
 
                     // ── Preview messaggio che verrà inviato all'alunno ──────────────────
                     const _msgPreview = (() => {
@@ -30952,8 +30995,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                         </div>`;
                     })();
 
-                    return `<div style="background:#FFFBEB;border:2px solid #FDE68A;border-radius:12px;padding:14px;margin-bottom:10px;">
-                      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:${isCollapsed?'0':'8px'};gap:8px;cursor:pointer;" onclick="ppToggleDraftCollapse('${d.id}')">
+                    return `<div id="ppDraftCard_${d.id}" style="background:#FFFBEB;border:2px solid ${isCollapsed?'#FDE68A':'#F59E0B'};border-radius:12px;padding:${isCollapsed?'10px 14px':'14px'};margin-bottom:${isCollapsed?'6px':'10px'};">
+                      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:${isCollapsed?'0':'8px'};gap:8px;cursor:pointer;" onclick="ppToggleDraftCollapse('${d.id}')" title="${isCollapsed?'Apri per modificare e approvare':'Chiudi'}">
                         <div style="flex:1;min-width:0;">
                           <div style="display:flex;align-items:center;gap:8px;">
                             <span style="font-size:16px;color:#B45309;user-select:none;">${isCollapsed ? '▶' : '▼'}</span>
@@ -30964,9 +31007,16 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                         </div>
                         <span style="background:${pfxBg};color:${pfxCol};border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;white-space:nowrap;flex-shrink:0;">${pfxLabel}</span>
                       </div>
-                      ${isCollapsed ? _msgPreview : `
+                      ${isCollapsed ? '' : `
                       ${_msgPreview}
-                      <div style="background:#fffef7;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;margin-top:10px;margin-bottom:8px;max-height:600px;overflow-y:auto;">
+                      ${(() => { const _v = _ppDraftView[d.id] || 'preview';
+                        const _b = (v, lbl) => `<button id="ppDraftViewBtn_${v}_${d.id}" onclick="event.stopPropagation();ppSetDraftView('${d.id}','${v}')" style="background:${_v===v?'#6c47ff':'#fff'};color:${_v===v?'#fff':'#6c47ff'};border:1.5px solid #6c47ff;border-radius:8px;padding:6px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">${lbl}</button>`;
+                        return `<div style="display:flex;gap:6px;margin-top:10px;">${_b('preview','👁 Anteprima completa')}${_b('edit','✏️ Modifica domande')}</div>
+                      <div id="ppDraftPrev_${d.id}" style="display:${_v==='edit'?'none':'block'};background:#f5f3ff;border:1px dashed #c4b5fd;border-radius:8px;padding:12px 14px;margin-top:8px;margin-bottom:8px;max-height:75vh;overflow-y:auto;font-size:16px;">
+                        <div style="font-size:12px;color:#6b7280;margin-bottom:10px;">Attività completa come la vedrà lo studente (${qList.length} esercizi). Le modifiche compaiono qui dopo <strong>💾 Salva modifiche</strong>.</div>
+                        ${_ppFullPreview(qList)}
+                      </div>`; })()}
+                      <div id="ppDraftEdit_${d.id}" style="display:${(_ppDraftView[d.id]||'preview')==='edit'?'block':'none'};background:#fffef7;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;margin-top:8px;margin-bottom:8px;max-height:600px;overflow-y:auto;">
                         <div style="font-size:13px;font-weight:700;color:#92400e;letter-spacing:.3px;margin-bottom:8px;">✏️ MODIFICA QUIZ — ${qList.length} domande · modifica i campi, poi premi <strong>💾 Salva modifiche</strong> per aggiornare l'anteprima</div>
                         ${editQs}
                       </div>
@@ -30979,7 +31029,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                       `}
                     </div>`;
                 }).join('');
-                draftsHtml = `<div style="margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ IN ATTESA DI APPROVAZIONE (${_ppDraftScritto.length})</div>${draftCards}</div>`;
+                draftsHtml = `<div style="margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ IN ATTESA DI APPROVAZIONE (${_ppDraftScritto.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire la sua attività</span></div>${draftCards}</div>`;
             }
             // Banner coda differita (attività in attesa di un giorno libero da verifiche)
             let deferredBanner = '';
@@ -31116,20 +31166,22 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 return;
             }
             let html = '';
+            if (pending.length) html += `<div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ DA APPROVARE (${pending.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire il suo testo</span></div>`;
             pending.forEach(item => {
-                html += `<div style="background:#FFFBEB;border:1.5px solid #FDE68A;border-radius:12px;padding:14px;margin-bottom:10px;">
-                  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+                const _open = item.id === _ppOraleOpenId;
+                html += `<div style="background:#FFFBEB;border:1.5px solid ${_open?'#F59E0B':'#FDE68A'};border-radius:12px;padding:${_open?'14px':'10px 14px'};margin-bottom:${_open?'10px':'6px'};">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:${_open?'8px':'0'};cursor:pointer;" onclick="ppToggleOraleCollapse('${item.id}')">
                     <div>
-                      <div style="font-size:13px;font-weight:700;color:#78350F;">${item.studentName}</div>
+                      <div style="font-size:13px;font-weight:700;color:#78350F;"><span style="font-size:14px;color:#B45309;margin-right:6px;">${_open?'▼':'▶'}</span>${item.studentName}</div>
                       <div style="font-size:11px;color:#B45309;">${item.unit||''} · voto ${item.voto} · ${new Date(item.createdAt).toLocaleString('it',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
                     </div>
                     <span style="background:#FEF3C7;color:#92400E;border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;">⏳ Da approvare</span>
                   </div>
-                  <textarea id="ppOraleEdit_${item.id}" style="width:100%;min-height:80px;border:1px solid #FDE68A;border-radius:8px;padding:8px;font-size:13px;line-height:1.6;font-family:inherit;resize:vertical;box-sizing:border-box;">${item.text}</textarea>
+                  ${_open ? `<textarea id="ppOraleEdit_${item.id}" style="width:100%;min-height:80px;border:1px solid #FDE68A;border-radius:8px;padding:8px;font-size:13px;line-height:1.6;font-family:inherit;resize:vertical;box-sizing:border-box;">${item.text}</textarea>
                   <div style="display:flex;gap:8px;margin-top:8px;">
                     <button id="ppOraleAppBtn_${item.id}" onclick="ppApproveOrale('${item.id}')" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">✅ Approva e invia</button>
                     <button onclick="ppRejectOrale('${item.id}')" style="background:#fff;color:#DC2626;border:1.5px solid #FCA5A5;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🗑 Scarta</button>
-                  </div>
+                  </div>` : ''}
                 </div>`;
             });
             if (approved.length) {
