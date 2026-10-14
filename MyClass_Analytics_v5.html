@@ -30448,6 +30448,16 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
     // Approva una bozza scritto: legge modifiche dal DOM, scrive su Firebase, pubblica in Bacheca, invia push
     // Legge le modifiche inline dal DOM per una bozza e restituisce le domande aggiornate.
     // Usata sia da "💾 Salva modifiche" sia da "✅ Approva e invia".
+    // Testo di una domanda come stringa: nel listening q.question e' l'oggetto
+    // dell'esercizio interno (prima .replace su quell'oggetto bloccava il pannello
+    // delle bozze appena una bozza conteneva un listening).
+    function _ppQStr(q) {
+        if (!q) return '';
+        if (typeof q.question === 'string') return q.question;
+        if (q.question && typeof q.question === 'object') return String(q.text || q.question.question || q.question.text || '');
+        return String(q.text || '');
+    }
+
     function _ppReadDraftEdits(id) {
         const item = _ppDraftScritto.find(x => x.id === id);
         if (!item) return [];
@@ -30457,7 +30467,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         return qList.map((q, i) => {
             const qText = _v(`ppDraftQ_${id}_${i}`);
             if (qText === null) return q; // campo non nel DOM: usa originale
-            const txt = qText || q.question || q.text || '';
+            const txt = qText || _ppQStr(q);
             if (q.type === 'multiple-choice') {
                 return { ...q, question: txt, text: txt,
                     options: _sp(`ppDraftOpts_${id}_${i}`) || q.options,
@@ -30615,7 +30625,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         const prompt = `Sei un docente esperto di inglese per scuola media italiana.
 Genera UNA SOLA domanda di tipo "${q.type}" (${tipoDesc}) per uno studente di livello ${livello}.
 Argomento: "${argomento}".
-La domanda deve essere diversa da questa (che viene sostituita): "${(q.question||q.text||'').replace(/\n/g,' ')}".
+La domanda deve essere diversa da questa (che viene sostituita): "${_ppQStr(q).replace(/\n/g,' ')}".
 
 Rispondi SOLO con il JSON dell'oggetto domanda, senza testo prima o dopo, senza backtick markdown.
 
@@ -30761,7 +30771,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         const eSty = 'display:inline-block;background:#fff;border:1.5px solid #d1d5db;border-radius:6px;padding:3px 10px;margin:3px;font-size:15px;cursor:default;';
 
         if (q.type === 'multiple-choice') {
-            const opts = (q.options||[]).map((o,i) => `<label style="display:block;margin:4px 0;cursor:default;font-size:16px;"><input type="radio" disabled style="margin-right:6px;">${esc(o)}</label>`).join('');
+            const opts = (q.options||[]).map((o,i) => `<label style="display:block;margin:4px 0;cursor:default;font-size:16px;"><input type="radio" disabled style="margin-right:6px;width:auto;display:inline;">${esc(o)}</label>`).join('');
             return previewWrap(`<div style="font-weight:600;margin-bottom:8px;font-size:16px;">${qText}</div>${opts}`);
         }
         if (q.type === 'fill-blanks') {
@@ -30914,7 +30924,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                         const wId   = `ppDraftW_${d.id}_${i}`;
                         const m = _qTypeMeta[q.type] || { label:q.type, bg:'#f3f4f6', col:'#555' };
                         const badge = `<span style="font-size:13px;font-weight:700;color:${m.col};background:${m.bg};border-radius:4px;padding:2px 7px;">${m.label} ${i+1}</span>`;
-                        const qInput = `<input id="${qId}" type="text" value="${(q.question||q.text||'').replace(/"/g,'&quot;').replace(/\n/g,' ')}" placeholder="Testo domanda..." style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:5px 8px;font-size:15px;margin-bottom:5px;box-sizing:border-box;font-family:inherit;">`;
+                        const qInput = `<input id="${qId}" type="text" value="${_ppQStr(q).replace(/"/g,'&quot;').replace(/\n/g,' ')}" placeholder="Testo domanda..." style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:5px 8px;font-size:15px;margin-bottom:5px;box-sizing:border-box;font-family:inherit;">`;
                         let extraInputs = '';
                         if (q.type === 'multiple-choice') {
                             extraInputs = `<input id="${optsId}" type="text" value="${(q.options||[]).join(' | ').replace(/"/g,'&quot;')}" placeholder="Opzioni: a | b | c | d" style="width:100%;border:1px solid #d1d5db;border-radius:6px;padding:4px 7px;font-size:15px;margin-bottom:5px;box-sizing:border-box;font-family:inherit;color:#555;">
