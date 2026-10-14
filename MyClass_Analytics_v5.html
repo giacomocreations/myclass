@@ -30721,6 +30721,49 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             : `✅ Inviate tutte le ${sent} attività della classe ${classeNome}.`);
     }
 
+    // Alunno della bozza nei dati locali (prima nella sua classe, poi ovunque)
+    function _ppDraftStudent(d) {
+        const match = s => _mcToSafe(`${s.cognome} ${s.nome}`) === d.studentSafe || _mcToSafe(`${s.nome} ${s.cognome}`) === d.studentSafe;
+        const cls = (data.classi || []).find(c => c.nome === d.classeNome);
+        return cls?.studenti?.find(match)
+            || (data.classi || []).reduce((f, c) => f || (c.studenti || []).find(match), null);
+    }
+
+    // Rigenera l'intera bozza: rileva di nuovo la versione della verifica (DSA/PEI/PEI 2),
+    // recupera gli errori e sostituisce le domande. Codice e card restano gli stessi.
+    async function ppRegenDraft(id) {
+        const d = _ppDraftScritto.find(x => x.id === id);
+        if (!d) return;
+        const stu = _ppDraftStudent(d);
+        if (!stu) { alert(`Studente ${d.studentName} non trovato nei dati locali.`); return; }
+        if (!confirm(`Rigenerare l'attività di ${d.studentName}?\n\nLe domande attuali della bozza (comprese le modifiche) vengono sostituite. Se nella verifica ha svolto la versione DSA / PEI / PEI 2, la nuova attività è adattata alla sua versione.`)) return;
+        const btn = document.getElementById('ppDraftRegenBtn_' + id);
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Rigenero…'; }
+        try {
+            const verInfo = await _ppDetectTestVersion(stu, d.studentSafe, d.unit);
+            let errorDetails = '';
+            if (d.prefix !== 'APP') {
+                try { errorDetails = await _ppFetchLastTestErrorsFromFirebase(d.studentSafe, d.classeNome, d.unit); } catch(e) {}
+            }
+            const activity = await _pianoGenerateActivity(stu, d.voto, d.unit, d.prefix, errorDetails, {}, d.classeNome, verInfo);
+            if (!activity) throw new Error('generazione quiz fallita (errore AI)');
+            const old = (d.activity && !Array.isArray(d.activity)) ? d.activity : {};
+            if (old.speakingPrompt) activity.speakingPrompt = old.speakingPrompt;
+            d.activity = activity;
+            if (verInfo) d.versione = verInfo.label; else delete d.versione;
+            d.regenAt = Date.now();
+            _ppSavDraftScritto();
+            _ppDraftOpenId = id;
+            await renderPianoPersPanel();
+            alert(verInfo
+                ? `✅ Attività di ${d.studentName} rigenerata in versione ${verInfo.label} (${activity.questions.length} esercizi).`
+                : `✅ Attività di ${d.studentName} rigenerata (${activity.questions.length} esercizi).\n\nNella verifica di "${d.unit}" ha svolto la prova standard: attività standard.`);
+        } catch(e) {
+            if (btn) { btn.disabled = false; btn.textContent = '↺ Rigenera'; }
+            alert('❌ Rigenerazione non riuscita: ' + e.message);
+        }
+    }
+
     // Scarta una bozza scritto senza inviarla
     function ppDiscardScritto(id) {
         if (!confirm('Scartare questa bozza? L\'attività non verrà inviata all\'alunno.')) return;
@@ -31221,12 +31264,18 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                           <div style="display:flex;align-items:center;gap:8px;">
                             <span style="font-size:16px;color:#B45309;user-select:none;">${isCollapsed ? '▶' : '▼'}</span>
                             <div style="font-size:14px;font-weight:700;color:#78350F;">${d.studentName}</div>
-                            ${d.versione ? `<span title="Piano adattato: nella verifica ha svolto la versione ${d.versione}" style="background:${/PEI/.test(d.versione)?'#dbeafe':'#ffedd5'};color:${/PEI/.test(d.versione)?'#1e40af':'#9a3412'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">${/PEI/.test(d.versione)?'📘':'🔤'} ${d.versione}</span>` : ''}
+                            ${d.versione ? `<span title="Piano adattato: nella verifica ha svolto la versione ${d.versione}" style="background:${/PEI/.test(d.versione)?'#dbeafe':'#ffedd5'};color:${/PEI/.test(d.versione)?'#1e40af':'#9a3412'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">${/PEI/.test(d.versione)?'📘':'🔤'} ${d.versione}</span>`
+                              : (() => { const _sup = _ppDraftStudent(d)?.supporto;
+                                  return (_sup === 'PEI' || _sup === 'PDP_DSA') && !d.regenAt
+                                    ? `<span title="Bozza creata prima dell'adattamento DSA/PEI: premi ↺ Rigenera per adattarla alla versione che ha svolto" style="background:#fee2e2;color:#991b1b;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">⚠️ ${_sup === 'PEI' ? 'PEI' : 'DSA'} — da rigenerare</span>` : ''; })()}
                           </div>
                           <div style="font-size:12px;color:#B45309;margin-top:3px;margin-left:24px;">${d.unit||''} · voto ${d.voto} · ${new Date(d.createdAt).toLocaleString('it',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})} · codice: <strong>${d.code}</strong></div>
                           <div style="margin-top:5px;margin-left:24px;display:flex;flex-wrap:wrap;gap:4px;">${typeBar}</div>
                         </div>
-                        <span style="background:${pfxBg};color:${pfxCol};border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;white-space:nowrap;flex-shrink:0;">${pfxLabel}</span>
+                        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
+                          <span style="background:${pfxBg};color:${pfxCol};border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;white-space:nowrap;">${pfxLabel}</span>
+                          <button id="ppDraftRegenBtn_${d.id}" onclick="event.stopPropagation();ppRegenDraft('${d.id}')" title="Rigenera l'attività: se ha svolto la verifica DSA / PEI / PEI 2 viene adattata alla sua versione" style="background:#fff7ed;color:#c2410c;border:1.5px solid #fdba74;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">↺ Rigenera</button>
+                        </div>
                       </div>
                       ${isCollapsed ? '' : `
                       ${_msgPreview}
