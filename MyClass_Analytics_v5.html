@@ -21271,17 +21271,18 @@ REGOLE ASSOLUTE — rispettale in ogni parola del tuo output:
     // Feedback all'alunno della verifica scritta (blocco CLASSROOM: l'alunno lo
     // legge in LiveLearn). Prima erano 5-7 frasi generiche: ora sezioni fisse con
     // punti di forza e punti deboli concreti, tratti dalla tabella per-domanda.
-    // Niente "come migliorare": doppione dei piani di recupero/consolidamento.
+    // Niente "come migliorare" (doppione dei piani di recupero/consolidamento) e
+    // niente frase finale di incoraggiamento.
     const AGENT_LL_FEEDBACK_INSTR = `Poi il feedback personale per l'alunno, che lo legge in LiveLearn. Scrivi in seconda persona (tu), in italiano, tono incoraggiante ma onesto. Struttura OBBLIGATORIA, con ogni etichetta su una riga a sé e una riga vuota tra le sezioni:
 Ciao [nome], ecco il feedback della tua prova di [attivita].
 Punti di forza:
 almeno 3 punti concreti (strutture, esercizi, aree in cui sei andato bene), citando esempi reali dalla tabella per-domanda.
 Punti deboli:
 almeno 2-3 errori o lacune specifiche, riportando la risposta data e quella corretta (es. hai scritto "he go" invece di "he goes") e spiegando in modo semplice la regola.
-Per finire:
-una frase di incoraggiamento personalizzata.
+Chiudi con l'ultimo punto debole: niente frase finale di incoraggiamento o di saluto, niente frasi a effetto.
 NON dare indicazioni su cosa ripassare, esercizi da fare o percorsi di recupero/consolidamento: li fornisce gia' il Piano Personalizzato.
-Lunghezza 140-200 parole per alunno. Frasi complete, niente elenchi puntati, niente grassetti, niente simboli.`;
+Chi ha RECUPERO_FAST: un solo feedback che tiene conto di entrambe le prove. Nei punti di forza indica anche cosa e' migliorato nel recupero rispetto alla prima prova (aree e strutture, con esempi dalla tabella del recupero); nei punti deboli distingui gli errori corretti nel recupero da quelli rimasti. Nomina le due prove come "la prima prova" e "il recupero".
+Lunghezza 140-200 parole per alunno (fino a 260 per chi ha fatto il recupero). Frasi complete, niente elenchi puntati, niente grassetti, niente simboli.`;
 
     // Cooldown quota Gemini — solo in memoria, si azzera al ricaricamento pagina
     let _geminiQuotaUntil = 0;
@@ -23326,7 +23327,8 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
                 const timeStr = r.totalTimeSec != null ? `tempoTotale:${r.totalTimeSec}s` : '';
                 const tByType = Object.entries(r.avgTimeByType||{}).map(([t,v])=>`avgTime_${t}:${v}s`).join(' | ');
                 const tp = [timeStr, tByType].filter(Boolean).join(' | ');
-                return `${r.nome} | pct:${r.pct}% | voto:${r.votoLabel}${tagStr?' | '+tagStr:''}${tp?' | '+tp:''}`;
+                const vL = (r.recoveryNote||'').includes('VOTO_CAP:6') ? '6' : r.votoLabel;
+                return `${r.nome} | pct:${r.pct}%${r.recoveryNote||''} | voto:${vL}${tagStr?' | '+tagStr:''}${tp?' | '+tp:''}`;
             }).join('\n');
 
             // Dettaglio per domanda: serve alla ValDocente e al feedback LiveLearn
@@ -23342,7 +23344,9 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
                     const lines = agentBuildDetailLines(rQs, r.detailedResponse);
                     return lines ? `--- ${r.nome} ---\n${lines}` : '';
                 }).filter(Boolean).join('\n\n');
-                if (blocks) detailSection = `\nRISPOSTE PER DOMANDA:\n${blocks}\n`;
+                if (blocks) detailSection = `\nRISPOSTE PER DOMANDA — PROVA ORIGINALE:\n${blocks}\n`;
+                const recB = bStudents.map(r => r.recoveryDetailLines).filter(Boolean).join('\n\n');
+                if (recB) detailSection += `\nRISPOSTE PER DOMANDA — RECUPERO FAST:\n${recB}\n`;
             }
 
             // Istruzioni solo per le sezioni necessarie
@@ -23350,7 +23354,8 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
             if (bNeedsDoc) {
                 sectionInstrs.push(`=== VALUTAZIONE DOCENTE ===
 Per ogni alunno usa OBBLIGATORIAMENTE: --- ALUNNO: Nome Cognome ---
-Poi scheda strutturata: prima riga (classe/data/attivita/pct/voto), analisi per area (GRAMMAR/VOCABULARY/FUNCTIONS/LISTENING se presenti: 2-3 frasi con errori specifici dalla tabella per-domanda), tempi di risposta (commenta avgTime_*/tempoTotale), analisi complessiva (3-4 frasi su pattern errori, punti di forza, priorita recupero, suggerimento metodologico). Min 12-14 righe per alunno.`);
+Poi scheda strutturata: prima riga (classe/data/attivita/pct/voto), analisi per area (GRAMMAR/VOCABULARY/FUNCTIONS/LISTENING se presenti: 2-3 frasi con errori specifici dalla tabella per-domanda), tempi di risposta (commenta avgTime_*/tempoTotale), analisi complessiva (3-4 frasi su pattern errori, punti di forza, priorita recupero, suggerimento metodologico). Min 12-14 righe per alunno.
+Solo per chi ha RECUPERO_FAST: aggiungi la parte "Recupero (T1: x%, T2: y%)" con analisi per area del recupero, confronto con la prima prova (aree migliorate, errori corretti, errori persistenti) e valutazione globale che spiega il voto finale.`);
             }
             if (bNeedsArgo) {
                 sectionInstrs.push(`=== ARGO ===
@@ -23366,6 +23371,7 @@ Chi ha fatto recupero: menziona il miglioramento rispetto alla prima prova.`);
 
             const prompt = `CLASSE: ${classe} | DATA: ${sessionDate} | ATTIVITA: ${unit || 'N/D'}
 ${REGOLE}
+- RECUPERO FAST: chi ha RECUPERO_FAST ha svolto la prima prova e il recupero: valuta entrambe e confrontale. Il voto indicato è già quello finale.
 RISULTATI (non ricalcolare, usa le percentuali indicate):
 ${resultLines}${detailSection}
 Genera SOLO i blocchi seguenti con i marcatori esatti:
@@ -23428,7 +23434,8 @@ ${sectionInstrs.join('\n')}`;
         const timeStr = r.totalTimeSec != null ? `tempoTotale:${r.totalTimeSec}s` : '';
         const tByType = Object.entries(r.avgTimeByType||{}).map(([t,v])=>`avgTime_${t}:${v}s`).join(' | ');
         const timeParts = [timeStr, tByType].filter(Boolean).join(' | ');
-        const resultLine = `${r.nome} | pct:${r.pct}% | voto:${r.votoLabel}${tagStr?' | '+tagStr:''}${timeParts?' | '+timeParts:''}`;
+        const _vL = (r.recoveryNote||'').includes('VOTO_CAP:6') ? '6' : r.votoLabel;
+        const resultLine = `${r.nome} | pct:${r.pct}%${r.recoveryNote||''} | voto:${_vL}${tagStr?' | '+tagStr:''}${timeParts?' | '+timeParts:''}`;
 
         // Dettaglio risposte per domanda (se disponibile)
         // ⚠️ VERSION-AWARE: usa r._studentQs (domande della versione assegnata: Fila B/C)
@@ -23440,14 +23447,16 @@ ${sectionInstrs.join('\n')}`;
         let detailBlock = '';
         if (r.detailedResponse && rQs.length) {
             const lines = agentBuildDetailLines(rQs, r.detailedResponse);
-            if (lines) detailBlock = `\nRISPOSTE PER DOMANDA:\n--- ${r.nome} ---\n${lines}\n`;
+            if (lines) detailBlock = `\nRISPOSTE PER DOMANDA — PROVA ORIGINALE:\n--- ${r.nome} ---\n${lines}\n`;
         }
+        if (r.recoveryDetailLines && field !== 'argo') detailBlock += `\nRISPOSTE PER DOMANDA — RECUPERO FAST:\n${r.recoveryDetailLines}\n`;
 
         const REGOLE_EXTRA = `REGOLE AGGIUNTIVE:
 - Menziona un'area solo se presente nel test
 - Aggrega i tag: grammatica aggregata, lessico aggregato, funzioni aggregate, listening aggregato
 - Una risposta con tick ma 0 punti = accettata per obiettivo non pertinente
 - NON inventare numeri: quante domande/risposte giuste o totali ci sono (soprattutto nel LISTENING) si ricava SOLO dalla tabella per-domanda ([elementi corretti k/n], punti x/ypt). Se il dato non c'e', parla solo della percentuale per area.
+- RECUPERO FAST: se l'alunno ha RECUPERO_FAST ha svolto la prima prova e il recupero: valuta entrambe e confrontale (aree migliorate, errori corretti, errori rimasti). Il voto indicato è già quello finale.
 SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55-58%=5.5 | 59%=6- | 60-61%=6 | 62-64%=6+ | 65-68%=6.5 | 69%=7- | 70-71%=7 | 72-74%=7+ | 75-78%=7.5 | 79%=8- | 80-81%=8 | 82-84%=8+ | 85-88%=8.5 | 89%=9- | 90-91%=9 | 92-94%=9+ | 95-98%=9.5 | 99%=10- | 100%=10`;
 
         const sectionLabel = field === 'doc' ? 'VALUTAZIONE DOCENTE'
@@ -23455,7 +23464,7 @@ SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55
                            : 'CLASSROOM';
 
         const sectionInstr = field === 'doc'
-            ? `=== VALUTAZIONE DOCENTE ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\nPoi la scheda strutturata:\n- Prima riga: classe, data, attivita, accuratezza percentuale, voto.\n- Analisi per area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING se presenti): 2-3 frasi per area. Se hai la tabella per-domanda, cita gli errori specifici con la risposta data e quella attesa. Spiega l'errore grammaticale sottostante.\n- Tempi di risposta: commenta avgTime_* e tempoTotale se disponibili.\n- Analisi complessiva: 3-4 frasi su pattern di errore ricorrente, punti di forza, priorita di recupero, suggerimento metodologico concreto.\nMinimo 12-14 righe.`
+            ? `=== VALUTAZIONE DOCENTE ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\nPoi la scheda strutturata:\n- Prima riga: classe, data, attivita, accuratezza percentuale, voto.\n- Analisi per area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING se presenti): 2-3 frasi per area. Se hai la tabella per-domanda, cita gli errori specifici con la risposta data e quella attesa. Spiega l'errore grammaticale sottostante.\n- Tempi di risposta: commenta avgTime_* e tempoTotale se disponibili.\n- Analisi complessiva: 3-4 frasi su pattern di errore ricorrente, punti di forza, priorita di recupero, suggerimento metodologico concreto.\n- Solo se l'alunno ha RECUPERO_FAST: aggiungi la parte "Recupero (T1: x%, T2: y%)" con analisi per area del recupero, confronto con la prima prova (aree migliorate, errori corretti, errori persistenti) e valutazione globale che spiega il voto finale.\nMinimo 12-14 righe (18-22 con il recupero).`
             : field === 'argo'
             ? `=== ARGO ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\nPoi 2-3 frasi valutative sintetiche. Max 300 caratteri.`
             : `=== CLASSROOM ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\n${AGENT_LL_FEEDBACK_INSTR}`;
@@ -25564,6 +25573,59 @@ ${sectionInstr}`;
     }
 
     // ── Tabella errori per-domanda per un alunno ──────────────────────────
+    // Recupero fast (svolto nella stessa sessione, dopo una prova < 60%).
+    // Restituisce la nota per la riga aggregata e, per ogni tentativo, percentuale
+    // per area e tabella per-domanda, cosi' l'AI puo' confrontare le due prove.
+    // Firebase puo' restituire recoveryHistory e le domande come oggetti {0:..,1:..}:
+    // prima con Array.isArray il dettaglio del recupero andava perso.
+    function _agentRecoveryInfo(dr, pct, nome) {
+        const out = { recoveryNote: '', recoveryDetailLines: '' };
+        if (!dr || pct >= 60) return out;
+        let hist = agentFbArr(dr.recoveryHistory).filter(Boolean);
+        if (!hist.length && agentFbArr(dr.recoveryQuestions).length) {
+            hist = [{ questions: dr.recoveryQuestions, answers: dr.recoveryAnswers || [],
+                      score: dr.recScore1 ?? null, aiScores: dr.recoveryAiScores || {},
+                      manualScores: dr.recoveryManualScores || {} }];
+        }
+        const rec1 = dr.recScore1 ?? hist[0]?.score ?? null;
+        const rec2 = dr.recScore2 ?? hist[1]?.score ?? null;
+        if (rec1 === null && rec2 === null) return out;
+        const bestRec = Math.max(rec1 ?? 0, rec2 ?? 0);
+        const attemptsLabel = [rec1 !== null ? `T1:${rec1}%` : null, rec2 !== null ? `T2:${rec2}%` : null]
+            .filter(Boolean).join(' ');
+        // Soglia del recupero superato come in LiveLearn (>= 60%) → voto massimo 6
+        out.recoveryNote = bestRec >= 60
+            ? ` | RECUPERO_FAST:${attemptsLabel} | VOTO_CAP:6 (recupero superato ${bestRec}%→max6)`
+            : ` | RECUPERO_FAST:${attemptsLabel} | recupero_insuff`;
+        console.log(`[Agente] ${nome}: recupero fast ${attemptsLabel} — ${bestRec >= 60 ? 'voto cappato a 6' : 'recupero insufficiente'}`);
+        const TAGS = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING'];
+        out.recoveryDetailLines = hist.map((h, hi) => {
+            const qs = agentFbArr(h.questions);
+            if (!qs.length) return '';
+            const resp = { answers: h.answers || [], aiScores: h.aiScores || {},
+                           aiFeedbacks: h.aiFeedbacks || {}, manualScores: h.manualScores || {} };
+            // Percentuale per area del tentativo (manuale > AI > automatico)
+            const ans = agentFbArr(resp.answers);
+            const tagAgg = {};
+            qs.forEach((q, qi) => {
+                const tag = q.tag || (q.type === 'listening' ? 'LISTENING' : null);
+                if (!TAGS.includes(tag)) return;
+                const max = q.points || 1;
+                let got = resp.manualScores[qi] != null ? Number(resp.manualScores[qi])
+                        : resp.aiScores[qi] != null ? Number(resp.aiScores[qi])
+                        : _agentEvalPts(q, ans[qi]);
+                if (got == null || isNaN(got)) return;
+                (tagAgg[tag] = tagAgg[tag] || { e: 0, t: 0 });
+                tagAgg[tag].e += got; tagAgg[tag].t += max;
+            });
+            const tagStr = Object.entries(tagAgg).map(([k, v]) => `${k}:${Math.min(100, Math.round(v.e / v.t * 100))}%`).join(' | ');
+            const lines = agentBuildDetailLines(qs, resp);
+            const sc = h.score ?? (hi === 0 ? rec1 : rec2);
+            return `--- ${nome} (Recupero T${hi+1}: ${sc ?? '?'}%${tagStr ? ' | ' + tagStr : ''}) ---` + (lines ? `\n${lines}` : '');
+        }).filter(Boolean).join('\n\n');
+        return out;
+    }
+
     function agentBuildDetailLines(questions, detailedResponse) {
         if (!questions?.length || !detailedResponse) return '';
         const answers  = agentFbArr(detailedResponse.answers);
@@ -26598,41 +26660,7 @@ ${sectionInstr}`;
             // Regola di cappatura: se il recupero supera il 60%, il voto finale
             // è comunque cappato a 6 (pct effettiva = 60).
             // Se la prova originale è già sufficiente (pct ≥ 60), ignora il recupero.
-            let recoveryNote = '';
-            let recoveryDetailLines = '';
-            if (dr) {
-                const rec1 = dr.recScore1 ?? null;   // pct 1° tentativo recupero
-                const rec2 = dr.recScore2 ?? null;   // pct 2° tentativo recupero
-                const hasRecovery = rec1 !== null || rec2 !== null;
-                if (hasRecovery && pct < 60) {
-                    const bestRec = Math.max(rec1 ?? 0, rec2 ?? 0);
-                    const attemptsLabel = [rec1 !== null ? `T1:${rec1}%` : null, rec2 !== null ? `T2:${rec2}%` : null]
-                        .filter(Boolean).join(' ');
-                    if (bestRec > 60) {
-                        // Recupero superato → voto cappato a 6
-                        recoveryNote = ` | RECUPERO_FAST:${attemptsLabel} | VOTO_CAP:6 (recupero>${bestRec}%>60%→max6)`;
-                        console.log(`[Agente] ${s.displayName}: recupero fast ${attemptsLabel} — voto cappato a 6`);
-                    } else {
-                        // Recupero insufficiente → riporta i dati, nessun cap
-                        recoveryNote = ` | RECUPERO_FAST:${attemptsLabel} | recupero_insuff`;
-                        console.log(`[Agente] ${s.displayName}: recupero fast ${attemptsLabel} — recupero insufficiente`);
-                    }
-                    // Costruisci dettaglio per-domanda del recupero (se recoveryHistory disponibile)
-                    const recHist = Array.isArray(dr.recoveryHistory) ? dr.recoveryHistory : [];
-                    const recBlocks = recHist.map((h, hi) => {
-                        if (!h || !Array.isArray(h.questions) || !h.answers) return '';
-                        const fakeResp = {
-                            answers: h.answers,
-                            aiScores: h.aiScores || {},
-                            aiFeedbacks: h.aiFeedbacks || {},
-                            manualScores: {}
-                        };
-                        const lines = agentBuildDetailLines(h.questions, fakeResp);
-                        return lines ? `--- ${s.displayName || s.safe} (Recupero T${hi+1}, ${h.score ?? '?'}%) ---\n${lines}` : '';
-                    }).filter(Boolean).join('\n\n');
-                    if (recBlocks) recoveryDetailLines = recBlocks;
-                }
-            }
+            const { recoveryNote, recoveryDetailLines } = _agentRecoveryInfo(dr, pct, s.displayName || s.safe);
 
             // Applica il cap del recupero al VOTO EFFETTIVO (non solo al testo del prompt):
             // se il recupero fast ha superato il 60%, il voto salvato dev'essere 6. Prima il
@@ -26684,7 +26712,7 @@ ${sectionInstr}`;
 - Aggrega i tag: grammatica aggregata, lessico aggregato, funzioni aggregate, listening aggregato
 - Una risposta con tick ma 0 punti = accettata per obiettivo non pertinente
 - NON inventare numeri: quante domande/risposte giuste o totali ci sono (soprattutto nel LISTENING) si ricava SOLO dalla tabella per-domanda ([elementi corretti k/n], punti x/ypt). Se il dato non c'e', parla solo della percentuale per area.
-- RECUPERO FAST — se un alunno ha RECUPERO_FAST nei risultati: valuta ENTRAMBE le prove e commenta il miglioramento (o la persistenza degli errori). Se il campo dice VOTO_CAP:6, il voto massimo è 6 indipendentemente dal punteggio del recupero.
+- RECUPERO FAST — se un alunno ha RECUPERO_FAST nei risultati ha svolto due prove: la prima prova (pct e aree nella riga dei risultati, risposte in PROVA ORIGINALE) e il recupero (percentuali per area e risposte in RECUPERO FAST). Valuta ENTRAMBE e confrontale area per area: cosa è migliorato, quali errori sono stati corretti, quali sono rimasti. Il voto è quello indicato nella riga (se c'è VOTO_CAP:6, è 6 indipendentemente dal punteggio del recupero): non ricalcolarlo.
 SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55-58%=5.5 | 59%=6- | 60-61%=6 | 62-64%=6+ | 65-68%=6.5 | 69%=7- | 70-71%=7 | 72-74%=7+ | 75-78%=7.5 | 79%=8- | 80-81%=8 | 82-84%=8+ | 85-88%=8.5 | 89%=9- | 90-91%=9 | 92-94%=9+ | 95-98%=9.5 | 99%=10- | 100%=10`;
 
         const detailSection = detailBlocks
@@ -26696,7 +26724,7 @@ SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55
             : '';
 
         const _tipoSessioneLabel = task.isRecupero
-            ? '\nTIPO SESSIONE: RECUPERO — questa è la prova di recupero che l\'alunno ha svolto dopo aver ottenuto un voto insufficiente. Valuta il livello raggiunto e, nella sezione CLASSROOM, menziona esplicitamente che si tratta del recupero e incoraggia rispetto al miglioramento dimostrato.'
+            ? '\nTIPO SESSIONE: RECUPERO — questa è la prova di recupero che l\'alunno ha svolto dopo aver ottenuto un voto insufficiente. Valuta il livello raggiunto e, nella sezione CLASSROOM, menziona esplicitamente che si tratta del recupero e indica nei punti di forza i miglioramenti dimostrati.'
             : task.isConsolidamento
             ? '\nTIPO SESSIONE: CONSOLIDAMENTO — questa è un\'attività di rinforzo per studenti che hanno già raggiunto la sufficienza. Valorizza il consolidamento delle competenze raggiunte.'
             : '';
@@ -26708,7 +26736,6 @@ Genera SOLO questi due blocchi, nell'ordine esatto qui sotto, con questi marcato
 === CLASSROOM ===
 Per ogni alunno usa OBBLIGATORIAMENTE questo header (sostituisci con il nome reale): --- ALUNNO: Nome Cognome ---
 ${AGENT_LL_FEEDBACK_INSTR}
-Chi ha fatto il recupero riceve feedback che menziona il miglioramento rispetto alla prima prova.
 === VALUTAZIONE DOCENTE ===
 Per ogni alunno usa OBBLIGATORIAMENTE questo header (sostituisci con il nome reale):
 --- ALUNNO: Nome Cognome ---
@@ -26717,7 +26744,8 @@ Poi la scheda strutturata:
 - Analisi per area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING se presenti): 2-3 frasi per area. Se hai la tabella per-domanda, cita gli errori specifici con la risposta data e quella attesa (es. Q3: "what did you see" invece di "Did you see"). Spiega l'errore grammaticale sottostante.
 - Tempi di risposta: commenta avgTime_* e tempoTotale se disponibili. Tempo alto + errore = incertezza sulla struttura; tempo basso + errore = risposta superficiale/impulsiva. Segnala le domande con tempo anomalo (>3min o <10s con errore).
 - Analisi complessiva: 3-4 frasi su pattern di errore ricorrente (es. "confusione sistematica tra Do/Does e Did nelle Wh-questions"), punti di forza, priorita di recupero, suggerimento metodologico concreto.
-Ogni scheda minimo 12-14 righe. NON aggiungere separatori tra schede oltre all'header.`;
+- Solo per chi ha RECUPERO_FAST: dopo l'analisi della prima prova aggiungi la parte "Recupero (T1: x%, T2: y%)": analisi per area del recupero con gli errori specifici dalla tabella del recupero, poi un confronto con la prima prova (aree migliorate, errori corretti, errori persistenti) e una valutazione globale che spiega il voto finale.
+Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiungere separatori tra schede oltre all'header.`;
 
         const extractSection = (text, marker) => {
             // Estrae il label dal marcatore (es. "ARGO" da "=== ARGO ===")
