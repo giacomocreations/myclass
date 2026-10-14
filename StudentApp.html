@@ -2147,9 +2147,10 @@ function renderStats(){
   html+=`</div>`;
 
   // ── Radar competenze ────────────────────────────────────────────
-  // Senza voti (e senza analisi AI) il grafico si disegnava su un 6 di
-  // ripiego: un profilo inventato. Al suo posto un avviso.
-  const _noVoti = !mc.competenzeAI && !hasO && !hasS;
+  // Solo dati reali delle prove (mc.competenze, calcolato da MyClass): le aree
+  // non ancora valutate sono NP. Senza nessuna area niente grafico inventato.
+  const _comp = (mc.competenze && typeof mc.competenze === 'object') ? mc.competenze : {};
+  const _noVoti = !Object.values(_comp).some(v => v != null);
   const _hasFullAnal = mc.aiReportText || mc.aiPuntiForza || mc.aiAreeMiglioramento;
   html+=`<div class="card" style="margin-bottom:12px;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -2157,9 +2158,9 @@ function renderStats(){
       ${_hasFullAnal?`<button onclick="openFullAnalysis()" style="background:var(--purple-light);border:none;color:var(--purple);border-radius:8px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">📄 Analisi completa — clicca qui</button>`:''}
     </div>
     ${_noVoti
-      ? `<div style="padding:28px 12px;text-align:center;color:var(--muted);"><div style="font-size:26px;margin-bottom:6px;">📭</div><div style="font-size:14px;font-weight:700;">Voti non presenti</div><div style="font-size:11px;margin-top:4px;">Il profilo comparirà dopo i primi voti.</div></div>`
+      ? `<div style="padding:28px 12px;text-align:center;color:var(--muted);"><div style="font-size:26px;margin-bottom:6px;">📭</div><div style="font-size:14px;font-weight:700;">Profilo non ancora disponibile</div><div style="font-size:11px;margin-top:4px;">Il profilo comparirà dopo le prime verifiche valutate.</div></div>`
       : `<div class="chart-wrap"><canvas id="radar-chart"></canvas></div>
-    ${!mc.competenzeAI?`<div style="font-size:11px;color:var(--muted);margin-top:6px;text-align:center;line-height:1.4">Basato sulle medie. Il profilo completo si aggiorna dopo l'analisi AI in MyClass.</div>`:''}`}
+    <div style="font-size:11px;color:var(--muted);margin-top:6px;text-align:center;line-height:1.4">Calcolato dalle tue verifiche. NP = non ancora presente.</div>`}
   </div>`;
 
   // ── Andamento orale vs scritto ──────────────────────────────────
@@ -2355,20 +2356,12 @@ function buildStatCharts(){
   const rCtx = document.getElementById('radar-chart');
   if(rCtx){
     destroyChart('radar-chart');
-    const CLABELS=['Listening','Speaking','Reading','Writing','Grammar','Vocabulary'];
-    let radarData;
-    if(mc.competenzeAI){
-      const c = mc.competenzeAI;
-      radarData = [c.listening,c.speaking,c.reading,c.writing,c.grammar,c.vocabulary]
-        .map(v=>Math.min(10,Math.max(1,Math.round((v||0)*10)/10)));
-    } else {
-      const base = mc.mediaS!=null?mc.mediaS:(mc.mediaO!=null?mc.mediaO:6);
-      radarData = [
-        mc.mediaO!=null?mc.mediaO:base,
-        mc.mediaO!=null?mc.mediaO:base,
-        base, base, base, base
-      ].map(v=>Math.min(10,Math.max(1,Math.round(v*10)/10)));
-    }
+    // Solo aree con dati reali; le altre restano vuote con l'etichetta NP
+    const CKEYS=['listening','speaking','reading','writing','grammar','vocabulary'];
+    const c = (mc.competenze && typeof mc.competenze === 'object') ? mc.competenze : {};
+    const radarData = CKEYS.map(k => c[k]!=null ? Math.min(10,Math.max(1,Math.round(Number(c[k])*10)/10)) : null);
+    const CLABELS=['Listening','Speaking','Reading','Writing','Grammar','Vocabulary']
+      .map((l,i) => radarData[i]==null ? l+' (NP)' : l);
     S.chartInstances['radar-chart'] = new Chart(rCtx,{
       type:'radar',
       data:{

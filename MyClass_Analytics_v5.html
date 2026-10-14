@@ -3193,7 +3193,7 @@
                 // Modelli locali: aggiungi promemoria formato se il prompt richiede punteggi
                 const needsScores = prompt.includes('LISTENING:') || prompt.includes('PUNTEGGI COMPETENZE');
                 const ollamaPrompt = needsScores
-                    ? prompt + '\n\n FINE RISPOSTA — OBBLIGATORIO: copia queste 6 righe ESATTE in fondo, sostituendo [numero] con un decimale (es. 7.5):\nLISTENING: [numero]\nSPEAKING: [numero]\nREADING: [numero]\nWRITING: [numero]\nGRAMMAR: [numero]\nVOCABULARY: [numero]'
+                    ? prompt + '\n\n FINE RISPOSTA — OBBLIGATORIO: copia queste 6 righe ESATTE in fondo, sostituendo [numero] con il valore indicato nel prompt (un decimale, es. 7.5, oppure NP se la competenza non è ancora valutata):\nLISTENING: [numero]\nSPEAKING: [numero]\nREADING: [numero]\nWRITING: [numero]\nGRAMMAR: [numero]\nVOCABULARY: [numero]'
                     : prompt;
                 try {
                     const oRes = await ollamaXhr(OLLAMA_URL + '/api/generate', {
@@ -3201,7 +3201,7 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             model,
-                            system: 'Sei un assistente per docenti di lingua inglese. Segui SEMPRE il formato richiesto esattamente. Quando ti vengono chiesti punteggi numerici, fornisci SOLO numeri (es. 7.5), mai parole.',
+                            system: 'Sei un assistente per docenti di lingua inglese. Segui SEMPRE il formato richiesto esattamente. Quando ti vengono chiesti punteggi numerici, fornisci SOLO numeri (es. 7.5) oppure NP se indicato, mai altre parole.',
                             prompt: ollamaPrompt,
                             stream: false,
                             options: { num_ctx: 16384, num_predict: -1 }
@@ -3824,12 +3824,10 @@ Basata su annotazioni (NHC, NHM, NdM) e note disciplinari. Impatto delle assenze
 3-4 azioni concrete${studente.supporto ? ', inclusive e adatte al profilo speciale dello studente' : ''}.
 
 **PUNTEGGI COMPETENZE** (OBBLIGATORIO - ultima sezione)
-Regole VINCOLANTI per i punteggi:
-- SPEAKING: DEVE corrispondere alla media ufficiale delle prove ORALI = ${oraleAvg !== null ? oraleAvg + '/10' : 'non disponibile (stima libera)'}. Non puoi discostartene.
-- WRITING: DEVE corrispondere alla media ufficiale delle prove SCRITTE = ${scrittoAvg !== null ? scrittoAvg + '/10' : 'non disponibile (stima libera)'}. Non puoi discostartene.
-- LISTENING, READING, GRAMMAR, VOCABULARY: stima libera basata sulle note discorsive e sull'analisi complessiva.
+Regole VINCOLANTI per i punteggi: sono CALCOLATI dalle prove svolte (% per area delle verifiche, voti orali per lo speaking) e vanno copiati ESATTAMENTE, senza stime. NP = competenza non ancora valutata: scrivi NP, non inventare un numero, e nel testo dillo esplicitamente.
+${(() => { const _c = getStudentCompetenze(studente); return COMP_KEYS.map(k => k.toUpperCase() + ' = ' + (_c[k] != null ? _c[k] : 'NP')).join(' | '); })()}
 - Tutti i punteggi devono essere coerenti con l'analisi testuale sopra.
-Usa questo formato ESATTO (una riga per competenza, valore numerico da 1 a 10 con al massimo un decimale):
+Usa questo formato ESATTO (una riga per competenza, valore numerico da 1 a 10 con al massimo un decimale, oppure NP):
 LISTENING: [punteggio]
 SPEAKING: [punteggio]
 READING: [punteggio]
@@ -3896,7 +3894,7 @@ Quadro d'insieme della classe: livello medio, distribuzione competenze, dinamich
 **ANALISI COMPETENZE LINGUISTICHE DI CLASSE**
 Valuta le competenze prevalenti e le criticità comuni in:
 
-IMPORTANTE - CRITERI DI ANALISI:
+IMPORTANTE - CRITERI DI ANALISI (una competenza che risulta NP nei PUNTEGGI COMPETENZE non è ancora stata valutata: scrivi "non ancora valutata" senza stimarla):
 - **SPEAKING** (produzione orale): basati ESCLUSIVAMENTE sulle medie ORALE degli studenti. Quando menzioni l'accuratezza, specifica sempre: "accuratezza nella produzione orale" o il tipo specifico di attività (dialogo, descrizione, role-play).
 - **LISTENING** (comprensione orale): basati ESCLUSIVAMENTE sulle NOTE DISCORSIVE (cerca "ascolto", "listening", "comprensione orale"). Se le note non menzionano ascolto, scrivi "dati insufficienti". Non inferire dall'orale.
 - **WRITING** (produzione scritta): basati ESCLUSIVAMENTE sulle medie SCRITTO. Quando menzioni l'accuratezza, specifica: "accuratezza nella produzione scritta" o il tipo di prova (email, composizione, esercizio strutturato).
@@ -3916,14 +3914,9 @@ Competenze consolidate, aspetti positivi, studenti trainanti.
 3-5 azioni didattiche concrete per il prossimo periodo, mirate alle criticità rilevate.
 
 **PUNTEGGI COMPETENZE CLASSE** (OBBLIGATORIO - ultima sezione, sempre presente)
-Fornisci la media stimata della classe per ogni competenza, usando queste regole VINCOLANTI:
-- SPEAKING: DEVE essere la media aritmetica delle medie ORALI degli studenti = ${(studentReports.filter(s=>s.oraleAvg!=='N/A').reduce((a,s)=>a+parseFloat(s.oraleAvg),0) / (studentReports.filter(s=>s.oraleAvg!=='N/A').length||1)).toFixed(1)}/10. Non puoi discostartene.
-- WRITING: DEVE essere la media aritmetica delle medie SCRITTE degli studenti = ${(studentReports.filter(s=>s.scrittoAvg!=='N/A').reduce((a,s)=>a+parseFloat(s.scrittoAvg),0) / (studentReports.filter(s=>s.scrittoAvg!=='N/A').length||1)).toFixed(1)}/10. Non puoi discostartene.
-- LISTENING: stima basata ESCLUSIVAMENTE sulle note discorsive (cerca "ascolto", "listening"). Nessuna media numerica — usa solo le note. Se insufficienti, usa lo stesso valore di SPEAKING.
-- READING: riferimento = media SCRITTO sopra; raffina con le note discorsive su lettura/reading.
-- GRAMMAR: riferimento = media TOTALE della classe = ${(studentReports.reduce((a,s)=>a+parseFloat(s.media),0)/(studentReports.length||1)).toFixed(1)}/10; raffina con le note su grammatica/strutture.
-- VOCABULARY: riferimento = media TOTALE della classe = ${(studentReports.reduce((a,s)=>a+parseFloat(s.media),0)/(studentReports.length||1)).toFixed(1)}/10; raffina con le note su lessico/vocabolario.
-Usa questo formato ESATTO (una riga per competenza, valore numerico da 1 a 10 con al massimo un decimale):
+Riporta la media della classe per ogni competenza. I valori sono CALCOLATI dalle prove svolte (% per area delle verifiche, voti orali per lo speaking) e vanno copiati ESATTAMENTE, senza stime. NP = competenza non ancora valutata: scrivi NP, non inventare un numero, e nell'analisi dillo esplicitamente.
+${(() => { const _c = getClassCompetenze(classe); return COMP_KEYS.map(k => k.toUpperCase() + ' = ' + (_c[k] != null ? _c[k] : 'NP')).join(' | '); })()}
+Usa questo formato ESATTO (una riga per competenza, valore numerico da 1 a 10 con al massimo un decimale, oppure NP):
 LISTENING: [punteggio]
 SPEAKING: [punteggio]
 READING: [punteggio]
@@ -4098,18 +4091,8 @@ Scrivi in modo tecnico, oggettivo, basato su evidenze. Destinatario: docente.`;
             // ── Aggiorna radar ──
             const _tabGraficiStud = document.getElementById('tab-grafici');
             const _graficiStudVisible = _tabGraficiStud && _tabGraficiStud.classList.contains('active');
-            if (_graficiStudVisible) {
-                renderStudentCharts();
-            } else if (studente.competenzeAI && studentChartInstances['chartCompRadarStud']) {
-                const _sc = studente.competenzeAI;
-                const _si = studentChartInstances['chartCompRadarStud'];
-                _si.data.datasets[0].data = [_sc.listening, _sc.speaking, _sc.reading, _sc.writing, _sc.grammar, _sc.vocabulary];
-                _si.update();
-                if (studentChartInstances['chartCompBars']) {
-                    studentChartInstances['chartCompBars'].data.datasets[0].data = [_sc.listening, _sc.speaking, _sc.reading, _sc.writing, _sc.grammar, _sc.vocabulary];
-                    studentChartInstances['chartCompBars'].update();
-                }
-            }
+            // (il radar usa i dati reali delle prove, non i punteggi dell'analisi AI)
+            if (_graficiStudVisible) renderStudentCharts();
 
             // ── Sync Firebase ──
             _autoSyncStudentMyClass(studente, classeNome);
@@ -4310,20 +4293,8 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 // ── Aggiorna radar con i nuovi punteggi ──────────────────────────
                 const _tabGrafici = document.getElementById('tabGrafici');
                 const _graficiVisible = _tabGrafici && !_tabGrafici.classList.contains('hidden');
-                if (_graficiVisible) {
-                    // Tab grafici aperto: renderizza normalmente
-                    renderClassCharts();
-                } else if (classe.competenzeAI && classChartInstances['radar']) {
-                    // Tab grafici nascosto ma istanza radar già esistente: aggiorna dati in-place
-                    const _rc = classe.competenzeAI;
-                    const _ri = classChartInstances['radar'];
-                    _ri.data.datasets[0].data = [_rc.listening, _rc.speaking, _rc.reading, _rc.writing, _rc.grammar, _rc.vocabulary];
-                    if (_ri.options.plugins?.title) {
-                        _ri.options.plugins.title.text  = '🤖 Punteggi da Analisi AI';
-                        _ri.options.plugins.title.color = '#667eea';
-                    }
-                    _ri.update();
-                }
+                // (il radar usa i dati reali delle prove, non i punteggi dell'analisi AI)
+                if (_graficiVisible) renderClassCharts();
                 // Nota: se tabGrafici è nascosto e radar non esiste ancora, verrà creato
                 // correttamente quando l'utente naviga sul tab Grafici (renderClassCharts() chiamato da switchCompetence)
                 
@@ -6237,29 +6208,17 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             }
 
             // ── Radar: competenze a confronto ─────────────────────────
-            const COMP_KEYS = ['listening','speaking','reading','writing','grammar','vocabulary'];
-            const COMP_LBLS = ['Listening','Speaking','Reading','Writing','Grammar','Vocabulary'];
             const radarCtx = document.getElementById('chartCompRadar');
             if (radarCtx) {
                 const datasets = filtered.map((c, i) => {
-                    // Use AI competenze if any student has them, else fallback to avg
-                    const studWithAI = c.studenti.filter(s=>s.competenzeAI);
-                    let vals;
-                    // Use AI if at least half the students have been analysed, else use renderClassCharts algorithm
-                    if (studWithAI.length >= c.studenti.length / 2) {
-                        vals = COMP_KEYS.map(k => {
-                            const avg = studWithAI.reduce((a,s)=>a+(s.competenzeAI[k]||0),0)/studWithAI.length;
-                            return parseFloat(avg.toFixed(1));
-                        });
-                    } else {
-                        vals = getClassRadarData(c);
-                    }
+                    // Dati reali delle prove (NP = null), come il radar della classe
+                    const vals = getClassRadarData(c);
                     const col = colors[i];
                     return { label:c.nome, data:vals, backgroundColor:col+'33', borderColor:col, pointBackgroundColor:col, borderWidth:2.5 };
                 });
                 compChartInstances['radar'] = new Chart(radarCtx.getContext('2d'), {
                     type:'radar',
-                    data:{ labels:COMP_LBLS, datasets },
+                    data:{ labels:_compLabels(...datasets.map(d => d.data)), datasets },
                     options:{ responsive:true,
                         scales:{ r:{ min:4, max:10, ticks:{stepSize:1,color:'#555'}, grid:{color:'rgba(0,0,0,0.08)'}, angleLines:{color:'rgba(0,0,0,0.1)'}, pointLabels:{font:{size:12,weight:'600'}} } },
                         plugins:{ legend:{position:'top'}, tooltip:{} },
@@ -6914,54 +6873,16 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 }
             }
 
-            // Mostra info box solo se non ci sono punteggi AI
+            // Il radar usa i dati reali delle prove (non i punteggi stimati dall'AI)
             const infoBox = document.getElementById('radarInfoBox');
-            if (infoBox) infoBox.style.display = studente.competenzeAI ? 'none' : 'block';
-            
+            if (infoBox) infoBox.style.display = 'none';
+
             // RADAR COMPETENZE (dati usati anche per barre Studente vs Classe)
             destroyChart('chartCompRadarStud');
             destroyChart('chartCompBars');
-            let radarData;
-            
-            // PRIORITÀ 1: Usa punteggi dall'analisi AI se disponibili
-            if (studente.competenzeAI) {
-                radarData = [
-                    studente.competenzeAI.listening,
-                    studente.competenzeAI.speaking,
-                    studente.competenzeAI.reading,
-                    studente.competenzeAI.writing,
-                    studente.competenzeAI.grammar,
-                    studente.competenzeAI.vocabulary
-                ];
-            } else {
-                // FALLBACK: stesso algoritmo di getClassRadarData ma per singolo studente
-                // Speaking = media voti orali, Writing = media voti scritti
-                // Listening/Reading/Grammar/Vocabulary = keyword nelle note + fallback
-                const _oEff = _effectiveGrades(studente.orale);
-                const _sEff = _effectiveGrades(studente.scritto);
-                const votiO = _oEff.map(g=>g.voto);
-                const votiS = _sEff.map(g=>g.voto);
-                const allGN = [..._oEff, ..._sEff];
-                const kw = {
-                    listening:['ascolto','comprensione orale','listening'],
-                    reading:['reading','lettura','comprensione scritta'],
-                    grammar:['grammatica','grammar','struttura','verbo','tempi'],
-                    vocabulary:['lessico','vocabulary','vocabolario','parole']
-                };
-                const avg = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
-                const speaking = avg(votiO) ?? avg(votiS) ?? 6;
-                const writing  = avg(votiS) ?? avg(votiO) ?? 6;
-                const listeningVoti = allGN.filter(g=>g.nota&&kw.listening.some(k=>g.nota.toLowerCase().includes(k))).map(g=>g.voto);
-                const listening = avg(listeningVoti) ?? speaking;
-                const readingVoti = [...votiS, ...allGN.filter(g=>g.nota&&kw.reading.some(k=>g.nota.toLowerCase().includes(k))).map(g=>g.voto)];
-                const reading = avg(readingVoti) ?? writing;
-                const grammarVoti = [...votiO,...votiS,...allGN.filter(g=>g.nota&&kw.grammar.some(k=>g.nota.toLowerCase().includes(k))).map(g=>g.voto)];
-                const grammar = avg(grammarVoti) ?? 6;
-                const vocabVoti = [...votiO,...votiS,...allGN.filter(g=>g.nota&&kw.vocabulary.some(k=>g.nota.toLowerCase().includes(k))).map(g=>g.voto)];
-                const vocabulary = avg(vocabVoti) ?? 6;
-                radarData = [listening, speaking, reading, writing, grammar, vocabulary].map(v=>parseFloat(v.toFixed(1)));
-            }
-            
+            const _studComp = getStudentCompetenze(studente);
+            const radarData = COMP_KEYS.map(k => _studComp[k]);
+
             // HEATMAP
             renderHeatmap(allGrades);
 
@@ -7008,20 +6929,13 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             const compBarsCtx = document.getElementById('chartCompBars');
             const compRadarStudCtx = document.getElementById('chartCompRadarStud');
             if (compBarsCtx && compRadarStudCtx) {
-                const CLABELS = ['Listening','Speaking','Reading','Writing','Grammar','Vocabulary'];
-                const CKEYS   = ['listening','speaking','reading','writing','grammar','vocabulary'];
-                const CCOLORS = ['#667eea','#764ba2','#34a853','#00bcd4','#f59e0b','#ea4335'];
-
-                // Class average: use same algorithm as renderClassCharts (getClassRadarData)
+                const CKEYS   = COMP_KEYS;
+                // Media classe: stesso calcolo del radar della classe
                 const classeObj = data.classi[currentClass];
-                const classRadar = (() => {
-                    // Prefer AI-based if majority of students have AI analysis
-                    const studAI = classeObj.studenti.filter(s => s.competenzeAI);
-                    if (studAI.length >= classeObj.studenti.length / 2) {
-                        return CKEYS.map(k => parseFloat((studAI.reduce((a,s)=>a+(s.competenzeAI[k]||0),0)/studAI.length).toFixed(1)));
-                    }
-                    return getClassRadarData(classeObj);
-                })();
+                const classRadar = getClassRadarData(classeObj);
+                // Asse NP per l'alunno → NP anche nel confronto (niente media classe da sola)
+                const classRadarCmp = classRadar.map((v, i) => radarData[i] == null ? null : v);
+                const CLABELS = COMP_LBLS.map((l, i) => radarData[i] == null ? l + ' (NP)' : l);
 
                 // Bar chart: student vs class
                 destroyChart('chartCompBars');
@@ -7030,8 +6944,8 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                     data: {
                         labels: CLABELS,
                         datasets: [
-                            { label: studente.cognome, data: radarData, backgroundColor: radarData.map(v => v>=7?'rgba(52,168,83,0.75)':v>=6?'rgba(251,188,4,0.75)':'rgba(234,67,53,0.75)'), borderRadius: 5, borderWidth: 0 },
-                            { label: 'Media Classe', data: classRadar, backgroundColor: 'rgba(150,150,150,0.3)', borderColor: '#aaa', borderWidth: 1.5, borderRadius: 5, type: 'bar' }
+                            { label: studente.cognome, data: radarData, backgroundColor: radarData.map(v => v==null?'rgba(0,0,0,0)':v>=7?'rgba(52,168,83,0.75)':v>=6?'rgba(251,188,4,0.75)':'rgba(234,67,53,0.75)'), borderRadius: 5, borderWidth: 0 },
+                            { label: 'Media Classe', data: classRadarCmp, backgroundColor: 'rgba(150,150,150,0.3)', borderColor: '#aaa', borderWidth: 1.5, borderRadius: 5, type: 'bar' }
                         ]
                     },
                     options: {
@@ -7043,6 +6957,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                             tooltip: { callbacks: { afterLabel: ctx => {
                                 const si = ctx.dataIndex;
                                 const sv = radarData[si], cv = classRadar[si];
+                                if (sv == null || cv == null) return '';
                                 const d = sv - cv;
                                 return 'Δ vs classe: ' + (d>=0?'+':'') + d.toFixed(1);
                             }}}
@@ -7051,20 +6966,18 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                             if (!els.length) return;
                             const i = els[0].index;
                             const sv = radarData[i], cv = classRadar[i];
-                            const d = (sv-cv).toFixed(1);
+                            if (sv == null) return;
+                            const d = cv != null ? (sv-cv).toFixed(1) : '—';
                             const col = sv>=7?'#34a853':sv>=6?'#fbbc04':'#ea4335';
                             const box = document.getElementById('compBarDetail');
                             box.style.display = 'block';
                             box.style.borderLeftColor = col;
                             // Rank student in class for this competence
-                            const classVals = classeObj.studenti.map(s => {
-                                if (s.competenzeAI && s.competenzeAI[CKEYS[i]] != null) return s.competenzeAI[CKEYS[i]];
-                                const all = [..._effectiveGrades(s.orale),..._effectiveGrades(s.scritto)];
-                                return all.length ? all.reduce((a,b)=>a+b.voto,0)/all.length : 0;
-                            }).filter(v=>v>0).sort((a,b)=>b-a);
+                            const classVals = classeObj.studenti.map(s => getStudentCompetenze(s)[CKEYS[i]])
+                                .filter(v => v != null).sort((a,b)=>b-a);
                             const rank = classVals.findIndex(v => v <= sv) + 1;
                             box.innerHTML = '<strong style="color:' + col + ';">' + CLABELS[i] + '</strong> — '
-                                + studente.cognome + ': <strong>' + sv + '</strong> | Classe: <strong>' + cv + '</strong> | '
+                                + studente.cognome + ': <strong>' + sv + '</strong> | Classe: <strong>' + (cv ?? 'NP') + '</strong> | '
                                 + 'Δ: <strong>' + (d>=0?'+':'') + d + '</strong> | '
                                 + 'Posizione in classe: <strong>' + rank + '°</strong> su ' + classVals.length;
                         }
@@ -7079,7 +6992,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                         labels: CLABELS,
                         datasets: [
                             { label: studente.cognome, data: radarData, backgroundColor: 'rgba(102,126,234,0.2)', borderColor: '#667eea', pointBackgroundColor: '#667eea', borderWidth: 2.5, pointRadius: 4 },
-                            { label: 'Media Classe', data: classRadar, backgroundColor: 'rgba(150,150,150,0.1)', borderColor: '#aaa', pointBackgroundColor: '#aaa', borderWidth: 1.5, borderDash: [4,3], pointRadius: 3 }
+                            { label: 'Media Classe', data: classRadarCmp, backgroundColor: 'rgba(150,150,150,0.1)', borderColor: '#aaa', pointBackgroundColor: '#aaa', borderWidth: 1.5, borderDash: [4,3], pointRadius: 3 }
                         ]
                     },
                     options: {
@@ -7718,52 +7631,51 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
         }
 
         // ================================================================
-        // FUNZIONE CONDIVISA: calcolo radar competenze per una classe
-        // Stesso algoritmo usato in renderClassCharts
+        // COMPETENZE DAI DATI REALI — radar classe, alunno, confronto classi
+        // e StudentApp usano tutti queste funzioni.
+        // Ogni asse si calcola SOLO da cio' che le prove misurano davvero:
+        //  - Grammar, Vocabulary, Listening (e Reading/Writing quando le verifiche
+        //    hanno esercizi con quel tag): % per area delle verifiche scritte,
+        //    salvate nello storico dall'agente (stessi calcoli di LiveLearn)
+        //  - Speaking: media dei voti orali
+        // Un asse senza dati vale null = NP (non ancora presente): mai stimato.
+        // Prima Speaking ripiegava sulla media dello scritto, Writing/Reading
+        // erano la media di tutti i voti scritti e l'analisi AI inventava il resto.
         // ================================================================
+        const COMP_KEYS = ['listening','speaking','reading','writing','grammar','vocabulary'];
+        const COMP_LBLS = ['Listening','Speaking','Reading','Writing','Grammar','Vocabulary'];
+        const _COMP_TAG = { listening:'LISTENING', reading:'READING', writing:'WRITING', grammar:'GRAMMAR', vocabulary:'VOCABULARY' };
+        // % → scala del radar (come la scala voti: sotto il 40% vale 4)
+        const _compFromPct = p => p < 40 ? 4 : Math.round(p) / 10;
+        const _compAvg = arr => arr.length ? Math.round(arr.reduce((a,b)=>a+b,0) / arr.length * 10) / 10 : null;
+
+        function getStudentCompetenze(s) {
+            const out = {};
+            const scritti = (s?.scritto || []).filter(g => g && g.recupero !== 'escludi' && g.tags && typeof g.tags === 'object');
+            for (const [k, tag] of Object.entries(_COMP_TAG)) {
+                const pcts = scritti.map(g => g.tags[tag]).filter(v => v != null && v !== '' && !isNaN(Number(v))).map(Number);
+                out[k] = pcts.length ? _compFromPct(pcts.reduce((a,b)=>a+b,0) / pcts.length) : null;
+            }
+            out.speaking = _compAvg(_effectiveGrades(s?.orale || []).map(g => Number(g.voto)).filter(v => !isNaN(v) && v > 0));
+            return out;
+        }
+
+        function getClassCompetenze(classe) {
+            const per = (classe?.studenti || []).map(getStudentCompetenze);
+            const out = {};
+            COMP_KEYS.forEach(k => { out[k] = _compAvg(per.map(c => c[k]).filter(v => v != null)); });
+            return out;
+        }
+
+        // Array nell'ordine degli assi (null = NP), per Chart.js
         function getClassRadarData(classe) {
-            const votiOrale = [];
-            const votiScritto = [];
-            const allGradesWithNotes = [];
-            classe.studenti.forEach(s => {
-                _effectiveGrades(s.orale).forEach(g => { votiOrale.push(g.voto); allGradesWithNotes.push({...g, tipo:'orale'}); });
-                _effectiveGrades(s.scritto).forEach(g => { votiScritto.push(g.voto); allGradesWithNotes.push({...g, tipo:'scritto'}); });
-            });
-            if (!allGradesWithNotes.length) return [6,6,6,6,6,6];
+            const c = getClassCompetenze(classe);
+            return COMP_KEYS.map(k => c[k]);
+        }
 
-            const kw = {
-                listening:['ascolto','comprensione orale','listening'],
-                reading:['reading','lettura','comprensione scritta'],
-                grammar:['grammatica','grammar','struttura','verbo','tempi'],
-                vocabulary:['lessico','vocabulary','vocabolario','parole']
-            };
-
-            const speaking = votiOrale.length ? votiOrale.reduce((a,b)=>a+b,0)/votiOrale.length : 0;
-            const writing  = votiScritto.length ? votiScritto.reduce((a,b)=>a+b,0)/votiScritto.length : 0;
-
-            const listeningVoti = allGradesWithNotes.filter(g => g.nota && kw.listening.some(k=>g.nota.toLowerCase().includes(k))).map(g=>g.voto);
-            const listening = listeningVoti.length ? listeningVoti.reduce((a,b)=>a+b,0)/listeningVoti.length : speaking;
-
-            const readingVoti = [...votiScritto];
-            allGradesWithNotes.forEach(g => { if (g.nota && kw.reading.some(k=>g.nota.toLowerCase().includes(k))) readingVoti.push(g.voto); });
-            const reading = readingVoti.length ? readingVoti.reduce((a,b)=>a+b,0)/readingVoti.length : writing;
-
-            const grammarVoti = [...votiOrale, ...votiScritto];
-            allGradesWithNotes.forEach(g => { if (g.nota && kw.grammar.some(k=>g.nota.toLowerCase().includes(k))) grammarVoti.push(g.voto); });
-            const grammar = grammarVoti.length ? grammarVoti.reduce((a,b)=>a+b,0)/grammarVoti.length : 0;
-
-            const vocabVoti = [...votiOrale, ...votiScritto];
-            allGradesWithNotes.forEach(g => { if (g.nota && kw.vocabulary.some(k=>g.nota.toLowerCase().includes(k))) vocabVoti.push(g.voto); });
-            const vocabulary = vocabVoti.length ? vocabVoti.reduce((a,b)=>a+b,0)/vocabVoti.length : 0;
-
-            return [
-                parseFloat(listening.toFixed(1)),
-                parseFloat(speaking.toFixed(1)),
-                parseFloat(reading.toFixed(1)),
-                parseFloat(writing.toFixed(1)),
-                parseFloat(grammar.toFixed(1)),
-                parseFloat(vocabulary.toFixed(1))
-            ];
+        // Etichette degli assi: "(NP)" dove nessun dataset ha un valore
+        function _compLabels(...series) {
+            return COMP_LBLS.map((l, i) => series.some(sr => sr && sr[i] != null) ? l : l + ' (NP)');
         }
 
         function renderClassCharts() {
@@ -7860,145 +7772,41 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                     });
                 }
                 
-                // RADAR COMPETENZE CLASSE
+                // RADAR COMPETENZE CLASSE — dati reali delle prove, NP dove mancano
                 const radarCtx = document.getElementById('chartClassRadar');
                 if (radarCtx) {
-                    // Raccogli voti separati per orale e scritto
-                    const votiOrale = [];
-                    const votiScritto = [];
-                    const allGradesWithNotes = [];
-                    
-                    classe.studenti.forEach(s => {
-                        _effectiveGrades(s.orale).forEach(g => {
-                            votiOrale.push(g.voto);
-                            allGradesWithNotes.push({...g, tipo:'orale'});
-                        });
-                        _effectiveGrades(s.scritto).forEach(g => {
-                            votiScritto.push(g.voto);
-                            allGradesWithNotes.push({...g, tipo:'scritto'});
-                        });
-                    });
-                    
-                    if (allGradesWithNotes.length > 0) {
-                        // ── Ri-estrai punteggi dal testo AI ogni volta — fonte di verità unica ──
-                        if (classe.aiReport?.text) {
-                            const freshClassScores = _extractScoresFromAIText(classe.aiReport.text);
-                            if (freshClassScores) classe.competenzeAI = freshClassScores;
-                        }
-                        // ── Usa punteggi AI se disponibili ──
-                        if (classe.competenzeAI &&
-                            ['listening','speaking','reading','writing','grammar','vocabulary'].every(k => classe.competenzeAI[k] != null)) {
-                            const c = classe.competenzeAI;
-                            const radarData = [c.listening, c.speaking, c.reading, c.writing, c.grammar, c.vocabulary].map(v => parseFloat(v.toFixed(1)));
-                            classChartInstances['radar'] = new Chart(radarCtx.getContext('2d'), {
-                                type: 'radar',
-                                data: { 
-                                    labels:['Listening','Speaking','Reading','Writing','Grammar','Vocabulary'], 
-                                    datasets:[{ 
-                                        label:`Classe ${classe.nome}`, 
-                                        data:radarData, 
-                                        backgroundColor:'rgba(102,126,234,0.2)', 
-                                        borderColor:'#667eea', 
-                                        pointBackgroundColor:'#667eea', 
-                                        borderWidth:2 
-                                    }] 
-                                },
-                                options: { 
-                                    responsive:true, 
-                                    scales:{ r:{ min:4, max:10, ticks:{stepSize:1, color:'#555', font:{size:12}}, grid:{color:'rgba(102,126,234,0.2)'}, angleLines:{color:'rgba(102,126,234,0.3)'}, pointLabels:{font:{size:13,weight:'600'}} } }, 
-                                    plugins:{ 
-                                        legend:{display:false},
-                                        title:{ display:true, text:'🤖 Punteggi da Analisi AI', font:{size:11}, color:'#667eea' }
-                                    } 
-                                }
-                            });
-                        } else {
-                            const keywords = {
-                            listening:['ascolto','comprensione orale','listening'],
-                            reading:['reading','lettura','comprensione scritta'],
-                            grammar:['grammatica','grammar','struttura','verbo','tempi'],
-                            vocabulary:['lessico','vocabulary','vocabolario','parole']
-                        };
-                        
-                        // SPEAKING: media voti ORALE
-                        const speaking = votiOrale.length ? votiOrale.reduce((a,b)=>a+b,0)/votiOrale.length : 0;
-                        
-                        // LISTENING: solo da NOTE (keyword matching)
-                        const listeningVoti = allGradesWithNotes.filter(g => 
-                            g.nota && keywords.listening.some(k => g.nota.toLowerCase().includes(k))
-                        ).map(g => g.voto);
-                        const listening = listeningVoti.length ? listeningVoti.reduce((a,b)=>a+b,0)/listeningVoti.length : speaking; // fallback a speaking se nessuna nota
-                        
-                        // WRITING: media voti SCRITTO
-                        const writing = votiScritto.length ? votiScritto.reduce((a,b)=>a+b,0)/votiScritto.length : 0;
-                        
-                        // READING: voti SCRITTO + keyword dalle note
-                        const readingVoti = votiScritto.slice(); // inizia con tutti i voti scritto
-                        allGradesWithNotes.forEach(g => {
-                            if (g.nota && keywords.reading.some(k => g.nota.toLowerCase().includes(k))) {
-                                readingVoti.push(g.voto);
-                            }
-                        });
-                        const reading = readingVoti.length ? readingVoti.reduce((a,b)=>a+b,0)/readingVoti.length : writing;
-                        
-                        // GRAMMAR: voti ORALE + SCRITTO + keyword dalle note
-                        const grammarVoti = [...votiOrale, ...votiScritto];
-                        allGradesWithNotes.forEach(g => {
-                            if (g.nota && keywords.grammar.some(k => g.nota.toLowerCase().includes(k))) {
-                                grammarVoti.push(g.voto);
-                            }
-                        });
-                        const grammar = grammarVoti.length ? grammarVoti.reduce((a,b)=>a+b,0)/grammarVoti.length : 0;
-                        
-                        // VOCABULARY: voti ORALE + SCRITTO + keyword dalle note
-                        const vocabVoti = [...votiOrale, ...votiScritto];
-                        allGradesWithNotes.forEach(g => {
-                            if (g.nota && keywords.vocabulary.some(k => g.nota.toLowerCase().includes(k))) {
-                                vocabVoti.push(g.voto);
-                            }
-                        });
-                        const vocabulary = vocabVoti.length ? vocabVoti.reduce((a,b)=>a+b,0)/vocabVoti.length : 0;
-                        
-                        const radarData = [
-                            parseFloat(listening.toFixed(1)),
-                            parseFloat(speaking.toFixed(1)),
-                            parseFloat(reading.toFixed(1)),
-                            parseFloat(writing.toFixed(1)),
-                            parseFloat(grammar.toFixed(1)),
-                            parseFloat(vocabulary.toFixed(1))
-                        ];
-                        
+                    const radarData = getClassRadarData(classe);
+                    if (radarData.some(v => v != null)) {
                         classChartInstances['radar'] = new Chart(radarCtx.getContext('2d'), {
                             type: 'radar',
-                            data: { 
-                                labels:['Listening','Speaking','Reading','Writing','Grammar','Vocabulary'], 
-                                datasets:[{ 
-                                    label:`Classe ${classe.nome}`, 
-                                    data:radarData, 
-                                    backgroundColor:'rgba(102,126,234,0.2)', 
-                                    borderColor:'#667eea', 
-                                    pointBackgroundColor:'#667eea', 
-                                    borderWidth:2 
-                                }] 
+                            data: {
+                                labels: _compLabels(radarData),
+                                datasets:[{
+                                    label:`Classe ${classe.nome}`,
+                                    data:radarData,
+                                    backgroundColor:'rgba(102,126,234,0.2)',
+                                    borderColor:'#667eea',
+                                    pointBackgroundColor:'#667eea',
+                                    borderWidth:2
+                                }]
                             },
-                            options: { 
-                                responsive:true, 
-                                scales:{ r:{ min:4, max:10, ticks:{stepSize:1, color:'#555', font:{size:12}}, grid:{color:'rgba(102,126,234,0.2)'}, angleLines:{color:'rgba(102,126,234,0.3)'}, pointLabels:{font:{size:13,weight:'600'}} } }, 
-                                plugins:{ 
+                            options: {
+                                responsive:true,
+                                scales:{ r:{ min:4, max:10, ticks:{stepSize:1, color:'#555', font:{size:12}}, grid:{color:'rgba(102,126,234,0.2)'}, angleLines:{color:'rgba(102,126,234,0.3)'}, pointLabels:{font:{size:13,weight:'600'}} } },
+                                plugins:{
                                     legend:{display:false},
-                                    title:{ 
-                                        display:true, 
-                                        text:'Speaking=Orale | Listening=Note | Writing=Scritto | Reading=Scritto+Note | Grammar/Vocab=Tutto+Note', 
-                                        font:{size:11}, 
-                                        color:'#666' 
+                                    title:{
+                                        display:true,
+                                        text:'Aree dalle verifiche (% per area) | Speaking = voti orali | NP = non ancora presente',
+                                        font:{size:11},
+                                        color:'#666'
                                     }
-                                } 
+                                }
                             }
                         });
-                        } // end else (fallback calcolo automatico)
                     }
                 }
-                
+
                 // Distribuzione Orale vs Scritto (sostituisce scatter)
                 const compCtx = document.getElementById('chartClassScatter');
                 if (compCtx) {
@@ -20366,7 +20174,7 @@ ${blocco.regole}`;
     // ══════════════════════════════════════════════════════════════════
     // SYNC STATISTICHE STUDENTI → Firebase → StudentApp
     // Scrive su: livelearn/history_priv/{codice}/myclass
-    // Contiene: mediaO, mediaS, numOrale, numScritto, competenzeAI,
+    // Contiene: mediaO, mediaS, numOrale, numScritto, competenze (dati reali),
     //           votiOrale[], votiScritto[], assenze
     // ══════════════════════════════════════════════════════════════════
     // ── Auto-sync silenzioso di tutta la classe (debounced, chiamato da saveData) ──
@@ -20445,7 +20253,8 @@ ${blocco.regole}`;
           supporto:   s.supporto||null,
           votiOrale,
           votiScritto,
-          competenzeAI:        s.competenzeAI||null,
+          // Competenze dai dati reali delle prove; un'area assente (NP) non c'e'
+          competenze:          _compForSync(s),
           aiReportText:        aiText,
           aiPuntiForza:        _extractAISection(aiText, 'PUNTI DI FORZA'),
           aiAreeMiglioramento: _extractAISection(aiText, 'AREE DI MIGLIORAMENTO'),
@@ -20491,6 +20300,13 @@ ${blocco.regole}`;
       return m ? m[1].trim() : null;
     }
 
+    // Solo le aree con un valore: StudentApp mostra NP per quelle mancanti
+    function _compForSync(st) {
+      const c = getStudentCompetenze(st), out = {};
+      COMP_KEYS.forEach(k => { if (c[k] != null) out[k] = c[k]; });
+      return Object.keys(out).length ? out : null;
+    }
+
     async function _autoSyncStudentMyClass(studente, classeNome) {
       let db;
       try { db = firebase.database(); } catch(e) { return; }
@@ -20520,7 +20336,8 @@ ${blocco.regole}`;
         supporto:   studente.supporto||null,
         votiOrale:  effO.map(g=>({data:g.data||'',voto:g.voto,titolo:g.titolo||'',unit:g.unit||''})),
         votiScritto:effS.map(g=>({data:g.data||'',voto:g.voto,titolo:g.titolo||'',unit:g.unit||''})),
-        competenzeAI:        studente.competenzeAI||null,
+        // Competenze dai dati reali delle prove; un'area assente (NP) non c'e'
+        competenze:          _compForSync(studente),
         aiReportText:        aiText,
         aiPuntiForza:        _extractAISection(aiText, 'PUNTI DI FORZA'),
         aiAreeMiglioramento: _extractAISection(aiText, 'AREE DI MIGLIORAMENTO'),
@@ -26919,6 +26736,7 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
         // nel pannello, così nulla cambia in silenzio: viene riportato nell'alert finale.
         const _recalcChanges = [];
         const _unmatched = [];
+        const _syncDopo = [];
 
         // ── SEMPRE ricarica le risposte AGGIORNATE da Firebase prima di importare ──
         // (include manualScores e aiScores salvati dal docente in LiveLearn dopo la consegna)
@@ -27083,6 +26901,7 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
                         sessionCode:  task.sessionCode || ''
                     });
                     imported++;
+                    _syncDopo.push(studente);
                 } else {
                     // Alunno presente nei risultati ma NON abbinato a nessuno in classe:
                     // il voto NON finisce nello storico. Reso visibile (era silenzioso → "manca").
@@ -27104,6 +26923,9 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
             }
         }
         if (classeObj) saveData();
+        // Statistiche StudentApp (voti, competenze) aggiornate subito per gli alunni
+        // importati: l'auto-sync di saveData copre solo la classe aperta a schermo.
+        if (classeObj) for (const st of _syncDopo) { try { await _autoSyncStudentMyClass(st, classeObj.nome); } catch(e) {} }
 
         // Piano Personalizzato: trigger per ogni studente approvato.
         // Passa gli errori reali (domande sbagliate con risposta data vs attesa)
