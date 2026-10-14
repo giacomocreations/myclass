@@ -23429,6 +23429,7 @@ ${sectionInstrs.join('\n')}`;
 - Menziona un'area solo se presente nel test
 - Aggrega i tag: grammatica aggregata, lessico aggregato, funzioni aggregate, listening aggregato
 - Una risposta con tick ma 0 punti = accettata per obiettivo non pertinente
+- NON inventare numeri: quante domande/risposte giuste o totali ci sono (soprattutto nel LISTENING) si ricava SOLO dalla tabella per-domanda ([elementi corretti k/n], punti x/ypt). Se il dato non c'e', parla solo della percentuale per area.
 SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55-58%=5.5 | 59%=6- | 60-61%=6 | 62-64%=6+ | 65-68%=6.5 | 69%=7- | 70-71%=7 | 72-74%=7+ | 75-78%=7.5 | 79%=8- | 80-81%=8 | 82-84%=8+ | 85-88%=8.5 | 89%=9- | 90-91%=9 | 92-94%=9+ | 95-98%=9.5 | 99%=10- | 100%=10`;
 
         const sectionLabel = field === 'doc' ? 'VALUTAZIONE DOCENTE'
@@ -25314,6 +25315,19 @@ ${sectionInstr}`;
         }
     }
 
+    // Una response e' gia' tra gli studenti del task? Oltre alla chiave (esatta o
+    // normalizzata, anche a parole invertite) conta l'associazione fatta in LiveLearn:
+    // se il docente ha collegato il nome digitato a un nome del registro (aliasOf),
+    // lo studente e' quello del registro e non va aggiunto una seconda volta.
+    function _agentRespAlreadyIn(safes, respKey, respEntry) {
+        const norm  = s => String(s||'').toLowerCase().replace(/[.#$[\]\/ ]/g,'_');
+        const words = s => norm(s).split('_').filter(w=>w.length>1).sort().join('_');
+        const cands = [respKey];
+        if (respEntry && respEntry.aliasOf) cands.push(respEntry.aliasOf);
+        const have = [...safes];
+        return cands.some(c => have.some(h => h === c || norm(h) === norm(c) || (words(h) && words(h) === words(c))));
+    }
+
     // Trova la detailedResponse per un safe key con match esatto poi fuzzy
     // Specchia StudentApp._refreshSessionScores (entry.name + key variants)
     function agentMatchResponse(detail, safeKey) {
@@ -25405,10 +25419,10 @@ ${sectionInstr}`;
     // q.points oppure null se non valutabile senza AI (free-response, listening
     // di tipo libero). Prima l'agente valutava solo MC e cloze: matching, reorder,
     // drag-drop e categorization risultavano 0 e i tag uscivano sballati.
-    function _agentEvalPts(q, a) {
+    function _agentEvalPts(q, a, out) {
         const pts = q.points || 1;
         const arrOf = v => Array.isArray(v) ? v : (v && typeof v === 'object' ? agentFbArr(v) : null);
-        const frac = (n, tot) => Math.round((n / (tot || 1)) * pts * 100) / 100;
+        const frac = (n, tot) => { if (out) { out.n = n; out.tot = tot; } return Math.round((n / (tot || 1)) * pts * 100) / 100; };
         const evalCloze = (corrects, ans) => {
             const arr = arrOf(ans);
             if (!arr) return 0;
@@ -25467,7 +25481,7 @@ ${sectionInstr}`;
             return frac(n, corrects.length);
         };
         const evalBy = (sub, inner) => {
-            if (sub === 'multiple-choice') return a === (inner.correct ?? inner.correctIndex) ? pts : 0;
+            if (sub === 'multiple-choice') { const ok = a === (inner.correct ?? inner.correctIndex); if (out) { out.n = ok ? 1 : 0; out.tot = 1; } return ok ? pts : 0; }
             if (sub === 'cloze' || sub === 'fill-blanks') return evalCloze(agentFbArr(inner.answers || []), a);
             if (sub === 'drag-drop')      return evalDrag(inner, a);
             if (sub === 'reorder')        return evalReorder(inner, a);
@@ -25563,44 +25577,11 @@ ${sectionInstr}`;
             return '';
         };
 
-        // ── Calcolo deterministico punti (specchio di agentTaskValScritta) ─
-        // Evita il "?/Xpt" che confondeva l'AI: ora mostra "2/2pt" o "0/2pt"
-        // chiarendo inequivocabilmente quali domande sono corrette.
-        const calcDetPts = (q, a, pts) => {
-            if (q.type === 'listening') {
-                const inner = q.question || {};
-                let sub = q.subtype || inner.type;
-                if (!sub) {
-                    if (inner.correct !== undefined)                           sub = 'multiple-choice';
-                    else if (Array.isArray(inner.answers) && inner.answers.length) sub = 'cloze';
-                    else sub = 'free-response';
-                }
-                if (sub === 'multiple-choice') return a === inner.correct ? pts : 0;
-                if (sub === 'free-response')   return null; // indeterminabile senza AI
-                const arr  = agentFbArr(a);
-                const corr = agentFbArr(inner.answers || inner.blanks || inner.correctAnswers || []);
-                if (!corr.length) return null;
-                let ok = 0;
-                corr.forEach((c, ci) => {
-                    const given = _normClozeAg(String(arr[ci] || ''));
-                    const alts  = String(c || '').split('|').map(x => _normClozeAg(x)).filter(Boolean);
-                    if (given && alts.some(alt => alt === given)) ok++;
-                });
-                return Math.round(ok / corr.length * pts * 100) / 100;
-            }
-            if (q.type === 'multiple-choice') return a === (q.correct ?? q.correctIndex) ? pts : 0;
-            if (q.type === 'free-response')   return null; // indeterminabile senza AI
-            const arr  = agentFbArr(a);
-            const corr = agentFbArr(q.answers || q.blanks || q.correctAnswers || []);
-            if (!corr.length) return null;
-            let ok = 0;
-            corr.forEach((c, ci) => {
-                const given = _normClozeAg(String(arr[ci] || ''));
-                const alts  = String(c || '').split('|').map(x => _normClozeAg(x)).filter(Boolean);
-                if (given && alts.some(alt => alt === given)) ok++;
-            });
-            return Math.round(ok / corr.length * pts * 100) / 100;
-        };
+        // ── Calcolo deterministico punti: stesso valutatore di LiveLearn ──────
+        // Copre tutti i tipi (anche matching/reorder/drag-drop/categorization e i
+        // sotto-tipi del listening) e riporta i conteggi reali degli elementi, così
+        // l'AI non deve stimare "quante giuste su quante" (prima le inventava).
+        const calcDetPts = (q, a, pts, out) => _agentEvalPts(q, a, out);
 
         return questions.map((q, i) => {
             const a   = answers[i];
@@ -25613,19 +25594,23 @@ ${sectionInstr}`;
             const ansText = fmtAns(q, a);
             const expText = fmtExp(q);
 
-            // Priorità punti: manuale > AI > deterministico > sconosciuto
-            let earnedPts, ptsLabel;
+            // Massimo effettivo (override del docente) e punti: manuale > AI > deterministico
+            const qmoV = (detailedResponse.questionMaxOverrides || {})[i];
+            const effMax = (qmoV != null && !isNaN(Number(qmoV))) ? Number(qmoV) : pts;
+            const scaleTo = v => pts > 0 ? Math.round(v / pts * effMax * 100) / 100 : v;
+            let earnedPts, ptsLabel, cnt = {};
             if (ms != null) {
-                earnedPts = ms;   ptsLabel = '(M)';
+                earnedPts = Number(ms);   ptsLabel = '(M)';
             } else if (aiS != null) {
-                earnedPts = aiS;  ptsLabel = '(AI)';
+                earnedPts = scaleTo(Number(aiS));  ptsLabel = '(AI)';
             } else {
-                const det = calcDetPts(q, a, pts);
-                if (det != null) { earnedPts = det; ptsLabel = ''; }
+                const det = calcDetPts(q, a, pts, cnt);
+                if (det != null) { earnedPts = scaleTo(det); ptsLabel = ''; }
                 else             { earnedPts = null; }
             }
 
-            const ptsStr   = earnedPts != null ? `${earnedPts}/${pts}pt${ptsLabel}` : `?/${pts}pt(FR)`;
+            const cntStr   = (cnt.tot > 1 && cnt.n != null) ? ` [elementi corretti ${cnt.n}/${cnt.tot}]` : '';
+            const ptsStr   = (earnedPts != null ? `${earnedPts}/${effMax}pt${ptsLabel}` : `?/${effMax}pt(FR)`) + cntStr;
             const timeStr  = fmtTime(t);
             const expPart  = expText ? ` | atteso: "${expText}"` : '';
             const timePart = timeStr ? ` | ${timeStr}` : '';
@@ -25765,7 +25750,7 @@ ${sectionInstr}`;
                 // Leggi le responses per costruire la lista studenti
                 try {
                     const responses = (await _getResp(code)) || {};
-                    const submitted = Object.entries(responses).filter(([,r]) => r && r.submittedAt);
+                    const submitted = Object.entries(responses).filter(([,r]) => r && r.submittedAt && !r.removed);
                     if (!submitted.length) {
                         console.log(`[Agente] PATH-B  ${classId}/${code}: nessuna consegna ancora`);
                         continue;
@@ -26148,11 +26133,9 @@ ${sectionInstr}`;
                     const existingSafes = new Set(group.students.map(s => s.safe));
                     const _norm = s => String(s||'').toLowerCase().replace(/[.#$[\]/ ]/g,'_');
                     for (const [respKey, respEntry] of Object.entries(detail.responses)) {
-                        if (!respEntry || !respEntry.submittedAt) continue; // non consegnato
-                        // Controlla se questo studente è già incluso (esatto o fuzzy)
-                        const alreadyIn = existingSafes.has(respKey) ||
-                            [...existingSafes].some(s => _norm(s) === _norm(respKey));
-                        if (alreadyIn) continue;
+                        if (!respEntry || !respEntry.submittedAt || respEntry.removed) continue; // non consegnato / rimosso
+                        // Controlla se questo studente è già incluso (esatto, fuzzy o via aliasOf)
+                        if (_agentRespAlreadyIn(existingSafes, respKey, respEntry)) continue;
                         // Cerca il displayName dalla lista MyClass
                         const _normName = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
                         const respName = respEntry.name || respKey.replace(/_/g,' ');
@@ -26274,10 +26257,8 @@ ${sectionInstr}`;
                 const existingSafes = new Set(task.students.map(s => s.safe));
                 const _norm = s => String(s||'').toLowerCase().replace(/[.#$[\]/ ]/g,'_');
                 for (const [respKey, respEntry] of Object.entries(detail.responses)) {
-                    if (!respEntry || !respEntry.submittedAt) continue;
-                    const alreadyIn = existingSafes.has(respKey) ||
-                        [...existingSafes].some(s => _norm(s) === _norm(respKey));
-                    if (alreadyIn) continue;
+                    if (!respEntry || !respEntry.submittedAt || respEntry.removed) continue;
+                    if (_agentRespAlreadyIn(existingSafes, respKey, respEntry)) continue;
                     const _normName = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
                     const respName = respEntry.name || respKey.replace(/_/g,' ');
                     const respTokens = _normName(respName).split(/[\s_]+/).filter(w => w.length > 1);
@@ -26630,6 +26611,7 @@ ${sectionInstr}`;
 - L'esercizio sulle funzioni comunicative è solitamente uno solo: non generalizzare
 - Aggrega i tag: grammatica aggregata, lessico aggregato, funzioni aggregate, listening aggregato
 - Una risposta con tick ma 0 punti = accettata per obiettivo non pertinente
+- NON inventare numeri: quante domande/risposte giuste o totali ci sono (soprattutto nel LISTENING) si ricava SOLO dalla tabella per-domanda ([elementi corretti k/n], punti x/ypt). Se il dato non c'e', parla solo della percentuale per area.
 - RECUPERO FAST — se un alunno ha RECUPERO_FAST nei risultati: valuta ENTRAMBE le prove e commenta il miglioramento (o la persistenza degli errori). Se il campo dice VOTO_CAP:6, il voto massimo è 6 indipendentemente dal punteggio del recupero.
 SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55-58%=5.5 | 59%=6- | 60-61%=6 | 62-64%=6+ | 65-68%=6.5 | 69%=7- | 70-71%=7 | 72-74%=7+ | 75-78%=7.5 | 79%=8- | 80-81%=8 | 82-84%=8+ | 85-88%=8.5 | 89%=9- | 90-91%=9 | 92-94%=9+ | 95-98%=9.5 | 99%=10- | 100%=10`;
 
