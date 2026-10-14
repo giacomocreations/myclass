@@ -30528,7 +30528,26 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         if (!item) return;
         const btn = document.getElementById('ppDraftAppBtn_' + id);
         if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+        const ok = await _ppApproveScrittoCore(item);
+        if (!ok) {
+            if (btn) { btn.textContent = '✅ Approva e invia'; btn.disabled = false; }
+            alert('Errore scrittura Firebase. Riprova.');
+            return;
+        }
+        _ppReloadBacheca([item.classeNome]);
+        renderPianoPersPanel();
+    }
 
+    // Ricarica la Bacheca se mostra una delle classi indicate
+    function _ppReloadBacheca(classi) {
+        if (typeof mcBachecaLoadMsgs !== 'function') return;
+        try { const cur = data.classi[currentClass]; if (cur && classi.includes(cur.nome)) mcBachecaLoadMsgs().catch(()=>{}); } catch(e) {}
+    }
+
+    // Approva e invia una bozza scritto (Firebase, Bacheca, push, passa ad attivo).
+    // Non ri-renderizza: lo fa il chiamante (singola o in blocco).
+    async function _ppApproveScrittoCore(item) {
+        const id = item.id;
         // ── Leggi eventuali modifiche dal DOM (editor inline, tutti i tipi) ──
         item.activity = { questions: _ppReadDraftEdits(id) };
         _ppSavDraftScritto();
@@ -30543,11 +30562,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             unit: item.unit, voto: item.voto, classeNome: item.classeNome,
             deadline: _ppDeadlineMs
         });
-        if (!ok) {
-            if (btn) { btn.textContent = '✅ Approva e invia'; btn.disabled = false; }
-            alert('Errore scrittura Firebase. Riprova.');
-            return;
-        }
+        if (!ok) return false;
         const classId = item.classeNome.replace(/\s+/g,'_').toLowerCase();
         const deepLink = `./StudentApp.html?safe=${encodeURIComponent(item.studentSafe)}&name=${encodeURIComponent(item.studentName)}&piano=${encodeURIComponent(item.code)}`;
         // Pubblica in Bacheca
@@ -30562,11 +30577,37 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         _ppSavDraftScritto();
         _ppActiveScritto[item.code] = { studentSafe: item.studentSafe, stuCode: await _mcCodeOf(item.studentSafe), studentName: item.studentName, classeNome: item.classeNome, unit: item.unit, voto: item.voto, lastScore: null, attemptCount: 0, status: 'pending' };
         _ppSavActive();
-        // Ricarica lista Bacheca se visibile
-        if (typeof mcBachecaLoadMsgs === 'function') {
-            try { const cur = data.classi[currentClass]; if (cur && cur.nome === item.classeNome) mcBachecaLoadMsgs().catch(()=>{}); } catch(e) {}
-        }
-        renderPianoPersPanel();
+        return true;
+    }
+
+    // Approva in blocco tutte le bozze scritte di una classe (una alla volta)
+    let _ppBulkRunning = false;
+    async function ppApproveScrittoClass(classeEnc) {
+        if (_ppBulkRunning) return;
+        const classeNome = decodeURIComponent(classeEnc);
+        const list = _ppDraftScritto.filter(x => (x.classeNome || '') === classeNome);
+        if (!list.length) return;
+        if (!confirm(`Approvare e inviare tutte le ${list.length} attività della classe ${classeNome || '(senza classe)'}?\n\n` +
+            list.map(x => '• ' + x.studentName + ' — ' + (x.unit || '') + ' (' + x.code + ')').join('\n') +
+            '\n\nOgni alunno riceve la sua attività, il messaggio in Bacheca e la notifica.')) return;
+        _ppBulkRunning = true;
+        const btn = document.getElementById('ppBulkScrBtn_' + classeEnc);
+        const failed = [];
+        try {
+            for (let i = 0; i < list.length; i++) {
+                if (btn) { btn.textContent = `⏳ ${i + 1}/${list.length}…`; btn.disabled = true; }
+                if (!_ppDraftScritto.some(x => x.id === list[i].id)) continue; // già gestita
+                let ok = false;
+                try { ok = await _ppApproveScrittoCore(list[i]); } catch(e) { console.warn('[PP] approvazione in blocco:', e); }
+                if (!ok) failed.push(list[i].studentName);
+            }
+        } finally { _ppBulkRunning = false; }
+        _ppReloadBacheca([classeNome]);
+        await renderPianoPersPanel();
+        const sent = list.length - failed.length;
+        alert(failed.length
+            ? `⚠️ Inviate ${sent} attività su ${list.length}.\n\nNon inviate (errore Firebase, restano in attesa):\n• ${failed.join('\n• ')}`
+            : `✅ Inviate tutte le ${sent} attività della classe ${classeNome}.`);
     }
 
     // Scarta una bozza scritto senza inviarla
@@ -30719,29 +30760,79 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
     async function ppApproveOrale(id) {
         const item = _ppOraleQueue.find(x => x.id === id);
         if (!item) return;
-        const editEl = document.getElementById('ppOraleEdit_' + id);
-        if (editEl) item.text = editEl.value.trim();
         const btn = document.getElementById('ppOraleAppBtn_' + id);
         if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
-        const ok = await _pianoWriteOraleFirebase(item);
-        if (ok) {
-            const classId = item.classeNome.replace(/\s+/g,'_').toLowerCase();
-            const _oraleDeepLink = `./StudentApp.html?safe=${encodeURIComponent(item.studentSafe)}&name=${encodeURIComponent(item.studentName)}&piano=orale`;
-            // Pubblica in Bacheca
-            await _ppPianoPublishToBacheca({ classId, studentSafe: item.studentSafe, studentName: item.studentName, code: null, prefix: 'ORALE', unit: item.unit, voto: item.voto, text: item.text, isOrale: true });
-            sendPushToClass(classId, '🗣️ Recupero orale disponibile', item.studentName, 'valutazione', item.studentSafe, _oraleDeepLink).catch(() => {});
-            item.status = 'approved';
-            _ppSavOraleQueue();
-            // Ricarica lista Bacheca se visibile
-            if (typeof mcBachecaLoadMsgs === 'function') {
-                try { const cur = data.classi[currentClass]; if (cur && cur.nome === item.classeNome) mcBachecaLoadMsgs().catch(()=>{}); } catch(e) {}
-            }
-        } else {
+        const ok = await _ppApproveOraleCore(item);
+        if (!ok) {
             if (btn) { btn.textContent = '✅ Approva'; btn.disabled = false; }
             alert('Errore scrittura Firebase. Riprova.');
             return;
         }
+        _ppReloadBacheca([item.classeNome]);
         renderPianoPersPanel();
+    }
+
+    // Approva e invia un testo orale (Firebase, Bacheca, push). Non ri-renderizza.
+    async function _ppApproveOraleCore(item) {
+        const editEl = document.getElementById('ppOraleEdit_' + item.id);
+        if (editEl) item.text = editEl.value.trim();
+        const ok = await _pianoWriteOraleFirebase(item);
+        if (!ok) return false;
+        const classId = item.classeNome.replace(/\s+/g,'_').toLowerCase();
+        const _oraleDeepLink = `./StudentApp.html?safe=${encodeURIComponent(item.studentSafe)}&name=${encodeURIComponent(item.studentName)}&piano=orale`;
+        // Pubblica in Bacheca
+        await _ppPianoPublishToBacheca({ classId, studentSafe: item.studentSafe, studentName: item.studentName, code: null, prefix: 'ORALE', unit: item.unit, voto: item.voto, text: item.text, isOrale: true });
+        sendPushToClass(classId, '🗣️ Recupero orale disponibile', item.studentName, 'valutazione', item.studentSafe, _oraleDeepLink).catch(() => {});
+        item.status = 'approved';
+        _ppSavOraleQueue();
+        return true;
+    }
+
+    // Approva in blocco tutti i testi orali in attesa di una classe
+    async function ppApproveOraleClass(classeEnc) {
+        if (_ppBulkRunning) return;
+        const classeNome = decodeURIComponent(classeEnc);
+        const list = _ppOraleQueue.filter(x => x.status !== 'approved' && (x.classeNome || '') === classeNome);
+        if (!list.length) return;
+        if (!confirm(`Approvare e inviare tutti i ${list.length} testi orali della classe ${classeNome || '(senza classe)'}?\n\n` +
+            list.map(x => '• ' + x.studentName + ' — ' + (x.unit || '')).join('\n'))) return;
+        _ppBulkRunning = true;
+        const btn = document.getElementById('ppBulkOrBtn_' + classeEnc);
+        const failed = [];
+        try {
+            for (let i = 0; i < list.length; i++) {
+                if (btn) { btn.textContent = `⏳ ${i + 1}/${list.length}…`; btn.disabled = true; }
+                if (list[i].status === 'approved') continue;
+                let ok = false;
+                try { ok = await _ppApproveOraleCore(list[i]); } catch(e) { console.warn('[PP] approvazione orale in blocco:', e); }
+                if (!ok) failed.push(list[i].studentName);
+            }
+        } finally { _ppBulkRunning = false; }
+        _ppReloadBacheca([classeNome]);
+        await renderPianoPersPanel();
+        const sent = list.length - failed.length;
+        alert(failed.length
+            ? `⚠️ Inviati ${sent} testi su ${list.length}.\n\nNon inviati (errore Firebase, restano in attesa):\n• ${failed.join('\n• ')}`
+            : `✅ Inviati tutti i ${sent} testi orali della classe ${classeNome}.`);
+    }
+
+    // Intestazione di gruppo classe con il pulsante "Approva tutte"
+    function _ppClassGroupHeader(classeNome, n, kind) {
+        const enc = encodeURIComponent(classeNome);
+        const fn = kind === 'orale' ? 'ppApproveOraleClass' : 'ppApproveScrittoClass';
+        const btnId = (kind === 'orale' ? 'ppBulkOrBtn_' : 'ppBulkScrBtn_') + enc;
+        const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:10px 0 6px;padding:6px 10px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;">
+          <span style="font-size:13px;font-weight:700;color:#4c1d95;">🏫 ${classeNome ? esc(classeNome) : 'Senza classe'} <span style="font-weight:400;color:#6b7280;">· ${n} da approvare</span></span>
+          <button id="${btnId}" onclick="${fn}('${enc}')" title="Approva e invia tutte le bozze di questa classe" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">✅ Approva tutte (${n})</button>
+        </div>`;
+    }
+
+    // Raggruppa per classe mantenendo l'ordine di comparsa
+    function _ppGroupByClass(list) {
+        const groups = new Map();
+        list.forEach(x => { const k = x.classeNome || ''; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(x); });
+        return groups;
     }
 
     function ppRejectOrale(id) {
@@ -30903,7 +30994,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     'categorization':  { label:'Cat', bg:'#fff3cd', col:'#7c5600' },
                     'listening':       { label:'🎧', bg:'#e0f2fe', col:'#0369a1' },
                 };
-                const draftCards = _ppDraftScritto.map(d => {
+                const _draftCard = d => {
                     const pfxLabel = d.prefix === 'REC' ? '📝 Recupero' : d.prefix === 'CON' ? '📚 Consolidamento' : '⭐ Approfondimento';
                     const pfxBg = d.prefix === 'REC' ? '#FEE2E2' : d.prefix === 'CON' ? '#DCFCE7' : '#DBEAFE';
                     const pfxCol = d.prefix === 'REC' ? '#991B1B' : d.prefix === 'CON' ? '#14532D' : '#1E3A5F';
@@ -31038,7 +31129,11 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                       </div>
                       `}
                     </div>`;
-                }).join('');
+                };
+                let draftCards = '';
+                _ppGroupByClass(_ppDraftScritto).forEach((list, classeNome) => {
+                    draftCards += _ppClassGroupHeader(classeNome, list.length, 'scritto') + list.map(_draftCard).join('');
+                });
                 draftsHtml = `<div style="margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ IN ATTESA DI APPROVAZIONE (${_ppDraftScritto.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire la sua attività</span></div>${draftCards}</div>`;
             }
             // Banner coda differita (attività in attesa di un giorno libero da verifiche)
@@ -31177,7 +31272,10 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             }
             let html = '';
             if (pending.length) html += `<div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ DA APPROVARE (${pending.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire il suo testo</span></div>`;
-            pending.forEach(item => {
+            const _byClass = _ppGroupByClass(pending);
+            _byClass.forEach((list, classeNome) => {
+              html += _ppClassGroupHeader(classeNome, list.length, 'orale');
+              list.forEach(item => {
                 const _open = item.id === _ppOraleOpenId;
                 html += `<div style="background:#FFFBEB;border:1.5px solid ${_open?'#F59E0B':'#FDE68A'};border-radius:12px;padding:${_open?'14px':'10px 14px'};margin-bottom:${_open?'10px':'6px'};">
                   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:${_open?'8px':'0'};cursor:pointer;" onclick="ppToggleOraleCollapse('${item.id}')">
@@ -31193,6 +31291,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     <button onclick="ppRejectOrale('${item.id}')" style="background:#fff;color:#DC2626;border:1.5px solid #FCA5A5;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🗑 Scarta</button>
                   </div>` : ''}
                 </div>`;
+              });
             });
             if (approved.length) {
                 html += `<div style="margin-top:8px;font-size:11px;font-weight:700;color:#059669;padding:6px 0;">✅ ${approved.length} testo/i approvato/i in questa sessione</div>`;

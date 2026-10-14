@@ -752,6 +752,7 @@ const CONFIG = {
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;">
         <button class="btn btn-sm" onclick="document.getElementById('activity-upload-file').click()" title="Carica un'attività già pronta (file JSON) con originale e tutte le versioni differenziate">📂 Carica attività</button>
         <input type="file" id="activity-upload-file" accept=".json,application/json" style="display:none" onchange="uploadActivityFile(event)">
+        <input type="file" id="activity-update-file" accept=".json,application/json" style="display:none" onchange="updateActivityFileSelected(event)">
         <button class="btn btn-sm" onclick="optimizeActivitiesStorage()" title="Salva ogni MP3/immagine una sola volta per attività invece di copiarli in ogni versione: la dashboard si apre più in fretta. Prima scarica un backup.">🧹 Ottimizza spazio</button>
         <button class="btn btn-sm" onclick="rebuildActivityIndex()" title="Rigenera l'elenco leggero delle attività usato dalla dashboard (scarica una volta tutte le attività). Serve solo se l'elenco sembra incompleto o sbagliato.">🗂 Ricostruisci indice</button>
       </div>
@@ -952,6 +953,7 @@ const CONFIG = {
         <div class="version-mode-btns">
           <button class="btn btn-sm" onclick="versionManual()">✏️ Crea manualmente</button>
           <button class="btn btn-sm" onclick="versionImport()">📂 Importa JSON</button>
+          <button class="btn btn-sm" onclick="updateActivityFromFile()" title="Carica un file con più versioni insieme (PEI, DSA, Fila B…): sostituisce solo quelle presenti nel file">🔄 Aggiorna più versioni da file</button>
           <button class="btn btn-primary btn-sm" onclick="versionGenerateAI()">🤖 Genera con AI</button>
           <span id="version-ai-badge" style="display:inline-flex;align-items:center;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:#f0fdf4;color:#065f46;border:1.5px solid #86efac;margin-left:6px;" title="Provider AI attivo per la generazione versioni"></span>
         </div>
@@ -3132,6 +3134,7 @@ function renderActivitiesGrouped(actArr, activeFilter) {
         <div class="ac-actions">
           <button class="btn btn-primary btn-sm" onclick="startSession('${safeId}', '${esc(a.title).replace(/'/g,"\\'")}')">▶ Avvia</button>
           <button class="btn btn-sm" onclick="editActivity('${safeId}')" title="Modifica attività">✏️</button>
+          <button class="btn btn-sm" onclick="updateActivityFromFile('${safeId}')" title="Aggiorna da file JSON: sostituisce solo le versioni presenti nel file (PEI, DSA, Fila B…), senza cancellare e ricreare l'attività">🔄 Aggiorna</button>
           <button class="btn btn-sm" onclick="duplicateActivity('${safeId}')" title="Duplica attività">⧉ Duplica</button>
           <button class="btn btn-sm" style="color:#e53e3e;border-color:transparent;" onclick="deleteActivity('${safeId}')" title="Elimina attività">🗑</button>
         </div>
@@ -3368,16 +3371,23 @@ function _uploadVerName(k) {
   return _UPLOAD_VER_ALIASES[String(k).toLowerCase().replace(/[\s_\-\/]/g, '')] || null;
 }
 
-function _uploadParseActivity(raw) {
-  if (Array.isArray(raw)) raw = { questions: raw };
+// opts.update: aggiornamento di un'attività esistente → le domande originali
+// sono facoltative (il file può contenere solo le versioni da sostituire).
+function _uploadParseActivity(raw, opts) {
+  const _upd = !!(opts && opts.update);
+  if (Array.isArray(raw)) {
+    if (_upd) throw new Error('Il file contiene solo un elenco di domande, senza dire a quale versione appartiene.\nUsa un file con i nomi delle versioni ("pei": [...], "dsa": [...]…) oppure "📂 Importa JSON" dentro la singola versione.');
+    raw = { questions: raw };
+  }
   if (!raw || typeof raw !== 'object') throw new Error('Il file non contiene un oggetto JSON valido.');
   // Esportazioni Firebase con una sola attività sotto la chiave-ID
   if (!raw.questions && !raw.domande && Object.keys(raw).length === 1) {
     const inner = raw[Object.keys(raw)[0]];
-    if (inner && typeof inner === 'object' && (inner.questions || inner.domande)) raw = inner;
+    if (inner && typeof inner === 'object' && (inner.questions || inner.domande || inner.versions || inner.versioni)) raw = inner;
   }
   const questions = raw.questions || raw.domande || raw.originale || raw.fila_a || raw.filaA;
-  if (!Array.isArray(questions) || !questions.length) throw new Error('Manca l\'elenco delle domande originali ("questions").');
+  const _hasMain = Array.isArray(questions) && questions.length > 0;
+  if (!_hasMain && !_upd) throw new Error('Manca l\'elenco delle domande originali ("questions").');
 
   // Versioni con lettere neutre (R1): servono le chiavi per ricollegarle
   const keys = _vkValid(raw.versionKeys) ? raw.versionKeys : null;
@@ -3397,10 +3407,12 @@ function _uploadParseActivity(raw) {
   });
 
   const fixQs = qs => qs.filter(q => q && q.type).map(q => { if (!q.points) q.points = 10; return q; });
-  const mainQs = fixQs(_vkQs(questions, 'lt', 'dsaLargeText'));
-  if (!mainQs.length) throw new Error('Nessuna domanda valida (manca il campo "type").');
+  const mainQs = _hasMain ? fixQs(_vkQs(questions, 'lt', 'dsaLargeText')) : [];
+  if (_hasMain && !mainQs.length) throw new Error('Nessuna domanda valida (manca il campo "type").');
   mainQs.forEach(q => _autoTagQuestion(q));
   Object.keys(versions).forEach(n => { versions[n] = fixQs(versions[n]); if (!versions[n].length) delete versions[n]; });
+  if (_upd && !mainQs.length && !Object.keys(versions).length && !Object.keys(versionPassages).length)
+    throw new Error('Nel file non c\'è nessuna versione riconosciuta (né domande originali).' + (unknown.length ? '\nChiavi non riconosciute: ' + unknown.join(', ') : ''));
 
   return {
     title: String(raw.title || raw.titolo || '').trim(),
@@ -3454,6 +3466,87 @@ function uploadActivityFile(event) {
     msg += loaded.length ? '\n\nVersioni:\n' + loaded.join('\n') : '\n\n(Nessuna versione differenziata nel file.)';
     if (act.unknown.length) msg += '\n\n⚠️ Ignorate (versione non riconosciuta): ' + act.unknown.join(', ');
     msg += '\n\nControlla e premi "💾 Salva attività" per aggiungerla all\'elenco.';
+    alert(msg);
+  };
+  reader.readAsText(file);
+}
+
+// ── Aggiorna attività esistente da file (nuovi modelli PEI, DSA, Fila B…) ──
+// Sostituisce SOLO le versioni presenti nel file; tutto il resto (le altre
+// versioni, titolo, classi, argomento) resta com'è. L'attività mantiene lo
+// stesso ID, quindi sessioni e risultati già raccolti restano collegati.
+// Accetta lo stesso formato di "📂 Carica attività"; le domande originali
+// sono facoltative (se ci sono, chiede conferma prima di sostituirle).
+let _updateActivityTargetId = null;
+
+function updateActivityFromFile(id) {
+  _updateActivityTargetId = id || null;
+  const inp = document.getElementById('activity-update-file');
+  if (inp) { inp.value = ''; inp.click(); }
+}
+
+function updateActivityFileSelected(event) {
+  const input = event.target;
+  const file = input.files[0];
+  const targetId = _updateActivityTargetId;
+  _updateActivityTargetId = null;
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async e => {
+    input.value = '';
+    let act;
+    try { act = _uploadParseActivity(JSON.parse(e.target.result), { update: true }); }
+    catch (err) { return alert('❌ Impossibile leggere il file: ' + err.message); }
+
+    // Dalla dashboard: apre l'attività nell'editor (con la legenda delle versioni)
+    if (targetId) {
+      await editActivity(targetId);
+      if (S.editingId !== targetId) return; // editor non aperto (errore già segnalato)
+    } // dall'editor: aggiorna l'attività aperta
+
+    const v = act.versions;
+    const names = _VK_ORDER.filter(n => v[n]);
+    const replaced = names.map(n => {
+      const old = _verQs(n) || [];
+      return '• ' + _VK_LABELS[n] + ': ' + (old.length ? old.length + ' → ' : 'nuova, ') + v[n].length + ' domande';
+    });
+
+    // Domande originali: si sostituiscono solo con conferma esplicita
+    let mainReplaced = false;
+    if (act.questions.length) {
+      mainReplaced = confirm('Il file contiene anche le domande ORIGINALI (Fila A): ' + act.questions.length + ' domande.\n\n' +
+        'OK = sostituisci anche le originali (attuali: ' + S.questions.length + ')\n' +
+        'Annulla = aggiorna solo le versioni differenziate');
+      if (mainReplaced) {
+        S.questions = act.questions;
+        const passEl = document.getElementById('activity-passage');
+        if (passEl && act.passageText) { passEl.value = act.passageText; _updatePassageCharCount(); }
+        const passLinkEl = document.getElementById('activity-passage-link');
+        if (passLinkEl && act.passageLink) passLinkEl.value = act.passageLink;
+        renderQList();
+      }
+    }
+    if (!names.length && !mainReplaced && !Object.keys(act.versionPassages).length)
+      return alert('ℹ️ Nessuna modifica: il file non contiene versioni differenziate da aggiornare.');
+
+    names.forEach(n => _setVerQs(n, v[n]));
+    S.versionPassages = Object.assign({}, S.versionPassages || {}, act.versionPassages);
+
+    document.getElementById('versions-panel').style.display = 'block';
+    const first = names[0] || 'fila_b';
+    const tabEl = Array.from(document.querySelectorAll('.version-tab'))
+      .find(t => (t.getAttribute('onclick') || '').indexOf("'" + first + "'") !== -1);
+    switchVersionTab(first, tabEl || document.querySelector('.version-tab'));
+    updateVersionTabBadges();
+
+    let msg = '✅ Attività aggiornata dal file "' + file.name + '".';
+    if (mainReplaced) msg += '\n\nDomande originali sostituite: ' + S.questions.length + ' domande.';
+    msg += names.length ? '\n\nVersioni sostituite:\n' + replaced.join('\n') : '\n\n(Nessuna versione differenziata nel file.)';
+    const vpNames = Object.keys(act.versionPassages).filter(n => _VK_LABELS[n]);
+    if (vpNames.length) msg += '\n\nTesti di versione aggiornati: ' + vpNames.map(n => _VK_LABELS[n]).join(', ');
+    msg += '\n\nLe altre versioni restano invariate.';
+    if (act.unknown.length) msg += '\n\n⚠️ Ignorate (versione non riconosciuta): ' + act.unknown.join(', ');
+    msg += '\n\nControlla e premi "💾 Salva attività" per confermare (l\'attività resta la stessa: sessioni e risultati non si perdono).';
     alert(msg);
   };
   reader.readAsText(file);
