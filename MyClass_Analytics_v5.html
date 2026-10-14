@@ -21266,7 +21266,22 @@ REGOLE ASSOLUTE — rispettale in ogni parola del tuo output:
 2. Plain text: niente asterischi, niente markdown, niente emoji.
 3. Non usare "eccellente": usa "ottimo". Non fare confronti tra alunni. Non menzionare PDP.
 4. Cita errori reali dalle risposte dell'alunno quando disponibili nella sezione RISPOSTE PER DOMANDA.
-5. MARCATORI DI SEZIONE OBBLIGATORI: usa ESATTAMENTE questi marcatori, carattere per carattere, senza asterischi, senza #, senza spazi extra: === VALUTAZIONE DOCENTE === e === ARGO === e === CLASSROOM === — non usare varianti, non aggiungere decorazioni.`;
+5. MARCATORI DI SEZIONE OBBLIGATORI: usa ESATTAMENTE i marcatori richiesti nel messaggio (es. === VALUTAZIONE DOCENTE === e === CLASSROOM ===), carattere per carattere, senza asterischi, senza #, senza spazi extra — non usare varianti, non aggiungere decorazioni. Genera SOLO i blocchi richiesti.`;
+
+    // Feedback all'alunno della verifica scritta (blocco CLASSROOM: l'alunno lo
+    // legge in LiveLearn). Prima erano 5-7 frasi generiche: ora sezioni fisse con
+    // punti di forza e punti deboli concreti, tratti dalla tabella per-domanda.
+    const AGENT_LL_FEEDBACK_INSTR = `Poi il feedback personale per l'alunno, che lo legge in LiveLearn. Scrivi in seconda persona (tu), in italiano, tono incoraggiante ma onesto. Struttura OBBLIGATORIA, con ogni etichetta su una riga a sé e una riga vuota tra le sezioni:
+Ciao [nome], ecco il feedback della tua prova di [attivita].
+Punti di forza:
+almeno 3 punti concreti (strutture, esercizi, aree in cui sei andato bene), citando esempi reali dalla tabella per-domanda.
+Punti deboli:
+almeno 2-3 errori o lacune specifiche, riportando la risposta data e quella corretta (es. hai scritto "he go" invece di "he goes") e spiegando in modo semplice la regola.
+Come migliorare:
+2-3 indicazioni pratiche: cosa ripassare, quali esercizi fare a casa, a cosa fare attenzione la prossima volta.
+Per finire:
+una frase di incoraggiamento personalizzata con il prossimo passo.
+Lunghezza 170-250 parole per alunno. Frasi complete, niente elenchi puntati, niente grassetti, niente simboli.`;
 
     // Cooldown quota Gemini — solo in memoria, si azzera al ricaricamento pagina
     let _geminiQuotaUntil = 0;
@@ -23210,7 +23225,8 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
     // Ottimizzazione chiave: richiede ALL'AI SOLO le sezioni effettivamente assenti per ogni batch,
     // evitando di sprecare token sulla ValDocente (12-14 righe/alunno) quando non serve.
     // Batch da 8 se solo Argo+Classroom, da 4 se anche ValDocente.
-    async function agentRegenerateMissing(taskId) {
+    // Con onlyArgo=true genera su richiesta il solo blocco Argo per chi non ce l'ha.
+    async function agentRegenerateMissing(taskId, onlyArgo = false) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task || task.type !== 'valscritta') return;
 
@@ -23227,12 +23243,12 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
         // Per ogni alunno calcola QUALI blocchi mancano individualmente
         const allMissing = (task.importData||[]).map(r => ({
             r,
-            needDoc:  !_hasDoc(r.nome),
-            needArgo: false,   // Argo e' opzionale: non si rigenera come blocco mancante
-            needCls:  !(task.studentClassroom||{})[r.nome],
+            needDoc:  !onlyArgo && !_hasDoc(r.nome),
+            needArgo: onlyArgo && !((task.studentArgo||{})[r.nome]||'').trim(),   // Argo solo su richiesta
+            needCls:  !onlyArgo && !(task.studentClassroom||{})[r.nome],
         })).filter(x => x.needDoc || x.needArgo || x.needCls);
 
-        if (!allMissing.length) { alert('Nessun alunno con blocchi mancanti.'); return; }
+        if (!allMissing.length) { alert(onlyArgo ? 'Tutti gli alunni hanno già il testo Argo.' : 'Nessun alunno con blocchi mancanti.'); return; }
 
         // Batch pi\u00f9 grandi se non c'\u00e8 ValDocente (blocchi corti), pi\u00f9 piccoli se c'\u00e8 anche ValDocente
         const hasAnyDoc = allMissing.some(x => x.needDoc);
@@ -23313,9 +23329,10 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
                 return `${r.nome} | pct:${r.pct}% | voto:${r.votoLabel}${tagStr?' | '+tagStr:''}${tp?' | '+tp:''}`;
             }).join('\n');
 
-            // Dettaglio per domanda: solo se si sta generando la ValDocente
+            // Dettaglio per domanda: serve alla ValDocente e al feedback LiveLearn
+            // (errori reali nei punti deboli); per il solo Argo no.
             let detailSection = '';
-            if (bNeedsDoc) {
+            if (bNeedsDoc || bNeedsCls) {
                 const blocks = bStudents.map(r => {
                     // ⚠️ VERSION-AWARE: usa r._studentQs (domande della versione assegnata)
                     // per Fila B/C; solo se assente usa le domande originali (Fila A).
@@ -23343,7 +23360,8 @@ Poi 2-3 frasi valutative sintetiche. Max 300 caratteri per alunno.`);
             if (bNeedsCls) {
                 sectionInstrs.push(`=== CLASSROOM ===
 Per ogni alunno usa OBBLIGATORIAMENTE: --- ALUNNO: Nome Cognome ---
-Poi: Ciao [nome], ecco il feedback della tua ultima prova di [attivita]. 2-3 frasi punti di forza, 2-3 frasi aree da migliorare con indicazioni concrete, 1 frase di incoraggiamento. Chi ha fatto recupero: menziona il miglioramento rispetto alla prima prova.`);
+${AGENT_LL_FEEDBACK_INSTR}
+Chi ha fatto recupero: menziona il miglioramento rispetto alla prima prova.`);
             }
 
             const prompt = `CLASSE: ${classe} | DATA: ${sessionDate} | ATTIVITA: ${unit || 'N/D'}
@@ -23440,7 +23458,7 @@ SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55
             ? `=== VALUTAZIONE DOCENTE ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\nPoi la scheda strutturata:\n- Prima riga: classe, data, attivita, accuratezza percentuale, voto.\n- Analisi per area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING se presenti): 2-3 frasi per area. Se hai la tabella per-domanda, cita gli errori specifici con la risposta data e quella attesa. Spiega l'errore grammaticale sottostante.\n- Tempi di risposta: commenta avgTime_* e tempoTotale se disponibili.\n- Analisi complessiva: 3-4 frasi su pattern di errore ricorrente, punti di forza, priorita di recupero, suggerimento metodologico concreto.\nMinimo 12-14 righe.`
             : field === 'argo'
             ? `=== ARGO ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\nPoi 2-3 frasi valutative sintetiche. Max 300 caratteri.`
-            : `=== CLASSROOM ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\nPoi feedback personale: Ciao [nome], ecco il feedback della tua ultima prova di [attivita].\n2-3 frasi sui punti di forza, 2-3 frasi sulle aree da migliorare con indicazioni concrete, 1 frase di incoraggiamento.`;
+            : `=== CLASSROOM ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\n${AGENT_LL_FEEDBACK_INSTR}`;
 
         const prompt = `CLASSE: ${task.classe} | DATA: ${task.sessionDate} | ATTIVITA: ${task.unit || 'N/D'}
 ${REGOLE_EXTRA}
@@ -24085,8 +24103,9 @@ ${sectionInstr}`;
                                 : '<span style="font-size:12px;color:#e65100;font-weight:700;">⚠️ Voto non rilevato — compila a mano</span>'}
                             </div>
                             ${mkDlgSection('📊 JSON storico','jsonOrale',idx,160)}
-                            ${mkDlgSection('📝 Argo (registro)','argoText',idx,70)}
-                            ${mkDlgSection('💬 Classroom (feedback)','classroomText',idx,110)}
+                            ${mkDlgSection('💬 LiveLearn (feedback)','classroomText',idx,160)}
+                            ${mkDlgSection('📝 Argo (registro) — solo su richiesta','argoText',idx,70)}
+                            <button class="agent-btn-edit" id="agentArgoBtn_${task.id}_${idx}" onclick="agentGenArgo('${task.id}',${idx})" style="font-size:11px;padding:3px 10px;">${(r.argoText||'').trim() ? '🔄 Rigenera Argo' : '📝 Genera Argo'}</button>
                         </div>`).join('');
                     body = `
                         ${task.audioFileName ? `<details style="margin-bottom:10px;border:1px solid #d1c4e9;border-radius:8px;overflow:hidden;"
@@ -24181,11 +24200,12 @@ ${sectionInstr}`;
                             </div>
                         </details>` : ''}
                         ${mkSection('📊 JSON storico', 'jsonOrale', 200)}
-                        ${mkSection('📝 Argo (registro)', 'argoText', 80)}
-                        ${mkSection('💬 Classroom (feedback studente)', 'classroomText', 120)}
+                        ${mkSection('💬 LiveLearn (feedback studente)', 'classroomText', 160)}
+                        ${mkSection('📝 Argo (registro) — solo su richiesta', 'argoText', 80)}
                         <div class="agent-task-actions" style="margin-top:4px;">
                             ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')">📥 Importa feedback</button>` : ''}
                             ${task.status==='approved' ? `<button class="agent-btn-approve" onclick="agentReapproveValOrale('${task.id}')" style="background:#7b3fa0;" title="Sovrascrive il voto e il JSON nello storico con i valori attualmente modificati">🔄 Riscrivi storico</button>` : ''}
+                            <button class="agent-btn-edit" id="agentArgoBtn_${task.id}_x" onclick="agentGenArgo('${task.id}')">${(task.argoText||'').trim() ? '🔄 Rigenera Argo' : '📝 Genera Argo'}</button>
                             <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
                             ${task.trascrizione ? `<button class="agent-btn-edit" onclick="agentToggleTranscript('${task.id}')">📝 Trascrizione</button>` : ''}
                             <button class="agent-btn-edit" onclick="agentOpenEditTranscript('${task.id}')">✏️ Modifica trascrizione</button>
@@ -24228,7 +24248,7 @@ ${sectionInstr}`;
                         const savId = `agentVSSav_${field}_${tid}_${safeKey}`;
                         const map   = field === 'argo' ? (task.studentArgo||{}) : (task.studentClassroom||{});
                         const val   = (map[nome]||'').replace(/</g,'&lt;');
-                        const prev  = (map[nome]||'').slice(0,200).replace(/</g,'&lt;') + ((map[nome]||'').length>200?'…':'');
+                        const prev  = (map[nome]||'').replace(/</g,'&lt;');
                         const safeNomeJs = nome.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
                         const hasContent = !!(map[nome]||'').trim();
                         const regenBtnId  = `agentRegenBtn_${field}_${tid}_${safeKey}`;
@@ -24242,9 +24262,12 @@ ${sectionInstr}`;
                                 <button id="${regenBtnId}" data-label="${regenLabel}" onclick="event.stopPropagation(); agentRegenSingleBlock('${tid}','${safeNomeJs}','${field}')" style="font-size:10px;padding:2px 9px;border-radius:10px;border:1.5px solid ${regenColor};background:${regenBg};color:${regenColor};cursor:pointer;font-weight:700;line-height:1.5;">${regenLabel}</button>
                             </summary>
                             <div style="padding:8px;">
-                                <div id="${prvId}" style="font-size:11px;color:#444;white-space:pre-wrap;max-height:80px;overflow:hidden;">${prev}</div>
+                                <div id="${prvId}" style="font-size:12px;color:#333;white-space:pre-wrap;line-height:1.45;">${prev}</div>
                                 <textarea id="${eId}" style="display:none;width:100%;min-height:${minH}px;padding:8px;font-size:12px;border:1.5px solid #b39ddb;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;">${val}</textarea>
-                                <button class="agent-btn-edit" id="${savId}" onclick="agentSaveVS('${tid}','${field}','${safeNomeJs}')" style="font-size:11px;padding:3px 10px;margin-top:6px;display:none;">💾 Salva</button>
+                                <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+                                    ${hasContent ? `<button class="agent-btn-edit" onclick="agentAutoOpenVS('${tid}','${field}','${safeNomeJs}',true)" style="font-size:11px;padding:3px 10px;">✏️ Modifica</button>` : ''}
+                                    <button class="agent-btn-edit" id="${savId}" onclick="agentSaveVS('${tid}','${field}','${safeNomeJs}')" style="font-size:11px;padding:3px 10px;display:none;">💾 Salva</button>
+                                </div>
                             </div>
                         </details>`;
                     };
@@ -24266,7 +24289,7 @@ ${sectionInstr}`;
                         const safeKey = r.nome.replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_]/g,'');
                         // Valutazione docente per questo alunno (con fallback all'intero blocco)
                         const analisiTesto = _vsAnalisi(r.nome) || '';
-                        const analisiPrev  = (analisiTesto).slice(0,200).replace(/</g,'&lt;') + (analisiTesto.length>200?'…':'');
+                        const analisiPrev  = analisiTesto.replace(/</g,'&lt;');
                         const analisiVal   = analisiTesto.replace(/</g,'&lt;');
                         const analisiVuota = !analisiTesto.trim();
                         return `<div style="border:1px solid #d1c4e9;border-radius:10px;padding:10px;margin-bottom:10px;background:#faf8ff;">
@@ -24285,18 +24308,18 @@ ${sectionInstr}`;
                                     <button id="agentRegenBtn_doc_${task.id}_${safeKey}" data-label="${analisiVuota?'✨ Genera':'🔄 Rigenera'}" onclick="event.stopPropagation(); agentRegenSingleBlock('${task.id}','${safeNomeJs}','doc')" style="font-size:10px;padding:2px 9px;border-radius:10px;border:1.5px solid ${analisiVuota?'#6a1b9a':'#2e7d32'};background:${analisiVuota?'#f3e5f5':'#e8f5e9'};color:${analisiVuota?'#6a1b9a':'#2e7d32'};cursor:pointer;font-weight:700;line-height:1.5;">${analisiVuota?'✨ Genera':'🔄 Rigenera'}</button>
                                 </summary>
                                 <div style="padding:8px;">
-                                    <div id="agentVSPrev_analisi_${task.id}_${safeKey}" style="font-size:11px;color:#444;white-space:pre-wrap;max-height:120px;overflow:hidden;">${analisiPrev||'<em style="color:#999;">Nessuna analisi generata per questo alunno.</em>'}</div>
+                                    <div id="agentVSPrev_analisi_${task.id}_${safeKey}" style="font-size:12px;color:#333;white-space:pre-wrap;line-height:1.45;">${analisiPrev||'<em style="color:#999;">Nessuna analisi generata per questo alunno.</em>'}</div>
                                     <textarea id="agentVS_analisi_${task.id}_${safeKey}" style="display:none;width:100%;min-height:140px;padding:8px;font-size:12px;border:1.5px solid #a5d6a7;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;">${analisiVal}</textarea>
                                     <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
                                         <button class="agent-btn-edit" style="font-size:11px;padding:3px 10px;"
                                             onclick="(function(){const pr=document.getElementById('agentVSPrev_analisi_${task.id}_${safeKey}'),ta=document.getElementById('agentVS_analisi_${task.id}_${safeKey}');if(ta.style.display==='none'){pr.style.display='none';ta.style.display='block';}else{pr.style.display='';ta.style.display='none';}})()">✏️ Modifica</button>
                                         <button class="agent-btn-edit" style="font-size:11px;padding:3px 10px;"
-                                            onclick="(function(){const ta=document.getElementById('agentVS_analisi_${task.id}_${safeKey}');const v=ta.value;const t=agentTasks.find(x=>x.id==='${task.id}');if(!t)return;if(!t.studentAnalysis)t.studentAnalysis={};t.studentAnalysis['${safeNomeJs}']=v;agentSaveTasks(agentTasks);const pr=document.getElementById('agentVSPrev_analisi_${task.id}_${safeKey}');pr.textContent=v.slice(0,200)+(v.length>200?'…':'');pr.style.display='';ta.style.display='none';})()">💾 Salva</button>
+                                            onclick="(function(){const ta=document.getElementById('agentVS_analisi_${task.id}_${safeKey}');const v=ta.value;const t=agentTasks.find(x=>x.id==='${task.id}');if(!t)return;if(!t.studentAnalysis)t.studentAnalysis={};t.studentAnalysis['${safeNomeJs}']=v;agentSaveTasks(agentTasks);const pr=document.getElementById('agentVSPrev_analisi_${task.id}_${safeKey}');pr.textContent=v;pr.style.display='';ta.style.display='none';})()">💾 Salva</button>
                                     </div>
                                 </div>
                             </details>
-                            ${mkVSSection('📝 Argo (registro)', task.id, r.nome, 'argo', 80)}
-                            ${mkVSSection('💬 Classroom (feedback studente)', task.id, r.nome, 'classroom', 120)}
+                            ${mkVSSection('💬 LiveLearn (feedback studente)', task.id, r.nome, 'classroom', 220)}
+                            ${mkVSSection('📝 Argo (registro) — solo su richiesta', task.id, r.nome, 'argo', 80)}
                         </div>`;
                     }).join('');
                     // Avviso blocchi incompleti (causa comune: risposta AI troncata per token limit)
@@ -24317,7 +24340,7 @@ ${sectionInstr}`;
                     const missingBlocksBanner = hasMissingBlocks ? `<div style="background:#fff3e0;border:1.5px solid #ffb74d;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#e65100;">
                         ${isMissingProcessing
                             ? `<span class="agent-spinner"></span> <strong>Generazione in corso…</strong> ${task._missingProgress || ''}`
-                            : `⚠️ <strong>Blocchi incompleti</strong> — uno o più blocchi (Classroom, Val.Docente) mancano per <strong>${missingStudents.length} alunno/i</strong>: ${missingStudents.map(r=>r.nome).join(', ')}`
+                            : `⚠️ <strong>Blocchi incompleti</strong> — uno o più blocchi (LiveLearn, Val.Docente) mancano per <strong>${missingStudents.length} alunno/i</strong>: ${missingStudents.map(r=>r.nome).join(', ')}`
                         }<br>
                         <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
                             <button class="agent-btn-edit" style="font-size:11px;padding:4px 12px;background:#e65100;color:white;border-color:#e65100;" ${isMissingProcessing?'disabled':''} onclick="agentRegenerateMissing('${task.id}')">&#x26A1; Rigenera mancanti (${missingStudents.length})</button>
@@ -24332,6 +24355,7 @@ ${sectionInstr}`;
                             ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')">📥 Importa voti &amp; feedback</button>` : ''}
                             ${task.status==='approved' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')" style="background:#7b3fa0;" title="Sovrascrive voti e feedback nello storico">🔄 Riscrivi storico</button>` : ''}
                             <button class="agent-btn-edit" onclick="agentRecalcAndRegenerate('${task.id}')">📊 Riprendi con dati aggiornati</button>
+                            <button class="agent-btn-edit" onclick="agentRegenerateMissing('${task.id}', true)" ${task.status==='processing'?'disabled':''} title="Argo non viene più generato in automatico: lo genera ora per gli alunni che non ce l'hanno">📝 Genera Argo (tutti)</button>
                             <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                         </div>`;
@@ -25328,6 +25352,42 @@ ${sectionInstr}`;
         return cands.some(c => have.some(h => h === c || norm(h) === norm(c) || (words(h) && words(h) === words(c))));
     }
 
+    // Ogni alunno una volta sola nel task. Due voci che puntano alla STESSA
+    // consegna (stesso nome digitato, stesso istante di consegna) sono lo stesso
+    // alunno: succede quando in LiveLearn il docente associa un nome scritto male
+    // a quello del registro (aliasOf) e l'alunno arriva sia dalla cronologia (nome
+    // giusto) sia dalle response (nome digitato). Stessa cosa per una voce col
+    // nome digitato la cui consegna e' associata a un alunno gia' presente.
+    // Si tiene la voce col nome del registro. Vale anche per i task gia' creati
+    // prima della correzione: la rigenerazione passa di qui.
+    function _agentDedupeStudents(students, classeObj) {
+        if (!Array.isArray(students) || students.length < 2) return students || [];
+        const nrm   = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+        const words = s => nrm(s).split(' ').filter(w => w.length > 1).sort().join(' ');
+        const roster = new Set((classeObj?.studenti||[]).map(st => words(`${st.cognome} ${st.nome}`)));
+        const sig   = st => { const dr = st.detailedResponse; return dr && dr.submittedAt ? nrm(dr.name) + '|' + dr.submittedAt : null; };
+        const rank  = st => roster.has(words(st.displayName)) ? 1 : 0;
+        const out = [];
+        for (const st of students) {
+            const sg = sig(st);
+            const al = st.detailedResponse?.aliasOf ? words(st.detailedResponse.aliasOf) : '';
+            const i = out.findIndex(o => {
+                if (sg && sig(o) === sg) return true;
+                // voce col nome digitato, consegna associata a un alunno gia' in elenco
+                if (al && words(o.displayName) === al && (!o.detailedResponse || sig(o) === sg)) return true;
+                const oal = o.detailedResponse?.aliasOf ? words(o.detailedResponse.aliasOf) : '';
+                return oal && words(st.displayName) === oal && (!st.detailedResponse || sig(o) === sg);
+            });
+            if (i === -1) { out.push(st); continue; }
+            const keep = rank(st) > rank(out[i]) ? st : out[i];
+            const drop = keep === st ? out[i] : st;
+            if (!keep.detailedResponse && drop.detailedResponse) keep.detailedResponse = drop.detailedResponse;
+            console.log(`[Agente] doppione rimosso: "${drop.displayName}" (${drop.safe}) = "${keep.displayName}" (${keep.safe})`);
+            out[i] = keep;
+        }
+        return out;
+    }
+
     // Trova la detailedResponse per un safe key con match esatto poi fuzzy
     // Specchia StudentApp._refreshSessionScores (entry.name + key variants)
     function agentMatchResponse(detail, safeKey) {
@@ -25944,6 +26004,15 @@ ${sectionInstr}`;
                         // valutata manualmente) e il task sia tornato visibile per qualsiasi
                         // motivo (localStorage ripristinato, scheletro da Firebase, ecc.).
                         const _mcClAR = data.classi?.find(c => c.nome === classe.nome);
+                        // Task creati prima della correzione: toglie i doppioni da alunni associati
+                        {
+                            const _nB = (existing.importData||[]).length;
+                            if (_nB > 1) {
+                                existing.importData = _agentDedupeStudents(existing.importData, _mcClAR);
+                                existing.students   = _agentDedupeStudents(existing.students || [], _mcClAR);
+                                if (existing.importData.length < _nB) agentSaveTasks(agentTasks);
+                            }
+                        }
                         if (_mcClAR && group.students.length > 0) {
                             const _normARS = s => (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
                             const _titNAR  = _normARS(group.activityTitle || '');
@@ -26138,7 +26207,7 @@ ${sectionInstr}`;
                         if (_agentRespAlreadyIn(existingSafes, respKey, respEntry)) continue;
                         // Cerca il displayName dalla lista MyClass
                         const _normName = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
-                        const respName = respEntry.name || respKey.replace(/_/g,' ');
+                        const respName = respEntry.aliasOf || respEntry.name || respKey.replace(/_/g,' ');
                         const respTokens = _normName(respName).split(/[\s_]+/).filter(w => w.length > 1);
                         const myclasStu = (classe.studenti||[]).find(s => {
                             const full = _normName(`${s.cognome} ${s.nome}`);
@@ -26165,6 +26234,7 @@ ${sectionInstr}`;
                         existingSafes.add(respKey);
                         console.log(`[Agente] ${classe.nome}: ➕ aggiunto da responses (non in history): ${displayName} (key: ${respKey})`);
                     }
+                    group.students = _agentDedupeStudents(group.students, classe);
                     if (group.students.length !== [...existingSafes].length || group.students.length > 11) {
                         console.log(`[Agente] ${classe.nome} ${code}: totale studenti dopo merge = ${group.students.length}`);
                     }
@@ -26260,7 +26330,7 @@ ${sectionInstr}`;
                     if (!respEntry || !respEntry.submittedAt || respEntry.removed) continue;
                     if (_agentRespAlreadyIn(existingSafes, respKey, respEntry)) continue;
                     const _normName = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
-                    const respName = respEntry.name || respKey.replace(/_/g,' ');
+                    const respName = respEntry.aliasOf || respEntry.name || respKey.replace(/_/g,' ');
                     const respTokens = _normName(respName).split(/[\s_]+/).filter(w => w.length > 1);
                     const myclasStu = (classeObj?.studenti||[]).find(s => {
                         const full = _normName(`${s.cognome} ${s.nome}`);
@@ -26286,6 +26356,7 @@ ${sectionInstr}`;
                     existingSafes.add(respKey);
                     console.log(`[Agente] refresh: ➕ aggiunto da responses (non in history): ${displayName} (key: ${respKey})`);
                 }
+                task.students = _agentDedupeStudents(task.students, classeObj);
             }
             if (detail?.questions?.length) task.questions = detail.questions;
             if (detail?.studentVersions)   task.studentVersions = detail.studentVersions;
@@ -26317,6 +26388,7 @@ ${sectionInstr}`;
             return;
         }
 
+        task.students = _agentDedupeStudents(task.students, (data.classi||[]).find(c => c.nome === task.classe));
         const { students, unit, sessionDate, classe } = task;
         const questions = task.questions || [];
         const maxPts = questions.reduce((s, q) => s + (q.points || 1), 0);
@@ -26632,11 +26704,10 @@ SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55
 ${REGOLE_EXTRA}
 RISULTATI AGGREGATI (usa l'accuracy indicata, non ricalcolare):
 ${resultLines}${detailSection}${recoveryDetailSection}
-Genera i blocchi nell'ordine esatto qui sotto, con questi marcatori. L'ordine e' di priorita': prima CLASSROOM, poi VALUTAZIONE DOCENTE (finisce nello storico), per ultimo ARGO che e' OPZIONALE (se lo spazio e' poco, omettilo piuttosto che accorciare gli altri due).
+Genera SOLO questi due blocchi, nell'ordine esatto qui sotto, con questi marcatori (NON generare il blocco ARGO).
 === CLASSROOM ===
 Per ogni alunno usa OBBLIGATORIAMENTE questo header (sostituisci con il nome reale): --- ALUNNO: Nome Cognome ---
-Poi feedback personale: Ciao [nome], ecco il feedback della tua ultima prova di [attivita].
-2-3 frasi sui punti di forza, 2-3 frasi sulle aree da migliorare con indicazioni concrete, 1 frase di incoraggiamento.
+${AGENT_LL_FEEDBACK_INSTR}
 Chi ha fatto il recupero riceve feedback che menziona il miglioramento rispetto alla prima prova.
 === VALUTAZIONE DOCENTE ===
 Per ogni alunno usa OBBLIGATORIAMENTE questo header (sostituisci con il nome reale):
@@ -26646,10 +26717,7 @@ Poi la scheda strutturata:
 - Analisi per area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING se presenti): 2-3 frasi per area. Se hai la tabella per-domanda, cita gli errori specifici con la risposta data e quella attesa (es. Q3: "what did you see" invece di "Did you see"). Spiega l'errore grammaticale sottostante.
 - Tempi di risposta: commenta avgTime_* e tempoTotale se disponibili. Tempo alto + errore = incertezza sulla struttura; tempo basso + errore = risposta superficiale/impulsiva. Segnala le domande con tempo anomalo (>3min o <10s con errore).
 - Analisi complessiva: 3-4 frasi su pattern di errore ricorrente (es. "confusione sistematica tra Do/Does e Did nelle Wh-questions"), punti di forza, priorita di recupero, suggerimento metodologico concreto.
-Ogni scheda minimo 12-14 righe. NON aggiungere separatori tra schede oltre all'header.
-=== ARGO ===
-Per ogni alunno usa OBBLIGATORIAMENTE questo header (sostituisci con il nome reale): --- ALUNNO: Nome Cognome ---
-Poi 2-3 frasi valutative sintetiche. Max 300 caratteri per alunno.`;
+Ogni scheda minimo 12-14 righe. NON aggiungere separatori tra schede oltre all'header.`;
 
         const extractSection = (text, marker) => {
             // Estrae il label dal marcatore (es. "ARGO" da "=== ARGO ===")
@@ -26675,13 +26743,13 @@ Poi 2-3 frasi valutative sintetiche. Max 300 caratteri per alunno.`;
         try {
             const raw = await agentCallAI(prompt, task, true);
             task.valDocente     = extractSection(raw, '=== VALUTAZIONE DOCENTE ===');
-            task.argoBlock      = extractSection(raw, '=== ARGO ===');
+            // Argo non si genera piu' in automatico: solo su richiesta (pulsanti "Genera Argo")
+            task.argoBlock      = '';
             task.classroomBlock = extractSection(raw, '=== CLASSROOM ===');
             // Diagnostica: segnala sezioni mancanti (causa comune: risposta troncata per token limit)
             const missingBlocks = [];
             if (!task.valDocente)     missingBlocks.push('VALUTAZIONE DOCENTE');
             if (!task.classroomBlock) missingBlocks.push('CLASSROOM');
-            if (!task.argoBlock) console.log('[Agente] ARGO non generato (opzionale)');
             if (missingBlocks.length) {
                 console.warn(`[Agente] ⚠️ Blocchi mancanti nella risposta AI: ${missingBlocks.join(', ')} — risposta troncata? (raw length: ${raw.length} chars)`);
             } else {
@@ -26996,7 +27064,7 @@ Poi 2-3 frasi valutative sintetiche. Max 300 caratteri per alunno.`;
             }
             if (db && task.studentClassroom?.[r.nome]) {
                 try {
-                    const _agB = await _mcHistBase(r.safe);
+                    const _agB = (await _mcHistBase(r.safe)) || (await _mcHistBase(r.nome));
                     if (!_agB) throw new Error('nessun codice personale per ' + r.nome);
                     await db.ref(`${_agB}/feedback`).push({
                         title: `Verifica scritta ${task.unit||''}`.trim(),
@@ -27087,7 +27155,7 @@ Poi 2-3 frasi valutative sintetiche. Max 300 caratteri per alunno.`;
         const classroomFull = (task.importData||[])
             .map(r => task.studentClassroom?.[r.nome] || '').filter(Boolean).join('\n\n');
         if (argoFull)      agentDownloadTxt(argoFull,      `Argo_${task.classe}_${task.sessionDate}.txt`);
-        if (classroomFull) agentDownloadTxt(classroomFull, `Classroom_${task.classe}_${task.sessionDate}.txt`);
+        if (classroomFull) agentDownloadTxt(classroomFull, `LiveLearn_${task.classe}_${task.sessionDate}.txt`);
 
         task.status = 'approved'; task.approvedAt = new Date().toISOString();
 
@@ -27112,7 +27180,8 @@ Poi 2-3 frasi valutative sintetiche. Max 300 caratteri per alunno.`;
         // localStorage. Il salvataggio avviene nel chiamante (agentSaveTasks).
         _agentSlimValscritta(task);
 
-        let _msg = `Valutazioni approvate.\nMyClass: ${imported} voti (con nota discorsiva) | Firebase: ${fbPushed} feedback\n2 file: Argo.txt, Classroom.txt`;
+        const _files = [argoFull ? 'Argo.txt' : null, classroomFull ? 'LiveLearn.txt' : null].filter(Boolean);
+        let _msg = `Valutazioni approvate.\nMyClass: ${imported} voti (con nota discorsiva) | Firebase: ${fbPushed} feedback LiveLearn` + (_files.length ? `\nFile: ${_files.join(', ')}` : '');
         if (_recalcChanges.length) {
             _msg += `\n\n⚠️ ${_recalcChanges.length} voti ricalcolati al salvataggio (le correzioni a mano NON vengono toccate):\n• ` + _recalcChanges.join('\n• ');
         }
@@ -27692,7 +27761,7 @@ Verifica orale di ${task.studentName}, classe ${task.classe}${task.unit?', '+tas
 TRASCRIZIONE:
 ${trascrizioneSlice}
 ${REGOLE}
-Genera tre blocchi con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ===\n${task.griglia ? ('Intestazione: ' + task.studentName + ', ' + task.classe + (task.unit ? ', ' + task.unit : '') + ', data ' + task.sessionDate + '.\n\n' + (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n' + '[analisi della prestazione in quest\'area basata sulla trascrizione]').join('\n\n') + '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma dei punteggi per area e Y il voto dalla tabella di conversione.') : ('Intestazione: nome, classe, data (' + task.sessionDate + '), unit, voto. Analisi per area' + (task.hasSlides ? ' (NON commentare le pause [slide])' : ' (includi fluency se rilevante: pause significative, ritmo)') + '. Analisi complessiva.')}\n=== ARGO ===\nNome studente su riga, poi testo valutativo. Max 300 caratteri. Niente intestazione.\n=== CLASSROOM ===\nFeedback personale scritto allo studente, italiano, tono incoraggiante ma onesto. Struttura OBBLIGATORIA (separa ogni sezione con un ritorno a capo):\nSaluto: Ciao ${nomeBreve}, ecco il feedback sulla tua ultima verifica orale.\nPUNTI DI FORZA (almeno 2-3, specifici e tratti dalla trascrizione): descrivi cosa ha fatto bene con esempi concreti.\nAREE DI MIGLIORAMENTO (almeno 2, costruttive e pratiche): indica cosa migliorare e COME, con suggerimenti pratici per esercitarsi a casa.\nCONSIGLIO FINALE: una frase motivante personalizzata con il prossimo passo utile.\nLunghezza totale: 150-220 parole. Testo scorrevole, niente elenchi puntati, niente grassetti. Non menzionare il voto numerico.`;
+Genera SOLO due blocchi (niente ARGO) con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ===\n${task.griglia ? ('Intestazione: ' + task.studentName + ', ' + task.classe + (task.unit ? ', ' + task.unit : '') + ', data ' + task.sessionDate + '.\n\n' + (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n' + '[analisi della prestazione in quest\'area basata sulla trascrizione]').join('\n\n') + '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma dei punteggi per area e Y il voto dalla tabella di conversione.') : ('Intestazione: nome, classe, data (' + task.sessionDate + '), unit, voto. Analisi per area' + (task.hasSlides ? ' (NON commentare le pause [slide])' : ' (includi fluency se rilevante: pause significative, ritmo)') + '. Analisi complessiva.')}\n=== CLASSROOM ===\nFeedback personale scritto allo studente, italiano, tono incoraggiante ma onesto. Struttura OBBLIGATORIA (separa ogni sezione con un ritorno a capo):\nSaluto: Ciao ${nomeBreve}, ecco il feedback sulla tua ultima verifica orale.\nPUNTI DI FORZA (almeno 2-3, specifici e tratti dalla trascrizione): descrivi cosa ha fatto bene con esempi concreti.\nAREE DI MIGLIORAMENTO (almeno 2, costruttive e pratiche): indica cosa migliorare e COME, con suggerimenti pratici per esercitarsi a casa.\nCONSIGLIO FINALE: una frase motivante personalizzata con il prossimo passo utile.\nLunghezza totale: 150-220 parole. Testo scorrevole, niente elenchi puntati, niente grassetti. Non menzionare il voto numerico.`;
 
             const raw = await agentCallAI(prompt, task, true);
             const makeRe = (lbl) => new RegExp(
@@ -27711,7 +27780,7 @@ Genera tre blocchi con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ==
             };
             const extractSection = (text, marker) => _exSec(text, marker);
             task.valDocente    = extractSection(raw, '=== VALUTAZIONE DOCENTE ===');
-            task.argoText      = extractSection(raw, '=== ARGO ===');
+            task.argoText      = '';   // Argo solo su richiesta (agentGenArgo)
             task.classroomText = extractSection(raw, '=== CLASSROOM ===');
 
             // Estrai voto numerico dal valDocente.
@@ -27749,6 +27818,33 @@ Genera tre blocchi con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ==
             task.generatedAt = new Date().toISOString();
         } catch(e) { task.status='error'; task.error=e.message; agentRenderPanel(); }
     }
+    // Argo per orale/dialogo: non si genera piu' in automatico. Su richiesta lo
+    // si ricava dalla valutazione docente gia' scritta (una chiamata breve).
+    async function agentGenArgo(taskId, idx) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        const tgt = (idx != null && Array.isArray(task.results)) ? task.results[idx] : task;
+        if (!tgt) return;
+        const nome = tgt.studentName || task.studentName || '';
+        const base = (tgt.valDocente || '').trim();
+        if (!base) { alert('Manca la valutazione docente da cui ricavare il testo Argo.'); return; }
+        const btn = document.getElementById(`agentArgoBtn_${taskId}_${idx ?? 'x'}`);
+        const lbl = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = '⏳…'; }
+        try {
+            const raw = await agentCallAI(`Dalla valutazione docente qui sotto (verifica orale di ${nome}, classe ${task.classe}${task.unit ? ', ' + task.unit : ''}) scrivi il testo per il registro Argo: 2-3 frasi valutative sintetiche, massimo 300 caratteri. Solo il testo: niente intestazione, niente nome, niente marcatori.
+
+VALUTAZIONE DOCENTE:
+${base}`, task, true);
+            tgt.argoText = String(raw || '').replace(/^[*=#\s]*ARGO[*=#\s]*$/gim, '').trim();
+            agentSaveTasks(agentTasks);
+            agentRenderPanel();
+        } catch(e) {
+            if (btn) { btn.disabled = false; btn.textContent = lbl; }
+            alert('Errore nella generazione Argo: ' + e.message);
+        }
+    }
+
     // Mostra/nasconde trascrizione completa nel card
     function agentToggleTranscript(taskId) {
         const task = agentTasks.find(t => t.id === taskId);
@@ -27768,7 +27864,9 @@ Genera tre blocchi con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ==
     // Chiamato dall'ontoggle del <details>: apre subito in edit mode al primo click
 
     // ── Funzioni edit per valscritta per-alunno ───────────────────────────
-    function agentAutoOpenVS(taskId, field, nome) {
+    // All'apertura il testo si legge per intero; la modifica parte da sola solo
+    // se il blocco e' vuoto, altrimenti col pulsante ✏️ Modifica (force).
+    function agentAutoOpenVS(taskId, field, nome, force) {
         const task = agentTasks.find(t => t.id === taskId);
         const safeKey = nome.replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_]/g,'');
         const ta  = document.getElementById(`agentVS_${field}_${taskId}_${safeKey}`);
@@ -27776,6 +27874,7 @@ Genera tre blocchi con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ==
         const sav = document.getElementById(`agentVSSav_${field}_${taskId}_${safeKey}`);
         if (!ta || ta.style.display !== 'none') return;
         const map = field === 'argo' ? (task?.studentArgo||{}) : (task?.studentClassroom||{});
+        if (!force && (map[nome]||'').trim()) return;
         ta.value = map[nome] || '';
         ta.style.display = 'block';
         if (prv) prv.style.display = 'none';
@@ -27797,7 +27896,7 @@ Genera tre blocchi con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ==
         agentSaveTasks(agentTasks);
         ta.style.display = 'none';
         if (sav) sav.style.display = 'none';
-        if (prv) { prv.textContent = (ta.value||'').slice(0,200) + ((ta.value||'').length>200?'…':''); prv.style.display = 'block'; }
+        if (prv) { prv.textContent = ta.value || ''; prv.style.display = 'block'; }
     }
 
     function agentUpdateVotoVS(taskId, nome, newVotoStr) {
@@ -28102,13 +28201,13 @@ Genera tre blocchi con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ==
 
         const sn = task.studentName.replace(/\s+/g,'_');
         if (task.argoText)      agentDownloadTxt(`${task.studentName}\n${task.argoText}`, `Argo_orale_${task.classe}_${sn}_${task.sessionDate}.txt`);
-        if (task.classroomText) agentDownloadTxt(task.classroomText, `Classroom_orale_${sn}_${task.sessionDate}.txt`);
+        if (task.classroomText) agentDownloadTxt(task.classroomText, `LiveLearn_orale_${sn}_${task.sessionDate}.txt`);
         const jsonStr = task.jsonOrale || (task.votoValue ? _buildJsonOrale(task) : null);
         if (jsonStr) agentDownloadTxt(jsonStr, `Voti_orale_${task.classe}_${sn}_${task.sessionDate}.json`);
 
         task.status = 'approved'; task.approvedAt = new Date().toISOString();
         const verb = isReapprove ? 'riscritto' : 'approvato';
-        alert(`Valutazione orale ${verb}.\nVoto: ${task.votoLabel||'non rilevato'} | Firebase: ${db?'ok':'skip'}\nFile scaricati: Argo.txt, Classroom.txt${jsonStr?', JSON':''}`);
+        alert(`Valutazione orale ${verb}.\nVoto: ${task.votoLabel||'non rilevato'} | Firebase: ${db?'ok':'skip'}\nFile scaricati: ${[task.argoText ? 'Argo.txt' : null, task.classroomText ? 'LiveLearn.txt' : null, jsonStr ? 'JSON' : null].filter(Boolean).join(', ') || 'nessuno'}`);
     }
 
     // Riscrivi storico per una valutazione già approvata (overwrite voto + JSON)
@@ -28361,7 +28460,7 @@ ${pauseRule}`;
                        (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n[analisi della prestazione di questo alunno in quest\'area]').join('\n\n') +
                        '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((t,a)=>t+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma e Y il voto dalla tabella di conversione.')
                     : 'Intestazione: nome, classe, data, unit, voto. Analisi per area e complessiva.';
-                return `### ALUNNO: ${s.studentName}\n=== VALUTAZIONE DOCENTE ===\n${intest}\n=== ARGO ===\nNome studente su una riga, poi testo valutativo. Max 300 caratteri. Niente intestazione.\n=== CLASSROOM ===\nFeedback personale scritto allo studente, italiano, tono incoraggiante ma onesto. Struttura OBBLIGATORIA (separa ogni sezione con un ritorno a capo):\nSaluto: Ciao ${s.studentNome||s.studentName.split(' ')[0]}, ecco il feedback sulla tua ultima verifica orale.\nPUNTI DI FORZA (almeno 2-3, specifici e tratti dalla trascrizione): descrivi cosa ha fatto bene con esempi concreti.\nAREE DI MIGLIORAMENTO (almeno 2, costruttive e pratiche): indica cosa migliorare e COME, con suggerimenti pratici per esercitarsi a casa.\nCONSIGLIO FINALE: una frase motivante personalizzata con il prossimo passo utile.\nLunghezza totale: 150-220 parole. Testo scorrevole, niente elenchi puntati, niente grassetti. Non menzionare il voto numerico.`;
+                return `### ALUNNO: ${s.studentName}\n=== VALUTAZIONE DOCENTE ===\n${intest}\n=== CLASSROOM ===\nFeedback personale scritto allo studente, italiano, tono incoraggiante ma onesto. Struttura OBBLIGATORIA (separa ogni sezione con un ritorno a capo):\nSaluto: Ciao ${s.studentNome||s.studentName.split(' ')[0]}, ecco il feedback sulla tua ultima verifica orale.\nPUNTI DI FORZA (almeno 2-3, specifici e tratti dalla trascrizione): descrivi cosa ha fatto bene con esempi concreti.\nAREE DI MIGLIORAMENTO (almeno 2, costruttive e pratiche): indica cosa migliorare e COME, con suggerimenti pratici per esercitarsi a casa.\nCONSIGLIO FINALE: una frase motivante personalizzata con il prossimo passo utile.\nLunghezza totale: 150-220 parole. Testo scorrevole, niente elenchi puntati, niente grassetti. Non menzionare il voto numerico.`;
             }).join('\n\n');
 
             const prompt = `Sei il prof. Giacomo Cossu, docente di inglese scuola media italiana.
@@ -28407,7 +28506,7 @@ ${blocchiPerAlunno}`;
                 if (!stud) return;
                 usati.add(stud.studentSafe);
                 const valDocente = extractSection(rest, '=== VALUTAZIONE DOCENTE ===');
-                const argoText   = extractSection(rest, '=== ARGO ===');
+                const argoText   = '';   // Argo solo su richiesta (agentGenArgo)
                 const classroomText = extractSection(rest, '=== CLASSROOM ===');
                 const { votoValue, votoLabel } = _votoFromText(valDocente, argoText, task.griglia);
                 const r = { studentSafe: stud.studentSafe, studentName: stud.studentName, studentNome: stud.studentNome,
@@ -28489,7 +28588,7 @@ ${blocchiPerAlunno}`;
             // File TXT/JSON
             const sn = r.studentName.replace(/\s+/g,'_');
             if (r.argoText)      agentDownloadTxt(`${r.studentName}\n${r.argoText}`, `Argo_dialogo_${task.classe}_${sn}_${task.sessionDate}.txt`);
-            if (r.classroomText) agentDownloadTxt(r.classroomText, `Classroom_dialogo_${sn}_${task.sessionDate}.txt`);
+            if (r.classroomText) agentDownloadTxt(r.classroomText, `LiveLearn_dialogo_${sn}_${task.sessionDate}.txt`);
             if (r.jsonOrale)     agentDownloadTxt(r.jsonOrale, `Voti_dialogo_${task.classe}_${sn}_${task.sessionDate}.json`);
             okCount++;
         }
