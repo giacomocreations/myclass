@@ -448,9 +448,11 @@ const TAG_META  = {
   GRAMMAR:    {label:'Grammar',    color:'#534AB7', bg:'#EEEDFE'},
   VOCABULARY: {label:'Vocabulary', color:'#0e7490', bg:'#e0f2fe'},
   FUNCTIONS:  {label:'Functions',  color:'#047857', bg:'#d1fae5'},
-  LISTENING:  {label:'Listening',  color:'#b45309', bg:'#fef3c7'}
+  LISTENING:  {label:'Listening',  color:'#b45309', bg:'#fef3c7'},
+  READING:    {label:'Reading',    color:'#9d174d', bg:'#fce7f3'},
+  WRITING:    {label:'Writing',    color:'#075985', bg:'#e0f2fe'}
 };
-const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING'];
+const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
 
 // ── HELPERS ───────────────────────────────────────────────────────────────
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -2160,7 +2162,7 @@ function renderStats(){
     ${_noVoti
       ? `<div style="padding:28px 12px;text-align:center;color:var(--muted);"><div style="font-size:26px;margin-bottom:6px;">📭</div><div style="font-size:14px;font-weight:700;">Profilo non ancora disponibile</div><div style="font-size:11px;margin-top:4px;">Il profilo comparirà dopo le prime verifiche valutate.</div></div>`
       : `<div class="chart-wrap"><canvas id="radar-chart"></canvas></div>
-    <div style="font-size:11px;color:var(--muted);margin-top:6px;text-align:center;line-height:1.4">Calcolato dalle tue verifiche. NP = non ancora presente.</div>`}
+    <div style="font-size:11px;color:var(--muted);margin-top:6px;text-align:center;line-height:1.4">Calcolato dalle tue verifiche. NP = non ancora presente.${String(_comp.stimate||'') ? ' * = media di Grammar e Vocabulary.' : ''}</div>`}
   </div>`;
 
   // ── Andamento orale vs scritto ──────────────────────────────────
@@ -2360,8 +2362,9 @@ function buildStatCharts(){
     const CKEYS=['listening','speaking','reading','writing','grammar','vocabulary'];
     const c = (mc.competenze && typeof mc.competenze === 'object') ? mc.competenze : {};
     const radarData = CKEYS.map(k => c[k]!=null ? Math.min(10,Math.max(1,Math.round(Number(c[k])*10)/10)) : null);
+    const _stim = String(c.stimate||'').split(',');
     const CLABELS=['Listening','Speaking','Reading','Writing','Grammar','Vocabulary']
-      .map((l,i) => radarData[i]==null ? l+' (NP)' : l);
+      .map((l,i) => radarData[i]==null ? l+' (NP)' : _stim.includes(CKEYS[i]) ? l+'*' : l);
     S.chartInstances['radar-chart'] = new Chart(rCtx,{
       type:'radar',
       data:{
@@ -3012,9 +3015,9 @@ function _evalSimple(q, a, manualScore, aiScore) {
 }
 
 function _buildStudentPdfWindow(sessionCode, questions, entry, sess) {
-  const TAG_COLORS = { GRAMMAR:'#3b82f6', VOCABULARY:'#10b981', FUNCTIONS:'#f59e0b', LISTENING:'#8b5cf6' };
+  const TAG_COLORS = { GRAMMAR:'#3b82f6', VOCABULARY:'#10b981', FUNCTIONS:'#f59e0b', LISTENING:'#8b5cf6', READING:'#ec4899', WRITING:'#0ea5e9' };
   const TYPE_ICONS = { 'multiple-choice':'📋','cloze':'✏️','fill-blanks':'📝','matching':'🔗','drag-drop':'🔀','reorder':'🔢','free-response':'💬','listening':'🎧' };
-  const TAG_LABELS = { GRAMMAR:'Grammar', VOCABULARY:'Vocabulary', FUNCTIONS:'Functions', LISTENING:'Listening' };
+  const TAG_LABELS = { GRAMMAR:'Grammar', VOCABULARY:'Vocabulary', FUNCTIONS:'Functions', LISTENING:'Listening', READING:'Reading', WRITING:'Writing' };
 
   const answers      = entry.answers      || [];
   const manualScores = entry.manualScores || {};
@@ -3039,7 +3042,7 @@ function _buildStudentPdfWindow(sessionCode, questions, entry, sess) {
   const totalTime = (submittedAt && joinedAt) ? Math.round((submittedAt - joinedAt) / 1000) : null;
 
   // Tag breakdown
-  const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING'];
+  const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
   let tagHtml = '';
   const tagData = TAG_LIST.map(tag => {
     const qs = questions.filter(q => q.tag === tag);

@@ -3825,7 +3825,7 @@ Basata su annotazioni (NHC, NHM, NdM) e note disciplinari. Impatto delle assenze
 
 **PUNTEGGI COMPETENZE** (OBBLIGATORIO - ultima sezione)
 Regole VINCOLANTI per i punteggi: sono CALCOLATI dalle prove svolte (% per area delle verifiche, voti orali per lo speaking) e vanno copiati ESATTAMENTE, senza stime. NP = competenza non ancora valutata: scrivi NP, non inventare un numero, e nel testo dillo esplicitamente.
-${(() => { const _c = getStudentCompetenze(studente); return COMP_KEYS.map(k => k.toUpperCase() + ' = ' + (_c[k] != null ? _c[k] : 'NP')).join(' | '); })()}
+${(() => { const _c = getStudentCompetenze(studente); return COMP_KEYS.map(k => k.toUpperCase() + ' = ' + (_c[k] != null ? _c[k] + (_c._stimate.includes(k) ? ' (stima: media grammar e vocabulary, non ancora verificata con prove specifiche — dillo nel testo)' : '') : 'NP')).join(' | '); })()}
 - Tutti i punteggi devono essere coerenti con l'analisi testuale sopra.
 Usa questo formato ESATTO (una riga per competenza, valore numerico da 1 a 10 con al massimo un decimale, oppure NP):
 LISTENING: [punteggio]
@@ -3915,7 +3915,7 @@ Competenze consolidate, aspetti positivi, studenti trainanti.
 
 **PUNTEGGI COMPETENZE CLASSE** (OBBLIGATORIO - ultima sezione, sempre presente)
 Riporta la media della classe per ogni competenza. I valori sono CALCOLATI dalle prove svolte (% per area delle verifiche, voti orali per lo speaking) e vanno copiati ESATTAMENTE, senza stime. NP = competenza non ancora valutata: scrivi NP, non inventare un numero, e nell'analisi dillo esplicitamente.
-${(() => { const _c = getClassCompetenze(classe); return COMP_KEYS.map(k => k.toUpperCase() + ' = ' + (_c[k] != null ? _c[k] : 'NP')).join(' | '); })()}
+${(() => { const _c = getClassCompetenze(classe); return COMP_KEYS.map(k => k.toUpperCase() + ' = ' + (_c[k] != null ? _c[k] + (_c._stimate.includes(k) ? ' (stima: media grammar e vocabulary, non ancora verificata con prove specifiche — dillo nel testo)' : '') : 'NP')).join(' | '); })()}
 Usa questo formato ESATTO (una riga per competenza, valore numerico da 1 a 10 con al massimo un decimale, oppure NP):
 LISTENING: [punteggio]
 SPEAKING: [punteggio]
@@ -6210,15 +6210,18 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             // ── Radar: competenze a confronto ─────────────────────────
             const radarCtx = document.getElementById('chartCompRadar');
             if (radarCtx) {
+                const _stAll = new Set();
                 const datasets = filtered.map((c, i) => {
                     // Dati reali delle prove (NP = null), come il radar della classe
-                    const vals = getClassRadarData(c);
+                    const _cc = getClassCompetenze(c);
+                    _cc._stimate.forEach(k => _stAll.add(k));
+                    const vals = COMP_KEYS.map(k => _cc[k]);
                     const col = colors[i];
                     return { label:c.nome, data:vals, backgroundColor:col+'33', borderColor:col, pointBackgroundColor:col, borderWidth:2.5 };
                 });
                 compChartInstances['radar'] = new Chart(radarCtx.getContext('2d'), {
                     type:'radar',
-                    data:{ labels:_compLabels(...datasets.map(d => d.data)), datasets },
+                    data:{ labels:_compLabels(datasets.map(d => d.data), [..._stAll]), datasets },
                     options:{ responsive:true,
                         scales:{ r:{ min:4, max:10, ticks:{stepSize:1,color:'#555'}, grid:{color:'rgba(0,0,0,0.08)'}, angleLines:{color:'rgba(0,0,0,0.1)'}, pointLabels:{font:{size:12,weight:'600'}} } },
                         plugins:{ legend:{position:'top'}, tooltip:{} },
@@ -6935,7 +6938,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 const classRadar = getClassRadarData(classeObj);
                 // Asse NP per l'alunno → NP anche nel confronto (niente media classe da sola)
                 const classRadarCmp = classRadar.map((v, i) => radarData[i] == null ? null : v);
-                const CLABELS = COMP_LBLS.map((l, i) => radarData[i] == null ? l + ' (NP)' : l);
+                const CLABELS = _compLabels([radarData], _studComp._stimate);
 
                 // Bar chart: student vs class
                 destroyChart('chartCompBars');
@@ -6998,7 +7001,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                     options: {
                         responsive: true,
                         scales: { r: { min:4, max:10, ticks:{stepSize:1,color:'#666'}, grid:{color:'rgba(0,0,0,0.08)'}, angleLines:{color:'rgba(0,0,0,0.1)'}, pointLabels:{font:{size:11,weight:'600'}} } },
-                        plugins: { legend:{position:'top'}, tooltip:{} }
+                        plugins: { legend:{position:'top'}, tooltip:{}, title:{ display: _studComp._stimate.length > 0, text: COMP_NOTA_STIMA, font:{size:11}, color:'#666' } }
                     }
                 });
             }
@@ -7657,6 +7660,14 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 out[k] = pcts.length ? _compFromPct(pcts.reduce((a,b)=>a+b,0) / pcts.length) : null;
             }
             out.speaking = _compAvg(_effectiveGrades(s?.orale || []).map(g => Number(g.voto)).filter(v => !isNaN(v) && v > 0));
+            // Reading/Writing: finche' nessuna verifica ha esercizi con quel tag, si
+            // usa la media di Grammar e Vocabulary (scelta del docente: prove di
+            // reading/writing rare). Segnato in _stimate per etichette e testi.
+            out._stimate = [];
+            const gv = [out.grammar, out.vocabulary].filter(v => v != null);
+            ['reading','writing'].forEach(k => {
+                if (out[k] == null && gv.length) { out[k] = _compAvg(gv); out._stimate.push(k); }
+            });
             return out;
         }
 
@@ -7664,6 +7675,8 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             const per = (classe?.studenti || []).map(getStudentCompetenze);
             const out = {};
             COMP_KEYS.forEach(k => { out[k] = _compAvg(per.map(c => c[k]).filter(v => v != null)); });
+            // Stimata se nessun alunno ha dati reali per quell'area
+            out._stimate = ['reading','writing'].filter(k => out[k] != null && per.every(c => c[k] == null || c._stimate.includes(k)));
             return out;
         }
 
@@ -7673,9 +7686,12 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             return COMP_KEYS.map(k => c[k]);
         }
 
-        // Etichette degli assi: "(NP)" dove nessun dataset ha un valore
-        function _compLabels(...series) {
-            return COMP_LBLS.map((l, i) => series.some(sr => sr && sr[i] != null) ? l : l + ' (NP)');
+        // Etichette degli assi: "(NP)" dove nessun dataset ha un valore,
+        // "*" dove il valore e' la media Grammar/Vocabulary (stimate)
+        const COMP_NOTA_STIMA = '* = media Grammar e Vocabulary (nessun esercizio Reading/Writing ancora)';
+        function _compLabels(series, stimate) {
+            return COMP_LBLS.map((l, i) => !series.some(sr => sr && sr[i] != null) ? l + ' (NP)'
+                : (stimate || []).includes(COMP_KEYS[i]) ? l + '*' : l);
         }
 
         function renderClassCharts() {
@@ -7775,12 +7791,13 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 // RADAR COMPETENZE CLASSE — dati reali delle prove, NP dove mancano
                 const radarCtx = document.getElementById('chartClassRadar');
                 if (radarCtx) {
-                    const radarData = getClassRadarData(classe);
+                    const _clComp = getClassCompetenze(classe);
+                    const radarData = COMP_KEYS.map(k => _clComp[k]);
                     if (radarData.some(v => v != null)) {
                         classChartInstances['radar'] = new Chart(radarCtx.getContext('2d'), {
                             type: 'radar',
                             data: {
-                                labels: _compLabels(radarData),
+                                labels: _compLabels([radarData], _clComp._stimate),
                                 datasets:[{
                                     label:`Classe ${classe.nome}`,
                                     data:radarData,
@@ -7797,7 +7814,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                                     legend:{display:false},
                                     title:{
                                         display:true,
-                                        text:'Aree dalle verifiche (% per area) | Speaking = voti orali | NP = non ancora presente',
+                                        text:'Aree dalle verifiche (% per area) | Speaking = voti orali | NP = non ancora presente' + (_clComp._stimate.length ? ' | ' + COMP_NOTA_STIMA : ''),
                                         font:{size:11},
                                         color:'#666'
                                     }
@@ -19057,7 +19074,7 @@ ${blocco.regole}`;
     async function mcSmistaInbox(silenzioso) {
       if (_mcSmistaInCorso) return { spostati: 0, senzaCodice: [] };
       _mcSmistaInCorso = true;
-      const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING'];
+      const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
       const esito = { spostati: 0, senzaCodice: [], sessioni: 0 };
       try {
         const db = firebase.database();
@@ -20304,6 +20321,7 @@ ${blocco.regole}`;
     function _compForSync(st) {
       const c = getStudentCompetenze(st), out = {};
       COMP_KEYS.forEach(k => { if (c[k] != null) out[k] = c[k]; });
+      if (c._stimate.length) out.stimate = c._stimate.join(',');
       return Object.keys(out).length ? out : null;
     }
 
@@ -23171,7 +23189,7 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
             if (bNeedsDoc) {
                 sectionInstrs.push(`=== VALUTAZIONE DOCENTE ===
 Per ogni alunno usa OBBLIGATORIAMENTE: --- ALUNNO: Nome Cognome ---
-Poi scheda strutturata: prima riga (classe/data/attivita/pct/voto), analisi per area (GRAMMAR/VOCABULARY/FUNCTIONS/LISTENING se presenti: 2-3 frasi con errori specifici dalla tabella per-domanda), tempi di risposta (commenta avgTime_*/tempoTotale), analisi complessiva (3-4 frasi su pattern errori, punti di forza, priorita recupero, suggerimento metodologico). Min 12-14 righe per alunno.
+Poi scheda strutturata: prima riga (classe/data/attivita/pct/voto), analisi per area (GRAMMAR/VOCABULARY/FUNCTIONS/LISTENING/READING/WRITING se presenti: 2-3 frasi con errori specifici dalla tabella per-domanda), tempi di risposta (commenta avgTime_*/tempoTotale), analisi complessiva (3-4 frasi su pattern errori, punti di forza, priorita recupero, suggerimento metodologico). Min 12-14 righe per alunno.
 Solo per chi ha RECUPERO_FAST: aggiungi la parte "Recupero (T1: x%, T2: y%)" con analisi per area del recupero, confronto con la prima prova (aree migliorate, errori corretti, errori persistenti) e valutazione globale che spiega il voto finale.`);
             }
             if (bNeedsArgo) {
@@ -23281,7 +23299,7 @@ SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55
                            : 'CLASSROOM';
 
         const sectionInstr = field === 'doc'
-            ? `=== VALUTAZIONE DOCENTE ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\nPoi la scheda strutturata:\n- Prima riga: classe, data, attivita, accuratezza percentuale, voto.\n- Analisi per area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING se presenti): 2-3 frasi per area. Se hai la tabella per-domanda, cita gli errori specifici con la risposta data e quella attesa. Spiega l'errore grammaticale sottostante.\n- Tempi di risposta: commenta avgTime_* e tempoTotale se disponibili.\n- Analisi complessiva: 3-4 frasi su pattern di errore ricorrente, punti di forza, priorita di recupero, suggerimento metodologico concreto.\n- Solo se l'alunno ha RECUPERO_FAST: aggiungi la parte "Recupero (T1: x%, T2: y%)" con analisi per area del recupero, confronto con la prima prova (aree migliorate, errori corretti, errori persistenti) e valutazione globale che spiega il voto finale.\nMinimo 12-14 righe (18-22 con il recupero).`
+            ? `=== VALUTAZIONE DOCENTE ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\nPoi la scheda strutturata:\n- Prima riga: classe, data, attivita, accuratezza percentuale, voto.\n- Analisi per area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING, READING, WRITING se presenti): 2-3 frasi per area. Se hai la tabella per-domanda, cita gli errori specifici con la risposta data e quella attesa. Spiega l'errore grammaticale sottostante.\n- Tempi di risposta: commenta avgTime_* e tempoTotale se disponibili.\n- Analisi complessiva: 3-4 frasi su pattern di errore ricorrente, punti di forza, priorita di recupero, suggerimento metodologico concreto.\n- Solo se l'alunno ha RECUPERO_FAST: aggiungi la parte "Recupero (T1: x%, T2: y%)" con analisi per area del recupero, confronto con la prima prova (aree migliorate, errori corretti, errori persistenti) e valutazione globale che spiega il voto finale.\nMinimo 12-14 righe (18-22 con il recupero).`
             : field === 'argo'
             ? `=== ARGO ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\nPoi 2-3 frasi valutative sintetiche. Max 300 caratteri.`
             : `=== CLASSROOM ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\n${AGENT_LL_FEEDBACK_INSTR}`;
@@ -25415,7 +25433,7 @@ ${sectionInstr}`;
             ? ` | RECUPERO_FAST:${attemptsLabel} | VOTO_CAP:6 (recupero superato ${bestRec}%→max6)`
             : ` | RECUPERO_FAST:${attemptsLabel} | recupero_insuff`;
         console.log(`[Agente] ${nome}: recupero fast ${attemptsLabel} — ${bestRec >= 60 ? 'voto cappato a 6' : 'recupero insufficiente'}`);
-        const TAGS = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING'];
+        const TAGS = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
         out.recoveryDetailLines = hist.map((h, hi) => {
             const qs = agentFbArr(h.questions);
             if (!qs.length) return '';
@@ -26271,7 +26289,7 @@ ${sectionInstr}`;
         const { students, unit, sessionDate, classe } = task;
         const questions = task.questions || [];
         const maxPts = questions.reduce((s, q) => s + (q.points || 1), 0);
-        const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING'];
+        const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
 
         // ── Helper: restituisce le domande della versione assegnata allo studente ──
         // Se lo studente ha avuto fila_b/c/recupero/etc., usa quelle domande;
@@ -26558,7 +26576,7 @@ Per ogni alunno usa OBBLIGATORIAMENTE questo header (sostituisci con il nome rea
 --- ALUNNO: Nome Cognome ---
 Poi la scheda strutturata:
 - Prima riga: classe, data, attivita, accuratezza percentuale, voto.
-- Analisi per area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING se presenti): 2-3 frasi per area. Se hai la tabella per-domanda, cita gli errori specifici con la risposta data e quella attesa (es. Q3: "what did you see" invece di "Did you see"). Spiega l'errore grammaticale sottostante.
+- Analisi per area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING, READING, WRITING se presenti): 2-3 frasi per area. Se hai la tabella per-domanda, cita gli errori specifici con la risposta data e quella attesa (es. Q3: "what did you see" invece di "Did you see"). Spiega l'errore grammaticale sottostante.
 - Tempi di risposta: commenta avgTime_* e tempoTotale se disponibili. Tempo alto + errore = incertezza sulla struttura; tempo basso + errore = risposta superficiale/impulsiva. Segnala le domande con tempo anomalo (>3min o <10s con errore).
 - Analisi complessiva: 3-4 frasi su pattern di errore ricorrente (es. "confusione sistematica tra Do/Does e Did nelle Wh-questions"), punti di forza, priorita di recupero, suggerimento metodologico concreto.
 - Solo per chi ha RECUPERO_FAST: dopo l'analisi della prima prova aggiungi la parte "Recupero (T1: x%, T2: y%)": analisi per area del recupero con gli errori specifici dalla tabella del recupero, poi un confronto con la prima prova (aree migliorate, errori corretti, errori persistenti) e una valutazione globale che spiega il voto finale.
