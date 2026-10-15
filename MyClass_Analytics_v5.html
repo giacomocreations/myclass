@@ -29706,7 +29706,8 @@ ${righe.join('\n')}
     // DSA / PEI / PEI 2 → il piano NON è quello standard: stesso percorso REC/CON/APP
     // degli altri, ma costruito sulle sue competenze e con le regole della sua versione.
     // Costruisce il prompt del quiz (usato sia per Haiku/Gemini/Ollama sia nel file per Claude Code).
-    // opts.nQ: numero di domande (10 quando l'approfondimento ha anche il blocco Sfida).
+    // opts.nQ: numero di domande; opts.level (_ppChallengeLevel): piano da 9,5 in su livellato per anno
+    // (prima 6 domande, seconda 8, terza 10 + blocco Sfida).
     function _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails = '', tagBreakdown = {}, classeNome = '', verInfo = null, opts = {}) {
         const isPei = verInfo?.layout === 2, isDsa = verInfo?.layout === 1;
         const nQ = isPei ? 10 : (opts.nQ || 15);   // PEI: attività più breve, come la sua verifica
@@ -29733,6 +29734,7 @@ ${righe.join('\n')}
 - Hint solo dove necessario (non su ogni domanda). Word bank nel cloze senza voci extra.
 - Alterna domande guidate (con forma base) e domande libere senza guida.
 - Includi almeno 3 domande che richiedono di scegliere tra strutture simili che generano confusione.`
+                : opts.level?.quiz ? opts.level.quiz
                 : `LIVELLO DOMANDE — APPROFONDIMENTO:
 - Frasi complesse, contesti variati (non solo quelli del libro), vocabolario ricco.
 - Nessun hint, nessuna forma base tra parentesi: lo studente deve richiamare la struttura da solo.
@@ -29841,7 +29843,7 @@ ${verInfo ? 'TIPI DI DOMANDA: vedi le REGOLE DELLA VERSIONE ' + verInfo.label + 
 4. "matching" — abbina elementi colonna sinistra a colonna destra (usa per coppie irregolari, definizioni)
 5. "drag-drop" — trascina le parole nella posizione giusta in una frase (usa per word order, sintassi)
 
-${isPei ? 'DISTRIBUZIONE: 6 multiple-choice (3 opzioni) + 2 matching + 2 drag-drop = 10 totali.' : isDsa ? 'DISTRIBUZIONE: 9 multiple-choice + 3 matching + 3 drag-drop = 15 totali.' : nQ === 10 ? 'DISTRIBUZIONE: 3 multiple-choice + 3 fill-blanks + 2 cloze + 1 matching + 1 drag-drop = 10 totali.' : 'DISTRIBUZIONE: 4 multiple-choice + 4 fill-blanks + 3 cloze + 2 matching + 2 drag-drop = 15 totali.'}
+${isPei ? 'DISTRIBUZIONE: 6 multiple-choice (3 opzioni) + 2 matching + 2 drag-drop = 10 totali.' : isDsa ? 'DISTRIBUZIONE: 9 multiple-choice + 3 matching + 3 drag-drop = 15 totali.' : opts.level ? 'DISTRIBUZIONE: ' + opts.level.dist : nQ === 10 ? 'DISTRIBUZIONE: 3 multiple-choice + 3 fill-blanks + 2 cloze + 1 matching + 1 drag-drop = 10 totali.' : 'DISTRIBUZIONE: 4 multiple-choice + 4 fill-blanks + 3 cloze + 2 matching + 2 drag-drop = 15 totali.'}
 Domande mescolate (non raggruppare per tipo). Difficoltà variata, non progressiva.
 Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni di tipo ("Scegli", "Completa", "Abbina", "Trascina").
 
@@ -29878,7 +29880,8 @@ Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdow
     // + scrittura guidata), uguale per tutti gli alunni da 9,5 in su della classe.
     async function _pianoGenerateActivity(studente, voto, unit, prefix, errorDetails = '', tagBreakdown = {}, classeNome = '', verInfo = null, opts = {}) {
         const challenge = prefix === 'APP' && !!opts.challenge;
-        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, { nQ: challenge ? 10 : undefined });
+        const _lv = challenge ? _ppChallengeLevel(classeNome) : null;
+        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, _lv ? { nQ: _lv.nQ, level: _lv } : {});
         let raw = '';
         try {
             raw = await _pianoAICall(P.prompt, P.sysMsg);
@@ -30250,39 +30253,85 @@ Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markd
         return Number(last.voto) >= 9.5;
     }
     function _ppChallengeKey(classeNome, unit) { return `${classeNome || ''}|${unit || ''}`; }
+
+    // Piano "da 9,5 in su" (quiz di approfondimento + Sfida) livellato per anno:
+    // prima più facile e più corto, seconda un po' più impegnativo, terza completo.
+    function _ppChallengeLevel(classeNome) {
+        const y = _ppAnnoLabel(classeNome).y;
+        if (y === '1') return {
+            y, nQ: 6,
+            dist: '2 multiple-choice + 1 fill-blanks + 1 cloze + 1 matching + 1 drag-drop = 6 totali.',
+            quiz: `LIVELLO DOMANDE — APPROFONDIMENTO PRIMA MEDIA (alunno da 9,5 in su, livello A1):
+- Frasi brevi e chiare, lessico dell'unità con al massimo qualche parola nuova facile da capire dal contesto.
+- Nessuna forma base tra parentesi, ma istruzioni molto chiare; nella cloze la word bank ha 1 solo distrattore.
+- Almeno 2 domande con distrattori plausibili (errori tipici di chi ha appena imparato la struttura).
+- Almeno 1 domanda di TRANSFER: la stessa struttura in un contesto nuovo e semplice (chat, biglietto, breve messaggio). Nell'istruzione scrivi "Transfer —" all'inizio (es. "**Transfer — completa la chat.**").`,
+            sfida: { livello: 'A1/A1+', parole: '100-130', frasi: 'frasi brevi e semplici, lessico noto di una prima media',
+                     esercizi: 4, comp: null, errori: 3, scrittura: '30-40', strutture: 2, pScrittura: 4 }
+        };
+        if (y === '2') return {
+            y, nQ: 8,
+            dist: '2 multiple-choice + 2 fill-blanks + 2 cloze + 1 matching + 1 drag-drop = 8 totali.',
+            quiz: `LIVELLO DOMANDE — APPROFONDIMENTO SECONDA MEDIA (alunno da 9,5 in su, livello A2):
+- Frasi di media lunghezza, contesti variati (anche fuori dal libro), qualche parola nuova.
+- Nessun hint, nessuna forma base tra parentesi: lo studente deve richiamare la struttura da solo.
+- Almeno 2 domande con distrattori plausibili (errori comuni di chi conosce bene ma non ancora perfettamente).
+- Almeno 2 domande di TRANSFER: la stessa struttura in un contesto nuovo e realistico (chat, email, post, dialogo al negozio). Nell'istruzione scrivi "Transfer —" all'inizio (es. "**Transfer — completa la chat.**").`,
+            sfida: { livello: 'A2', parole: '150-190', frasi: 'frasi di media lunghezza, lessico adatto a una seconda media',
+                     esercizi: 5, comp: '1 frase', errori: 4, scrittura: '50-60', strutture: 3, pScrittura: 5, pComp: 2 }
+        };
+        return {   // terza (e classi senza anno riconoscibile): come prima di questa modifica
+            y, nQ: 10,
+            dist: '3 multiple-choice + 3 fill-blanks + 2 cloze + 1 matching + 1 drag-drop = 10 totali.',
+            quiz: null,
+            sfida: { livello: 'A2+/B1', parole: '180-250', frasi: '', esercizi: 5, comp: '1-2 frasi', errori: 5, scrittura: '60-80', strutture: 3, pScrittura: 6, pComp: 3 }
+        };
+    }
+    // Versione dei blocchi Sfida in cache: quelli salvati prima del livellamento per anno non si riusano
+    const _PP_CHALLENGE_VER = 2;
     function _ppChallengeCacheGet(key) {
         try {
             const e = JSON.parse(localStorage.getItem('pp_challenge_cache') || '{}')[key];
-            return e && (Date.now() - e.at < 30 * 864e5) ? JSON.parse(JSON.stringify(e.block)) : null;
+            return e && e.v === _PP_CHALLENGE_VER && (Date.now() - e.at < 30 * 864e5) ? JSON.parse(JSON.stringify(e.block)) : null;
         } catch { return null; }
     }
     function _ppChallengeCacheSet(key, block) {
         try {
             const c = JSON.parse(localStorage.getItem('pp_challenge_cache') || '{}');
-            c[key] = { at: Date.now(), block };
+            c[key] = { at: Date.now(), v: _PP_CHALLENGE_VER, block };
             const keys = Object.keys(c).sort((a, b) => c[b].at - c[a].at);
             keys.slice(20).forEach(k => delete c[k]);   // tiene le 20 più recenti
             localStorage.setItem('pp_challenge_cache', JSON.stringify(c));
         } catch(e) { console.warn('[Piano] cache sfida non salvata:', e.message); }
     }
-    function _pianoBuildChallengePrompt(unit) {
-        return `Sei un docente di inglese per la scuola media italiana. Prepara il blocco "SFIDA" per gli alunni che hanno preso almeno 9,5 nella verifica dell'unità "${unit}". Lo stesso blocco andrà a tutti questi alunni della classe: niente riferimenti a un singolo alunno.
-
+    function _pianoBuildChallengePrompt(unit, classeNome = '') {
+        const A = _ppAnnoLabel(classeNome), L = _ppChallengeLevel(classeNome).sfida;
+        const nErr = L.errori, righeErr = Array.from({ length: nErr }, (_, i) => i === 0 ? '1. She don\'t like cold weather. → ___' : `${i + 1}. ... → ___`).join('\\n');
+        const ansErr = ['"doesn\'t|does not"', ...Array(nErr - 1).fill('"..."')].join(',');
+        const lettere = 'abcd';
+        const voci = [
+            `2 "multiple-choice" di comprensione del testo (4 opzioni, una sola corretta, la risposta si trova nel testo), "tag":"READING", "points":1.`,
+            ...(L.comp ? [`1 "free-response" di comprensione: domanda aperta sul testo, risposta in inglese in ${L.comp}; nel campo "hint" scrivi in italiano cosa deve contenere una buona risposta (serve alla correzione automatica). "tag":"READING", "points":${L.pComp}.`] : []),
+            `1 "fill-blanks" CACCIA ALL'ERRORE: ${nErr} frasi numerate, legate al testo, ognuna con UN errore sulle strutture dell'unità; dopo ogni frase scrivi "→ ___"; lo studente scrive la forma corretta della parola sbagliata. "answers" = le ${nErr} forme corrette (con | solo forme ugualmente corrette, es. "doesn't|does not"). "tag":"GRAMMAR", "points":${nErr}.`,
+            `1 "free-response" SCRITTURA BREVE GUIDATA (transfer): ${L.scrittura} parole in inglese in un contesto nuovo e concreto (${A.y === '1' ? 'messaggio a un amico, biglietto, breve post' : 'email, post, recensione, messaggio a un amico'}) collegato al tema del testo, con l'elenco di ${L.strutture} strutture dell'unità da usare obbligatoriamente. Nel campo "hint" scrivi in italiano i criteri di valutazione (strutture usate correttamente, lunghezza, coerenza). "tag":"WRITING", "points":${L.pScrittura}.`
+        ];
+        const esempio = [
+            `{"type":"multiple-choice","tag":"READING","question":"**Reading — scegli la risposta corretta.**\\nWhy ...?","options":["...","...","...","..."],"correct":0,"points":1}`,
+            `{"type":"multiple-choice","tag":"READING","question":"**Reading — scegli la risposta corretta.**\\nWhat ...?","options":["...","...","...","..."],"correct":2,"points":1}`,
+            ...(L.comp ? [`{"type":"free-response","tag":"READING","question":"**Reading — rispondi in inglese (${L.comp}).**\\nWhy ...?","hint":"...","points":${L.pComp}}`] : []),
+            `{"type":"fill-blanks","tag":"GRAMMAR","question":"**Caccia all'errore — ogni frase contiene un errore. Scrivi la forma corretta.**\\n${righeErr}","answers":[${ansErr}],"points":${nErr}}`,
+            `{"type":"free-response","tag":"WRITING","question":"**Scrittura guidata (${L.scrittura} parole).**\\nWrite ... Use: ${Array.from({ length: L.strutture }, (_, i) => `${i + 1}) ...`).join(' ')}","hint":"...","points":${L.pScrittura}}`
+        ];
+        return `Sei un docente di inglese per la scuola media italiana. Prepara il blocco "SFIDA" per gli alunni che hanno preso almeno 9,5 nella verifica dell'unità "${unit}"${classeNome ? `, classe ${classeNome} (${A.label})` : ''}. Lo stesso blocco andrà a tutti questi alunni della classe: niente riferimenti a un singolo alunno.
+${A.y === '1' ? 'È una PRIMA media: la sfida deve essere stimolante ma alla portata di chi studia inglese da poco — più corta e più semplice di quella di seconda e terza.\n' : A.y === '2' ? 'È una SECONDA media: la sfida è un po\' più impegnativa di quella di prima, ma più breve e semplice di quella di terza.\n' : ''}
 Il blocco contiene:
-1. "passageText": un testo di lettura in inglese di 180-250 parole, livello A2+/B1, con il titolo in grassetto sulla prima riga (**Title**). Argomento: un approfondimento legato al tema o alla grammatica dell'unità (curiosità culturali, vita reale, storia, scienza, attualità adatta a ragazzi di 11-14 anni). Il testo usa in modo naturale le strutture dell'unità.
-2. "questions": ESATTAMENTE 5 esercizi, in quest'ordine:
-   a) 2 "multiple-choice" di comprensione del testo (4 opzioni, una sola corretta, la risposta si trova nel testo), "tag":"READING", "points":1.
-   b) 1 "free-response" di comprensione: domanda aperta sul testo, risposta in inglese in 1-2 frasi; nel campo "hint" scrivi in italiano cosa deve contenere una buona risposta (serve alla correzione automatica). "tag":"READING", "points":3.
-   c) 1 "fill-blanks" CACCIA ALL'ERRORE: 5 frasi numerate, legate al testo, ognuna con UN errore sulle strutture dell'unità; dopo ogni frase scrivi "→ ___"; lo studente scrive la forma corretta della parola sbagliata. "answers" = le 5 forme corrette (con | solo forme ugualmente corrette, es. "doesn't|does not"). "tag":"GRAMMAR", "points":5.
-   d) 1 "free-response" SCRITTURA BREVE GUIDATA (transfer): 60-80 parole in inglese in un contesto nuovo e concreto (email, post, recensione, messaggio a un amico) collegato al tema del testo, con l'elenco di 3 strutture dell'unità da usare obbligatoriamente. Nel campo "hint" scrivi in italiano i criteri di valutazione (strutture usate correttamente, lunghezza, coerenza). "tag":"WRITING", "points":6.
+1. "passageText": un testo di lettura in inglese di ${L.parole} parole, livello ${L.livello}${L.frasi ? ` (${L.frasi})` : ''}, con il titolo in grassetto sulla prima riga (**Title**). Argomento: un approfondimento legato al tema o alla grammatica dell'unità (curiosità culturali, vita reale, storia, scienza, attualità adatta a ragazzi di 11-14 anni). Il testo usa in modo naturale le strutture dell'unità${A.y === '1' || A.y === '2' ? `, senza strutture grammaticali che una ${A.anno} non ha ancora studiato` : ''}.
+2. "questions": ESATTAMENTE ${L.esercizi} esercizi, in quest'ordine:
+${voci.map((v, i) => `   ${lettere[i]}) ${v}`).join('\n')}
 
 FORMATO JSON ESATTO:
 {"passageText":"**Title**\\nText...","questions":[
-{"type":"multiple-choice","tag":"READING","question":"**Reading — scegli la risposta corretta.**\\nWhy did ...?","options":["...","...","...","..."],"correct":0,"points":1},
-{"type":"multiple-choice","tag":"READING","question":"**Reading — scegli la risposta corretta.**\\nWhat ...?","options":["...","...","...","..."],"correct":2,"points":1},
-{"type":"free-response","tag":"READING","question":"**Reading — rispondi in inglese (1-2 frasi).**\\nWhy ...?","hint":"...","points":3},
-{"type":"fill-blanks","tag":"GRAMMAR","question":"**Caccia all'errore — ogni frase contiene un errore. Scrivi la forma corretta.**\\n1. She don't like cold weather. → ___\\n2. ... → ___\\n3. ... → ___\\n4. ... → ___\\n5. ... → ___","answers":["doesn't|does not","...","...","...","..."],"points":5},
-{"type":"free-response","tag":"WRITING","question":"**Scrittura guidata (60-80 parole).**\\nWrite ... Use: 1) ... 2) ... 3) ...","hint":"...","points":6}]}
+${esempio.join(',\n')}]}
 Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markdown.`;
     }
     async function _pianoGetChallengeBlock(classeNome, unit) {
@@ -30290,7 +30339,7 @@ Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markd
         const cached = _ppChallengeCacheGet(key);
         if (cached) { console.log(`[Piano] Sfida ${key}: riuso il blocco già generato`); return cached; }
         try {
-            const raw = await _pianoAICall(_pianoBuildChallengePrompt(unit || 'English'), 'Sei un docente di inglese per scuola media italiana. Rispondi SEMPRE e SOLO con un oggetto JSON valido.');
+            const raw = await _pianoAICall(_pianoBuildChallengePrompt(unit || 'English', classeNome), 'Sei un docente di inglese per scuola media italiana. Rispondi SEMPRE e SOLO con un oggetto JSON valido.');
             const obj = _pianoParseJson(raw, '{');
             if (!obj || !String(obj.passageText || '').trim() || !Array.isArray(obj.questions)) throw new Error('JSON sfida non valido');
             const questions = await _pianoReviewQuestions(obj.questions, { unit, prefix: 'APP' });
@@ -30525,7 +30574,7 @@ OUTPUT: crea UN file chiamato "piani_da_claude.json" (solo JSON valido, nessun t
     { "ref": "<ref di un alunno con piano ORALE>", "testo": "Ciao [NOME], ..." }
   ],
   "sfide": [
-    { "chiave": "<chiave della sfida>", "passageText": "...", "questions": [ ...5 esercizi... ] }
+    { "chiave": "<chiave della sfida>", "passageText": "...", "questions": [ ...gli esercizi richiesti dalla sua consegna... ] }
   ]
 }
 Un elemento in "piani" per OGNI alunno, nello stesso ordine; "sfide" vuoto se il file non ne contiene.
@@ -30538,7 +30587,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
 
     // Voce dell'export: "local" resta in questo browser (nomi, codici), "file" va a Claude (senza nomi).
     function _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix, voto, code, errorDetails = '', tagBreakdown = {}, verInfo = null, challenge = false, draftId = null }) {
-        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, { nQ: challenge ? 10 : undefined });
+        const _lv = challenge ? _ppChallengeLevel(classeNome) : null;
+        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, _lv ? { nQ: _lv.nQ, level: _lv } : {});
         const lNeed = _ppListeningNeed(prefix, errorDetails, tagBreakdown, verInfo);
         const sfida = challenge ? _ppChallengeKey(classeNome, unit) : null;
         return {
@@ -30550,7 +30600,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 versione: verInfo?.label || null,
                 consegna_quiz: P.prompt,
                 consegna_listening: lNeed.needed ? _pianoBuildListeningPrompt(unit || 'English Grammar', lNeed.level, lNeed.focus) : null,
-                consegna_speaking: prefix === 'APP' ? _pianoBuildSpeakingPrompt(unit) : null,
+                consegna_speaking: prefix === 'APP' ? _pianoBuildSpeakingPrompt(unit, classeNome) : null,
                 sfida
             }
         };
@@ -30636,7 +30686,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
         });
         const sfide = [...new Set(entries.map(e => e.local.sfida).filter(Boolean))].map(k => {
             const unit = k.slice(k.indexOf('|') + 1);
-            return { chiave: k, classe: k.slice(0, k.indexOf('|')), unit, consegna: _pianoBuildChallengePrompt(unit || 'English') };
+            return { chiave: k, classe: k.slice(0, k.indexOf('|')), unit, consegna: _pianoBuildChallengePrompt(unit || 'English', k.slice(0, k.indexOf('|'))) };
         });
         _ppSaveClaudeManifest(exportId, manifest);
         const fileObj = { formato: 'myclass-piani-export', versione: 1, export_id: exportId, creato: new Date().toISOString(),
@@ -30804,13 +30854,18 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
     }
 
     // Genera speaking prompt per approfondimento via Haiku
-    function _pianoBuildSpeakingPrompt(unit) {
-        return `Scrivi UN breve speaking prompt (massimo 40 parole, in inglese) per uno studente di scuola media italiana di livello B1 sull'unità "${unit}". 
-Deve essere una domanda aperta che richiede 1-2 minuti di parlato.
+    // Livello per anno: prima A1 (più breve), seconda A2, terza B1
+    function _pianoBuildSpeakingPrompt(unit, classeNome = '') {
+        const y = _ppAnnoLabel(classeNome).y;
+        const cfg = y === '1' ? { lv: 'A1', max: 25, durata: '30-60 secondi', extra: 'Usa parole semplici e una domanda diretta sulla vita quotidiana dello studente.' }
+                  : y === '2' ? { lv: 'A2', max: 30, durata: '1 minuto circa', extra: '' }
+                  : { lv: 'B1', max: 40, durata: '1-2 minuti', extra: '' };
+        return `Scrivi UN breve speaking prompt (massimo ${cfg.max} parole, in inglese) per uno studente di scuola media italiana di livello ${cfg.lv} sull'unità "${unit}". 
+Deve essere una domanda aperta che richiede ${cfg.durata} di parlato.${cfg.extra ? '\n' + cfg.extra : ''}
 Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
     }
-    async function _pianoGenerateSpeakingPrompt(unit) {
-        const prompt = _pianoBuildSpeakingPrompt(unit);
+    async function _pianoGenerateSpeakingPrompt(unit, classeNome = '') {
+        const prompt = _pianoBuildSpeakingPrompt(unit, classeNome);
         try {
             return (await _pianoAICall(prompt, null)).trim();
         } catch(e) {
@@ -31097,7 +31152,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         }
         if (challenge) console.log(`[Piano] ${studentName}: almeno 9,5 nella verifica → APP con blocco Sfida`);
         const activity = await _pianoGenerateActivity(studente, media, unit, 'APP', appContext, {}, classeNome, verInfo, { challenge });
-        const speaking = await _pianoGenerateSpeakingPrompt(unit);
+        const speaking = await _pianoGenerateSpeakingPrompt(unit, classeNome);
         if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return 'error'; }
         // Aggiungi speaking prompt come item extra nel piano (incluso nella bozza)
         if (speaking) activity.speakingPrompt = speaking;
