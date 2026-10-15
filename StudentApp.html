@@ -538,6 +538,31 @@ function fmtLessonDesc(raw){
   }).join('');
 }
 
+// Testo del docente → HTML sicuro con gli indirizzi web cliccabili (a capo anche negli URL lunghi)
+function linkifyText(s){
+  return esc(s).replace(/\bhttps?:\/\/[^\s<]+/gi, m => {
+    const tail = (m.match(/[.,;:!?)\]]+$/) || [''])[0];
+    const u = tail ? m.slice(0, -tail.length) : m;
+    return `<a href="${u.replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" style="color:#534AB7;font-weight:600;text-decoration:underline;overflow-wrap:anywhere;word-break:break-word">${u}</a>${tail}`;
+  });
+}
+
+// Materiali della unit allegati a un messaggio di piano (REC/CON).
+// I messaggi nuovi li hanno in msg.pianoMateriali; per quelli vecchi si leggono
+// dalle righe "• Titolo → url" del testo.
+function pianoMateriali(msg){
+  if(Array.isArray(msg.pianoMateriali) && msg.pianoMateriali.length) return msg.pianoMateriali.filter(m=>m && (m.titolo||m.url));
+  const i = String(msg.text||'').indexOf('📚 Rivedi i materiali');
+  if(i < 0) return [];
+  return String(msg.text).slice(i).split('\n').slice(1)
+    .map(l => l.match(/^\s*•\s*(.*?)(?:\s*→\s*(\S+))?\s*$/)).filter(Boolean)
+    .map(m => ({ titolo: m[1] || m[2] || '', url: m[2] || '' }));
+}
+function pianoTextSenzaMateriali(text){
+  const t = String(text||''), i = t.indexOf('📚 Rivedi i materiali');
+  return (i < 0 ? t : t.slice(0, i)).trim();
+}
+
 // Garantisce che un URL abbia un protocollo — senza, il browser lo tratta come
 // path relativo e la pagina risulta vuota.
 function ensureUrl(u){
@@ -2513,6 +2538,13 @@ function renderBoard(){
          </div>
          ${msg.pianoCode?`<div style="font-size:11px;color:#7c3aed;margin-bottom:8px;">Codice: <code style="font-weight:700;letter-spacing:1px;">${esc(msg.pianoCode)}</code></div>`:''}
          ${msg.pianoText?`<div style="font-size:12px;color:#3730a3;line-height:1.6;background:white;border-radius:8px;padding:10px;margin-bottom:10px;max-height:120px;overflow:hidden;">${esc(msg.pianoText.slice(0,300))}${msg.pianoText.length>300?'…':''}</div>`:''}
+         ${(() => { const mats = pianoMateriali(msg); if(!mats.length) return '';
+           return `<div style="background:white;border-radius:8px;padding:10px;margin-bottom:10px;">
+             <div style="font-size:12px;font-weight:700;color:#3730a3;margin-bottom:6px;">📚 Rivedi i materiali di questa unit</div>
+             ${mats.map(m => m.url
+               ? `<a href="${esc(ensureUrl(m.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-top:6px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;text-decoration:none;color:#3C3489;font-size:13px;font-weight:600;min-width:0;"><span style="flex-shrink:0">🔗</span><span style="flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word">${esc(m.titolo||m.url)}</span><span style="flex-shrink:0;font-size:11px;color:#7c3aed">Apri ›</span></a>`
+               : `<div style="padding:6px 10px;margin-top:6px;font-size:13px;color:#3C3489;overflow-wrap:anywhere">• ${esc(m.titolo)}</div>`).join('')}
+           </div>`; })()}
          ${msg.url?`<a href="${ensureUrl(msg.url)}" target="_blank" rel="noopener noreferrer"
            style="display:block;text-align:center;padding:10px 20px;background:#5b21b6;color:#fff;border-radius:10px;font-size:13px;font-weight:700;text-decoration:none;">▶ Accedi all'attività</a>`:''}
        </div>`;
@@ -2528,7 +2560,7 @@ function renderBoard(){
              ${isVal&&msg.voto!=null?`<div style="font-size:20px;font-weight:700;color:#3C3489">${msg.voto}</div>`:''}
            </div>
            <div style="display:flex;gap:4px;margin:3px 0 5px;flex-wrap:wrap">${privBadge}<span style="font-size:10px;color:var(--faint)">${timeStr}</span></div>
-           <div style="font-size:13px;color:${isTeacher?'#3C3489':isMine?'#085041':'var(--text)'};line-height:1.5">${msg.htmlText ? _safeHtml(msg.htmlText) : esc((msg.from==='teacher') ? (msg.text||'') : linguaccia(msg.text||'').masked)}</div>
+           <div style="font-size:13px;color:${isTeacher?'#3C3489':isMine?'#085041':'var(--text)'};line-height:1.5;overflow-wrap:anywhere;word-break:break-word;${msg.htmlText?'':'white-space:pre-line;'}">${msg.htmlText ? _safeHtml(msg.htmlText) : (msg.from==='teacher') ? linkifyText(isPiano ? pianoTextSenzaMateriali(msg.text) : (msg.text||'')) : esc(linguaccia(msg.text||'').masked)}</div>
            ${isPiano ? pianoBlock : isQuiz ? quizBlock : (msg.url||msg.link?`<div style="margin-top:8px;background:var(--bg);border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:8px">
              <div style="width:28px;height:28px;background:#FCEBEB;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#E24B4A" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
