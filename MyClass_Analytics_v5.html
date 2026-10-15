@@ -29561,7 +29561,8 @@ ${blocchiPerAlunno}`;
     }
 
     // Scrittura atomica Firebase per un'attività piano
-    async function _pianoWriteFirebase({ studentSafe, studentName, code, prefix, activity, unit, voto, classeNome, deadline }) {
+    // I piani non hanno scadenza (scelta del docente): nessun campo deadline.
+    async function _pianoWriteFirebase({ studentSafe, studentName, code, prefix, activity, unit, voto, classeNome }) {
         let db;
         try { db = firebase.database(); } catch(e) { console.warn('[Piano] Firebase non disponibile'); return false; }
         const now = Date.now();
@@ -29569,13 +29570,12 @@ ${blocchiPerAlunno}`;
             activity, prefix, unit, voto,
             studentName, classeNome,
             createdAt: now,
-            deadline: deadline || (now + 7 * 24 * 3600 * 1000),
             status: 'pending', lastScore: null, attemptCount: 0
         };
         const planData = {
             type: prefix === 'REC' ? 'recovery_scritto' : prefix === 'CON' ? 'consolidamento' : 'approfondimento',
             code, unitName: unit || '', voto,
-            deadline: sessionData.deadline, createdAt: now,
+            createdAt: now,
             status: 'pending', lastScore: null, attemptCount: 0,
             ...(activity?.speakingPrompt ? { speakingPrompt: activity.speakingPrompt } : {})
         };
@@ -31494,14 +31494,11 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         _ppSavDraftScritto();
         // ─────────────────────────────────────────────────────────────────────
 
-        const _ppDeadlineMs = item.prefix === 'APP'
-            ? Date.now() + 14 * 24 * 3600 * 1000   // approfondimento → 14 giorni
-            : Date.now() +  7 * 24 * 3600 * 1000;   // rec/con → 7 giorni
+        // Nessuna scadenza: il piano resta disponibile finché il docente non lo rimuove
         const ok = await _pianoWriteFirebase({
             studentSafe: item.studentSafe, studentName: item.studentName,
             code: item.code, prefix: item.prefix, activity: item.activity,
-            unit: item.unit, voto: item.voto, classeNome: item.classeNome,
-            deadline: _ppDeadlineMs
+            unit: item.unit, voto: item.voto, classeNome: item.classeNome
         });
         if (!ok) return false;
         const classId = item.classeNome.replace(/\s+/g,'_').toLowerCase();
