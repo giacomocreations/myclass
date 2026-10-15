@@ -6710,7 +6710,7 @@ function renderLiveSidebar(responses) {
 
       // Calcola % solo per studenti che hanno consegnato (done o recDone)
       if ((done || recDone) && !aiPending) {
-        const qsForPct = getStudentAssignedQuestions(key, displayName, r.aliasOf);
+        const qsForPct = getStudentAssignedQuestions(key, displayName, r.aliasOf, r.studentVersion);
         const answersForPct = fbArr(r.answers);
         const manualScoresPct = r.manualScores || {};
         const aiScoresPct = r.aiScores || {};
@@ -6746,7 +6746,7 @@ function renderLiveSidebar(responses) {
       // Badge "📝 N" — risposte libere consegnate senza punteggio AI né manuale
       let pendingFRBadge = '';
       if ((done || recDone) && !aiPending) {
-        const _qsP = getStudentAssignedQuestions(key, displayName, r.aliasOf);
+        const _qsP = getStudentAssignedQuestions(key, displayName, r.aliasOf, r.studentVersion);
         const _ansP = fbArr(r.answers);
         const _msP = r.manualScores || {};
         const _asP = r.aiScores || {};
@@ -13195,6 +13195,325 @@ function switchDashTabById(id) {
 }
 
 
+// ── PDF: domanda completa + risposta dell'alunno ─────────────────────────
+// Nel PDF la domanda era tagliata a 100 caratteri, senza immagine né opzioni,
+// e alcune risposte uscivano come indici grezzi ("2", "2 / 0 / 1"): l'alunno
+// e il genitore non capivano cosa era stato chiesto né cosa era stato scelto.
+// Qui ogni domanda è ridisegnata per intero (immagine, testo, tutte le
+// opzioni, tutte le coppie, tutti gli spazi) con la risposta dell'alunno
+// evidenziata e, se sbagliata, quella giusta accanto.
+// Blocco autosufficiente: identico in LiveLearn.html e StudentApp.html.
+const _PDFQ_BLANK_RE = /___|\[\[([^\[\]\n]*\|[^\[\]\n]*)\]\]/g;
+function _pdfqEsc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function _pdfqArr(v) {
+  if (Array.isArray(v)) return v;
+  if (v && typeof v === 'object') {
+    const ks = Object.keys(v).map(Number).filter(n => Number.isFinite(n));
+    if (!ks.length) return Object.values(v);
+    const arr = new Array(Math.max(...ks) + 1).fill(null);
+    Object.keys(v).forEach(k => { const n = Number(k); if (Number.isFinite(n)) arr[n] = v[k]; });
+    return arr;
+  }
+  return null;
+}
+function _pdfqRich(s) {
+  let h = _pdfqEsc(s);
+  h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/\*([^\n]+?)\*/g, '<em>$1</em>');
+  h = h.replace(/\[(red|blue|green|orange|purple|big)\]([\s\S]+?)\[\/\1\]/gi, (m, c, t) =>
+    c.toLowerCase() === 'big' ? '<span style="font-size:1.25em;font-weight:700;">' + t + '</span>'
+      : '<span style="color:' + ({ red:'#ef4444', blue:'#3b82f6', green:'#10b981', orange:'#f59e0b', purple:'#8b5cf6' })[c.toLowerCase()] + '">' + t + '</span>');
+  return h.replace(/\n/g, '<br>');
+}
+function _pdfqNorm(s) {
+  return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .replace(/[-–—]/g, '').replace(/[.,!?;:'"()]/g, '').replace(/\s+/g, ' ').trim();
+}
+function _pdfqAlts(c) { return String(c == null ? '' : c).split('|').map(x => x.trim()).filter(Boolean); }
+function _pdfqClozeOk(given, corr) { const g = _pdfqNorm(given); return _pdfqAlts(corr).some(alt => _pdfqNorm(alt) === g); }
+function _pdfqEmpty(v) { return v === null || v === undefined || (typeof v === 'string' && v.trim() === ''); }
+const _PDFQ_NONE = '<span class="pq-none">nessuna risposta</span>';
+// Spazio compilato: risposta dell'alunno (verde/rossa) + quella giusta se sbagliata
+function _pdfqChip(given, ok, correctTxt) {
+  if (_pdfqEmpty(given)) {
+    return '<span class="pq-chip pq-ko">___</span>' + (correctTxt ? '<span class="pq-fix">→ ' + _pdfqEsc(correctTxt) + '</span>' : '');
+  }
+  const cls = ok === true ? 'pq-ok' : ok === false ? 'pq-ko' : 'pq-neutral';
+  return '<span class="pq-chip ' + cls + '">' + _pdfqEsc(given) + (ok === true ? ' ✓' : ok === false ? ' ✗' : '') + '</span>' +
+    (ok === false && correctTxt ? '<span class="pq-fix">→ ' + _pdfqEsc(correctTxt) + '</span>' : '');
+}
+// Testo con gli spazi (___ e [[a|b|c]]) sostituiti dalle risposte dell'alunno
+function _pdfqFillText(text, given, corrects, startIdx) {
+  let k = startIdx || 0;
+  const parts = [];
+  const tok = String(text || '').replace(_PDFQ_BLANK_RE, (m, inner) => {
+    const n = k++;
+    const corr = corrects[n];
+    const g = given[n];
+    const hasCorr = corr != null && String(corr).trim() !== '';
+    const ok = hasCorr ? (!_pdfqEmpty(g) && _pdfqClozeOk(g, corr)) : null;
+    let h = _pdfqChip(g, hasCorr ? ok : null, hasCorr ? _pdfqAlts(corr).join(' / ') : '');
+    if (inner !== undefined) h += '<span class="pq-icopts">(' + inner.split('|').map(o => _pdfqEsc(o.trim())).join(' / ') + ')</span>';
+    parts.push(h);
+    return '\u0000' + (parts.length - 1) + '\u0000';
+  });
+  return { html: _pdfqRich(tok).replace(/\u0000(\d+)\u0000/g, (m, i) => parts[+i]), next: k };
+}
+function _pdfqCountBlanks(t) { return (String(t || '').match(_PDFQ_BLANK_RE) || []).length; }
+
+// Corpo della domanda secondo il tipo. q = domanda (per il listening: quella interna)
+function _pdfqBody(q, type, a) {
+  const L = 'ABCDEFGHIJ';
+  const textHtml = q.text ? '<div class="pq-text">' + _pdfqRich(q.text) + '</div>' : '';
+  const hint = q.hint ? '<div class="pq-hint">💡 ' + _pdfqEsc(q.hint) + '</div>' : '';
+
+  if (type === 'multiple-choice') {
+    const opts = Array.isArray(q.options) ? q.options : (_pdfqArr(q.options) || []);
+    let sel = null;
+    if (typeof a === 'number') sel = a;
+    else if (typeof a === 'string' && a.trim() !== '' && /^\d+$/.test(a.trim())) sel = Number(a.trim());
+    else if (typeof a === 'string' && a.trim() !== '') {
+      const f = opts.findIndex(o => _pdfqNorm(o) === _pdfqNorm(a));
+      if (f >= 0) sel = f;
+    }
+    const corr = q.correct != null && q.correct !== '' ? Number(q.correct) : null;
+    const rows = opts.map((o, oi) => {
+      const isSel = sel === oi, isCorr = corr === oi;
+      const cls = isSel ? (isCorr ? 'pq-opt pq-opt-ok' : 'pq-opt pq-opt-ko') : (isCorr ? 'pq-opt pq-opt-right' : 'pq-opt');
+      const tags = (isSel ? '<span class="pq-tag ' + (isCorr ? 'pq-tag-ok' : 'pq-tag-ko') + '">' + (isCorr ? '✓ scelta dall\'alunno' : '✗ scelta dall\'alunno') + '</span>' : '') +
+        (isCorr && !isSel ? '<span class="pq-tag pq-tag-right">✓ risposta corretta</span>' : '');
+      return '<div class="' + cls + '"><span class="pq-letter">' + (L[oi] || (oi + 1)) + '</span><span class="pq-otext">' + _pdfqEsc(o) + '</span>' + tags + '</div>';
+    }).join('');
+    let extra = '';
+    if (_pdfqEmpty(a)) extra = '<div class="pq-note">L\'alunno non ha risposto.</div>';
+    else if (sel === null || sel < 0 || sel >= opts.length) extra = '<div class="pq-note">Risposta registrata: <strong>' + _pdfqEsc(typeof a === 'object' ? JSON.stringify(a) : a) + '</strong></div>';
+    return textHtml + hint + '<div class="pq-opts">' + rows + '</div>' + extra;
+  }
+
+  if (type === 'cloze' || type === 'fill-blanks') {
+    const given = _pdfqArr(a) || (_pdfqEmpty(a) ? [] : [a]);
+    const corrects = _pdfqArr(q.answers) || [];
+    const bank = Array.isArray(q.wordBank) && q.wordBank.length
+      ? '<div class="pq-bank"><strong>Banca parole:</strong> ' + q.wordBank.map(_pdfqEsc).join(' · ') + '</div>' : '';
+    const nBlanks = _pdfqCountBlanks(q.text);
+    let html = '';
+    let used = 0;
+    if (nBlanks > 0) {
+      const r = _pdfqFillText(q.text, given, corrects, 0);
+      html = '<div class="pq-text pq-filled">' + r.html + '</div>';
+      used = r.next;
+    } else {
+      html = textHtml;
+    }
+    // Spazi senza segnaposto nel testo (fill-blanks senza ___): elenco numerato
+    const n = Math.max(corrects.length, given.length);
+    if (used < n) {
+      let li = '';
+      for (let b = used; b < n; b++) {
+        const corr = corrects[b];
+        const hasCorr = corr != null && String(corr).trim() !== '';
+        const ok = hasCorr ? (!_pdfqEmpty(given[b]) && _pdfqClozeOk(given[b], corr)) : null;
+        li += '<li>' + _pdfqChip(given[b], ok, hasCorr ? _pdfqAlts(corr).join(' / ') : '') + '</li>';
+      }
+      html += '<ol class="pq-list" start="' + (used + 1) + '">' + li + '</ol>';
+    }
+    return bank + hint + html + (_pdfqEmpty(a) ? '<div class="pq-note">L\'alunno non ha risposto.</div>' : '');
+  }
+
+  if (type === 'matching') {
+    const left = _pdfqArr(q.left) || [], right = _pdfqArr(q.right) || [];
+    const arr = _pdfqArr(a);
+    const rightOf = v => {
+      if (_pdfqEmpty(v)) return null;
+      if (typeof v === 'number' || /^\d+$/.test(String(v).trim())) return right[Number(v)] != null ? right[Number(v)] : '?';
+      return String(v);
+    };
+    const rows = left.map((l, li) => {
+      const g = arr ? arr[li] : null;
+      const gv = rightOf(g);
+      const cv = right[li];
+      const ok = gv != null && _pdfqNorm(gv) === _pdfqNorm(cv);
+      return '<tr><td class="pq-mleft">' + _pdfqEsc(l) + '</td><td class="pq-marrow">→</td><td>' +
+        (gv == null ? '<span class="pq-chip pq-ko">non collegato</span>' : '<span class="pq-chip ' + (ok ? 'pq-ok' : 'pq-ko') + '">' + _pdfqEsc(gv) + (ok ? ' ✓' : ' ✗') + '</span>') +
+        (!ok && cv != null ? '<span class="pq-fix">→ ' + _pdfqEsc(cv) + '</span>' : '') + '</td></tr>';
+    }).join('');
+    const colB = right.length ? '<div class="pq-bank"><strong>Colonna B:</strong> ' + right.map(_pdfqEsc).join(' · ') + '</div>' : '';
+    return textHtml + hint + colB +
+      '<table class="pq-match"><thead><tr><th>Colonna A</th><th></th><th>Collegato dall\'alunno</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      (arr ? '' : (_pdfqEmpty(a) ? '<div class="pq-note">L\'alunno non ha risposto.</div>' : '<div class="pq-note">Risposta registrata: <strong>' + _pdfqEsc(a) + '</strong></div>'));
+  }
+
+  if (type === 'drag-drop') {
+    const given = _pdfqArr(a) || [];
+    const corrects = _pdfqArr(q.answers) || [];
+    const sentences = _pdfqArr(q.sentences) || [];
+    const bank = Array.isArray(q.words) && q.words.length
+      ? '<div class="pq-bank"><strong>Parole:</strong> ' + q.words.map(_pdfqEsc).join(' · ') + '</div>' : '';
+    // Correttezza per spazio (anche in modalità "ordine libero" per riga)
+    const okArr = corrects.map((c, i) => !_pdfqEmpty(given[i]) && String(given[i]).toLowerCase() === String(c || '').toLowerCase());
+    if (q.unordered && sentences.length) {
+      let bi = 0;
+      sentences.forEach(st => {
+        const cnt = (String(st).match(/___/g) || []).length || 1;
+        const pool = corrects.slice(bi, bi + cnt).map(c => String(c || '').toLowerCase());
+        for (let j = bi; j < bi + cnt; j++) {
+          const g = _pdfqEmpty(given[j]) ? null : String(given[j]).toLowerCase();
+          const p = g == null ? -1 : pool.indexOf(g);
+          okArr[j] = p >= 0;
+          if (p >= 0) pool.splice(p, 1);
+        }
+        bi += cnt;
+      });
+    }
+    let bi = 0;
+    const fill = s => {
+      const parts = [];
+      const tok = String(s || '').replace(/___/g, () => {
+        const n = bi++;
+        parts.push(_pdfqChip(given[n], corrects[n] != null ? okArr[n] : null, q.unordered ? '' : (corrects[n] != null ? String(corrects[n]) : '')));
+        return '\u0000' + (parts.length - 1) + '\u0000';
+      });
+      return _pdfqRich(tok).replace(/\u0000(\d+)\u0000/g, (m, i) => parts[+i]);
+    };
+    const body = sentences.length
+      ? '<div class="pq-sentences">' + sentences.map(s => '<div class="pq-sent">' + fill(s) + '</div>').join('') + '</div>'
+      : '<div class="pq-text">' + given.map((g, i) => _pdfqChip(g, corrects[i] != null ? okArr[i] : null, corrects[i] != null ? String(corrects[i]) : '')).join(' ') + '</div>';
+    const unNote = q.unordered && okArr.some(x => !x) && corrects.length
+      ? '<div class="pq-note">Soluzione: ' + corrects.map(_pdfqEsc).join(' · ') + '</div>' : '';
+    return textHtml + hint + bank + body + unNote + (_pdfqEmpty(a) ? '<div class="pq-note">L\'alunno non ha risposto.</div>' : '');
+  }
+
+  if (type === 'reorder') {
+    const given = _pdfqArr(a) || [];
+    const sentences = _pdfqArr(q.sentences) || [];
+    const rows = sentences.map((s, si) => {
+      const g = given[si];
+      const ok = !_pdfqEmpty(g) && String(g).trim().toLowerCase() === String(s || '').trim().toLowerCase();
+      return '<li>' + _pdfqChip(g, ok, s) + '</li>';
+    }).join('');
+    return textHtml + hint + '<ol class="pq-list">' + rows + '</ol>' + (_pdfqEmpty(a) ? '<div class="pq-note">L\'alunno non ha risposto.</div>' : '');
+  }
+
+  if (type === 'categorization') {
+    const items = _pdfqArr(q.items) || [], cats = _pdfqArr(q.categories) || [], corr = _pdfqArr(q.answers) || [];
+    const arr = _pdfqArr(a) || [];
+    const rows = items.map((it, ii) => {
+      const g = arr[ii];
+      const placed = !_pdfqEmpty(g);
+      const gName = placed ? (cats[Number(g)] != null ? cats[Number(g)] : String(g)) : null;
+      const hasCorr = corr[ii] != null;
+      const ok = placed && hasCorr && Number(g) === Number(corr[ii]);
+      const cName = hasCorr && cats[Number(corr[ii])] != null ? cats[Number(corr[ii])] : '';
+      return '<tr><td class="pq-mleft">' + _pdfqEsc(it) + '</td><td class="pq-marrow">→</td><td>' +
+        (placed ? '<span class="pq-chip ' + (hasCorr ? (ok ? 'pq-ok' : 'pq-ko') : 'pq-neutral') + '">' + _pdfqEsc(gName) + (hasCorr ? (ok ? ' ✓' : ' ✗') : '') + '</span>'
+                : '<span class="pq-chip pq-ko">non inserito</span>') +
+        (hasCorr && !ok && cName ? '<span class="pq-fix">→ ' + _pdfqEsc(cName) + '</span>' : '') + '</td></tr>';
+    }).join('');
+    const catList = cats.length ? '<div class="pq-bank"><strong>Categorie:</strong> ' + cats.map(_pdfqEsc).join(' · ') + '</div>' : '';
+    return textHtml + hint + catList +
+      '<table class="pq-match"><thead><tr><th>Elemento</th><th></th><th>Categoria scelta dall\'alunno</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  if (type === 'free-response' || type === 'free') {
+    return textHtml + hint + '<div class="pq-label">Risposta dell\'alunno</div>' +
+      (_pdfqEmpty(a) ? '<div class="pq-free">' + _PDFQ_NONE + '</div>'
+                     : '<div class="pq-free">' + _pdfqEsc(typeof a === 'object' ? (_pdfqArr(a) || []).join(' ') : a).replace(/\n/g, '<br>') + '</div>');
+  }
+
+  // Tipo sconosciuto: testo + risposta così com'è
+  const raw = _pdfqEmpty(a) ? _PDFQ_NONE
+    : _pdfqEsc(Array.isArray(a) || typeof a === 'object' ? (_pdfqArr(a) || []).map(x => x == null ? '—' : x).join(' / ') : a);
+  return textHtml + hint + '<div class="pq-label">Risposta dell\'alunno</div><div class="pq-free">' + raw + '</div>';
+}
+
+// Blocco completo di una domanda (immagine + testo + risposta)
+function _pdfQuestionBlock(q, a) {
+  if (!q || typeof q !== 'object') return '<div class="pq-note">Domanda non disponibile.</div>';
+  const img = q.image ? '<div class="pq-img"><img src="' + _pdfqEsc(q.image) + '" alt="Immagine della domanda"></div>' : '';
+  if (q.type === 'listening') {
+    const inner = q.question || {};
+    let sub = q.subtype || inner.type;
+    if (!sub) {
+      if (inner.correct !== undefined) sub = 'multiple-choice';
+      else if (Array.isArray(inner.answers) && inner.answers.length) sub = 'cloze';
+      else if (Array.isArray(inner.left) && inner.left.length) sub = 'matching';
+      else sub = 'free-response';
+    }
+    const innerImg = inner.image && inner.image !== q.image ? '<div class="pq-img"><img src="' + _pdfqEsc(inner.image) + '" alt="Immagine della domanda"></div>' : '';
+    const intro = q.text && q.text !== inner.text ? '<div class="pq-text">' + _pdfqRich(q.text) + '</div>' : '';
+    return img + innerImg + '<div class="pq-listen">🎧 Esercizio di ascolto</div>' + intro + _pdfqBody(inner, sub, a);
+  }
+  return img + _pdfqBody(q, q.type, a);
+}
+
+// Card di una domanda nel PDF. o = { num, typeLabel, label, color, bg, pts, time, feedback }
+function _pdfQuestionCard(q, a, o) {
+  const meta = [o.pts ? '<span class="pq-pts">' + o.pts + '</span>' : '', o.time ? '<span class="pq-time">⏱ ' + o.time + '</span>' : ''].join('');
+  return '<div class="pq-card" style="border-left-color:' + (o.color || '#c4b5fd') + ';">' +
+    '<div class="pq-head" style="background:' + (o.bg || '#f8f7ff') + ';">' +
+      '<span class="pq-num">' + _pdfqEsc(o.num) + '</span>' +
+      '<span class="pq-type">' + _pdfqEsc(o.typeLabel || '') + '</span>' +
+      '<span class="pq-esito" style="color:' + (o.color || '#555') + ';">' + (o.label || '') + '</span>' + meta +
+    '</div>' +
+    '<div class="pq-body">' + _pdfQuestionBlock(q, a) + '</div>' +
+    (o.feedback ? '<div class="pq-fb">' + o.feedback + '</div>' : '') +
+  '</div>';
+}
+
+const _PDFQ_CSS = `
+  .pq-card { border:1px solid #e5e0ff; border-left:5px solid #c4b5fd; border-radius:8px; margin:0 0 10px; break-inside:avoid; page-break-inside:avoid; background:#fff; overflow:hidden; }
+  .pq-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; padding:6px 10px; border-bottom:1px solid #ece9ff; }
+  .pq-num { font-weight:900; color:#6c47ff; font-size:13px; }
+  .pq-type { font-size:11px; color:#666; }
+  .pq-esito { font-weight:800; font-size:12px; margin-left:auto; }
+  .pq-pts { font-weight:800; font-size:12px; color:#1e1b4b; }
+  .pq-time { font-size:11px; color:#888; }
+  .pq-body { padding:8px 12px 10px; font-size:13px; line-height:1.5; color:#1e1b4b; }
+  .pq-img { margin:2px 0 8px; }
+  .pq-img img { max-width:100%; max-height:200px; border-radius:6px; border:1px solid #e5e0ff; }
+  .pq-text { margin:0 0 6px; }
+  .pq-filled { line-height:2; }
+  .pq-hint { font-size:12px; color:#4c2fc0; margin:0 0 6px; }
+  .pq-listen { display:inline-block; font-size:11px; font-weight:800; color:#5b21b6; background:#ede9fe; border-radius:10px; padding:1px 8px; margin:0 0 6px; }
+  .pq-opts { display:flex; flex-direction:column; gap:4px; margin-top:4px; }
+  .pq-opt { display:flex; align-items:center; gap:8px; border:1.5px solid #e5e7eb; border-radius:6px; padding:4px 8px; background:#fff; }
+  .pq-opt-ok { border-color:#059669; background:#ecfdf5; font-weight:700; }
+  .pq-opt-ko { border-color:#dc2626; background:#fef2f2; font-weight:700; }
+  .pq-opt-right { border-color:#059669; border-style:dashed; background:#f0fdf4; }
+  .pq-letter { flex:0 0 auto; width:20px; height:20px; border-radius:50%; background:#ede9fe; color:#5b21b6; font-size:11px; font-weight:800; display:inline-flex; align-items:center; justify-content:center; }
+  .pq-otext { flex:1; }
+  .pq-tag { font-size:10px; font-weight:800; border-radius:10px; padding:1px 8px; white-space:nowrap; }
+  .pq-tag-ok { background:#059669; color:#fff; }
+  .pq-tag-ko { background:#dc2626; color:#fff; }
+  .pq-tag-right { background:#d1fae5; color:#065f46; }
+  .pq-chip { display:inline-block; border-radius:5px; padding:0 6px; font-weight:700; border:1.5px solid; line-height:1.6; }
+  .pq-ok { color:#065f46; background:#d1fae5; border-color:#059669; }
+  .pq-ko { color:#991b1b; background:#fee2e2; border-color:#dc2626; }
+  .pq-neutral { color:#1e1b4b; background:#f5f3ff; border-color:#c4b5fd; }
+  .pq-fix { color:#065f46; font-weight:700; font-size:12px; margin-left:4px; }
+  .pq-icopts { color:#888; font-size:11px; margin-left:3px; }
+  .pq-none { color:#999; font-style:italic; }
+  .pq-note { font-size:12px; color:#666; font-style:italic; margin-top:4px; }
+  .pq-bank { font-size:12px; color:#444; background:#f8f7ff; border:1px dashed #c4b5fd; border-radius:6px; padding:3px 8px; margin:0 0 6px; }
+  .pq-match { border-collapse:collapse; width:auto; margin-top:4px; }
+  .pq-match th { background:#f5f3ff !important; color:#5b21b6 !important; font-size:11px; padding:3px 8px; text-align:left; white-space:nowrap; }
+  .pq-match td { padding:3px 8px; border-bottom:1px solid #f0edff; font-size:13px; vertical-align:middle; }
+  .pq-mleft { font-weight:600; }
+  .pq-marrow { color:#888; }
+  .pq-list { margin:4px 0 0 20px; padding:0; }
+  .pq-list li { margin:2px 0; }
+  .pq-sentences { display:flex; flex-direction:column; gap:4px; line-height:2; }
+  .pq-label { font-size:11px; font-weight:800; color:#5b21b6; text-transform:uppercase; letter-spacing:.3px; margin-top:4px; }
+  .pq-free { white-space:normal; background:#f8f7ff; border:1px solid #e5e0ff; border-radius:6px; padding:6px 9px; margin-top:2px; }
+  .pq-fb { font-size:12px; color:#4c1d95; background:#f5f3ff; border-top:1px solid #ece9ff; padding:6px 12px; font-style:italic; }
+  .pq-legend { font-size:11px; color:#555; margin:0 0 10px; display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; }
+  @media print { .pq-card { box-shadow:none; } }
+`;
+// Legenda dei colori, da mettere sopra l'elenco delle domande
+const _PDFQ_LEGEND = '<div class="pq-legend"><span><span class="pq-chip pq-ok">verde ✓</span> risposta giusta</span>' +
+  '<span><span class="pq-chip pq-ko">rosso ✗</span> risposta sbagliata</span>' +
+  '<span><span class="pq-fix">→ testo verde</span> = risposta corretta</span></div>';
+
 // ── Export PDF (print-to-PDF nativo) ───────────────────────────────────────
 async function exportStudentPDF(studentName) {
   // Fetch all responses and find this student by display name
@@ -13206,7 +13525,9 @@ async function exportStudentPDF(studentName) {
   // Chiave safe dell'entry per il lookup versione
   const studentKeyPDF = Object.keys(allData).find(k => allData[k] === entry)
     || (studentName || '').replace(/[.#$\[\]\/]/g, '_');
-  const questions  = getStudentAssignedQuestions(studentKeyPDF, studentName, entry.aliasOf);
+  // Versione registrata nella risposta (FILA B/C, DSA, PEI, Training…): senza,
+  // le risposte venivano lette sulle domande di un'altra versione.
+  const questions  = getStudentAssignedQuestions(studentKeyPDF, studentName, entry.aliasOf, entry.studentVersion);
   const _fbToArr=v=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'){const ks=Object.keys(v).map(Number).filter(k=>!isNaN(k));return ks.length?Array.from({length:Math.max(...ks)+1},(_,i)=>v[i]!==undefined?v[i]:null):[]}return[];};
   const answers    = _fbToArr(entry.answers);
   const qTimes     = _fbToArr(entry.questionTimes);
@@ -13236,33 +13557,6 @@ async function exportStudentPDF(studentName) {
 
   // Build answer rows HTML
   const typeIcons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','drag-drop':'🔀','reorder':'🔢','categorization':'🗂️'};
-  // FIX: fbArr() normalizza gli oggetti Firebase {0:x,1:y} in array JS veri
-  function answerText(q, a) {
-    if (a === null || a === undefined) return '—';
-    if (q.type === 'multiple-choice') return q.options[a] ?? '—';
-    if (q.type === 'cloze') { const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? fbArr(a) : null); return arr ? arr.join(' / ') : String(a); }
-    if (q.type === 'fill-blanks') { const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? fbArr(a) : null); return arr ? arr.join(' / ') : String(a); }
-    if (q.type === 'free-response') return a;
-    if (q.type === 'matching') {
-      const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? fbArr(a) : null);
-      if (arr) return (q.left||[]).map((l,li)=>l+' → '+(q.right[arr[li]]||'?')).join(' | ');
-    }
-    if (q.type === 'drag-drop') {
-      const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? fbArr(a) : null);
-      if (arr) return arr.join(' / ');
-    }
-    if (q.type === 'reorder') { const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? fbArr(a) : null); return arr ? arr.join(' | ') : String(a); }
-    if (q.type === 'categorization') return _catAnswerText(q, a, true);
-    if (q.type === 'listening') {
-      const sub = q.subtype||q.question?.type;
-      if (sub==='multiple-choice'&&typeof a==='number') return (q.question?.options||[])[a]||'—';
-      if (sub==='categorization') return _catAnswerText(q.question||{}, a, true);
-      const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? fbArr(a) : null);
-      if (arr) return arr.join(' / ');
-      return String(a);
-    }
-    return String(a);
-  }
   function evalResult(q, a, qi) {
     if ((entry.excludedQuestions || {})[qi]) return { label: '🚫 Escluso', color: '#64748b', pts: 'non valutato' };
     const manual = manualScoresData[qi];
@@ -13285,22 +13579,15 @@ async function exportStudentPDF(studentName) {
   }
 
   const rowsHtml = questions.map((q, i) => {
-    const a    = answers[i];
-    const res  = evalResult(q, a, i);
-    const txt  = answerText(q, a);
-    const qtext = _qText(q, a);
-    const secs = qTimes[i];
-    const bgRow = res.label.includes('✓') ? '#f0fdf4' : res.label.includes('✗') ? '#fef2f2' : '#fafafa';
-    return `<tr style="background:${bgRow};">
-      <td style="padding:8px 10px;font-size:12px;font-weight:700;color:#6c47ff;text-align:center;">${i+1}</td>
-      <td style="padding:8px 10px;font-size:11px;color:#888;">${typeIcons[q.type]||''} ${typeLabel(q.type)}</td>
-      <td style="padding:8px 10px;font-size:13px;word-break:break-word;">${qtext}</td>
-      <td style="padding:8px 10px;font-size:13px;font-style:${txt==='—'?'italic':''};color:${txt==='—'?'#aaa':'inherit'};">${txt}</td>
-      <td style="padding:8px 10px;font-size:12px;font-weight:700;color:${res.color};text-align:center;">${res.label}</td>
-      <td style="padding:8px 10px;font-size:12px;font-weight:700;text-align:center;">${res.pts}</td>
-      <td style="padding:8px 10px;font-size:12px;color:#888;text-align:center;">${fmtSecs(secs)}</td>
-      <td style="padding:8px 10px;font-size:11px;color:#555;font-style:italic;">${aiFeedbacksData[i]||''}</td>
-    </tr>`;
+    const a   = answers[i];
+    const res = evalResult(q, a, i);
+    return _pdfQuestionCard(q, a, {
+      num: 'Domanda ' + (i+1), typeLabel: (typeIcons[q.type]||'') + ' ' + typeLabel(q.type),
+      label: res.label, color: res.color,
+      bg: res.label.includes('✓') ? '#f0fdf4' : res.label.includes('✗') ? '#fef2f2' : res.label.includes('🔶') ? '#fff7ed' : '#fafafa',
+      pts: res.pts, time: qTimes[i] != null ? fmtSecs(qTimes[i]) : '',
+      feedback: aiFeedbacksData[i] ? '🤖 ' + esc(aiFeedbacksData[i]) : ''
+    });
   }).join('');
 
   // ── Recovery section (if any) ─────────────────────────────
@@ -13330,19 +13617,19 @@ async function exportStudentPDF(studentName) {
           ? [{ attempt: recAttempt, questions: entry.recoveryQuestions, answers: entry.recoveryAnswers||[], score: recScore1 }]
           : []);
     let recRows = '';
+    const recAsCards = recHistory.length > 0;
     if (recHistory.length > 0) {
       recHistory.forEach(histEntry => {
-        const hQs  = histEntry.questions || [];
-        const hAns = histEntry.answers   || [];
+        // Copie leggere: le immagini sono solo chiavi → si rimettono dall'attività
+        const hQs  = _mediaResolveQs(fbArr(histEntry.questions || []), S.liveActivity) || [];
+        const hAns = fbArr(histEntry.answers || []);
         const hNum = histEntry.attempt || 1;
         const hPct = histEntry.score != null ? histEntry.score : '?';
         const hPassed = histEntry.score != null && histEntry.score >= 60;
-        recRows += '<tr><td colspan="8" style="padding:7px 10px;font-size:12px;font-weight:800;background:#fef3c7;color:#92400e;border-top:2px solid #f59e0b;">🔁 Tentativo ' + hNum + ' — ' + hPct + '% — ' + (hPassed ? '✅ Superato' : '❌ Non superato') + '</td></tr>';
+        recRows += '<div style="padding:7px 10px;margin:12px 0 8px;font-size:12px;font-weight:800;background:#fef3c7;color:#92400e;border-top:2px solid #f59e0b;border-radius:6px;">🔁 Tentativo ' + hNum + ' — ' + hPct + '% — ' + (hPassed ? '✅ Superato' : '❌ Non superato') + '</div>';
         hQs.forEach((rq, ri) => {
           const ra  = hAns[ri];
           const rr  = evaluateAnswer(rq, ra);
-          const rqText = _qText(rq, ra);
-          const rTxt  = answerText(rq, ra);
           const rPts  = rq.points || 1;
           // Legge punteggio e feedback AI dal recupero (salvati in recoveryHistory da recoveryFinish)
           const _hAiSc  = histEntry.aiScores   || {};
@@ -13367,19 +13654,11 @@ async function exportStudentPDF(studentName) {
           const rPtsLabel = rOv != null
             ? (rOv + '/' + rPts + ' pt')
             : (rr.scorable ? (rOk ? '+' + rPts + ' pt' : (rPartial ? rr.earnedPoints + '/' + rPts + ' pt' : '0/' + rPts + ' pt')) : '—');
-          const rFbHtml = rAiFeedback
-            ? '<div style="font-size:10px;color:#6c47ff;margin-top:3px;">🤖 ' + esc(rAiFeedback) + '</div>'
-            : '';
-          recRows += '<tr style="background:' + rBg + ';">' +
-            '<td style="padding:8px 10px;font-size:12px;font-weight:700;color:#f59e0b;text-align:center;">' + hNum + '.' + (ri+1) + '</td>' +
-            '<td style="padding:8px 10px;font-size:11px;color:#888;">' + (typeIcons[rq.type] || '') + ' ' + typeLabel(rq.type) + '</td>' +
-            '<td style="padding:8px 10px;font-size:13px;word-break:break-word;">' + rqText + '</td>' +
-            '<td style="padding:8px 10px;font-size:13px;font-style:' + (rTxt === '—' ? 'italic' : 'normal') + ';color:' + (rTxt === '—' ? '#aaa' : 'inherit') + ';">' + rTxt + '</td>' +
-            '<td style="padding:8px 10px;font-size:12px;font-weight:700;color:' + rColor + ';text-align:center;">' + rLabel + '</td>' +
-            '<td style="padding:8px 10px;font-size:12px;font-weight:700;text-align:center;">' + rPtsLabel + '</td>' +
-            '<td style="padding:8px 10px;color:#aaa;text-align:center;">—</td>' +
-            '<td style="padding:8px 10px;font-size:11px;color:#555;font-style:italic;">' + rFbHtml + '</td>' +
-            '</tr>';
+          recRows += _pdfQuestionCard(rq, ra, {
+            num: 'Recupero ' + hNum + '.' + (ri+1), typeLabel: (typeIcons[rq.type] || '') + ' ' + typeLabel(rq.type),
+            label: rLabel, color: rColor, bg: rBg, pts: rPtsLabel, time: '',
+            feedback: rAiFeedback ? '🤖 ' + esc(rAiFeedback) : ''
+          });
         });
       });
     } else if (recScore1 != null) {
@@ -13414,13 +13693,14 @@ async function exportStudentPDF(studentName) {
     }
 
     recoverySection =
-      '<div style="margin-top:24px;page-break-inside:avoid;">' +
+      '<div style="margin-top:24px;">' +
         '<div style="border-bottom:2px solid #f59e0b;padding-bottom:8px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;">' +
           '<h3 style="font-size:15px;font-weight:900;color:#92400e;">🔁 Recupero — ' + recAttempt + ' tentativo/i</h3>' +
           '<span style="font-size:13px;font-weight:700;background:' + (passed ? '#d1fae5' : '#fee2e2') + ';color:' + (passed ? '#065f46' : '#7f1d1d') + ';padding:3px 12px;border-radius:20px;">' +
             (scoreLabel || '—') + ' — ' + (passed ? '✅ Superato' : '❌ Non superato') +
           '</span>' +
         '</div>' +
+        (recAsCards ? recRows :
         '<table>' +
           '<thead><tr>' +
             '<th style="width:32px;">#</th><th style="width:90px;">Tipo</th>' +
@@ -13429,7 +13709,7 @@ async function exportStudentPDF(studentName) {
             '<th style="width:56px;">Tempo</th><th>Note</th>' +
           '</tr></thead>' +
           '<tbody>' + recRows + '</tbody>' +
-        '</table>' +
+        '</table>') +
       '</div>';
   } // end if (recAttempt > 0)
 
@@ -13437,7 +13717,7 @@ async function exportStudentPDF(studentName) {
 <head><meta charset="UTF-8">
 <title>LiveLearn — ${studentName} — ${actTitle}</title>
 <style>
-  @page { size: A4 landscape; margin: 14mm 14mm 16mm 14mm; }
+  @page { size: A4; margin: 12mm 12mm 14mm 12mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #1e1b4b; background: white; }
   .header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 3px solid #6c47ff; padding-bottom: 10px; margin-bottom: 18px; }
@@ -13453,6 +13733,7 @@ async function exportStudentPDF(studentName) {
   thead th { padding: 9px 10px; text-align: left; font-size: 11px; font-weight: 700; letter-spacing: 0.3px; }
   tbody tr:nth-child(even) { background: #f9f8ff; }
   tbody td { border-bottom: 1px solid #e5e0ff; vertical-align: top; line-height: 1.4; }
+  ${_PDFQ_CSS}
   .footer { margin-top: 20px; font-size: 10px; color: #aaa; text-align: center; border-top: 1px solid #e5e0ff; padding-top: 8px; }
   @media print {
     .no-print { display: none !important; }
@@ -13480,21 +13761,8 @@ async function exportStudentPDF(studentName) {
     <div class="meta-card"><div class="label">Tempo totale</div><div class="value">${fmtSecs(totalTime)}</div></div>
   </div>
   ${buildTagBreakdown(questions, answers, aiScoresData, manualScoresData, 'pdf', entry.excludedQuestions)}
-  <table>
-    <thead>
-      <tr>
-        <th style="width:32px;">#</th>
-        <th style="width:90px;">Tipo</th>
-        <th>Domanda</th>
-        <th>Risposta studente</th>
-        <th style="width:90px;">Esito</th>
-        <th style="width:60px;">Punti</th>
-        <th style="width:56px;">Tempo</th>
-        <th>Feedback AI</th>
-      </tr>
-    </thead>
-    <tbody>${rowsHtml}</tbody>
-  </table>
+  ${_PDFQ_LEGEND}
+  <div class="pq-list-wrap">${rowsHtml}</div>
   ${recoverySection}
   <div class="footer">Generato da LiveLearn · ${new Date().toLocaleString('it-IT')}</div>
   <div class="no-print" style="margin-top:28px;text-align:center;">
@@ -13714,7 +13982,7 @@ async function saveScoreFromDetailModal(qi, maxPts) {
     const snap = await db.ref('livelearn/responses/' + S.liveCode + '/' + S.selectedStudent).get();
     const resp = snap.val() || {};
     // FIX: usa le domande della versione assegnata (fila_b/c/ecc.) non sempre l'originale
-    const qs = getStudentAssignedQuestions(S.selectedStudent, resp.name || S.selectedStudent, resp.aliasOf);
+    const qs = getStudentAssignedQuestions(S.selectedStudent, resp.name || S.selectedStudent, resp.aliasOf, resp.studentVersion);
     const ans = fbArr(resp.answers || []);
     const ms = resp.manualScores || {};
     const as2 = resp.aiScores || {};
@@ -13863,7 +14131,7 @@ async function saveScoreOverride(qi, origPts) {
     // Ricalcola punteggio totale con questionMaxOverrides aggiornati
     const snap = await db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey).get();
     const resp = snap.val() || {};
-    const qs   = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf);
+    const qs   = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion);
     const ans  = fbArr(resp.answers || []);
     const ms   = resp.manualScores        || {};
     const as2  = resp.aiScores            || {};
@@ -13912,7 +14180,7 @@ async function teacherAIScoreQuestion(qi, maxPts) {
     const snap = await db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey).get();
     const resp = snap.val() || {};
     // FIX: usa le domande della versione assegnata (fila_b/c/ecc.) non sempre l'originale
-    const questions = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf);
+    const questions = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion);
     const answers = fbArr(resp.answers);
     const q = questions[qi];
     const ans = answers[qi];
@@ -13959,7 +14227,7 @@ async function teacherAIScoreAll() {
     const snap = await db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey).get();
     const resp = snap.val() || {};
     // FIX: usa le domande della versione assegnata (fila_b/c/ecc.) non sempre l'originale
-    const questions = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf);
+    const questions = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion);
     const answers = fbArr(resp.answers);
     const msExist = resp.manualScores || {};
     const asExist = resp.aiScores || {};
@@ -14037,7 +14305,7 @@ function jumpToNextPending() {
 function _refreshPendingForStudent(studentKey, responseData) {
   if (!window._pendingFRKeys) return;
   const displayName = responseData.name || studentKey;
-  const qsP = getStudentAssignedQuestions(studentKey, displayName, responseData.aliasOf);
+  const qsP = getStudentAssignedQuestions(studentKey, displayName, responseData.aliasOf, responseData.studentVersion);
   const ansP = fbArr(responseData.answers);
   const msP = responseData.manualScores || {};
   const asP = responseData.aiScores || {};
@@ -14105,11 +14373,11 @@ async function exportAllPDFCorretto() {
     const displayName  = entry.name || studentKey;
     // ── Versione corretta per questo studente ────────────────────────────
     const questions    = getStudentAssignedQuestions(studentKey, displayName, entry.aliasOf, entry.studentVersion);
-    const answers      = entry.answers      || [];
+    const answers      = fbArr(entry.answers || []);
     const manualScores = entry.manualScores || {};
     const aiScores     = entry.aiScores     || {};
     const aiFeedbacks  = entry.aiFeedbacks  || {};
-    const qTimes       = entry.questionTimes|| [];
+    const qTimes       = fbArr(entry.questionTimes || []);
     const qMaxOverrides = entry.questionMaxOverrides || {};
     const joinedAt     = entry.joinedAt;
     const submittedAt  = entry.submittedAt;
@@ -14154,31 +14422,11 @@ async function exportAllPDFCorretto() {
       const bg    = isExcl ? '#f1f5f9' : r.scorable ? (r.correct ? '#f0fdf4' : (isPartial ? '#fef3c7' : '#fef2f2')) : '#fafafa';
       const fb    = aiFeedbacks[i] || '';
       const secs  = qTimes[i];
-      const qText = _qText(q, a).substring(0, 100);
-
-      let ans = '—';
-      if (a !== null && a !== undefined) {
-        if (q.type === 'multiple-choice') ans = esc(String((q.options||[])[a] || '?'));
-        else if (q.type === 'cloze' || q.type === 'fill-blanks') ans = Array.isArray(a) ? a.map(x=>esc(String(x))).join(' / ') : esc(String(a));
-        else if (q.type === 'free-response') ans = esc(String(a).substring(0, 100));
-        else if (q.type === 'matching') { const left=q.left||[],right=q.right||[]; ans = Array.isArray(a)?left.map((l,li)=>esc(l)+' → '+esc(right[a[li]]||'?')).join(' | '):'—'; }
-        else if (q.type === 'categorization') ans = _catAnswerText(q, a, true);
-        else if (q.type === 'listening' && (q.subtype || q.question?.type) === 'categorization') ans = _catAnswerText(q.question || {}, a, true);
-        else if (Array.isArray(a)) ans = a.map(x => esc(String(x))).join(' / ');
-        else if (a && typeof a === 'object') ans = Object.values(a).map(x => esc(String(x))).join(' / ');
-        else ans = esc(String(a));
-      }
-
-      return `<tr style="background:${bg};">
-        <td style="padding:6px 8px;font-weight:700;color:#6c47ff;text-align:center;">${i+1}</td>
-        <td style="padding:6px 8px;font-size:11px;color:#888;white-space:nowrap;">${typeIcons[q.type]||''} ${q.type||''}</td>
-        <td style="padding:6px 8px;font-size:12px;">${esc(qText)}${_qText(q, a).length>100?'…':''}</td>
-        <td style="padding:6px 8px;font-size:12px;">${ans}</td>
-        <td style="padding:6px 8px;font-weight:700;color:${color};white-space:nowrap;">${label}</td>
-        <td style="padding:6px 8px;text-align:center;font-weight:700;">${pts}/${effMax}</td>
-        <td style="padding:6px 8px;font-size:11px;color:#888;text-align:center;">${fmtSec(secs)}</td>
-        <td style="padding:6px 8px;font-size:11px;color:#555;font-style:italic;">${esc(fb)}</td>
-      </tr>`;
+      return _pdfQuestionCard(q, a, {
+        num: 'Domanda ' + (i+1), typeLabel: (typeIcons[q.type]||'') + ' ' + typeLabel(q.type),
+        label, color, bg, pts: isExcl ? 'non valutato' : pts + '/' + effMax + ' pt',
+        time: secs != null ? fmtSec(secs) : '', feedback: fb ? '🤖 ' + esc(fb) : ''
+      });
     }).join('');
 
     // Sezione recupero
@@ -14202,15 +14450,10 @@ async function exportAllPDFCorretto() {
           <span style="padding:2px 8px;border-radius:8px;background:${passed?'#d1fae5':'#fee2e2'};color:${passed?'#065f46':'#7f1d1d'};">${passed?'✅ Superato':'❌ Non superato'}</span>
         </div>`;
       recHistory.forEach(h => {
-        const hQs = h.questions || [], hAns = h.answers || [];
-        recoveryHtml += `<div style="margin-bottom:10px;font-size:11px;font-weight:700;color:#92400e;">
-          Tentativo ${h.attempt||1} — ${h.score!=null?h.score+'%':'?'}</div>
-          <table style="width:100%;border-collapse:collapse;font-size:10px;margin-bottom:8px;">
-          <thead><tr style="background:#f59e0b;color:white;">
-            <th style="padding:4px 6px;">#</th><th style="padding:4px 6px;">Tipo</th>
-            <th style="padding:4px 6px;">Domanda</th><th style="padding:4px 6px;">Risposta</th>
-            <th style="padding:4px 6px;">Esito</th><th style="padding:4px 6px;">Punti</th><th style="padding:4px 6px;">Feedback AI</th>
-          </tr></thead><tbody>` +
+        // Copie leggere: le immagini sono solo chiavi → si rimettono dall'attività
+        const hQs = _mediaResolveQs(fbArr(h.questions || []), S.liveActivity) || [], hAns = fbArr(h.answers || []);
+        recoveryHtml += `<div style="margin:8px 0;font-size:11px;font-weight:700;color:#92400e;">
+          Tentativo ${h.attempt||1} — ${h.score!=null?h.score+'%':'?'}</div>` +
           hQs.map((rq, ri) => {
             const ra = hAns[ri];
             const rr = evaluateAnswer(rq, ra);
@@ -14225,37 +14468,24 @@ async function exportAllPDFCorretto() {
             // Priorità: manuale > AI > evaluateAnswer
             const rOv2 = rManual2 != null ? rManual2 : rAiScore2;
             const rOk2 = rOv2 != null ? rOv2 >= rqP : (rr.scorable && rr.correct);
-            const rPartial2 = rOv2 != null ? (rOv2 > 0 && rOv2 < rqP) : false;
+            const rPartial2 = rOv2 != null ? (rOv2 > 0 && rOv2 < rqP) : !!(rr.partial && rr.earnedPoints > 0);
             const rBg = rOv2 != null
               ? (rOk2 ? '#f0fdf4' : rPartial2 ? '#fff7ed' : '#fef2f2')
-              : (rr.scorable ? (rOk2 ? '#f0fdf4' : '#fef2f2') : '#fafafa');
+              : (rr.scorable ? (rOk2 ? '#f0fdf4' : rPartial2 ? '#fff7ed' : '#fef2f2') : '#fafafa');
             const rColor = rOv2 != null
               ? (rOk2 ? '#059669' : rPartial2 ? '#d97706' : '#dc2626')
-              : (rr.scorable ? (rOk2 ? '#059669' : '#dc2626') : '#555');
+              : (rr.scorable ? (rOk2 ? '#059669' : rPartial2 ? '#d97706' : '#dc2626') : '#555');
             const rLabel2 = rOv2 != null
               ? ((rManual2 != null ? '✏️ ' : '🤖 ') + rOv2 + '/' + rqP)
               : (rr.scorable ? (rOk2 ? '✓' : (rPartial2 ? '🔶' : '✗')) : '—');
             const autoPtsR2 = rOv2 != null ? rOv2
               : (rr.scorable ? (typeof rr.earnedPoints==='number' ? rr.earnedPoints : (rOk2?rqP:0)) : 0);
-            let rAns = '—';
-            if (ra !== null && ra !== undefined) {
-              if (rq.type === 'multiple-choice') rAns = esc(String((rq.options||[])[ra]||'?'));
-              else if (rq.type === 'free-response') rAns = esc(String(ra).substring(0,60));
-              else if (Array.isArray(ra)) rAns = ra.map(x=>esc(String(x))).join(' / ');
-              else if (ra && typeof ra === 'object') rAns = Object.values(ra).map(x=>esc(String(x))).join(' / ');
-              else rAns = esc(String(ra));
-            }
-            return `<tr style="background:${rBg};">
-              <td style="padding:4px 6px;font-weight:700;color:#f59e0b;">${h.attempt||1}.${ri+1}</td>
-              <td style="padding:4px 6px;color:#888;">${typeIcons[rq.type]||''}</td>
-              <td style="padding:4px 6px;">${esc(_qText(rq, ra).substring(0,70))}</td>
-              <td style="padding:4px 6px;">${rAns}</td>
-              <td style="padding:4px 6px;font-weight:700;color:${rColor};">${rLabel2}</td>
-              <td style="padding:4px 6px;text-align:center;">${autoPtsR2}/${rqP}</td>
-              <td style="padding:4px 6px;font-size:10px;color:#6c47ff;font-style:italic;">${rAiFeedback2 ? '🤖 '+esc(rAiFeedback2) : ''}</td>
-            </tr>`;
-          }).join('') +
-          `</tbody></table>`;
+            return _pdfQuestionCard(rq, ra, {
+              num: 'Recupero ' + (h.attempt||1) + '.' + (ri+1), typeLabel: (typeIcons[rq.type]||'') + ' ' + typeLabel(rq.type),
+              label: rLabel2, color: rColor, bg: rBg, pts: autoPtsR2 + '/' + rqP + ' pt', time: '',
+              feedback: rAiFeedback2 ? '🤖 ' + esc(rAiFeedback2) : ''
+            });
+          }).join('');
       });
       recoveryHtml += '</div>';
     }
@@ -14278,19 +14508,8 @@ async function exportAllPDFCorretto() {
         </div>
       </div>
       ${tagHtml}
-      <table>
-        <thead><tr>
-          <th style="width:26px;">#</th>
-          <th style="width:75px;">Tipo</th>
-          <th>Domanda</th>
-          <th>Risposta</th>
-          <th style="width:95px;">Esito</th>
-          <th style="width:48px;">Punti</th>
-          <th style="width:48px;">Tempo</th>
-          <th>Feedback AI</th>
-        </tr></thead>
-        <tbody>${rowsHtml}</tbody>
-      </table>
+      ${_PDFQ_LEGEND}
+      ${rowsHtml}
       ${recoveryHtml}
     </div>`;
   }
@@ -14309,6 +14528,7 @@ async function exportAllPDFCorretto() {
   table { width: 100%; border-collapse: collapse; }
   th { background: #6c47ff; color: white; padding: 7px 8px; font-size: 11px; text-align: left; }
   td { border-bottom: 0.5px solid #ece9ff; vertical-align: top; }
+  ${_PDFQ_CSS}
   @media print {
     .no-print { display: none !important; }
     body { padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -19808,7 +20028,7 @@ function openQuestionDetailTeacher(i) {
   db.ref('livelearn/responses/' + S.liveCode + '/' + S.selectedStudent).get().then(snap => {
     const r = snap.val() || {};
     const displayName = String(r.name || S.selectedStudent);
-    const questions = getStudentAssignedQuestions(S.selectedStudent, displayName, r.aliasOf);
+    const questions = getStudentAssignedQuestions(S.selectedStudent, displayName, r.aliasOf, r.studentVersion);
     openQuestionDetail(i, {
       mode: 'teacher',
       questions: questions,
