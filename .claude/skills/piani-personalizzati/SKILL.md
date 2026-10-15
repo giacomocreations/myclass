@@ -8,7 +8,7 @@ description: Genera i piani personalizzati (recupero, consolidamento, approfondi
 Il file esportato da MyClass (`"formato": "myclass-piani-export"`) è autosufficiente:
 
 1. Leggi `consegna_generale` e seguila alla lettera.
-2. Per ogni elemento di `alunni` segui `consegna_quiz`, poi `consegna_listening` e `consegna_speaking` se non sono `null`.
+2. Per ogni elemento di `alunni` segui `consegna_quiz`, poi `consegna_listening` e `consegna_speaking` se non sono `null`. Se il `piano` è `ORALE` non c'è quiz: segui `consegna_testo` e restituisci `{ "ref", "testo" }`, con `[NOME]` al posto del nome.
 3. Per ogni elemento di `sfide` segui la sua `consegna`: genera un solo blocco per ogni chiave.
 4. Scrivi `piani_da_claude.json` nella cartella di lavoro, nel formato indicato in `consegna_generale`. Copia `export_id` e ogni `ref` esattamente come sono.
 5. Prima di consegnare, verifica con uno script (Node o Python) che il file sia JSON valido e controlla:

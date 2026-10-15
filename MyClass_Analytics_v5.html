@@ -29405,19 +29405,31 @@ ${blocchiPerAlunno}`;
     }
     // Elabora solo gli item NON esclusi (rispetta la selezione persistente)
     async function _ppProcessSelected() {
-        const selectedKeys = new Set(
-            _ppDeferredQueue.filter(i => !_ppDeferredExcluded.has(_ppDefKey(i))).map(_ppDefKey)
-        );
-        const toProcess = _ppDeferredQueue.filter(i => selectedKeys.has(_ppDefKey(i)));
-        if (!toProcess.length) { alert('Nessuna attività selezionata.'); return; }
+        await _ppRunQueue(_ppDeferredQueue.filter(i => !_ppDeferredExcluded.has(_ppDefKey(i))));
+    }
+
+    // Elabora elementi della coda scegliendo il generatore CLASSE PER CLASSE
+    // (es. 2E con Claude Code, 3C con Haiku 5.5, 1A saltata per ora).
+    async function _ppRunQueue(items) {
+        if (!items.length) { alert('Nessuna attività selezionata.'); return; }
         if (_ppDeferredRunning) { alert('Elaborazione già in corso — attendi.'); return; }
-        const scelta = await _ppChooseGenerator(`Generare ${toProcess.length} piani personalizzati`);
-        if (!scelta) return;
-        if (scelta === 'claude') { await _ppExportForClaude({ queue: toProcess }); return; }
-        _ppSetGenProvider(scelta);
+        const groups = [..._ppGroupByClass(items)].map(([classe, list]) => ({ classe, n: list.length }));
+        const scelte = await _ppChooseGeneratorByClass(`Generare ${items.length} piani personalizzati`, groups);
+        if (!scelte) return;
+        const pick = i => scelte.get(i.classeNome || '') || 'skip';
+        const perClaude = items.filter(i => pick(i) === 'claude');
+        const daGenerare = items.filter(i => pick(i) === 'haiku' || pick(i) === 'auto');
+        _ppDeferredExcluded.clear();
+        if (perClaude.length) await _ppExportForClaude({ queue: perClaude });
+        if (daGenerare.length) await _ppGenerateQueueItems(daGenerare, pick);
+        else { _ppSavDeferred(); renderPianoPersPanel(); }
+    }
+
+    // Genera gli elementi della coda con il generatore scelto per la loro classe
+    async function _ppGenerateQueueItems(toProcess, pick) {
+        const selectedKeys = new Set(toProcess.map(_ppDefKey));
         // NON rimuovere dalla coda: aggiorna solo lo stato a 'processing'
         _ppDeferredQueue.forEach(i => { if (selectedKeys.has(_ppDefKey(i))) i.ppStatus = 'processing'; });
-        _ppDeferredExcluded.clear();
         _ppSavDeferred();
         if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
         _ppDeferredRunning = true;
@@ -29438,6 +29450,7 @@ ${blocchiPerAlunno}`;
                     _ppSavDeferred();
                     if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
                     try {
+                        _ppSetGenProvider(pick(item));
                         const res = await _pianoCheckTrigger(stu, item.tipo, item.unit, item.classeNome, true, item.errorDetails || '', item.tagBreakdown || {});
                         if (qItem) {
                             if (res?.outcome === 'generated') {
@@ -30306,6 +30319,140 @@ Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markd
         });
     }
 
+    // Scelta del generatore CLASSE PER CLASSE (coda con più classi).
+    // groups: [{ classe, n }]. Risolve con Map classe → 'haiku'|'auto'|'claude'|'skip', o null se annulla.
+    // Con una sola classe usa la finestra semplice.
+    async function _ppChooseGeneratorByClass(title, groups, { detail = '' } = {}) {
+        if (groups.length <= 1) {
+            const g = groups[0] || { classe: '', n: 0 };
+            const v = await _ppChooseGenerator(title, { detail: detail || (g.classe ? `Classe ${g.classe}` : '') });
+            return v ? new Map([[g.classe, v]]) : null;
+        }
+        return new Promise(resolve => {
+            const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+            const hasKey = !!(AGENT_ANTHROPIC_KEY || localStorage.getItem('agent_anthropic_key'));
+            let def = localStorage.getItem('pp_gen_last_choice') || 'haiku';
+            if (def === 'haiku' && !hasKey) def = 'auto';
+            const OPTS = [
+                { v: 'haiku', t: '🔵 Haiku 5.5', dis: !hasKey },
+                { v: 'auto', t: '⚙️ Automatico' },
+                { v: 'claude', t: '🟣 Claude Code' },
+                { v: 'skip', t: '⏭️ Salta' }
+            ];
+            const scelte = new Map(groups.map(g => [g.classe, def]));
+            const pill = (row, o, on) => `<button data-row="${row}" data-v="${o.v}" ${o.dis ? 'disabled title="Manca la chiave API Anthropic (impostazioni agente)"' : ''} style="padding:5px 9px;border-radius:999px;font-size:12px;font-weight:700;font-family:inherit;cursor:${o.dis ? 'not-allowed' : 'pointer'};opacity:${o.dis ? '.45' : '1'};border:1.5px solid ${on ? '#6c47ff' : '#e5e7eb'};background:${on ? '#6c47ff' : '#fff'};color:${on ? '#fff' : '#374151'};">${o.t}</button>`;
+            const ov = document.createElement('div');
+            ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;';
+            const render = () => {
+                const allSame = [...scelte.values()].every(v => v === [...scelte.values()][0]) ? [...scelte.values()][0] : null;
+                const nGen = groups.filter(g => scelte.get(g.classe) !== 'skip').reduce((t, g) => t + g.n, 0);
+                ov.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:620px;width:100%;max-height:90vh;overflow:auto;padding:18px;box-shadow:0 20px 50px rgba(0,0,0,.25);font-family:inherit;">
+                    <div style="font-size:16px;font-weight:800;color:#312e81;margin-bottom:4px;">${esc(title)}</div>
+                    <div style="font-size:13px;color:#6b7280;margin-bottom:12px;">${detail ? esc(detail) + '<br>' : ''}Scegli con cosa generare, classe per classe. Le classi con Claude Code finiscono in un unico file da dare a Claude.${hasKey ? '' : '<br>⚠️ Haiku 5.5 non disponibile: manca la chiave API Anthropic.'}</div>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;background:#f5f3ff;border-radius:10px;margin-bottom:8px;">
+                      <span style="font-size:13px;font-weight:700;color:#4c1d95;min-width:120px;">Tutte le classi</span>
+                      <span style="display:flex;gap:5px;flex-wrap:wrap;">${OPTS.map(o => pill('*', o, allSame === o.v)).join('')}</span>
+                    </div>
+                    ${groups.map((g, i) => `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-bottom:1px solid #f3f4f6;">
+                      <span style="font-size:13px;font-weight:700;color:#1f2937;min-width:120px;">🏫 ${esc(g.classe || 'Senza classe')} <span style="font-weight:400;color:#6b7280;">· ${g.n}</span></span>
+                      <span style="display:flex;gap:5px;flex-wrap:wrap;">${OPTS.map(o => pill(i, o, scelte.get(g.classe) === o.v)).join('')}</span>
+                    </div>`).join('')}
+                    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+                      <button data-act="cancel" style="background:none;border:1px solid #d1d5db;border-radius:8px;padding:7px 14px;font-size:13px;color:#4b5563;cursor:pointer;font-family:inherit;">Annulla</button>
+                      <button data-act="ok" ${nGen ? '' : 'disabled'} style="background:${nGen ? '#6c47ff' : '#c4b5fd'};color:#fff;border:none;border-radius:8px;padding:7px 16px;font-size:13px;font-weight:700;cursor:${nGen ? 'pointer' : 'not-allowed'};font-family:inherit;">Avvia (${nGen})</button>
+                    </div>
+                  </div>`;
+            };
+            const done = v => { ov.remove(); resolve(v); };
+            ov.addEventListener('click', e => {
+                if (e.target === ov) return done(null);
+                const b = e.target.closest('button');
+                if (!b || b.disabled) return;
+                const act = b.getAttribute('data-act');
+                if (act === 'cancel') return done(null);
+                if (act === 'ok') {
+                    const usate = [...scelte.values()].filter(v => v !== 'skip');
+                    if (usate.length) { try { localStorage.setItem('pp_gen_last_choice', usate[usate.length - 1]); } catch(err) {} }
+                    return done(scelte);
+                }
+                const row = b.getAttribute('data-row'), v = b.getAttribute('data-v');
+                if (row === '*') groups.forEach(g => scelte.set(g.classe, v));
+                else if (row != null) scelte.set(groups[Number(row)].classe, v);
+                render();
+            });
+            render();
+            document.body.appendChild(ov);
+        });
+    }
+
+    // Toglie nome e cognome dell'alunno da un testo diretto a Claude (anche con lettere accentate)
+    function _ppAnonymize(text, studente) {
+        let t = String(text || '');
+        const parts = [`${studente?.cognome || ''} ${studente?.nome || ''}`, `${studente?.nome || ''} ${studente?.cognome || ''}`, studente?.cognome, studente?.nome]
+            .map(x => String(x || '').trim()).filter(x => x.length > 2);
+        for (const p of parts) {
+            const re = new RegExp('(^|[^\\p{L}])(' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')(?![\\p{L}])', 'gu');   // maiuscole come nei dati: "Del" cognome ≠ "del" preposizione
+            t = t.replace(re, '$1[NOME]');
+        }
+        return t;
+    }
+
+    // Recupero orale → voce dell'export (testo discorsivo, non quiz)
+    function _ppBuildOraleExportEntry({ studente, studentSafe, studentName, classeNome, unit, voto, oraleDetails = '', dataVerifica = '', oraleId = null }) {
+        const prompt = _ppAnonymize(_pianoBuildOraleTextPrompt(studente, voto, unit, oraleDetails, classeNome, dataVerifica), studente);
+        return {
+            local: { kind: 'orale', studentSafe, studentName, nome: studente?.nome || '', classeNome, unit, prefix: 'ORALE', voto, oraleId, oraleDetails, dataVerifica },
+            file: {
+                classe: classeNome || '', unit: unit || '', piano: 'ORALE',
+                voto: Math.round(Number(voto) * 100) / 100,
+                versione: null,
+                consegna_testo: prompt + '\n\nNOTA: il nome dello studente è sostituito da [NOME]. Scrivi [NOME] dove andrebbe il nome: MyClass lo rimette quando importa il testo.'
+            }
+        };
+    }
+
+    // Dati della verifica orale di un testo già in coda (per rigenerarlo o rifarlo con Claude)
+    function _ppOraleSource(item, stu) {
+        if (item.oraleDetails != null) return { oraleDetails: item.oraleDetails, dataVerifica: item.dataVerifica || '' };
+        const g = (stu?.orale || []).filter(x => x.unit === item.unit || x.titolo === item.unit)
+            .sort((a, b) => new Date(b.data) - new Date(a.data))[0];
+        return { oraleDetails: g?.nota || '', dataVerifica: g?.data || '' };
+    }
+
+    // ↺ Rigenera un testo orale in attesa: Haiku 5.5, Automatico o Claude Code
+    async function ppRegenOrale(id) {
+        const item = _ppOraleQueue.find(x => x.id === id);
+        if (!item) return;
+        const stu = _ppFindStudent(item.classeNome, item.studentSafe);
+        if (!stu) { alert(`Studente ${item.studentName} non trovato nei dati locali.`); return; }
+        const scelta = await _ppChooseGenerator(`Rigenerare il testo orale di ${item.studentName}`, {
+            detail: 'Il testo attuale (comprese le modifiche) viene sostituito; con Claude Code solo quando importi il suo file.' });
+        if (!scelta) return;
+        if (scelta === 'claude') { await _ppExportForClaude({ orali: [item] }); return; }
+        _ppSetGenProvider(scelta);
+        const btn = document.getElementById('ppOraleRegenBtn_' + id);
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Rigenero…'; }
+        const src = _ppOraleSource(item, stu);
+        const text = await _pianoGenerateOraleText(stu, item.voto, item.unit, src.oraleDetails, item.classeNome, src.dataVerifica);
+        if (!text) {
+            if (btn) { btn.disabled = false; btn.textContent = '↺ Rigenera'; }
+            alert('❌ Rigenerazione non riuscita (errore AI).');
+            return;
+        }
+        Object.assign(item, { text, source: _ppGenProvider, oraleDetails: src.oraleDetails, dataVerifica: src.dataVerifica, regenAt: Date.now() });
+        _ppSavOraleQueue();
+        _ppOraleOpenId = id;
+        renderPianoPersPanel();
+    }
+
+    function ppExportClassOraliForClaude(classeEnc) {
+        const classeNome = decodeURIComponent(classeEnc);
+        const list = _ppOraleQueue.filter(x => x.status !== 'approved' && (x.classeNome || '') === classeNome);
+        if (!list.length) return;
+        if (!confirm(`Esportare per Claude Code i ${list.length} testi orali della classe ${classeNome || '(senza classe)'}?\n\nQuando importerai il file di Claude, i testi attuali verranno sostituiti. Fino ad allora restano come sono.`)) return;
+        _ppExportForClaude({ orali: list });
+    }
+
     function _ppFindStudent(classeNome, studentSafe) {
         const match = s => _mcToSafe(`${s.cognome} ${s.nome}`) === studentSafe || _mcToSafe(`${s.nome} ${s.cognome}`) === studentSafe;
         const cls = (data.classi || []).find(c => c.nome === classeNome);
@@ -30319,7 +30466,8 @@ Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markd
 Questo file è stato esportato da MyClass. Per OGNI elemento di "alunni":
 - genera l'array di domande seguendo ESATTAMENTE la sua "consegna_quiz" (numero di domande, tipi, livello, errori su cui lavorare, regole DSA/PEI);
 - se "consegna_listening" non è null, genera anche l'esercizio di listening seguendo quella consegna (testo scritto da te, letto poi dalla sintesi vocale);
-- se "consegna_speaking" non è null, scrivi lo speaking prompt richiesto.
+- se "consegna_speaking" non è null, scrivi lo speaking prompt richiesto;
+- se "piano" è "ORALE" non c'è nessun quiz: segui la sua "consegna_testo" e scrivi il testo del recupero orale (italiano, testo semplice, 200-280 parole, [NOME] al posto del nome).
 Per OGNI elemento di "sfide" genera il blocco seguendo la sua "consegna" (un solo blocco per chiave: lo ricevono tutti gli alunni che hanno quella "sfida").
 Gli alunni non hanno nomi: sono identificati solo da "ref". Non inventare nomi.
 
@@ -30336,7 +30484,8 @@ OUTPUT: crea UN file chiamato "piani_da_claude.json" (solo JSON valido, nessun t
   "versione": 1,
   "export_id": "<copia export_id di questo file>",
   "piani": [
-    { "ref": "<ref dell'alunno>", "questions": [ ...domande della consegna_quiz... ], "listening": { ...oggetto listening... } oppure null, "speakingPrompt": "..." oppure null }
+    { "ref": "<ref dell'alunno>", "questions": [ ...domande della consegna_quiz... ], "listening": { ...oggetto listening... } oppure null, "speakingPrompt": "..." oppure null },
+    { "ref": "<ref di un alunno con piano ORALE>", "testo": "Ciao [NOME], ..." }
   ],
   "sfide": [
     { "chiave": "<chiave della sfida>", "passageText": "...", "questions": [ ...5 esercizi... ] }
@@ -30397,7 +30546,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
     }
 
     // Esporta per Claude Code elementi della coda e/o bozze esistenti
-    async function _ppExportForClaude({ queue = [], drafts = [] } = {}) {
+    async function _ppExportForClaude({ queue = [], drafts = [], orali = [] } = {}) {
         if (_ppDeferredRunning) { alert('Elaborazione già in corso — attendi.'); return; }
         _ppDeferredRunning = true;
         const entries = [], esiti = new Map(), problemi = [];
@@ -30427,6 +30576,13 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             try { entries.push(await _ppEntryFromDraft(d)); }
             catch(e) { problemi.push(`${d.studentName}: ${e.message}`); }
         }
+        for (const o of orali) {
+            const stu = _ppFindStudent(o.classeNome, o.studentSafe);
+            if (!stu) { problemi.push(`${o.studentName}: studente non trovato nei dati`); continue; }
+            const src = _ppOraleSource(o, stu);
+            entries.push(_ppBuildOraleExportEntry({ studente: stu, studentSafe: o.studentSafe, studentName: o.studentName, classeNome: o.classeNome,
+                unit: o.unit, voto: o.voto, oraleDetails: src.oraleDetails, dataVerifica: src.dataVerifica, oraleId: o.id }));
+        }
         _ppDeferredQueue.forEach(i => { const st = esiti.get(_ppDefKey(i)); if (st) Object.assign(i, st); });
         _ppSavDeferred();
         renderPianoPersPanel();
@@ -30448,6 +30604,15 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
         _ppSaveClaudeManifest(exportId, manifest);
         const fileObj = { formato: 'myclass-piani-export', versione: 1, export_id: exportId, creato: new Date().toISOString(),
                           consegna_generale: _PP_CLAUDE_CONSEGNA, alunni, sfide };
+        // Ultima rete di sicurezza sui nomi: ogni consegna passa dall'anonimizzazione
+        for (const al of alunni) {
+            const L = manifest[al.ref];
+            const stu = _ppFindStudent(L.classeNome, L.studentSafe);
+            if (!stu) continue;
+            for (const k of ['consegna_quiz', 'consegna_listening', 'consegna_speaking', 'consegna_testo']) {
+                if (typeof al[k] === 'string') al[k] = _ppAnonymize(al[k], stu);
+            }
+        }
         const blob = new Blob([JSON.stringify(fileObj, null, 2)], { type: 'application/json' });
         const a = document.createElement('a');
         const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
@@ -30455,7 +30620,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
         a.download = `piani_per_claude_${ts}.json`;
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-        alert(`🟣 File per Claude Code scaricato: ${alunni.length} piani${sfide.length ? ` + ${sfide.length} sfide` : ''}.\n\n` +
+        const nOr = alunni.filter(a => a.piano === 'ORALE').length;
+        alert(`🟣 File per Claude Code scaricato: ${alunni.length - nOr} piani scritti${nOr ? ` + ${nOr} testi orali` : ''}${sfide.length ? ` + ${sfide.length} sfide` : ''}.\n\n` +
               `1. Apri una sessione di Claude Code e allega il file "${a.download}".\n` +
               `2. Scrivi: "Genera i piani personalizzati seguendo la consegna nel file".\n` +
               `3. Scarica il file "piani_da_claude.json" che Claude crea.\n` +
@@ -30499,11 +30665,32 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             if (qs.length) { sfide[sf.chiave] = { passageText: String(sf.passageText).trim(), questions: qs }; _ppChallengeCacheSet(sf.chiave, sfide[sf.chiave]); }
         }
 
-        let created = 0, replaced = 0;
+        let created = 0, replaced = 0, oraliN = 0;
         const nonTrovati = [], scartate = [];
         for (const p of fileData.piani) {
             const L = p && findLocal(p.ref);
             if (!L) { nonTrovati.push(p?.ref || '?'); continue; }
+            if (L.kind === 'orale') {
+                let testo = String(p.testo || p.text || '').trim();
+                if (!testo) { nonTrovati.push(`${L.studentName} (testo orale vuoto)`); continue; }
+                testo = testo.replace(/\[NOME\]/g, L.nome || '');
+                const target = (L.oraleId && _ppOraleQueue.find(x => x.id === L.oraleId && x.status !== 'approved'))
+                    || _ppOraleQueue.find(x => x.studentSafe === L.studentSafe && x.unit === L.unit && x.status !== 'approved');
+                if (target) {
+                    Object.assign(target, { text: testo, source: 'claude', regenAt: Date.now(), oraleDetails: L.oraleDetails, dataVerifica: L.dataVerifica });
+                    replaced++;
+                } else {
+                    _ppOraleQueue.push({ id: 'po_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+                        studentSafe: L.studentSafe, studentName: L.studentName, unit: L.unit, voto: L.voto, classeNome: L.classeNome,
+                        text: testo, createdAt: Date.now(), status: 'pending', source: 'claude', oraleDetails: L.oraleDetails, dataVerifica: L.dataVerifica });
+                    created++;
+                }
+                oraliN++;
+                _ppDeferredQueue.forEach(i => {
+                    if (i.studentSafe === L.studentSafe && i.unit === L.unit && i.tipo === 'orale' && i.ppStatus === 'exported') { i.ppStatus = 'done'; i.ppReason = 'Importato da Claude'; }
+                });
+                continue;
+            }
             let qs = (Array.isArray(p.questions) ? p.questions : []).filter(q => q && typeof q === 'object').map(_ppNormalizeQuestion);
             let nBad = qs.filter(bad).length;
             qs = qs.filter(q => !bad(q));
@@ -30544,16 +30731,17 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             });
         }
         _ppSavDraftScritto();
+        _ppSavOraleQueue();
         _ppSavDeferred();
-        ppSwitchTab(0);
-        alert(`📥 Import da Claude completato.\n\n✅ Nuove bozze: ${created}\n🔄 Bozze sostituite: ${replaced}` +
+        ppSwitchTab(oraliN && oraliN === created + replaced ? 1 : 0);
+        alert(`📥 Import da Claude completato.\n\n✅ Nuove bozze: ${created}\n🔄 Bozze sostituite: ${replaced}${oraliN ? `\n🗣️ di cui testi orali: ${oraliN} (scheda Orale)` : ''}` +
               (scartate.length ? `\n\n✂️ Controllo automatico:\n• ${scartate.join('\n• ')}` : '') +
               (nonTrovati.length ? `\n\n⚠️ Non importati (codice sconosciuto in questo browser o file vuoto):\n• ${nonTrovati.join('\n• ')}` : '') +
               '\n\nRivedi le bozze e approvale come sempre.');
     }
 
     // Genera testo orale recupero via Sonnet
-    async function _pianoGenerateOraleText(studente, voto, unit, oraleDetails = '', classeNome = '', dataVerifica = '') {
+    function _pianoBuildOraleTextPrompt(studente, voto, unit, oraleDetails = '', classeNome = '', dataVerifica = '') {
         // Usa lo STESSO prompt e la STESSA logica del tab "Genera Piano di Recupero"
         // del singolo studente (_buildRecuperoPrompt): l'output dev'essere identico.
         // La verifica è sempre orale; le note discorsive provengono dalla
@@ -30565,11 +30753,12 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             voto:   voto,
             data:   dataVerifica || new Date().toISOString()
         };
-        const prompt = _buildRecuperoPrompt(studente, grade, classeNome);
-
-        const fakeTask = { aiProvider: null };
+        return _buildRecuperoPrompt(studente, grade, classeNome);
+    }
+    async function _pianoGenerateOraleText(studente, voto, unit, oraleDetails = '', classeNome = '', dataVerifica = '') {
+        const prompt = _pianoBuildOraleTextPrompt(studente, voto, unit, oraleDetails, classeNome, dataVerifica);
         try {
-            const text = await agentCallAI(prompt, fakeTask, false);
+            const text = await _pianoAICall(prompt, null);
             return text.trim();
         } catch(e) {
             console.warn('[Piano] Orale text gen error:', e.message);
@@ -30718,7 +30907,6 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             return { outcome: 'generated' };
         } else if (tipo === 'orale') {
             // Trigger orale — va in approvazione se voto < 6
-            if (_ppExportCollector && voto < 6) return { outcome: 'skipped', reason: 'Il recupero orale (testo) non si esporta: generalo con Haiku o Automatico' };
             if (voto >= 6) {
                 const appRes = await _pianoCheckApprofondimento(studente, unitEff, classeNome, force);
                 if (force) {
@@ -30733,22 +30921,28 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             const now = new Date();
             const h = now.getHours();
             const inWindow = h >= 14 || h < 7;   // finestra 14:30–07:00 (approssimazione)
-            if (!inWindow && !force) {
+            if (!inWindow && !force && !_ppExportCollector) {
                 console.log('[Piano] Trigger orale fuori finestra (', h, 'h) — skip');
                 return { outcome: 'skipped', reason: `Fuori finestra oraria (${h}h — finestra: 14:00–07:00)` };
             }
             // Evita doppioni in coda orale per stessa unit/studente non ancora approvati
             const dupOrale = _ppOraleQueue.some(x =>
                 x.studentSafe === studentSafe && x.unit === unitEff && x.status !== 'approved');
-            if (dupOrale) {
+            // Con l'export per Claude si esporta anche se c'è già un testo in attesa: all'import viene sostituito
+            if (dupOrale && !_ppExportCollector) {
                 console.log(`[Piano] ⏭️ Recupero orale già in coda per ${studentName} (${unitEff}) — skip`);
                 return { outcome: 'skipped', reason: 'Recupero orale già in coda' };
             }
+            const dataVer = (ultimiFallback[0] && ultimiFallback[0].data) || '';
+            if (_ppExportCollector) {
+                _ppExportCollector.push(_ppBuildOraleExportEntry({ studente, studentSafe, studentName, classeNome, unit: unitEff, voto, oraleDetails: errorDetails, dataVerifica: dataVer }));
+                return { outcome: 'exported' };
+            }
             _ppShowGenerating(studentName, 'ORALE', unitEff);
-            const text = await _pianoGenerateOraleText(studente, voto, unitEff, errorDetails, classeNome, (ultimiFallback[0] && ultimiFallback[0].data) || '');
+            const text = await _pianoGenerateOraleText(studente, voto, unitEff, errorDetails, classeNome, dataVer);
             if (!text) { _ppShowError(studentName, 'Generazione testo fallita'); return { outcome: 'error', reason: 'Generazione testo fallita' }; }
             const id = 'po_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-            _ppOraleQueue.push({ id, studentSafe, studentName, unit: unitEff, voto, classeNome, text, createdAt: Date.now(), status: 'pending' });
+            _ppOraleQueue.push({ id, studentSafe, studentName, unit: unitEff, voto, classeNome, text, createdAt: Date.now(), status: 'pending', source: _ppGenProvider, oraleDetails: errorDetails, dataVerifica: dataVer });
             _ppSavOraleQueue();
             renderPianoPersPanel();
             ppSwitchTab(1);  // porta docente sul tab orale
@@ -30770,14 +30964,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             console.log(`[Piano] ⏸️ Coda approvazione (${_ppDeferredQueue.length}) — verifiche programmate, elabora manualmente dal pannello`);
             return;
         }
-        if (manuale) {
-            const daFare = _ppDeferredQueue.filter(i => !_ppDeferredExcluded.has(_ppDefKey(i)));
-            if (!daFare.length) { alert('Nessuna attività selezionata.'); return; }
-            const scelta = await _ppChooseGenerator(`Generare ${daFare.length} piani personalizzati`);
-            if (!scelta) return;
-            if (scelta === 'claude') { await _ppExportForClaude({ queue: daFare }); return; }
-            _ppSetGenProvider(scelta);
-        }
+        // Manuale ("▶ Elabora tutti"): stessa scelta classe per classe di "Elabora selezionati"
+        if (manuale) return _ppRunQueue(_ppDeferredQueue.filter(i => !_ppDeferredExcluded.has(_ppDefKey(i))));
         _ppDeferredRunning = true;
         console.log(`[Piano] ▶️ Elaborazione coda differita: ${_ppDeferredQueue.length} attività`);
         try {
@@ -31603,7 +31791,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:10px 0 6px;padding:6px 10px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;">
           <span style="font-size:13px;font-weight:700;color:#4c1d95;">🏫 ${classeNome ? esc(classeNome) : 'Senza classe'} <span style="font-weight:400;color:#6b7280;">· ${n} da approvare</span></span>
           <span style="display:flex;gap:6px;flex-wrap:wrap;">
-          ${kind === 'orale' ? '' : `<button onclick="ppExportClassDraftsForClaude('${enc}')" title="Scarica il file per Claude Code con queste bozze: quando importi il file di Claude, vengono sostituite" style="background:#fff;color:#7e22ce;border:1.5px solid #c084fc;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🟣 Rifai con Claude</button>`}
+          ${`<button onclick="${kind === 'orale' ? 'ppExportClassOraliForClaude' : 'ppExportClassDraftsForClaude'}('${enc}')" title="Scarica il file per Claude Code con ${kind === 'orale' ? 'questi testi orali' : 'queste bozze'}: quando importi il file di Claude, vengono sostituiti" style="background:#fff;color:#7e22ce;border:1.5px solid #c084fc;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🟣 Rifai con Claude</button>`}
           <button id="${btnId}" onclick="${fn}('${enc}')" title="Approva e invia tutte le bozze di questa classe" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">✅ Approva tutte (${n})</button>
           </span>
         </div>`;
@@ -31734,6 +31922,14 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             const c = document.getElementById('ppDraftCard_' + id);
             if (c) c.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         });
+    }
+
+    // Barra Claude Code (schede Scritto e Orale): import del file prodotto da Claude
+    function _ppClaudeBarHtml() {
+        return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+                <span style="font-size:12px;color:#6b21a8;">Generatore usato l'ultima volta: <strong>${_ppGenLabel(localStorage.getItem('pp_gen_last_choice') || _ppGenProvider)}</strong> · prima di ogni generazione lo scegli, anche classe per classe</span>
+                <button onclick="ppImportFromClaude()" title="Importa il file piani_da_claude.json creato da Claude Code: crea le bozze (scritte e orali) o sostituisce quelle esistenti" style="background:#7e22ce;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">📥 Importa da Claude</button>
+              </div>`;
     }
 
     async function renderPianoPersPanel() {
@@ -31935,11 +32131,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 });
                 draftsHtml = `<div style="margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ IN ATTESA DI APPROVAZIONE (${_ppDraftScritto.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire la sua attività</span></div>${draftCards}</div>`;
             }
-            // Barra Claude Code: import del file prodotto da Claude
-            const claudeBar = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
-                <span style="font-size:12px;color:#6b21a8;">Generatore usato l'ultima volta: <strong>${_ppGenLabel(localStorage.getItem('pp_gen_last_choice') || _ppGenProvider)}</strong> · prima di ogni generazione puoi sceglierlo</span>
-                <button onclick="ppImportFromClaude()" title="Importa il file piani_da_claude.json creato da Claude Code: crea le bozze o sostituisce quelle esistenti" style="background:#7e22ce;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">📥 Importa da Claude</button>
-              </div>`;
+            const claudeBar = _ppClaudeBarHtml();
             // Banner coda differita (attività in attesa di un giorno libero da verifiche)
             let deferredBanner = '';
             if (_ppDeferredQueue.length) {
@@ -32072,10 +32264,10 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             const pending = _ppOraleQueue.filter(x => x.status !== 'approved');
             const approved = _ppOraleQueue.filter(x => x.status === 'approved');
             if (!_ppOraleQueue.length) {
-                el.innerHTML = '<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">Nessun testo orale in attesa.<br><span style="font-size:11px;">Vengono generati automaticamente per voti < 6 nella finestra 14:30–07:00.</span></div>';
+                el.innerHTML = _ppClaudeBarHtml() + '<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">Nessun testo orale in attesa.<br><span style="font-size:11px;">Vengono generati automaticamente per voti < 6 nella finestra 14:30–07:00.</span></div>';
                 return;
             }
-            let html = '';
+            let html = _ppClaudeBarHtml();
             if (pending.length) html += `<div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ DA APPROVARE (${pending.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire il suo testo</span></div>`;
             const _byClass = _ppGroupByClass(pending);
             _byClass.forEach((list, classeNome) => {
@@ -32085,7 +32277,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 html += `<div style="background:#FFFBEB;border:1.5px solid ${_open?'#F59E0B':'#FDE68A'};border-radius:12px;padding:${_open?'14px':'10px 14px'};margin-bottom:${_open?'10px':'6px'};">
                   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:${_open?'8px':'0'};cursor:pointer;" onclick="ppToggleOraleCollapse('${item.id}')">
                     <div>
-                      <div style="font-size:13px;font-weight:700;color:#78350F;"><span style="font-size:14px;color:#B45309;margin-right:6px;">${_open?'▼':'▶'}</span>${item.studentName}</div>
+                      <div style="font-size:13px;font-weight:700;color:#78350F;"><span style="font-size:14px;color:#B45309;margin-right:6px;">${_open?'▼':'▶'}</span>${item.studentName}
+                        ${item.source ? `<span title="Generato con ${_ppGenLabel(item.source)}" style="margin-left:6px;background:${item.source === 'claude' ? '#f3e8ff' : item.source === 'auto' ? '#f3f4f6' : '#dbeafe'};color:${item.source === 'claude' ? '#7e22ce' : item.source === 'auto' ? '#4b5563' : '#1e40af'};border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;">${item.source === 'claude' ? '🟣 Claude' : item.source === 'auto' ? '⚙️ Auto' : '🔵 Haiku 5.5'}</span>` : ''}</div>
                       <div style="font-size:11px;color:#B45309;">${item.unit||''} · voto ${item.voto} · ${new Date(item.createdAt).toLocaleString('it',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
                     </div>
                     <span style="background:#FEF3C7;color:#92400E;border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;">⏳ Da approvare</span>
@@ -32093,6 +32286,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                   ${_open ? `<textarea id="ppOraleEdit_${item.id}" style="width:100%;min-height:80px;border:1px solid #FDE68A;border-radius:8px;padding:8px;font-size:13px;line-height:1.6;font-family:inherit;resize:vertical;box-sizing:border-box;">${item.text}</textarea>
                   <div style="display:flex;gap:8px;margin-top:8px;">
                     <button id="ppOraleAppBtn_${item.id}" onclick="ppApproveOrale('${item.id}')" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">✅ Approva e invia</button>
+                    <button id="ppOraleRegenBtn_${item.id}" onclick="ppRegenOrale('${item.id}')" title="Rigenera il testo con Haiku 5.5, Automatico o Claude Code" style="background:#fff7ed;color:#c2410c;border:1.5px solid #fdba74;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">↺ Rigenera</button>
                     <button onclick="ppRejectOrale('${item.id}')" style="background:#fff;color:#DC2626;border:1.5px solid #FCA5A5;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🗑 Scarta</button>
                   </div>` : ''}
                 </div>`;
