@@ -1982,7 +1982,7 @@
                             <label>&#x1F916; Modello Anthropic (fallback valutazioni)</label>
                             <select id="agentAnthropicModel" onchange="agentSaveSettings()" style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid #c8d0e7;background:#fff;font-size:13px;font-family:inherit;">
                                 <option value="sonnet">Claude Sonnet 4.6 &mdash; qualit&agrave; massima (consigliato per valutazioni)</option>
-                                <option value="haiku" selected>Claude Haiku 4.5 &mdash; pi&ugrave; veloce ed economico</option>
+                                <option value="haiku" selected>Claude Haiku 5.5 &mdash; pi&ugrave; veloce ed economico</option>
                             </select>
                         </div>
                         <div class="agent-field" style="grid-column:1/-1;">
@@ -21048,10 +21048,21 @@ ${blocco.regole}`;
         return j.content?.[0]?.text || '';
     }
 
-    // Anthropic (Claude Haiku 4.5) — fallback leggero per task strutturati (generazione quiz, piani, ecc.)
-    async function agentAnthropicLightCall(prompt, system = 'Sei un assistente per docenti di inglese scuola media italiana.') {
+    // Anthropic (Claude Haiku 5.5) — modello leggero per task strutturati (generazione quiz, piani, ecc.)
+    // ⚠️ Haiku 5.5 ragiona prima di rispondere (thinking adattivo, sempre attivo):
+    // la risposta puo' iniziare con blocchi "thinking", quindi il testo si legge
+    // per TIPO di blocco, non come content[0]. Il ragionamento consuma max_tokens:
+    // il tetto e' alto apposta, altrimenti il JSON del quiz resta troncato.
+    async function agentAnthropicLightCall(prompt, system = 'Sei un assistente per docenti di inglese scuola media italiana.', opts = {}) {
         const key = AGENT_ANTHROPIC_KEY || localStorage.getItem('agent_anthropic_key');
         if (!key) throw new Error('Chiave Anthropic non configurata (impostazioni agente)');
+        const body = {
+            model: 'claude-haiku-5-5',
+            max_tokens: opts.maxTokens || 16000,
+            output_config: { effort: opts.effort || 'medium' },
+            messages: [{ role: 'user', content: prompt }]
+        };
+        if (system) body.system = system;
         const res = await _nativeFetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             headers: {
@@ -21060,12 +21071,7 @@ ${blocco.regole}`;
                 'anthropic-version': '2023-06-01',
                 'anthropic-dangerous-direct-browser-access': 'true'
             },
-            body: JSON.stringify({
-                model: 'claude-haiku-4-5-20251001',
-                max_tokens: 4096,
-                system,
-                messages: [{ role: 'user', content: prompt }]
-            }),
+            body: JSON.stringify(body),
             signal: agentAbortController?.signal
         });
         if (!res.ok) {
@@ -21073,7 +21079,10 @@ ${blocco.regole}`;
             throw new Error(err?.error?.message || `Anthropic HTTP ${res.status}`);
         }
         const j = await res.json();
-        return j.content?.[0]?.text || '';
+        if (j.stop_reason === 'refusal') throw new Error('Haiku ha rifiutato la richiesta');
+        const text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+        if (j.stop_reason === 'max_tokens') console.warn('[Agente] Haiku 5.5: risposta troncata (max_tokens)');
+        return text;
     }
 
     // Ollama locale (fallback per task non-valutazione)
@@ -21092,7 +21101,7 @@ ${blocco.regole}`;
     /**
      * Chiama AI con gerarchia corretta per l'agente:
      *   isValutazione=true  → Gemini → Anthropic Sonnet 4.6 (valutazioni orali, resoconti)
-     *   isValutazione=false → Gemini → Ollama locale → Anthropic Haiku 4.5 (solo se Ollama KO)
+     *   isValutazione=false → Gemini → Ollama locale → Anthropic Haiku 5.5 (solo se Ollama KO)
      * Aggiorna task.aiProvider per il badge UI.
      */
     const AGENT_SYSTEM = `Sei il prof. Giacomo Cossu, docente di inglese scuola media italiana.
@@ -23737,7 +23746,7 @@ ${sectionInstr}`;
         // AI badge globale
         if (elBadgeGlobal) {
             if (GEMINI_API_KEY) { elBadgeGlobal.className='agent-ai-badge gemini'; elBadgeGlobal.textContent='🟢 Gemini'; }
-            else if (AGENT_ANTHROPIC_KEY) { elBadgeGlobal.className='agent-ai-badge anthropic'; elBadgeGlobal.textContent= AGENT_ANTHROPIC_MODEL === 'haiku' ? '🔵 Haiku 4.5' : '🔵 Sonnet 4.6'; }
+            else if (AGENT_ANTHROPIC_KEY) { elBadgeGlobal.className='agent-ai-badge anthropic'; elBadgeGlobal.textContent= AGENT_ANTHROPIC_MODEL === 'haiku' ? '🔵 Haiku 5.5' : '🔵 Sonnet 4.6'; }
             else if (AI_PROVIDER === 'qwen') { elBadgeGlobal.className='agent-ai-badge qwen'; elBadgeGlobal.textContent='🔵 Qwen3'; }
             else { elBadgeGlobal.className='agent-ai-badge ollama'; elBadgeGlobal.textContent='🟡 Ollama'; }
         }
@@ -23828,7 +23837,7 @@ ${sectionInstr}`;
         };
         const aiLabels = {
             gemini:    '<span class="agent-ai-badge gemini">🟢 Gemini</span>',
-            anthropic: `<span class="agent-ai-badge anthropic">🔵 ${AGENT_ANTHROPIC_MODEL === 'haiku' ? 'Haiku 4.5' : 'Sonnet 4.6'}</span>`,
+            anthropic: `<span class="agent-ai-badge anthropic">🔵 ${AGENT_ANTHROPIC_MODEL === 'haiku' ? 'Haiku 5.5' : 'Sonnet 4.6'}</span>`,
             llama:     '<span class="agent-ai-badge ollama">🟡 Llama</span>',
             gemma:     '<span class="agent-ai-badge ollama">🟡 Gemma</span>',
             qwen:      '<span class="agent-ai-badge qwen">🔵 Qwen3</span>',
@@ -29365,6 +29374,10 @@ ${blocchiPerAlunno}`;
     async function _ppDeferredRetryOne(idx) {
         const item = _ppDeferredQueue[idx];
         if (!item) return;
+        const scelta = await _ppChooseGenerator(`Ritentare il piano di ${item.studentName}`, { detail: item.unit || '' });
+        if (!scelta) return;
+        if (scelta === 'claude') { await _ppExportForClaude({ queue: [item] }); return; }
+        _ppSetGenProvider(scelta);
         // Reset stato errore prima di ritentare
         item.ppStatus = 'processing';
         item.ppReason = '';
@@ -29380,8 +29393,8 @@ ${blocchiPerAlunno}`;
             return;
         }
         try {
-            const result = await _pianoCheckTrigger(stu, item.tipo, item.unit, item.classeNome, true, item.errorDetails || '');
-            item.ppStatus = result?.outcome || 'done';
+            const result = await _pianoCheckTrigger(stu, item.tipo, item.unit, item.classeNome, true, item.errorDetails || '', item.tagBreakdown || {});
+            item.ppStatus = result?.outcome === 'generated' ? 'done' : (result?.outcome || 'done');
             item.ppReason = result?.reason || '';
         } catch(e) {
             item.ppStatus = 'error';
@@ -29398,6 +29411,10 @@ ${blocchiPerAlunno}`;
         const toProcess = _ppDeferredQueue.filter(i => selectedKeys.has(_ppDefKey(i)));
         if (!toProcess.length) { alert('Nessuna attività selezionata.'); return; }
         if (_ppDeferredRunning) { alert('Elaborazione già in corso — attendi.'); return; }
+        const scelta = await _ppChooseGenerator(`Generare ${toProcess.length} piani personalizzati`);
+        if (!scelta) return;
+        if (scelta === 'claude') { await _ppExportForClaude({ queue: toProcess }); return; }
+        _ppSetGenProvider(scelta);
         // NON rimuovere dalla coda: aggiorna solo lo stato a 'processing'
         _ppDeferredQueue.forEach(i => { if (selectedKeys.has(_ppDefKey(i))) i.ppStatus = 'processing'; });
         _ppDeferredExcluded.clear();
@@ -29421,7 +29438,7 @@ ${blocchiPerAlunno}`;
                     _ppSavDeferred();
                     if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
                     try {
-                        const res = await _pianoCheckTrigger(stu, item.tipo, item.unit, item.classeNome, true, item.errorDetails || '');
+                        const res = await _pianoCheckTrigger(stu, item.tipo, item.unit, item.classeNome, true, item.errorDetails || '', item.tagBreakdown || {});
                         if (qItem) {
                             if (res?.outcome === 'generated') {
                                 qItem.ppStatus = 'done'; qItem.ppReason = '';
@@ -29638,9 +29655,11 @@ ${righe.join('\n')}
     // verInfo (da _ppDetectTestVersion): l'alunno ha svolto la verifica in versione
     // DSA / PEI / PEI 2 → il piano NON è quello standard: stesso percorso REC/CON/APP
     // degli altri, ma costruito sulle sue competenze e con le regole della sua versione.
-    async function _pianoGenerateActivity(studente, voto, unit, prefix, errorDetails = '', tagBreakdown = {}, classeNome = '', verInfo = null) {
+    // Costruisce il prompt del quiz (usato sia per Haiku/Gemini/Ollama sia nel file per Claude Code).
+    // opts.nQ: numero di domande (10 quando l'approfondimento ha anche il blocco Sfida).
+    function _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails = '', tagBreakdown = {}, classeNome = '', verInfo = null, opts = {}) {
         const isPei = verInfo?.layout === 2, isDsa = verInfo?.layout === 1;
-        const nQ = isPei ? 10 : 15;   // PEI: attività più breve, come la sua verifica
+        const nQ = isPei ? 10 : (opts.nQ || 15);   // PEI: attività più breve, come la sua verifica
 
         // Descrizione della prestazione nel test (non livello CEFR globale)
         const prestazioneDesc =
@@ -29668,7 +29687,7 @@ ${righe.join('\n')}
 - Frasi complesse, contesti variati (non solo quelli del libro), vocabolario ricco.
 - Nessun hint, nessuna forma base tra parentesi: lo studente deve richiamare la struttura da solo.
 - Includi almeno 3 domande con distrattori plausibili (errori comuni di chi conosce bene ma non ancora perfettamente).
-- Almeno 2 domande che richiedono transfer: usare la struttura in un contesto nuovo/inaspettato.`;
+- Almeno 3 domande di TRANSFER: la stessa struttura usata in un contesto nuovo e realistico (chat, email, recensione, notizia, post, dialogo al negozio). Nell'istruzione di queste domande scrivi "Transfer —" all'inizio (es. "**Transfer — completa la chat.**").`;
 
         // ── Versione adattata (DSA / PEI) svolta nella verifica ──────────────
         let adattamentoSection = '';
@@ -29772,7 +29791,7 @@ ${verInfo ? 'TIPI DI DOMANDA: vedi le REGOLE DELLA VERSIONE ' + verInfo.label + 
 4. "matching" — abbina elementi colonna sinistra a colonna destra (usa per coppie irregolari, definizioni)
 5. "drag-drop" — trascina le parole nella posizione giusta in una frase (usa per word order, sintassi)
 
-${isPei ? 'DISTRIBUZIONE: 6 multiple-choice (3 opzioni) + 2 matching + 2 drag-drop = 10 totali.' : isDsa ? 'DISTRIBUZIONE: 9 multiple-choice + 3 matching + 3 drag-drop = 15 totali.' : 'DISTRIBUZIONE: 4 multiple-choice + 4 fill-blanks + 3 cloze + 2 matching + 2 drag-drop = 15 totali.'}
+${isPei ? 'DISTRIBUZIONE: 6 multiple-choice (3 opzioni) + 2 matching + 2 drag-drop = 10 totali.' : isDsa ? 'DISTRIBUZIONE: 9 multiple-choice + 3 matching + 3 drag-drop = 15 totali.' : nQ === 10 ? 'DISTRIBUZIONE: 3 multiple-choice + 3 fill-blanks + 2 cloze + 1 matching + 1 drag-drop = 10 totali.' : 'DISTRIBUZIONE: 4 multiple-choice + 4 fill-blanks + 3 cloze + 2 matching + 2 drag-drop = 15 totali.'}
 Domande mescolate (non raggruppare per tipo). Difficoltà variata, non progressiva.
 Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni di tipo ("Scegli", "Completa", "Abbina", "Trascina").
 
@@ -29780,213 +29799,757 @@ FORMATI JSON ESATTI per ogni tipo:
 {"type":"multiple-choice","question":"**Scegli la forma corretta.**\nShe ___ to school yesterday.","options":["go","goes","went","gone"],"correct":2,"points":1}
 {"type":"fill-blanks","question":"**Completa con il Past Simple.**\nLast night I ___ (watch) a film.","answers":["watched"],"points":1}
 {"type":"fill-blanks","question":"**Completa con il Past Simple irregolare.**\nWe ___ (go) to the beach and ___ (have) ice cream.","answers":["went","had"],"points":2}
-{"type":"cloze","question":"**Scegli dalla word bank e completa.**\nI ___ born in 2010. She ___ her homework yesterday.","answers":["was|were","did|made"],"hint":"word bank: was / were / did / made","points":2}
+{"type":"cloze","question":"**Scegli dalla word bank e completa.**\nI ___ born in 2010. She ___ her homework yesterday.","answers":["was","did"],"hint":"word bank: was / were / did / made","points":2}
 {"type":"matching","question":"**Abbina il verbo alla forma irregolare.**","left":["go","have","see","buy"],"right":["went","had","saw","bought"],"points":2}
 {"type":"drag-drop","question":"**Trascina le parole nell'ordine corretto.**\nYesterday / she / didn't / go / to school","sentences":["Yesterday she ___ ___ to school."],"words":["didn't","go","went","not","does"],"answers":["didn't","go"],"points":2}
 
-IMPORTANTE per cloze: "answers" è array di stringhe, ogni stringa può contenere alternative separate da | (es. "was|were").
+IMPORTANTE per cloze e fill-blanks: "answers" ha UNA stringa per ogni ___. Il simbolo | separa SOLO forme ugualmente CORRETTE (es. "didn't|did not", "isn't|is not"): MAI mettere dopo | una parola sbagliata o un distrattore, perché verrebbe accettata come giusta. Nella cloze la word bank ("hint") contiene tutte le risposte più 1-2 distrattori.
 IMPORTANTE per fill-blanks multi-blank: "answers" è array con un elemento per ogni blank.
 IMPORTANTE per matching: "left" e "right" hanno stesso numero di elementi, abbinamento posizionale (left[0]↔right[0] ecc.).
-IMPORTANTE per drag-drop: "sentences" ha ___ per ogni parola da inserire, "answers" è array ordinato delle parole corrette.
+IMPORTANTE per drag-drop: "sentences" ha ___ per ogni parola da inserire, "answers" è array ordinato delle parole corrette, e ogni risposta compare in "words".
+
+CONTROLLO QUALITÀ (obbligatorio, prima di rispondere ricontrolla OGNI domanda):
+- la risposta indicata come corretta è davvero corretta, in inglese corretto;
+- esiste UNA sola risposta corretta: nella scelta multipla nessun distrattore deve essere accettabile; se in un completamento sono corrette più forme, elencale tutte con |;
+- il numero di ___ nel testo è uguale al numero di risposte;
+- la frase non suggerisce la risposta (niente indizi che la rendono ovvia senza conoscere la regola).
 ${erroriSection}
 ${adattamentoSection}
 Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdown.`;
 
+        const sysMsg = `Sei un docente esperto di inglese per scuola media italiana. Rispondi SEMPRE e SOLO con un array JSON valido, senza testo aggiuntivo, senza backtick, senza spiegazioni.${hasErrors ? ' Ogni domanda deve esercitare direttamente le strutture in cui lo studente ha sbagliato nella verifica.' : ''}`;
+        return { prompt, sysMsg, nQ };
+    }
+
+    // verInfo (da _ppDetectTestVersion): l'alunno ha svolto la verifica in versione
+    // DSA / PEI / PEI 2 → il piano NON è quello standard: stesso percorso REC/CON/APP
+    // degli altri, ma costruito sulle sue competenze e con le regole della sua versione.
+    // opts.challenge (solo APP): aggiunge il blocco Sfida (lettura + caccia all'errore
+    // + scrittura guidata), uguale per tutti gli alunni da 9,5 in su della classe.
+    async function _pianoGenerateActivity(studente, voto, unit, prefix, errorDetails = '', tagBreakdown = {}, classeNome = '', verInfo = null, opts = {}) {
+        const challenge = prefix === 'APP' && !!opts.challenge;
+        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, { nQ: challenge ? 10 : undefined });
         let raw = '';
-        const fakeTask = { aiProvider: null };
         try {
-            // Per Ollama usa chat API con system/user separati per migliore instruction following
-            if (GEMINI_API_KEY && _geminiIsQuotaOk()) {
-                // Gemini diretto
-                fakeTask.aiProvider = 'gemini';
-                try {
-                    raw = await agentGeminiDirect(prompt, null);
-                    _geminiResetQuota();
-                } catch(e) {
-                    if (e.name === 'AbortError') throw e;
-                    if (e.isQuota) _geminiMarkQuota();
-                    raw = ''; // forza fallback
-                }
-            }
-            if (!raw) {
-                // Fallback Ollama con chat API (migliore instruction following per modelli locali)
-                try {
-                    fakeTask.aiProvider = AI_PROVIDER === 'llama' ? 'llama' : AI_PROVIDER === 'qwen' ? 'qwen' : 'gemma';
-                    const model = AI_PROVIDER === 'llama' ? OLLAMA_LLAMA_MODEL : AI_PROVIDER === 'qwen' ? OLLAMA_QWEN_MODEL : OLLAMA_GEMMA_MODEL;
-                    const sysMsg = `Sei un docente esperto di inglese per scuola media italiana. Rispondi SEMPRE e SOLO con un array JSON valido, senza testo aggiuntivo, senza backtick, senza spiegazioni.${hasErrors ? ' Ogni domanda deve esercitare direttamente le strutture in cui lo studente ha sbagliato nella verifica.' : ''}`;
-                    const res = await ollamaXhr(OLLAMA_URL + '/api/chat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            model,
-                            messages: [
-                                { role: 'system', content: sysMsg },
-                                { role: 'user',   content: prompt }
-                            ],
-                            stream: false,
-                            options: { num_ctx: 8192, num_predict: -1 }
-                        })
-                    });
-                    if (!res.ok) throw new Error('Ollama non raggiungibile');
-                    const j = await res.json();
-                    raw = j.message?.content || '';
-                } catch(ollamaErr) {
-                    console.warn('[Piano] Ollama non raggiungibile — fallback Haiku:', ollamaErr.message);
-                    fakeTask.aiProvider = 'anthropic';
-                    raw = await agentAnthropicLightCall(prompt, null);
-                }
-            }
-            console.log(`[Piano] Quiz generato: ${raw.length} chars, provider: ${fakeTask.aiProvider}`);
+            raw = await _pianoAICall(P.prompt, P.sysMsg);
+            console.log(`[Piano] Quiz generato: ${raw.length} chars, generatore: ${_ppGenLabel(_ppGenProvider)}`);
         } catch(e) {
             console.warn('[Piano] AI quiz gen error:', e.message);
             return null;
         }
-        // Parse JSON — robusto: accetta sia array diretto che {questions:[...]}
+        let questions = _pianoParseJson(raw, '[');
+        if (!Array.isArray(questions) || !questions.length) {
+            console.warn('[Piano] JSON quiz non valido | raw preview:', String(raw).slice(0, 300));
+            return null;
+        }
+        // Controllo automatico + revisione AI: corregge risposte sbagliate e formati rotti
+        questions = await _pianoReviewQuestions(questions, { unit, prefix, voto, verInfo });
+        if (!questions.length) return null;
+        if (questions.length < Math.min(10, P.nQ)) console.warn(`[Piano] ⚠️ Quiz incompleto: ${questions.length}/${P.nQ} domande`);
+        else console.log(`[Piano] ✅ Quiz OK: ${questions.length} domande, tipi: ${[...new Set(questions.map(q=>q.type))].join(', ')}`);
+
+        // ── Listening: se il listening è un punto debole, esercizio con testo letto dal TTS ──
+        // Vale per ogni fascia (REC/CON/APP) e anche per DSA/PEI, con testo più breve e lento.
+        const lNeed = _ppListeningNeed(prefix, errorDetails, tagBreakdown, verInfo);
+        if (lNeed.needed) {
+            console.log(`[Piano] Listening debole (${lNeed.reason}) — generazione esercizio TTS (${lNeed.level})…`);
+            try {
+                const listenQ = await _pianoGenerateListeningExercise(unit || 'English Grammar', lNeed.level, lNeed.focus);
+                if (listenQ) { questions.push(listenQ); console.log('[Piano] ✅ Listening aggiunto (totale esercizi:', questions.length + ')'); }
+            } catch(le) { console.warn('[Piano] Listening gen error:', le.message); }
+        }
+
+        const activity = { questions };
+        if (challenge) {
+            const block = await _pianoGetChallengeBlock(classeNome, unit);
+            if (block) {
+                activity.passageText = block.passageText;
+                activity.questions = [...questions, ...block.questions];
+                activity.challenge = true;
+            }
+        }
+        if (verInfo) {
+            // Testo grande su ogni domanda + impaginazione della versione in LiveLearn
+            // (il piano si apre come 'originale': layout 1 = DSA, 2 = PEI)
+            activity.questions.forEach(q => { if (q && typeof q === 'object') q.dsaLargeText = true; });
+            activity.versionLayout = { originale: verInfo.layout };
+        }
+        return activity;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  GENERATORE DEI PIANI — scelta del modello, controllo qualità
+    // ═══════════════════════════════════════════════════════════════════════
+    // 'haiku' = Claude Haiku 5.5 (predefinito) · 'auto' = catena storica Gemini → Ollama → Haiku.
+    // 'claude' (Claude Code) non passa di qui: è l'export su file (_ppExportForClaude).
+    var _ppGenProvider = localStorage.getItem('pp_gen_provider') === 'auto' ? 'auto' : 'haiku';
+    function _ppGenLabel(p) {
+        return p === 'auto' ? 'Automatico (Gemini → Ollama → Haiku)' : p === 'claude' ? 'Claude Code' : 'Claude Haiku 5.5';
+    }
+
+    // Chiamata AI dei piani. Con Haiku niente ripieghi silenziosi: se manca la chiave
+    // l'errore arriva al docente invece di finire su un modello diverso da quello scelto.
+    async function _pianoAICall(prompt, sysMsg) {
+        if (_ppGenProvider === 'haiku') return await agentAnthropicLightCall(prompt, sysMsg || null);
+        let raw = '';
+        if (GEMINI_API_KEY && _geminiIsQuotaOk()) {
+            try { raw = await agentGeminiDirect(prompt, null); _geminiResetQuota(); }
+            catch(e) { if (e.name === 'AbortError') throw e; if (e.isQuota) _geminiMarkQuota(); raw = ''; }
+        }
+        if (raw) return raw;
         try {
-            const clean = raw.replace(/```json\n?|```/g, '').trim();
-            const start = clean.indexOf('['), end = clean.lastIndexOf(']');
-            if (start < 0 || end < 0) throw new Error('No JSON array found in response');
-            // Sanitize: Gemma/Ollama produce spesso JSON malformato in due modi:
-            // 1) newline/tab LETTERALI dentro le stringhe (Bad control character)
-            // 2) virgola MANCANTE tra oggetti adiacenti (Expected ',' or ']')
-            const _sanitizeJsonCtrl = (s) => {
-                // Pass 1: escape caratteri di controllo dentro le stringhe
-                let r = '', inStr = false, esc = false;
-                for (let i = 0; i < s.length; i++) {
-                    const c = s[i];
-                    if (esc) { r += c; esc = false; continue; }
-                    if (c === '\\') { r += c; esc = true; continue; }
-                    if (c === '"') { inStr = !inStr; r += c; continue; }
-                    if (inStr && c === '\n') { r += '\\n'; continue; }
-                    if (inStr && c === '\r') { r += '\\r'; continue; }
-                    if (inStr && c === '\t') { r += '\\t'; continue; }
-                    r += c;
-                }
-                // Pass 2: aggiungi virgola tra oggetti/array adiacenti (es. }{  o  ][)
-                r = r.replace(/\}\s*\{/g, '},{').replace(/\]\s*\[/g, '],[');
-                return r;
-            };
-            let questions = JSON.parse(_sanitizeJsonCtrl(clean.slice(start, end + 1)));
-            if (!Array.isArray(questions) || !questions.length) throw new Error('Empty array');
-            if (questions.length < Math.min(10, nQ)) console.warn(`[Piano] ⚠️ Quiz incompleto: ${questions.length}/${nQ} domande`);
-            else console.log(`[Piano] ✅ Quiz OK: ${questions.length} domande, tipi: ${[...new Set(questions.map(q=>q.type))].join(', ')}`);
+            // Ollama con chat API: system/user separati, migliore instruction following
+            const model = AI_PROVIDER === 'llama' ? OLLAMA_LLAMA_MODEL : AI_PROVIDER === 'qwen' ? OLLAMA_QWEN_MODEL : OLLAMA_GEMMA_MODEL;
+            const res = await ollamaXhr(OLLAMA_URL + '/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model,
+                    messages: [
+                        ...(sysMsg ? [{ role: 'system', content: sysMsg }] : []),
+                        { role: 'user', content: prompt }
+                    ],
+                    stream: false,
+                    options: { num_ctx: 8192, num_predict: -1 }
+                })
+            });
+            if (!res.ok) throw new Error('Ollama non raggiungibile');
+            const j = await res.json();
+            raw = j.message?.content || '';
+            if (!raw) throw new Error('Ollama: risposta vuota');
+            return raw;
+        } catch(ollamaErr) {
+            console.warn('[Piano] Ollama non disponibile — fallback Haiku:', ollamaErr.message);
+            return await agentAnthropicLightCall(prompt, sysMsg || null);
+        }
+    }
 
-            // ── Listening extra: se ci sono errori LISTENING, aggiungi un esercizio TTS ──
-            // Rileva LISTENING da tre fonti indipendenti:
-            // 1. errorDetails: linee con [listening...] (q.type='listening' nel test — formato agentBuildDetailLines)
-            //    NB: q.tag='LISTENING' spesso non è nel dato Firebase grezzo → uso il type
-            // 2. tagBreakdown: {LISTENING: X%} calcolato all'approvazione task (richiede q.tag settato)
-            // 3. errorDetails: testo LISTENING come tag esplicito (formato legacy con tag settato)
-            const listeningPct = tagBreakdown?.LISTENING ?? tagBreakdown?.listening ?? null;
-            const listeningErrorLines = (isCurrentErrors && errorDetails)
-                ? errorDetails.split('\n').filter(l => /\[listening[\s,\]]/i.test(l) && /\b(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)pt/.test(l))
-                : [];
-            const hasListeningErrors = prefix === 'REC' && !isPei && (
-                listeningErrorLines.length > 0 ||
-                (listeningPct !== null && listeningPct < 60)
-            );
-            if (hasListeningErrors) {
-                const src = listeningErrorLines.length > 0 ? `${listeningErrorLines.length} domande listening sbagliate in errorDetails` : `tagBreakdown LISTENING=${listeningPct}%`;
-                console.log(`[Piano] Listening debole rilevato (${src}) — generazione esercizio TTS…`);
-                try {
-                    const listenQ = await _pianoGenerateListeningExercise(unit || 'English Grammar');
-                    if (listenQ) {
-                        questions.push(listenQ);
-                        console.log('[Piano] ✅ Listening exercise aggiunto (totale domande:', questions.length + ')');
-                    }
-                } catch(le) { console.warn('[Piano] Listening gen error:', le.message); }
-            }
-
-            if (verInfo) {
-                // Testo grande su ogni domanda + impaginazione della versione in LiveLearn
-                // (il piano si apre come 'originale': layout 1 = DSA, 2 = PEI)
-                questions.forEach(q => { if (q && typeof q === 'object') q.dsaLargeText = true; });
-                return { questions, versionLayout: { originale: verInfo.layout } };
-            }
-            return { questions };
-        } catch(e) {
-            console.warn('[Piano] JSON parse error:', e.message, '| raw preview:', raw.slice(0, 300));
+    // JSON robusto: i modelli locali producono spesso JSON malformato
+    // 1) newline/tab LETTERALI dentro le stringhe  2) virgola mancante tra oggetti adiacenti
+    function _pianoSanitizeJson(s) {
+        let r = '', inStr = false, esc = false;
+        for (let i = 0; i < s.length; i++) {
+            const c = s[i];
+            if (esc) { r += c; esc = false; continue; }
+            if (c === '\\') { r += c; esc = true; continue; }
+            if (c === '"') { inStr = !inStr; r += c; continue; }
+            if (inStr && c === '\n') { r += '\\n'; continue; }
+            if (inStr && c === '\r') { r += '\\r'; continue; }
+            if (inStr && c === '\t') { r += '\\t'; continue; }
+            r += c;
+        }
+        return r.replace(/\}\s*\{/g, '},{').replace(/\]\s*\[/g, '],[');
+    }
+    // open = '[' (array) o '{' (oggetto). Accetta anche {questions:[...]} quando serve un array.
+    function _pianoParseJson(raw, open = '[') {
+        const close = open === '[' ? ']' : '}';
+        const clean = String(raw || '').replace(/```json\n?|```/g, '').trim();
+        const start = clean.indexOf(open), end = clean.lastIndexOf(close);
+        if (start < 0 || end < start) {
+            if (open === '[') { const o = _pianoParseJson(raw, '{'); return Array.isArray(o?.questions) ? o.questions : null; }
+            return null;
+        }
+        try { return JSON.parse(_pianoSanitizeJson(clean.slice(start, end + 1))); }
+        catch(e) {
+            console.warn('[Piano] JSON parse error:', e.message);
+            if (open === '[') { const o = _pianoParseJson(raw, '{'); return Array.isArray(o?.questions) ? o.questions : null; }
             return null;
         }
     }
 
-    // Genera un esercizio listening (TTS + categorizzazione o drag-drop) per il PP di recupero
-    async function _pianoGenerateListeningExercise(unit) {
-        const prompt = `Sei un docente di inglese per scuola media italiana.
-Genera UNA domanda di tipo "listening" per un piano di recupero sull'unità "${unit}".
+    function _ppCountBlanks(s) { return (String(s || '').match(/_{3,}/g) || []).length; }
 
-La domanda deve contenere:
-1. "ttsText": un testo narrativo in inglese di circa 200-230 parole (massimo 1 minuto e 30 secondi di lettura a velocità moderata). Il testo deve riguardare i temi dell'unità, usare vocabolario e strutture grammaticali dell'unità, essere scorrevole e naturale.
-2. "subtype": scegli tra "categorization" o "drag-drop" (quello più adatto al contenuto del testo).
-3. "question": l'oggetto attività correlato al testo (lo studente deve aver capito il testo per rispondere).
+    // Categorization: LiveLearn corregge con "answers" = indice della categoria di
+    // ogni elemento (stesso ordine di "items"). L'editor delle bozze lavora con la
+    // mappa "correct" {elemento: categoria}: si tengono allineate tutte e due,
+    // e se ci sono entrambe vince la mappa (è quella che il docente modifica).
+    function _ppNormCategorization(q) {
+        const categories = q.categories || q.columns || [];
+        const items = q.items || q.words || [];
+        let answers = null;
+        const map = (q.correct && typeof q.correct === 'object' && !Array.isArray(q.correct)) ? q.correct : null;
+        if (map && items.length && items.every(it => categories.includes(map[it]))) {
+            answers = items.map(it => categories.indexOf(map[it]));
+        } else if (Array.isArray(q.answers)) {
+            answers = q.answers.map(Number);
+        }
+        const correct = {};
+        if (answers) items.forEach((it, i) => { if (categories[answers[i]] !== undefined) correct[it] = categories[answers[i]]; });
+        return { categories, items, answers: answers || [], correct };
+    }
 
-FORMATO JSON ESATTO per subtype "categorization":
-{"type":"listening","text":"Listening\nAscolta e classifica.","ttsText":"[testo 200-230 parole]","ttsRate":0.85,"subtype":"categorization","question":{"type":"categorization","text":"Classifica le informazioni sentite.","categories":["Categoria A","Categoria B"],"items":["elemento1","elemento2","elemento3","elemento4","elemento5","elemento6"],"correct":{"elemento1":"Categoria A","elemento2":"Categoria B"}},"points":4}
+    // Porta una domanda nel formato che LiveLearn legge davvero.
+    // ⚠️ LiveLearn mostra il testo da "text", non da "question": senza questa
+    // copia (es. con "Approva tutte", che non passa dall'editor) la domanda
+    // arrivava all'alunno senza testo. In MyClass il campo canonico è "question".
+    function _ppNormalizeQuestion(q) {
+        if (!q || typeof q !== 'object') return q;
+        const out = { ...q };
+        if (typeof out.question === 'string') out.text = out.question;
+        else if (typeof out.text === 'string' && out.question == null && out.type !== 'listening') out.question = out.text;
+        if (out.type === 'categorization') Object.assign(out, _ppNormCategorization(out));
+        if (out.type === 'multiple-choice' && typeof out.correct === 'string' && /^\d+$/.test(out.correct)) out.correct = Number(out.correct);
+        if (out.type === 'listening' && out.question && typeof out.question === 'object') {
+            const inner = { ...out.question };
+            if (!out.subtype && inner.type) out.subtype = inner.type;
+            if (!inner.type && out.subtype) inner.type = out.subtype;
+            if (typeof inner.question === 'string' && !inner.text) inner.text = inner.question;
+            if (inner.type === 'categorization') Object.assign(inner, _ppNormCategorization(inner));
+            out.question = inner;
+        }
+        if (!out.points) out.points = 1;
+        return out;
+    }
 
-FORMATO JSON ESATTO per subtype "drag-drop":
-{"type":"listening","text":"Listening\nAscolta e completa.","ttsText":"[testo 200-230 parole]","ttsRate":0.85,"subtype":"drag-drop","question":{"type":"drag-drop","text":"Completa le frasi con le informazioni che hai sentito.","sentences":["Frase ___ completamento."],"words":["parola1","parola2","parola3","parola4"],"answers":["parola1"]},"points":4}
+    // Controllo strutturale: elenco dei problemi (vuoto = domanda valida).
+    function _ppValidateQuestion(q) {
+        if (!q || typeof q !== 'object' || !q.type) return ['oggetto domanda non valido'];
+        const issues = [];
+        const txt = String(q.text || '');
+        const filled = a => Array.isArray(a) && a.length > 0 && a.every(x => String(x ?? '').trim() !== '');
+        const norm = x => String(x ?? '').trim().toLowerCase();
+        switch (q.type) {
+            case 'multiple-choice': {
+                const o = q.options;
+                if (!txt.trim()) issues.push('testo della domanda mancante');
+                if (!Array.isArray(o) || o.length < 3) { issues.push('servono almeno 3 opzioni'); break; }
+                if (!filled(o)) issues.push('opzioni vuote');
+                if (new Set(o.map(norm)).size !== o.length) issues.push('opzioni duplicate');
+                if (!Number.isInteger(q.correct) || q.correct < 0 || q.correct >= o.length) issues.push('"correct" non è l\'indice di un\'opzione');
+                break;
+            }
+            case 'fill-blanks':
+            case 'cloze': {
+                const n = _ppCountBlanks(txt);
+                if (!filled(q.answers)) { issues.push('"answers" vuoto'); break; }
+                if (n !== q.answers.length) issues.push(`${n} spazi ___ nel testo ma ${q.answers.length} risposte`);
+                if (q.type === 'cloze' && q.hint) {
+                    const bank = norm(q.hint);
+                    const missing = q.answers.filter(a => !String(a).split('|').some(alt => alt.trim() && bank.includes(norm(alt))));
+                    if (missing.length) issues.push('la word bank non contiene: ' + missing.join(', '));
+                }
+                break;
+            }
+            case 'matching': {
+                if (!filled(q.left) || !filled(q.right)) { issues.push('colonne vuote'); break; }
+                if (q.left.length !== q.right.length) issues.push('"left" e "right" con lunghezze diverse');
+                if (new Set(q.left.map(norm)).size !== q.left.length || new Set(q.right.map(norm)).size !== q.right.length) issues.push('elementi ripetuti in una colonna');
+                break;
+            }
+            case 'drag-drop': {
+                const sents = Array.isArray(q.sentences) ? q.sentences : [];
+                const n = sents.reduce((t, x) => t + _ppCountBlanks(x), 0);
+                if (!filled(q.answers) || !filled(q.words)) { issues.push('"answers" o "words" vuoti'); break; }
+                if (n !== q.answers.length) issues.push(`${n} spazi ___ nelle frasi ma ${q.answers.length} risposte`);
+                const pool = q.words.map(norm);
+                for (const a of q.answers) {
+                    const k = pool.indexOf(norm(a));
+                    if (k < 0) { issues.push(`la risposta "${a}" non è tra le parole disponibili`); break; }
+                    pool.splice(k, 1);
+                }
+                break;
+            }
+            case 'categorization': {
+                const c = q.categories || [], it = q.items || [], a = q.answers || [];
+                if (c.length < 2 || it.length < 2) { issues.push('servono almeno 2 categorie e 2 elementi'); break; }
+                if (a.length !== it.length || a.some(x => !Number.isInteger(x) || x < 0 || x >= c.length)) issues.push('soluzioni mancanti o non valide per alcuni elementi');
+                break;
+            }
+            case 'free-response':
+                if (!txt.trim()) issues.push('testo della domanda mancante');
+                break;
+            case 'listening': {
+                if (String(q.ttsText || '').trim().split(/\s+/).length < 30) issues.push('testo da ascoltare mancante o troppo corto');
+                const inner = q.question;
+                if (!inner || typeof inner !== 'object') { issues.push('attività di ascolto mancante'); break; }
+                const sub = q.subtype || inner.type;
+                if (!['multiple-choice','categorization','drag-drop','cloze','fill-blanks','matching'].includes(sub)) { issues.push('tipo di attività di ascolto non supportato'); break; }
+                const innerIssues = _ppValidateQuestion({ ...inner, type: sub, text: inner.text || (_ppCountBlanks(JSON.stringify(inner)) ? '___' : 'x') })
+                    .filter(x => !/spazi ___ nel testo/.test(x));
+                issues.push(...innerIssues.map(x => 'ascolto: ' + x));
+                break;
+            }
+            default:
+                issues.push('tipo non supportato: ' + q.type);
+        }
+        return issues;
+    }
 
-REGOLE:
-- ttsText in inglese, tono narrativo/descrittivo, non troppo tecnico.
-- Le domande devono poter essere risposte SOLO ascoltando il testo (non usando conoscenze generali).
-- Per categorization: almeno 2 categorie e 5-6 elementi; ogni elemento deve apparire chiaramente nel testo.
-- Per drag-drop: 1-2 frasi con blank, 4-5 parole disponibili (di cui 2-3 distrattori).
-- Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markdown.`;
+    // Revisione: controllo automatico + rilettura AI ("docente madrelingua").
+    // Con Haiku 5.5 la rilettura si fa sempre (costa pochissimo); con la catena
+    // automatica solo se il controllo trova problemi. Le domande ancora rotte
+    // dopo la revisione vengono scartate: meglio 14 domande giuste che 15 con una sbagliata.
+    async function _pianoReviewQuestions(questions, ctx = {}) {
+        let qs = (questions || []).filter(q => q && typeof q === 'object').map(_ppNormalizeQuestion);
+        const issuesOf = list => list.map((q, i) => ({ i, issues: _ppValidateQuestion(q) })).filter(x => x.issues.length);
+        let bad = issuesOf(qs);
+        if (qs.length && (_ppGenProvider === 'haiku' || bad.length)) {
+            const lay = ctx.verInfo?.layout;
+            const livello = lay === 2 ? 'versione PEI: frasi cortissime, lessico di base, scelta multipla con 3 opzioni'
+                : lay === 1 ? 'versione DSA: frasi brevi e chiare, una richiesta per domanda'
+                : ctx.prefix === 'REC' ? 'recupero: domande semplici e guidate'
+                : ctx.prefix === 'CON' ? 'consolidamento: difficoltà media'
+                : 'approfondimento: domande impegnative';
+            // "text" è una copia di "question": si manda solo "question", poi si ricopia
+            const send = qs.map(q => { const c = { ...q }; if (typeof c.question === 'string') delete c.text; return c; });
+            const prompt = `Sei un docente madrelingua inglese che rivede un'attività per la scuola media italiana (unità "${ctx.unit || 'English'}", ${livello}).
+Rivedi queste ${qs.length} domande. Per OGNI domanda controlla:
+1. La risposta indicata come corretta è davvero corretta (grammatica, ortografia, uso naturale dell'inglese).
+2. Esiste UNA sola risposta corretta. Nella scelta multipla nessun distrattore deve essere accettabile: se lo è, sostituiscilo. Nei completamenti ("fill-blanks", "cloze") elenca con | tutte le forme ugualmente corrette (es. "didn't|did not") e MAI forme sbagliate.
+3. Il numero di ___ nel testo è uguale al numero di risposte; nel "drag-drop" ogni risposta compare in "words"; nel "matching" "left" e "right" hanno la stessa lunghezza; nella "categorization" "answers" ha, per ogni elemento di "items", l'indice (da 0) della sua categoria.
+4. Istruzione chiara in italiano, frase in inglese naturale, nessun indizio che renda ovvia la risposta.
+${bad.length ? 'PROBLEMI GIÀ RILEVATI DAL CONTROLLO AUTOMATICO (correggili):\n' + bad.map(b => `- domanda ${b.i + 1}: ${b.issues.join('; ')}`).join('\n') + '\n' : ''}Correggi SOLO ciò che è sbagliato e lascia invariato il resto. Stesso numero di domande, stesso ordine, stessi tipi, stessi campi JSON.
+Rispondi SOLO con l'array JSON corretto, senza testo prima o dopo, senza backtick.
 
-        let raw = '';
-        const fakeTask = { aiProvider: null };
+DOMANDE:
+${JSON.stringify(send)}`;
+            try {
+                const raw = await _pianoAICall(prompt, 'Sei un revisore esperto di esercizi di inglese. Rispondi SEMPRE e SOLO con un array JSON valido.');
+                const rev = _pianoParseJson(raw, '[');
+                if (Array.isArray(rev) && rev.length >= Math.ceil(qs.length * 0.8)) {
+                    const revN = rev.filter(q => q && typeof q === 'object').map(_ppNormalizeQuestion);
+                    const revBad = issuesOf(revN);
+                    // La revisione si tiene solo se non peggiora il controllo automatico
+                    if (revBad.length <= bad.length) { qs = revN; bad = revBad; }
+                    console.log(`[Piano] 🔎 Revisione: ${bad.length} domande ancora da scartare`);
+                }
+            } catch(e) {
+                if (e.name === 'AbortError') throw e;
+                console.warn('[Piano] Revisione non riuscita (tengo le domande controllate):', e.message);
+            }
+        }
+        if (bad.length) {
+            bad.forEach(b => console.warn(`[Piano] ✂️ Scartata domanda ${b.i + 1}: ${b.issues.join('; ')}`));
+            const badIdx = new Set(bad.map(b => b.i));
+            qs = qs.filter((_, i) => !badIdx.has(i));
+        }
+        return qs;
+    }
+
+    // Il listening è un punto debole? Righe [listening] tra gli errori della verifica
+    // o percentuale LISTENING sotto il 60%. Livello del testo: PEI/DSA o fascia del piano.
+    function _ppListeningNeed(prefix, errorDetails = '', tagBreakdown = {}, verInfo = null) {
+        const pct = tagBreakdown?.LISTENING ?? tagBreakdown?.listening ?? null;
+        const isErrList = errorDetails && !/^(NOTE DISCORSIVE|AREE DEBOLI)/.test(errorDetails);
+        const lines = isErrList
+            ? errorDetails.split('\n').filter(l => /\[listening[\s,\]]/i.test(l) && /\b(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)pt/.test(l))
+            : [];
+        const needed = lines.length > 0 || (pct !== null && pct < 60);
+        const level = verInfo?.layout === 2 ? 'PEI' : verInfo?.layout === 1 ? 'DSA' : (prefix || 'REC');
+        return {
+            needed, level,
+            focus: lines.slice(0, 6).join('\n'),
+            reason: lines.length ? `${lines.length} esercizi di listening sbagliati` : `listening al ${pct}%`
+        };
+    }
+
+    // Prompt dell'esercizio di listening: testo scritto dall'AI e letto dal TTS del browser.
+    function _pianoBuildListeningPrompt(unit, level = 'REC', focus = '') {
+        const L = {
+            PEI: { words: '70-100', rate: 0.75, desc: 'versione PEI: frasi cortissime, lessico di base, ritmo lento', sub: 'scegli "multiple-choice" (3 opzioni semplici) oppure "categorization" con 2 categorie e 4 elementi' },
+            DSA: { words: '120-150', rate: 0.8, desc: 'versione DSA: frasi brevi e chiare, informazioni ben distinte', sub: 'scegli "categorization" (2 categorie, 5-6 elementi) oppure "multiple-choice"' },
+            REC: { words: '150-180', rate: 0.85, desc: 'recupero: lessico dell\'unità, frasi semplici', sub: 'scegli "categorization" (2-3 categorie, 6 elementi) oppure "drag-drop"' },
+            CON: { words: '180-220', rate: 0.9, desc: 'consolidamento: frasi di media lunghezza', sub: 'scegli "categorization" (2-3 categorie, 6-8 elementi) oppure "drag-drop"' },
+            APP: { words: '220-260', rate: 0.95, desc: 'approfondimento: testo ricco e naturale, qualche dettaglio da inferire', sub: 'scegli "drag-drop" oppure "categorization" con 3 categorie e 8 elementi' }
+        }[level] || null;
+        const l = L || { words: '150-180', rate: 0.85, desc: 'livello scuola media', sub: 'scegli "categorization" oppure "drag-drop"' };
+        return `Sei un docente di inglese per scuola media italiana.
+Genera UN esercizio di listening per un piano personalizzato sull'unità "${unit}" (${l.desc}).
+
+1. "ttsText": un testo in inglese SCRITTO DA TE (racconto o dialogo), di ${l.words} parole, sui temi dell'unità e con il suo lessico e le sue strutture. Verrà letto dalla sintesi vocale del browser: frasi complete, niente simboli, niente elenchi, niente nomi di chi parla tra parentesi.
+2. "subtype": ${l.sub}.
+3. "question": l'attività sul testo. Si deve poter rispondere SOLO avendo ascoltato (non con conoscenze generali) e ogni informazione richiesta deve comparire chiaramente nel testo.
+${focus ? `\nNella verifica lo studente ha sbagliato questi esercizi di ascolto:\n${focus}\nAllena le stesse abilità (es. cogliere numeri, orari, nomi, dettagli, sequenza dei fatti).\n` : ''}
+FORMATI JSON ESATTI ("ttsRate": ${l.rate}):
+categorization → {"type":"listening","text":"**Listening**\\nAscolta e classifica.","ttsText":"...","ttsRate":${l.rate},"subtype":"categorization","question":{"type":"categorization","text":"Classifica le informazioni che hai sentito.","categories":["Tom","Anna"],"items":["plays football","likes pizza","has a dog","goes to the cinema"],"answers":[0,1,1,0]},"points":4}
+  ("answers": per OGNI elemento di "items", nello stesso ordine, l'indice da 0 della sua categoria)
+multiple-choice → {"type":"listening","text":"**Listening**\\nAscolta e scegli.","ttsText":"...","ttsRate":${l.rate},"subtype":"multiple-choice","question":{"type":"multiple-choice","text":"Where does Tom go on Saturday?","options":["to the park","to the cinema","to school"],"correct":1},"points":2}
+drag-drop → {"type":"listening","text":"**Listening**\\nAscolta e completa.","ttsText":"...","ttsRate":${l.rate},"subtype":"drag-drop","question":{"type":"drag-drop","text":"Completa le frasi con le informazioni che hai sentito.","sentences":["Tom gets up at ___ and has ___ for breakfast."],"words":["seven","eight","toast","eggs","milk"],"answers":["seven","toast"]},"points":4}
+  (drag-drop: 1-2 frasi, una ___ per ogni risposta, "words" = risposte + 2-3 distrattori)
+Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markdown.`;
+    }
+
+    // Genera l'esercizio di listening (TTS + attività) del piano personalizzato
+    async function _pianoGenerateListeningExercise(unit, level = 'REC', focus = '') {
+        const prompt = _pianoBuildListeningPrompt(unit, level, focus);
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            let raw = '';
+            try {
+                raw = await _pianoAICall(prompt, 'Sei un docente di inglese per scuola media italiana. Rispondi SEMPRE e SOLO con un oggetto JSON valido, senza testo aggiuntivo, senza backtick, senza spiegazioni.');
+            } catch(e) {
+                console.warn('[Piano] Listening AI error:', e.message);
+                return null;
+            }
+            const obj = _ppNormalizeQuestion(_pianoParseJson(raw, '{'));
+            const issues = (obj && obj.type === 'listening') ? _ppValidateQuestion(obj) : ['JSON listening non valido'];
+            if (!issues.length) return obj;
+            console.warn(`[Piano] Listening scartato (tentativo ${attempt}): ${issues.join('; ')}`);
+        }
+        return null;
+    }
+
+    // ── SFIDA (alunni con almeno 9,5 nella verifica dell'unità) ───────────
+    // Lettura + comprensione (chiuse e aperte), caccia all'errore, scrittura guidata.
+    // Generata UNA volta per classe+unità e condivisa: il docente la rivede una volta,
+    // tutti gli alunni da 9,5 in su della classe ricevono lo stesso blocco.
+    function _ppChallengeEligible(studente, unit, verInfo) {
+        if (verInfo) return false;   // DSA / PEI: il loro approfondimento è già adattato
+        const sG = (studente?.scritto || []).filter(g => !unit || g.unit === unit || g.titolo === unit || String(g.titolo || '').includes(unit));
+        if (!sG.length) return false;
+        const last = [...sG].sort((a, b) => new Date(b.data) - new Date(a.data))[0];
+        return Number(last.voto) >= 9.5;
+    }
+    function _ppChallengeKey(classeNome, unit) { return `${classeNome || ''}|${unit || ''}`; }
+    function _ppChallengeCacheGet(key) {
         try {
-            if (GEMINI_API_KEY && _geminiIsQuotaOk()) {
-                fakeTask.aiProvider = 'gemini';
-                try {
-                    raw = await agentGeminiDirect(prompt, null);
-                    _geminiResetQuota();
-                } catch(e) {
-                    if (e.isQuota) _geminiMarkQuota();
-                    raw = '';
-                }
-            }
-            if (!raw) {
-                try {
-                    fakeTask.aiProvider = AI_PROVIDER === 'llama' ? 'llama' : AI_PROVIDER === 'qwen' ? 'qwen' : 'gemma';
-                    const model = AI_PROVIDER === 'llama' ? OLLAMA_LLAMA_MODEL : AI_PROVIDER === 'qwen' ? OLLAMA_QWEN_MODEL : OLLAMA_GEMMA_MODEL;
-                    const res = await ollamaXhr(OLLAMA_URL + '/api/chat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            model,
-                            messages: [
-                                { role: 'system', content: 'Sei un docente di inglese per scuola media italiana. Rispondi SEMPRE e SOLO con un oggetto JSON valido, senza testo aggiuntivo, senza backtick, senza spiegazioni.' },
-                                { role: 'user', content: prompt }
-                            ],
-                            stream: false,
-                            options: { num_ctx: 8192, num_predict: -1 }
-                        })
-                    });
-                    if (!res.ok) throw new Error('Ollama non raggiungibile');
-                    const j = await res.json();
-                    raw = j.message?.content || '';
-                } catch(ollamaErr) {
-                    console.warn('[Piano] Listening — Ollama fallback Haiku:', ollamaErr.message);
-                    fakeTask.aiProvider = 'anthropic';
-                    raw = await agentAnthropicLightCall(prompt, null);
-                }
-            }
+            const e = JSON.parse(localStorage.getItem('pp_challenge_cache') || '{}')[key];
+            return e && (Date.now() - e.at < 30 * 864e5) ? JSON.parse(JSON.stringify(e.block)) : null;
+        } catch { return null; }
+    }
+    function _ppChallengeCacheSet(key, block) {
+        try {
+            const c = JSON.parse(localStorage.getItem('pp_challenge_cache') || '{}');
+            c[key] = { at: Date.now(), block };
+            const keys = Object.keys(c).sort((a, b) => c[b].at - c[a].at);
+            keys.slice(20).forEach(k => delete c[k]);   // tiene le 20 più recenti
+            localStorage.setItem('pp_challenge_cache', JSON.stringify(c));
+        } catch(e) { console.warn('[Piano] cache sfida non salvata:', e.message); }
+    }
+    function _pianoBuildChallengePrompt(unit) {
+        return `Sei un docente di inglese per la scuola media italiana. Prepara il blocco "SFIDA" per gli alunni che hanno preso almeno 9,5 nella verifica dell'unità "${unit}". Lo stesso blocco andrà a tutti questi alunni della classe: niente riferimenti a un singolo alunno.
+
+Il blocco contiene:
+1. "passageText": un testo di lettura in inglese di 180-250 parole, livello A2+/B1, con il titolo in grassetto sulla prima riga (**Title**). Argomento: un approfondimento legato al tema o alla grammatica dell'unità (curiosità culturali, vita reale, storia, scienza, attualità adatta a ragazzi di 11-14 anni). Il testo usa in modo naturale le strutture dell'unità.
+2. "questions": ESATTAMENTE 5 esercizi, in quest'ordine:
+   a) 2 "multiple-choice" di comprensione del testo (4 opzioni, una sola corretta, la risposta si trova nel testo), "tag":"READING", "points":1.
+   b) 1 "free-response" di comprensione: domanda aperta sul testo, risposta in inglese in 1-2 frasi; nel campo "hint" scrivi in italiano cosa deve contenere una buona risposta (serve alla correzione automatica). "tag":"READING", "points":3.
+   c) 1 "fill-blanks" CACCIA ALL'ERRORE: 5 frasi numerate, legate al testo, ognuna con UN errore sulle strutture dell'unità; dopo ogni frase scrivi "→ ___"; lo studente scrive la forma corretta della parola sbagliata. "answers" = le 5 forme corrette (con | solo forme ugualmente corrette, es. "doesn't|does not"). "tag":"GRAMMAR", "points":5.
+   d) 1 "free-response" SCRITTURA BREVE GUIDATA (transfer): 60-80 parole in inglese in un contesto nuovo e concreto (email, post, recensione, messaggio a un amico) collegato al tema del testo, con l'elenco di 3 strutture dell'unità da usare obbligatoriamente. Nel campo "hint" scrivi in italiano i criteri di valutazione (strutture usate correttamente, lunghezza, coerenza). "tag":"WRITING", "points":6.
+
+FORMATO JSON ESATTO:
+{"passageText":"**Title**\\nText...","questions":[
+{"type":"multiple-choice","tag":"READING","question":"**Reading — scegli la risposta corretta.**\\nWhy did ...?","options":["...","...","...","..."],"correct":0,"points":1},
+{"type":"multiple-choice","tag":"READING","question":"**Reading — scegli la risposta corretta.**\\nWhat ...?","options":["...","...","...","..."],"correct":2,"points":1},
+{"type":"free-response","tag":"READING","question":"**Reading — rispondi in inglese (1-2 frasi).**\\nWhy ...?","hint":"...","points":3},
+{"type":"fill-blanks","tag":"GRAMMAR","question":"**Caccia all'errore — ogni frase contiene un errore. Scrivi la forma corretta.**\\n1. She don't like cold weather. → ___\\n2. ... → ___\\n3. ... → ___\\n4. ... → ___\\n5. ... → ___","answers":["doesn't|does not","...","...","...","..."],"points":5},
+{"type":"free-response","tag":"WRITING","question":"**Scrittura guidata (60-80 parole).**\\nWrite ... Use: 1) ... 2) ... 3) ...","hint":"...","points":6}]}
+Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markdown.`;
+    }
+    async function _pianoGetChallengeBlock(classeNome, unit) {
+        const key = _ppChallengeKey(classeNome, unit);
+        const cached = _ppChallengeCacheGet(key);
+        if (cached) { console.log(`[Piano] Sfida ${key}: riuso il blocco già generato`); return cached; }
+        try {
+            const raw = await _pianoAICall(_pianoBuildChallengePrompt(unit || 'English'), 'Sei un docente di inglese per scuola media italiana. Rispondi SEMPRE e SOLO con un oggetto JSON valido.');
+            const obj = _pianoParseJson(raw, '{');
+            if (!obj || !String(obj.passageText || '').trim() || !Array.isArray(obj.questions)) throw new Error('JSON sfida non valido');
+            const questions = await _pianoReviewQuestions(obj.questions, { unit, prefix: 'APP' });
+            if (questions.length < 3) throw new Error('troppi esercizi della sfida scartati');
+            const block = { passageText: String(obj.passageText).trim(), questions };
+            _ppChallengeCacheSet(key, block);
+            console.log(`[Piano] ✅ Sfida ${key} generata (${questions.length} esercizi)`);
+            return JSON.parse(JSON.stringify(block));
         } catch(e) {
-            console.warn('[Piano] Listening AI error:', e.message);
+            if (e.name === 'AbortError') throw e;
+            console.warn('[Piano] Sfida non generata:', e.message);
             return null;
         }
-        try {
-            const clean = raw.replace(/```json\n?|```/g, '').trim();
-            const start = clean.indexOf('{'), end = clean.lastIndexOf('}');
-            if (start < 0 || end < 0) throw new Error('No JSON object found');
-            const obj = JSON.parse(clean.slice(start, end + 1));
-            if (obj.type !== 'listening' || !obj.ttsText || !obj.question) throw new Error('JSON listening non valido');
-            return obj;
-        } catch(e) {
-            console.warn('[Piano] Listening parse error:', e.message, '| raw:', raw.slice(0, 200));
-            return null;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  SCELTA DEL GENERATORE + EXPORT / IMPORT PER CLAUDE CODE
+    // ═══════════════════════════════════════════════════════════════════════
+    function _ppSetGenProvider(v) {
+        _ppGenProvider = v === 'auto' ? 'auto' : 'haiku';
+        try { localStorage.setItem('pp_gen_provider', _ppGenProvider); } catch(e) {}
+    }
+
+    // Finestra "Con cosa vuoi generare?" prima di ogni generazione.
+    // Risolve con 'haiku' | 'auto' | 'claude', oppure null se il docente annulla.
+    function _ppChooseGenerator(title, { allowClaude = true, detail = '' } = {}) {
+        return new Promise(resolve => {
+            const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+            const hasKey = !!(AGENT_ANTHROPIC_KEY || localStorage.getItem('agent_anthropic_key'));
+            let last = localStorage.getItem('pp_gen_last_choice') || 'haiku';
+            if (last === 'claude' && !allowClaude) last = 'haiku';
+            const opts = [
+                { v: 'haiku', icon: '🔵', t: 'Claude Haiku 5.5', dis: !hasKey,
+                  d: hasKey ? 'Consigliato. Veloce ed economico, con controllo e revisione automatica di ogni domanda.'
+                            : '⚠️ Manca la chiave API Anthropic: inseriscila nelle impostazioni dell\'agente.' },
+                { v: 'auto', icon: '⚙️', t: 'Automatico (come prima)',
+                  d: 'Gemini → Ollama locale → Haiku 5.5 se gli altri non rispondono.' },
+                ...(allowClaude ? [{ v: 'claude', icon: '🟣', t: 'Claude Code',
+                  d: 'Scarica un file con i dati delle verifiche (senza nomi) e la consegna. Lo carichi in Claude Code, poi importi qui il file che ti restituisce con 📥 Importa da Claude.' }] : [])
+            ];
+            const ov = document.createElement('div');
+            ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;';
+            ov.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:460px;width:100%;padding:18px 18px 14px;box-shadow:0 20px 50px rgba(0,0,0,.25);font-family:inherit;">
+                <div style="font-size:16px;font-weight:800;color:#312e81;margin-bottom:4px;">${esc(title)}</div>
+                <div style="font-size:13px;color:#6b7280;margin-bottom:12px;">${detail ? esc(detail) + '<br>' : ''}Con cosa vuoi generare?</div>
+                ${opts.map(o => `<button data-v="${o.v}" ${o.dis ? 'disabled' : ''} style="display:block;width:100%;text-align:left;margin-bottom:8px;padding:10px 12px;border-radius:10px;border:2px solid ${o.v === last && !o.dis ? '#6c47ff' : '#e5e7eb'};background:${o.dis ? '#f9fafb' : '#fff'};cursor:${o.dis ? 'not-allowed' : 'pointer'};opacity:${o.dis ? '.6' : '1'};font-family:inherit;">
+                    <div style="font-size:14px;font-weight:700;color:#1f2937;">${o.icon} ${esc(o.t)}${o.v === last && !o.dis ? ' <span style="font-size:11px;color:#6c47ff;font-weight:600;">· ultima scelta</span>' : ''}</div>
+                    <div style="font-size:12px;color:#6b7280;margin-top:2px;">${esc(o.d)}</div>
+                  </button>`).join('')}
+                <div style="text-align:right;margin-top:4px;"><button data-v="" style="background:none;border:1px solid #d1d5db;border-radius:8px;padding:6px 14px;font-size:13px;color:#4b5563;cursor:pointer;font-family:inherit;">Annulla</button></div>
+              </div>`;
+            const done = v => {
+                ov.remove();
+                if (v) { try { localStorage.setItem('pp_gen_last_choice', v); } catch(e) {} }
+                resolve(v || null);
+            };
+            ov.addEventListener('click', e => {
+                if (e.target === ov) return done(null);
+                const b = e.target.closest('button[data-v]');
+                if (b && !b.disabled) done(b.getAttribute('data-v'));
+            });
+            document.body.appendChild(ov);
+        });
+    }
+
+    function _ppFindStudent(classeNome, studentSafe) {
+        const match = s => _mcToSafe(`${s.cognome} ${s.nome}`) === studentSafe || _mcToSafe(`${s.nome} ${s.cognome}`) === studentSafe;
+        const cls = (data.classi || []).find(c => c.nome === classeNome);
+        return cls?.studenti?.find(match)
+            || (data.classi || []).reduce((f, c) => f || (c.studenti || []).find(match), null);
+    }
+
+    // Consegna generale per Claude Code: il file esportato è autosufficiente,
+    // qualunque sessione di Claude capisce da sola cosa fare e in che formato.
+    const _PP_CLAUDE_CONSEGNA = `Sei Claude e prepari i PIANI PERSONALIZZATI di inglese (scuola media italiana) per MyClass / LiveLearn.
+Questo file è stato esportato da MyClass. Per OGNI elemento di "alunni":
+- genera l'array di domande seguendo ESATTAMENTE la sua "consegna_quiz" (numero di domande, tipi, livello, errori su cui lavorare, regole DSA/PEI);
+- se "consegna_listening" non è null, genera anche l'esercizio di listening seguendo quella consegna (testo scritto da te, letto poi dalla sintesi vocale);
+- se "consegna_speaking" non è null, scrivi lo speaking prompt richiesto.
+Per OGNI elemento di "sfide" genera il blocco seguendo la sua "consegna" (un solo blocco per chiave: lo ricevono tutti gli alunni che hanno quella "sfida").
+Gli alunni non hanno nomi: sono identificati solo da "ref". Non inventare nomi.
+
+QUALITÀ — prima di consegnare ricontrolla ogni domanda come un docente madrelingua:
+- la risposta indicata come corretta è davvero corretta, in inglese corretto e naturale;
+- c'è UNA sola risposta corretta: nella scelta multipla nessun distrattore è accettabile; nei "fill-blanks"/"cloze" il simbolo | separa SOLO forme ugualmente corrette (es. "didn't|did not"), mai forme sbagliate;
+- numero di ___ nel testo = numero di risposte; nel "drag-drop" ogni risposta compare in "words"; nel "matching" "left" e "right" hanno la stessa lunghezza; nella "categorization" "answers" ha, per ogni elemento di "items" nello stesso ordine, l'indice (da 0) della sua categoria;
+- istruzioni in italiano, contenuti in inglese, livello adatto alla fascia (REC = recupero, CON = consolidamento, APP = approfondimento) e alla versione DSA/PEI quando indicata;
+- gli esercizi lavorano sugli errori riportati nella consegna, con tipi variati e senza indizi che rendano ovvia la risposta.
+
+OUTPUT: crea UN file chiamato "piani_da_claude.json" (solo JSON valido, nessun testo fuori) con questa struttura:
+{
+  "formato": "myclass-piani-import",
+  "versione": 1,
+  "export_id": "<copia export_id di questo file>",
+  "piani": [
+    { "ref": "<ref dell'alunno>", "questions": [ ...domande della consegna_quiz... ], "listening": { ...oggetto listening... } oppure null, "speakingPrompt": "..." oppure null }
+  ],
+  "sfide": [
+    { "chiave": "<chiave della sfida>", "passageText": "...", "questions": [ ...5 esercizi... ] }
+  ]
+}
+Un elemento in "piani" per OGNI alunno, nello stesso ordine; "sfide" vuoto se il file non ne contiene.
+Dopo averlo creato, rileggi il file e verifica che sia JSON valido e che rispetti tutti i controlli qui sopra.
+Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modifica e approva come sempre.`;
+
+    // Raccoglitore attivo durante l'export: _pianoCheckTrigger / _pianoCheckApprofondimento
+    // vi aggiungono la consegna invece di generare.
+    var _ppExportCollector = null;
+
+    // Voce dell'export: "local" resta in questo browser (nomi, codici), "file" va a Claude (senza nomi).
+    function _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix, voto, code, errorDetails = '', tagBreakdown = {}, verInfo = null, challenge = false, draftId = null }) {
+        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, { nQ: challenge ? 10 : undefined });
+        const lNeed = _ppListeningNeed(prefix, errorDetails, tagBreakdown, verInfo);
+        const sfida = challenge ? _ppChallengeKey(classeNome, unit) : null;
+        return {
+            local: { studentSafe, studentName, classeNome, unit, prefix, voto, code, draftId,
+                     layout: verInfo?.layout || 0, versione: verInfo?.label || null, tagBreakdown: tagBreakdown || {}, sfida },
+            file: {
+                classe: classeNome || '', unit: unit || '', piano: prefix,
+                voto: Math.round(Number(voto) * 100) / 100,
+                versione: verInfo?.label || null,
+                consegna_quiz: P.prompt,
+                consegna_listening: lNeed.needed ? _pianoBuildListeningPrompt(unit || 'English Grammar', lNeed.level, lNeed.focus) : null,
+                consegna_speaking: prefix === 'APP' ? _pianoBuildSpeakingPrompt(unit) : null,
+                sfida
+            }
+        };
+    }
+
+    // Bozza già generata → voce dell'export (per sostituirla con la versione di Claude)
+    async function _ppEntryFromDraft(d) {
+        const stu = _ppDraftStudent(d);
+        if (!stu) throw new Error('studente non trovato nei dati');
+        const verInfo = await _ppDetectTestVersion(stu, d.studentSafe, d.unit);
+        let errorDetails = '', challenge = false;
+        if (d.prefix === 'APP') {
+            errorDetails = _pianoBuildAppContext(stu, d.unit);
+            challenge = _ppChallengeEligible(stu, d.unit, verInfo);
+        } else {
+            try { errorDetails = await _ppFetchLastTestErrorsFromFirebase(d.studentSafe, d.classeNome, d.unit) || ''; } catch(e) {}
         }
+        return _ppBuildExportEntry({ studente: stu, studentSafe: d.studentSafe, studentName: d.studentName, classeNome: d.classeNome,
+            unit: d.unit, prefix: d.prefix, voto: d.voto, code: d.code, errorDetails, tagBreakdown: d.tagBreakdown || {}, verInfo, challenge, draftId: d.id });
+    }
+
+    function _ppLoadClaudeManifest() {
+        try { return JSON.parse(localStorage.getItem('pp_claude_manifest') || '{}'); } catch { return {}; }
+    }
+    function _ppSaveClaudeManifest(exportId, entries) {
+        const all = _ppLoadClaudeManifest();
+        all[exportId] = { at: Date.now(), entries };
+        Object.keys(all).sort((a, b) => all[b].at - all[a].at).slice(10).forEach(k => delete all[k]);   // ultimi 10 export
+        _ppSavCritical('pp_claude_manifest', all);
+    }
+
+    // Esporta per Claude Code elementi della coda e/o bozze esistenti
+    async function _ppExportForClaude({ queue = [], drafts = [] } = {}) {
+        if (_ppDeferredRunning) { alert('Elaborazione già in corso — attendi.'); return; }
+        _ppDeferredRunning = true;
+        const entries = [], esiti = new Map(), problemi = [];
+        try {
+            _ppExportCollector = [];
+            for (const item of queue) {
+                const key = _ppDefKey(item);
+                const stu = _ppFindStudent(item.classeNome, item.studentSafe);
+                if (!stu) { esiti.set(key, { ppStatus: 'skipped', ppReason: 'Studente non trovato nei dati' }); continue; }
+                const before = _ppExportCollector.length;
+                let res;
+                try { res = await _pianoCheckTrigger(stu, item.tipo, item.unit, item.classeNome, true, item.errorDetails || '', item.tagBreakdown || {}); }
+                catch(e) { res = { outcome: 'error', reason: e.message }; }
+                if (_ppExportCollector.length > before) {
+                    esiti.set(key, { ppStatus: 'exported', ppReason: 'Esportato per Claude — in attesa del file' });
+                } else {
+                    esiti.set(key, { ppStatus: res?.outcome === 'error' ? 'error' : 'skipped', ppReason: res?.reason || 'Non esportato' });
+                    problemi.push(`${item.studentName}: ${res?.reason || 'non esportato'}`);
+                }
+            }
+            entries.push(..._ppExportCollector);
+        } finally {
+            _ppExportCollector = null;
+            _ppDeferredRunning = false;
+        }
+        for (const d of drafts) {
+            try { entries.push(await _ppEntryFromDraft(d)); }
+            catch(e) { problemi.push(`${d.studentName}: ${e.message}`); }
+        }
+        _ppDeferredQueue.forEach(i => { const st = esiti.get(_ppDefKey(i)); if (st) Object.assign(i, st); });
+        _ppSavDeferred();
+        renderPianoPersPanel();
+        if (!entries.length) {
+            alert('Nessun piano da esportare.' + (problemi.length ? '\n\n• ' + problemi.join('\n• ') : ''));
+            return;
+        }
+        const exportId = (Date.now().toString(36) + Math.random().toString(36).slice(2, 5)).toUpperCase().slice(-7);
+        const manifest = {};
+        const alunni = entries.map((e, i) => {
+            const ref = `${exportId}-${i + 1}`;
+            manifest[ref] = e.local;
+            return { ref, ...e.file };
+        });
+        const sfide = [...new Set(entries.map(e => e.local.sfida).filter(Boolean))].map(k => {
+            const unit = k.slice(k.indexOf('|') + 1);
+            return { chiave: k, classe: k.slice(0, k.indexOf('|')), unit, consegna: _pianoBuildChallengePrompt(unit || 'English') };
+        });
+        _ppSaveClaudeManifest(exportId, manifest);
+        const fileObj = { formato: 'myclass-piani-export', versione: 1, export_id: exportId, creato: new Date().toISOString(),
+                          consegna_generale: _PP_CLAUDE_CONSEGNA, alunni, sfide };
+        const blob = new Blob([JSON.stringify(fileObj, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+        a.href = URL.createObjectURL(blob);
+        a.download = `piani_per_claude_${ts}.json`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        alert(`🟣 File per Claude Code scaricato: ${alunni.length} piani${sfide.length ? ` + ${sfide.length} sfide` : ''}.\n\n` +
+              `1. Apri una sessione di Claude Code e allega il file "${a.download}".\n` +
+              `2. Scrivi: "Genera i piani personalizzati seguendo la consegna nel file".\n` +
+              `3. Scarica il file "piani_da_claude.json" che Claude crea.\n` +
+              `4. Qui premi "📥 Importa da Claude": le bozze compaiono (o sostituiscono quelle esistenti) e le approvi come sempre.\n\n` +
+              `Nel file non ci sono nomi: gli alunni sono identificati da un codice che solo questo browser sa ricollegare, quindi importa da questo stesso computer.` +
+              (problemi.length ? `\n\n⚠️ Non esportati:\n• ${problemi.join('\n• ')}` : ''));
+    }
+
+    function ppExportClassDraftsForClaude(classeEnc) {
+        const classeNome = decodeURIComponent(classeEnc);
+        const list = _ppDraftScritto.filter(x => (x.classeNome || '') === classeNome);
+        if (!list.length) return;
+        if (!confirm(`Esportare per Claude Code le ${list.length} bozze della classe ${classeNome || '(senza classe)'}?\n\nQuando importerai il file di Claude, le bozze attuali verranno sostituite (stesso codice). Fino ad allora restano come sono.`)) return;
+        _ppExportForClaude({ drafts: list });
+    }
+
+    function ppImportFromClaude() {
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = '.json,application/json';
+        inp.onchange = async () => {
+            const f = inp.files && inp.files[0];
+            if (!f) return;
+            try { await _ppApplyClaudeImport(JSON.parse(await f.text())); }
+            catch(e) { alert('❌ Import non riuscito: ' + e.message); }
+        };
+        inp.click();
+    }
+
+    async function _ppApplyClaudeImport(fileData) {
+        if (fileData?.formato === 'myclass-piani-export') throw new Error('questo è il file ESPORTATO da MyClass: serve quello creato da Claude ("piani_da_claude.json").');
+        if (!fileData || !Array.isArray(fileData.piani)) throw new Error('manca l\'elenco "piani".');
+        const all = _ppLoadClaudeManifest();
+        const findLocal = ref => { for (const m of Object.values(all)) if (m?.entries?.[ref]) return m.entries[ref]; return null; };
+        const bad = q => _ppValidateQuestion(q).length > 0;
+
+        const sfide = {};
+        for (const sf of (fileData.sfide || [])) {
+            if (!sf?.chiave || !String(sf.passageText || '').trim() || !Array.isArray(sf.questions)) continue;
+            const qs = sf.questions.filter(q => q && typeof q === 'object').map(_ppNormalizeQuestion).filter(q => !bad(q));
+            if (qs.length) { sfide[sf.chiave] = { passageText: String(sf.passageText).trim(), questions: qs }; _ppChallengeCacheSet(sf.chiave, sfide[sf.chiave]); }
+        }
+
+        let created = 0, replaced = 0;
+        const nonTrovati = [], scartate = [];
+        for (const p of fileData.piani) {
+            const L = p && findLocal(p.ref);
+            if (!L) { nonTrovati.push(p?.ref || '?'); continue; }
+            let qs = (Array.isArray(p.questions) ? p.questions : []).filter(q => q && typeof q === 'object').map(_ppNormalizeQuestion);
+            let nBad = qs.filter(bad).length;
+            qs = qs.filter(q => !bad(q));
+            if (p.listening && typeof p.listening === 'object') {
+                const l = _ppNormalizeQuestion(p.listening);
+                if (l.type === 'listening' && !bad(l)) qs.push(l); else nBad++;
+            }
+            if (nBad) scartate.push(`${L.studentName}: ${nBad} esercizi non validi scartati`);
+            if (!qs.length) { nonTrovati.push(`${L.studentName} (nessuna domanda valida)`); continue; }
+            const activity = { questions: qs };
+            if (L.sfida) {
+                const b = sfide[L.sfida] || _ppChallengeCacheGet(L.sfida);
+                if (b) { activity.passageText = b.passageText; activity.questions = [...qs, ...JSON.parse(JSON.stringify(b.questions))]; activity.challenge = true; }
+            }
+            if (L.layout) {
+                activity.questions.forEach(q => { if (q && typeof q === 'object') q.dsaLargeText = true; });
+                activity.versionLayout = { originale: L.layout };
+            }
+            if (typeof p.speakingPrompt === 'string' && p.speakingPrompt.trim()) activity.speakingPrompt = p.speakingPrompt.trim();
+            const target = (L.draftId && _ppDraftScritto.find(x => x.id === L.draftId))
+                || _ppDraftScritto.find(x => x.studentSafe === L.studentSafe && x.unit === L.unit && x.prefix === L.prefix);
+            if (target) {
+                if (!activity.speakingPrompt && target.activity?.speakingPrompt) activity.speakingPrompt = target.activity.speakingPrompt;
+                target.activity = activity;
+                target.source = 'claude';
+                target.regenAt = Date.now();
+                if (L.versione) target.versione = L.versione; else delete target.versione;
+                replaced++;
+            } else {
+                _ppDraftScritto.push({ id: 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+                    studentSafe: L.studentSafe, studentName: L.studentName, code: L.code, prefix: L.prefix, activity,
+                    unit: L.unit, voto: L.voto, classeNome: L.classeNome, createdAt: Date.now(),
+                    tagBreakdown: L.tagBreakdown || {}, source: 'claude', ...(L.versione ? { versione: L.versione } : {}) });
+                created++;
+            }
+            _ppDeferredQueue.forEach(i => {
+                if (i.studentSafe === L.studentSafe && i.unit === L.unit && i.ppStatus === 'exported') { i.ppStatus = 'done'; i.ppReason = 'Importato da Claude'; }
+            });
+        }
+        _ppSavDraftScritto();
+        _ppSavDeferred();
+        ppSwitchTab(0);
+        alert(`📥 Import da Claude completato.\n\n✅ Nuove bozze: ${created}\n🔄 Bozze sostituite: ${replaced}` +
+              (scartate.length ? `\n\n✂️ Controllo automatico:\n• ${scartate.join('\n• ')}` : '') +
+              (nonTrovati.length ? `\n\n⚠️ Non importati (codice sconosciuto in questo browser o file vuoto):\n• ${nonTrovati.join('\n• ')}` : '') +
+              '\n\nRivedi le bozze e approvale come sempre.');
     }
 
     // Genera testo orale recupero via Sonnet
@@ -30015,13 +30578,15 @@ REGOLE:
     }
 
     // Genera speaking prompt per approfondimento via Haiku
-    async function _pianoGenerateSpeakingPrompt(unit) {
-        const prompt = `Scrivi UN breve speaking prompt (massimo 40 parole, in inglese) per uno studente di scuola media italiana di livello B1 sull'unità "${unit}". 
+    function _pianoBuildSpeakingPrompt(unit) {
+        return `Scrivi UN breve speaking prompt (massimo 40 parole, in inglese) per uno studente di scuola media italiana di livello B1 sull'unità "${unit}". 
 Deve essere una domanda aperta che richiede 1-2 minuti di parlato.
 Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
-        const fakeTask = { aiProvider: null };
+    }
+    async function _pianoGenerateSpeakingPrompt(unit) {
+        const prompt = _pianoBuildSpeakingPrompt(unit);
         try {
-            return (await agentCallAI(prompt, fakeTask, false)).trim();
+            return (await _pianoAICall(prompt, null)).trim();
         } catch(e) {
             return null;
         }
@@ -30094,6 +30659,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
                     if (appRes === 'duplicate')       return { outcome: 'skipped', reason: 'APP già attivo per questa unit' };
                     if (appRes === 'no_scritto')      return { outcome: 'skipped', reason: 'Nessun voto scritto trovato' };
                     if (appRes === 'error')           return { outcome: 'error',   reason: 'APP: generazione quiz fallita (errore AI)' };
+                    if (appRes === 'exported')        return { outcome: 'exported' };
                     return { outcome: 'skipped', reason: `Voto ${voto} > 7 → APP non generato (${appRes})` };
                 }
                 return { outcome: 'skipped', reason: `Voto ${voto} > 7 → APP (attende orale)` };
@@ -30136,21 +30702,28 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             // Verifica svolta in versione DSA / PEI / PEI 2? → piano adattato, non standard
             const verInfo = await _ppDetectTestVersion(studente, studentSafe, unitEff);
             if (verInfo) console.log(`[Piano] ${studentName}: verifica in versione ${verInfo.label} (${verInfo.source}) → piano adattato`);
+            // Export per Claude Code: si raccoglie la consegna invece di generare
+            if (_ppExportCollector) {
+                _ppExportCollector.push(_ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit: unitEff, prefix, voto, code, errorDetails, tagBreakdown, verInfo }));
+                return { outcome: 'exported' };
+            }
             const activity = await _pianoGenerateActivity(studente, voto, unitEff, prefix, errorDetails, tagBreakdown, classeNome, verInfo);
             if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return { outcome: 'error', reason: 'Generazione quiz fallita' }; }
             // ── BOZZA: salva per anteprima docente prima dell'invio ──────────
             const draftId = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-            _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix, activity, unit: unitEff, voto, classeNome, createdAt: Date.now(), ...(verInfo ? { versione: verInfo.label } : {}) });
+            _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix, activity, unit: unitEff, voto, classeNome, createdAt: Date.now(), tagBreakdown: tagBreakdown || {}, source: _ppGenProvider, ...(verInfo ? { versione: verInfo.label } : {}) });
             _ppSavDraftScritto();
             ppSwitchTab(0);  // porta docente sul tab scritto
             renderPianoPersPanel();
             return { outcome: 'generated' };
         } else if (tipo === 'orale') {
             // Trigger orale — va in approvazione se voto < 6
+            if (_ppExportCollector && voto < 6) return { outcome: 'skipped', reason: 'Il recupero orale (testo) non si esporta: generalo con Haiku o Automatico' };
             if (voto >= 6) {
                 const appRes = await _pianoCheckApprofondimento(studente, unitEff, classeNome, force);
                 if (force) {
                     if (appRes === 'generated') return { outcome: 'generated' };
+                    if (appRes === 'exported')  return { outcome: 'exported' };
                     if (appRes === 'below_threshold') return { outcome: 'skipped', reason: `Voto ${voto} >= 6 ma media < 8 — nessun APP generato` };
                     if (appRes === 'duplicate')      return { outcome: 'skipped', reason: 'APP già attivo per questa unit' };
                     return { outcome: 'skipped', reason: `Voto ${voto} >= 6 → APP non generato` };
@@ -30196,6 +30769,14 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         if (!manuale && _ppHasVerificaNelleProssimeOre(1)) {
             console.log(`[Piano] ⏸️ Coda approvazione (${_ppDeferredQueue.length}) — verifiche programmate, elabora manualmente dal pannello`);
             return;
+        }
+        if (manuale) {
+            const daFare = _ppDeferredQueue.filter(i => !_ppDeferredExcluded.has(_ppDefKey(i)));
+            if (!daFare.length) { alert('Nessuna attività selezionata.'); return; }
+            const scelta = await _ppChooseGenerator(`Generare ${daFare.length} piani personalizzati`);
+            if (!scelta) return;
+            if (scelta === 'claude') { await _ppExportForClaude({ queue: daFare }); return; }
+            _ppSetGenProvider(scelta);
         }
         _ppDeferredRunning = true;
         console.log(`[Piano] ▶️ Elaborazione coda differita: ${_ppDeferredQueue.length} attività`);
@@ -30281,11 +30862,34 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         if (existing) return 'duplicate';
         const code = _pianoGenCode('APP');
         _ppShowGenerating(studentName, 'APP', unit);
+        const appContext = _pianoBuildAppContext(studente, unit);
+        const verInfo = await _ppDetectTestVersion(studente, studentSafe, unit);
+        if (verInfo) console.log(`[Piano] ${studentName}: verifica in versione ${verInfo.label} (${verInfo.source}) → APP adattato`);
+        const challenge = _ppChallengeEligible(studente, unit, verInfo);
+        if (_ppExportCollector) {
+            _ppExportCollector.push(_ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix: 'APP', voto: media, code, errorDetails: appContext, tagBreakdown: {}, verInfo, challenge }));
+            return 'exported';
+        }
+        if (challenge) console.log(`[Piano] ${studentName}: almeno 9,5 nella verifica → APP con blocco Sfida`);
+        const activity = await _pianoGenerateActivity(studente, media, unit, 'APP', appContext, {}, classeNome, verInfo, { challenge });
+        const speaking = await _pianoGenerateSpeakingPrompt(unit);
+        if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return 'error'; }
+        // Aggiungi speaking prompt come item extra nel piano (incluso nella bozza)
+        if (speaking) activity.speakingPrompt = speaking;
+        // ── BOZZA: come per REC/CON, passa per approvazione docente prima dell'invio ──
+        const draftId = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+        _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix: 'APP', activity, unit: unit, voto: media, classeNome, createdAt: Date.now(), source: _ppGenProvider, ...(verInfo ? { versione: verInfo.label } : {}) });
+        _ppSavDraftScritto();
+        ppSwitchTab(0);  // porta docente sul tab scritto/bozze
+        renderPianoPersPanel();
+        return 'generated';
+    }
 
-        // ── Contesto note discorsive per APP ─────────────────────────────
-        // Raggruppa tutte le note discorsive (g.nota) di ogni voto per unit.
-        // Questo permette all'AI di sapere cosa è stato effettivamente svolto
-        // e di costruire domande pertinenti su TUTTE le unit (non solo l'ultima).
+    // ── Contesto per l'approfondimento: note discorsive + aree deboli precedenti ──
+    // Raggruppa tutte le note discorsive (g.nota) di ogni voto per unit.
+    // Questo permette all'AI di sapere cosa è stato effettivamente svolto
+    // e di costruire domande pertinenti su TUTTE le unit (non solo l'ultima).
+    function _pianoBuildAppContext(studente, unit) {
         const _buildNotesContext = (stu, currentUnit) => {
             const allG = [
                 ...(stu.scritto || []).map(g => ({ ...g, _tipo: 'Scritto' })),
@@ -30309,27 +30913,13 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         const notesCtx    = _buildNotesContext(studente, unit);
         const previousWeak = _pianoGetPreviousWeakAreas(studente, unit);
         // Combina: note discorsive (fonte primaria) + aree deboli (integrazione)
-        const appContext = notesCtx
+        return notesCtx
             ? notesCtx + (previousWeak ? '\n\n' + previousWeak : '')
             : previousWeak;
-
-        const verInfo = await _ppDetectTestVersion(studente, studentSafe, unit);
-        if (verInfo) console.log(`[Piano] ${studentName}: verifica in versione ${verInfo.label} (${verInfo.source}) → APP adattato`);
-        const activity = await _pianoGenerateActivity(studente, media, unit, 'APP', appContext, {}, classeNome, verInfo);
-        const speaking = await _pianoGenerateSpeakingPrompt(unit);
-        if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return 'error'; }
-        // Aggiungi speaking prompt come item extra nel piano (incluso nella bozza)
-        if (speaking) activity.speakingPrompt = speaking;
-        // ── BOZZA: come per REC/CON, passa per approvazione docente prima dell'invio ──
-        const draftId = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-        _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix: 'APP', activity, unit: unit, voto: media, classeNome, createdAt: Date.now(), ...(verInfo ? { versione: verInfo.label } : {}) });
-        _ppSavDraftScritto();
-        ppSwitchTab(0);  // porta docente sul tab scritto/bozze
-        renderPianoPersPanel();
-        return 'generated';
     }
 
     function _ppShowGenerating(name, prefix, unit) {
+        if (_ppExportCollector) return;   // export per Claude: nessuna generazione in corso
         const el = document.getElementById('ppBody0');
         if (!el) return;
         el.insertAdjacentHTML('afterbegin', `<div id="ppGen_${_mcToSafe(name)}" style="padding:10px 12px;background:#fffbeb;border-radius:8px;border:1px solid #fde68a;font-size:12px;color:#92400e;margin-bottom:8px;">
@@ -30569,6 +31159,14 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         return { ...base, questions };
     }
 
+    // Testo di lettura della bozza (blocco Sfida): modificabile nell'editor
+    function _ppApplyPassageEdit(item) {
+        const el = document.getElementById('ppDraftPassage_' + item.id);
+        if (!el || !item.activity || Array.isArray(item.activity)) return;
+        const v = el.value.trim();
+        if (v) item.activity.passageText = v; else delete item.activity.passageText;
+    }
+
     function _ppReadDraftEdits(id) {
         const item = _ppDraftScritto.find(x => x.id === id);
         if (!item) return [];
@@ -30614,6 +31212,9 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
                 const ttsVal = _v(`ppDraftQ_${id}_${i}_tts`);
                 return { ...q,
                     ttsText: ttsVal !== null ? ttsVal : (q.ttsText || '') };
+            } else if (q.type === 'free-response') {
+                const hintVal = _v(`ppDraftQ_${id}_${i}_hint`);
+                return { ...q, question: txt, text: txt, hint: hintVal !== null ? hintVal : (q.hint || '') };
             }
             return { ...q, question: txt, text: txt };
         });
@@ -30626,7 +31227,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         if (!item) return;
         // Mantieni aperta la card dopo il salvataggio
         _ppDraftOpenId = id;
-        item.activity = _ppWithQuestions(item.activity, _ppReadDraftEdits(id));
+        item.activity = _ppWithQuestions(item.activity, _ppReadDraftEdits(id).map(_ppNormalizeQuestion));
+        _ppApplyPassageEdit(item);
         _ppSavDraftScritto();
         renderPianoPersPanel();
         // Feedback visivo sul pulsante (la card è stata ri-renderizzata)
@@ -30660,7 +31262,10 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
     async function _ppApproveScrittoCore(item) {
         const id = item.id;
         // ── Leggi eventuali modifiche dal DOM (editor inline, tutti i tipi) ──
-        item.activity = _ppWithQuestions(item.activity, _ppReadDraftEdits(id));
+        // e normalizza nel formato che LiveLearn legge (anche con "Approva tutte",
+        // quando le card sono chiuse e l'editor non c'è).
+        item.activity = _ppWithQuestions(item.activity, _ppReadDraftEdits(id).map(_ppNormalizeQuestion));
+        _ppApplyPassageEdit(item);
         _ppSavDraftScritto();
         // ─────────────────────────────────────────────────────────────────────
 
@@ -30736,20 +31341,28 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         if (!d) return;
         const stu = _ppDraftStudent(d);
         if (!stu) { alert(`Studente ${d.studentName} non trovato nei dati locali.`); return; }
-        if (!confirm(`Rigenerare l'attività di ${d.studentName}?\n\nLe domande attuali della bozza (comprese le modifiche) vengono sostituite. Se nella verifica ha svolto la versione DSA / PEI / PEI 2, la nuova attività è adattata alla sua versione.`)) return;
+        const scelta = await _ppChooseGenerator(`Rigenerare l'attività di ${d.studentName}`, {
+            detail: 'Le domande attuali (comprese le modifiche) vengono sostituite; con Claude Code solo quando importi il suo file. Se nella verifica ha svolto la versione DSA / PEI / PEI 2, la nuova attività è adattata.' });
+        if (!scelta) return;
+        if (scelta === 'claude') { await _ppExportForClaude({ drafts: [d] }); return; }
+        _ppSetGenProvider(scelta);
         const btn = document.getElementById('ppDraftRegenBtn_' + id);
         if (btn) { btn.disabled = true; btn.textContent = '⏳ Rigenero…'; }
         try {
             const verInfo = await _ppDetectTestVersion(stu, d.studentSafe, d.unit);
-            let errorDetails = '';
+            let errorDetails = '', challenge = false;
             if (d.prefix !== 'APP') {
                 try { errorDetails = await _ppFetchLastTestErrorsFromFirebase(d.studentSafe, d.classeNome, d.unit); } catch(e) {}
+            } else {
+                errorDetails = _pianoBuildAppContext(stu, d.unit);
+                challenge = _ppChallengeEligible(stu, d.unit, verInfo);
             }
-            const activity = await _pianoGenerateActivity(stu, d.voto, d.unit, d.prefix, errorDetails, {}, d.classeNome, verInfo);
+            const activity = await _pianoGenerateActivity(stu, d.voto, d.unit, d.prefix, errorDetails, d.tagBreakdown || {}, d.classeNome, verInfo, { challenge });
             if (!activity) throw new Error('generazione quiz fallita (errore AI)');
             const old = (d.activity && !Array.isArray(d.activity)) ? d.activity : {};
             if (old.speakingPrompt) activity.speakingPrompt = old.speakingPrompt;
             d.activity = activity;
+            d.source = _ppGenProvider;
             if (verInfo) d.versione = verInfo.label; else delete d.versione;
             d.regenAt = Date.now();
             _ppSavDraftScritto();
@@ -30791,15 +31404,16 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             'cloze':           'cloze (fill-blanks con word bank visibile, "answers" con pipe per alternative, campo "hint" = word bank)',
             'matching':        'matching ("left" e "right" array stesso numero elementi, abbinamento posizionale)',
             'drag-drop':       'drag-drop ("sentences" con ___, "words" array disponibili, "answers" array ordinato risposte corrette)',
-            'categorization':  'categorization ("categories" array categorie, "items" array elementi, "correct" oggetto {elemento:categoria})',
+            'categorization':  'categorization ("categories" array categorie, "items" array elementi, "answers" = per ogni elemento l\'indice da 0 della sua categoria)',
             'listening':       'listening (testo TTS + attività interna; usa _pianoGenerateListeningExercise)'
         };
 
         // Listening: rigenera l'intera domanda via funzione dedicata
         if (q.type === 'listening') {
             const argomento = topicOverride || draft.unit || 'English Grammar';
+            const _layL = Number(draft.activity?.versionLayout?.originale) || 0;
             try {
-                const newL = await _pianoGenerateListeningExercise(argomento);
+                const newL = await _pianoGenerateListeningExercise(argomento, _layL === 2 ? 'PEI' : _layL === 1 ? 'DSA' : draft.prefix);
                 if (newL) {
                     if (Array.isArray(draft.activity)) draft.activity[qIndex] = newL;
                     else if (draft.activity?.questions) draft.activity.questions[qIndex] = newL;
@@ -30837,18 +31451,15 @@ ${q.type === 'fill-blanks' ? '{"type":"fill-blanks","question":"**Completa con l
 ${q.type === 'cloze' ? '{"type":"cloze","question":"**Scegli dalla word bank.**\\nFrase con ___","answers":["opc1|opc2"],"hint":"word bank: opc1 / opc2","points":2}' : ''}
 ${q.type === 'matching' ? '{"type":"matching","question":"**Abbina gli elementi.**","left":["a","b","c"],"right":["x","y","z"],"points":2}' : ''}
 ${q.type === 'drag-drop' ? '{"type":"drag-drop","question":"**Riordina le parole.**\\nTesto frase","sentences":["Frase ___ ___"],"words":["w1","w2","w3","w4"],"answers":["w1","w2"],"points":2}' : ''}
-${q.type === 'categorization' ? '{"type":"categorization","question":"**Classifica gli elementi.**","categories":["Cat A","Cat B"],"items":["el1","el2","el3","el4"],"correct":{"el1":"Cat A","el2":"Cat B","el3":"Cat A","el4":"Cat B"},"points":3}' : ''}
+${q.type === 'categorization' ? '{"type":"categorization","question":"**Classifica gli elementi.**","categories":["Cat A","Cat B"],"items":["el1","el2","el3","el4"],"answers":[0,1,0,1],"points":3}' : ''}
 Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli", "Completa", "Abbina", "Trascina", "Classifica").`;
 
         try {
-            const fakeTask = { aiProvider: null };
-            const raw = await agentCallAI(prompt, fakeTask, false);
-            const clean = raw.replace(/```json\n?|```/g, '').trim();
-            // estrai il primo oggetto JSON
-            const start = clean.indexOf('{'), end = clean.lastIndexOf('}');
-            if (start < 0 || end < 0) throw new Error('Nessun JSON trovato');
-            const newQ = JSON.parse(clean.slice(start, end + 1));
-            if (!newQ.type) throw new Error('JSON non valido: manca "type"');
+            const raw = await _pianoAICall(prompt + '\nControlla prima di rispondere: una sola risposta corretta, numero di ___ uguale al numero di risposte, | solo tra forme ugualmente corrette.', null);
+            const newQ = _ppNormalizeQuestion(_pianoParseJson(raw, '{'));
+            if (!newQ || !newQ.type) throw new Error('JSON non valido: manca "type"');
+            const _iss = _ppValidateQuestion(newQ);
+            if (_iss.length) throw new Error('domanda generata non valida (' + _iss.join('; ') + ') — riprova');
             // sostituisci la domanda nel draft
             if (Array.isArray(draft.activity)) {
                 draft.activity[qIndex] = newQ;
@@ -30868,7 +31479,10 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
     async function ppRegenActiveScritto(code) {
         const item = _ppActiveScritto[code];
         if (!item) return;
-        if (!confirm(`Rigenerare il piano per ${item.studentName}?\n\nViene creata una nuova bozza da approvare. Il codice attuale (${code}) rimane valido su Firebase finché non viene rimosso manualmente.`)) return;
+        const scelta = await _ppChooseGenerator(`Rigenerare il piano per ${item.studentName}`, { allowClaude: false,
+            detail: `Viene creata una nuova bozza da approvare (poi puoi sostituirla con Claude Code da ↺ Rigenera). Il codice attuale (${code}) rimane valido su Firebase finché non viene rimosso manualmente.` });
+        if (!scelta) return;
+        _ppSetGenProvider(scelta);
 
         // Trova lo studente nei dati locali
         let stu = null;
@@ -30900,7 +31514,9 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         } catch(e) { console.warn('[Piano Regen] Firebase fetch:', e.message); }
 
         const verInfo = await _ppDetectTestVersion(stu, item.studentSafe, item.unit);
-        const activity = await _pianoGenerateActivity(stu, item.voto, item.unit, prefix, errorDetails, item.tagBreakdown || {}, item.classeNome, verInfo);
+        const challenge = prefix === 'APP' && _ppChallengeEligible(stu, item.unit, verInfo);
+        if (prefix === 'APP') errorDetails = _pianoBuildAppContext(stu, item.unit);
+        const activity = await _pianoGenerateActivity(stu, item.voto, item.unit, prefix, errorDetails, item.tagBreakdown || {}, item.classeNome, verInfo, { challenge });
         const genEl = document.getElementById('ppGen_' + _mcToSafe(item.studentName));
         if (genEl) genEl.remove();
         if (!activity) { _ppShowError(item.studentName, 'Rigenerazione quiz fallita'); return; }
@@ -30911,7 +31527,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             id: draftId, studentSafe: item.studentSafe, studentName: item.studentName,
             code: newCode, prefix, activity,
             unit: item.unit, voto: item.voto, classeNome: item.classeNome,
-            createdAt: Date.now(), ...(verInfo ? { versione: verInfo.label } : {})
+            createdAt: Date.now(), source: _ppGenProvider, ...(verInfo ? { versione: verInfo.label } : {})
         });
         _ppSavDraftScritto();
         renderPianoPersPanel();
@@ -30986,7 +31602,10 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
         return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:10px 0 6px;padding:6px 10px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;">
           <span style="font-size:13px;font-weight:700;color:#4c1d95;">🏫 ${classeNome ? esc(classeNome) : 'Senza classe'} <span style="font-weight:400;color:#6b7280;">· ${n} da approvare</span></span>
+          <span style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${kind === 'orale' ? '' : `<button onclick="ppExportClassDraftsForClaude('${enc}')" title="Scarica il file per Claude Code con queste bozze: quando importi il file di Claude, vengono sostituite" style="background:#fff;color:#7e22ce;border:1.5px solid #c084fc;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🟣 Rifai con Claude</button>`}
           <button id="${btnId}" onclick="${fn}('${enc}')" title="Approva e invia tutte le bozze di questa classe" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">✅ Approva tutte (${n})</button>
+          </span>
         </div>`;
     }
 
@@ -31059,6 +31678,9 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             const cols = cats.map(c => `<div style="flex:1;min-width:90px;"><div style="font-weight:700;background:#fff3cd;border-radius:5px 5px 0 0;padding:4px 8px;font-size:15px;text-align:center;border:1.5px solid #fbbf24;">${esc(c)}</div><div style="border:1.5px solid #fbbf24;border-top:none;border-radius:0 0 5px 5px;min-height:40px;padding:5px;"></div></div>`).join('');
             const chips = items.map(it => `<span style="${eSty}">${esc(it)}</span>`).join('');
             return previewWrap(`<div style="font-weight:600;margin-bottom:8px;font-size:16px;">${qText}</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">${cols}</div><div style="font-size:14px;color:#6b7280;margin-bottom:4px;">Elementi da classificare:</div><div>${chips}</div>`);
+        }
+        if (q.type === 'free-response') {
+            return previewWrap(`<div style="font-weight:600;margin-bottom:8px;font-size:16px;">${qText}</div><textarea disabled rows="3" placeholder="Risposta dello studente…" style="width:100%;border:1.5px solid #c4b5fd;border-radius:6px;padding:6px;font-size:15px;box-sizing:border-box;background:#fff;"></textarea>${q.hint ? `<div style="font-size:13px;color:#7e22ce;margin-top:5px;">🧑‍🏫 Criteri di correzione: ${esc(q.hint)}</div>` : ''}`);
         }
         if (q.type === 'listening') {
             const sub = q.subtype || (q.question && q.question.type) || 'fill-blanks';
@@ -31155,6 +31777,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     'drag-drop':       { label:'Drag', bg:'#fce7f3', col:'#9d174d' },
                     'categorization':  { label:'Cat', bg:'#fff3cd', col:'#7c5600' },
                     'listening':       { label:'🎧', bg:'#e0f2fe', col:'#0369a1' },
+                    'free-response':   { label:'Aperta', bg:'#f3e8ff', col:'#7e22ce' },
                 };
                 const _draftCard = d => {
                     const pfxLabel = d.prefix === 'REC' ? '📝 Recupero' : d.prefix === 'CON' ? '📚 Consolidamento' : '⭐ Approfondimento';
@@ -31209,6 +31832,9 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                             const subVal = q.subtype || (q.question&&q.question.type) || 'categorization';
                             extraInputs = `<textarea id="${qId}_tts" rows="4" placeholder="Testo TTS (200-230 parole in inglese, letto dal browser)" style="width:100%;border:1.5px solid #0ea5e9;border-radius:6px;padding:5px 8px;font-size:13px;box-sizing:border-box;font-family:inherit;color:#0369a1;background:#f0f9ff;">${ttsVal}</textarea>
                               <div style="font-size:12px;color:#6b7280;margin-top:2px;">Subtype attività: <strong>${subVal}</strong> · Modifica il testo TTS sopra se necessario.</div>`;
+                        } else if (q.type === 'free-response') {
+                            const hintVal = String(q.hint || '').replace(/"/g,'&quot;');
+                            extraInputs = `<input id="${qId}_hint" type="text" value="${hintVal}" placeholder="Criteri di correzione (li usa la valutazione automatica)" title="Criteri di correzione: li usa Haiku in LiveLearn per valutare la risposta" style="width:100%;border:1px solid #d8b4fe;border-radius:6px;padding:4px 7px;font-size:15px;box-sizing:border-box;font-family:inherit;color:#6b21a8;background:#faf5ff;">`;
                         }
                         const regenId = `ppRegenTopic_${d.id}_${i}`;
                         return `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;margin-bottom:7px;">
@@ -31264,6 +31890,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                           <div style="display:flex;align-items:center;gap:8px;">
                             <span style="font-size:16px;color:#B45309;user-select:none;">${isCollapsed ? '▶' : '▼'}</span>
                             <div style="font-size:14px;font-weight:700;color:#78350F;">${d.studentName}</div>
+                            ${d.source ? `<span title="Generata con ${_ppGenLabel(d.source)}" style="background:${d.source === 'claude' ? '#f3e8ff' : d.source === 'auto' ? '#f3f4f6' : '#dbeafe'};color:${d.source === 'claude' ? '#7e22ce' : d.source === 'auto' ? '#4b5563' : '#1e40af'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">${d.source === 'claude' ? '🟣 Claude' : d.source === 'auto' ? '⚙️ Auto' : '🔵 Haiku 5.5'}</span>` : ''}
+                            ${d.activity?.challenge ? `<span title="Include il blocco Sfida (lettura, caccia all'errore, scrittura guidata)" style="background:#fce7f3;color:#9d174d;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">🏆 Sfida</span>` : ''}
                             ${d.versione ? `<span title="Piano adattato: nella verifica ha svolto la versione ${d.versione}" style="background:${/PEI/.test(d.versione)?'#dbeafe':'#ffedd5'};color:${/PEI/.test(d.versione)?'#1e40af':'#9a3412'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">${/PEI/.test(d.versione)?'📘':'🔤'} ${d.versione}</span>`
                               : (() => { const _sup = _ppDraftStudent(d)?.supporto;
                                   return (_sup === 'PEI' || _sup === 'PDP_DSA') && !d.regenAt
@@ -31274,7 +31902,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                         </div>
                         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
                           <span style="background:${pfxBg};color:${pfxCol};border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;white-space:nowrap;">${pfxLabel}</span>
-                          <button id="ppDraftRegenBtn_${d.id}" onclick="event.stopPropagation();ppRegenDraft('${d.id}')" title="Rigenera l'attività: se ha svolto la verifica DSA / PEI / PEI 2 viene adattata alla sua versione" style="background:#fff7ed;color:#c2410c;border:1.5px solid #fdba74;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">↺ Rigenera</button>
+                          <button id="ppDraftRegenBtn_${d.id}" onclick="event.stopPropagation();ppRegenDraft('${d.id}')" title="Rigenera l'attività con Haiku, Automatico o Claude Code (in quel caso la bozza viene sostituita quando importi il file di Claude). Se ha svolto la verifica DSA / PEI / PEI 2 viene adattata alla sua versione" style="background:#fff7ed;color:#c2410c;border:1.5px solid #fdba74;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">↺ Rigenera</button>
                         </div>
                       </div>
                       ${isCollapsed ? '' : `
@@ -31284,10 +31912,12 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                         return `<div style="display:flex;gap:6px;margin-top:10px;">${_b('preview','👁 Anteprima completa')}${_b('edit','✏️ Modifica domande')}</div>
                       <div id="ppDraftPrev_${d.id}" style="display:${_v==='edit'?'none':'block'};background:#f5f3ff;border:1px dashed #c4b5fd;border-radius:8px;padding:12px 14px;margin-top:8px;margin-bottom:8px;max-height:75vh;overflow-y:auto;font-size:16px;">
                         <div style="font-size:12px;color:#6b7280;margin-bottom:10px;">Attività completa come la vedrà lo studente (${qList.length} esercizi). Le modifiche compaiono qui dopo <strong>💾 Salva modifiche</strong>.</div>
+                        ${d.activity?.passageText ? `<div style="background:#fff;border:1.5px solid #f9a8d4;border-radius:8px;padding:10px 12px;margin-bottom:12px;"><div style="font-size:12px;font-weight:800;color:#9d174d;margin-bottom:4px;">📄 TESTO DI LETTURA${d.activity.challenge ? ' — SFIDA (uguale per tutti gli alunni da 9,5 in su della classe)' : ''}</div><div style="font-size:15px;line-height:1.6;">${String(d.activity.passageText).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>')}</div></div>` : ''}
                         ${_ppFullPreview(qList)}
                       </div>`; })()}
                       <div id="ppDraftEdit_${d.id}" style="display:${(_ppDraftView[d.id]||'preview')==='edit'?'block':'none'};background:#fffef7;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;margin-top:8px;margin-bottom:8px;max-height:600px;overflow-y:auto;">
                         <div style="font-size:13px;font-weight:700;color:#92400e;letter-spacing:.3px;margin-bottom:8px;">✏️ MODIFICA QUIZ — ${qList.length} domande · modifica i campi, poi premi <strong>💾 Salva modifiche</strong> per aggiornare l'anteprima</div>
+                        ${d.activity?.passageText != null ? `<div style="background:#fff;border:1px solid #f9a8d4;border-radius:8px;padding:10px 12px;margin-bottom:7px;"><div style="font-size:12px;font-weight:800;color:#9d174d;margin-bottom:4px;">📄 Testo di lettura (lo studente lo apre con il pulsante "Testo")</div><textarea id="ppDraftPassage_${d.id}" rows="8" style="width:100%;border:1.5px solid #f9a8d4;border-radius:6px;padding:6px 8px;font-size:14px;box-sizing:border-box;font-family:inherit;line-height:1.5;">${String(d.activity.passageText).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</textarea></div>` : ''}
                         ${editQs}
                       </div>
                       <div style="font-size:12px;color:#92400e;background:#FEF3C7;padding:6px 12px;border-radius:6px;margin-bottom:10px;">⚠️ Non ancora inviata — lo studente la trova su LiveLearn con codice <strong>${d.code}</strong>.</div>
@@ -31305,6 +31935,11 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 });
                 draftsHtml = `<div style="margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ IN ATTESA DI APPROVAZIONE (${_ppDraftScritto.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire la sua attività</span></div>${draftCards}</div>`;
             }
+            // Barra Claude Code: import del file prodotto da Claude
+            const claudeBar = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
+                <span style="font-size:12px;color:#6b21a8;">Generatore usato l'ultima volta: <strong>${_ppGenLabel(localStorage.getItem('pp_gen_last_choice') || _ppGenProvider)}</strong> · prima di ogni generazione puoi sceglierlo</span>
+                <button onclick="ppImportFromClaude()" title="Importa il file piani_da_claude.json creato da Claude Code: crea le bozze o sostituisce quelle esistenti" style="background:#7e22ce;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">📥 Importa da Claude</button>
+              </div>`;
             // Banner coda differita (attività in attesa di un giorno libero da verifiche)
             let deferredBanner = '';
             if (_ppDeferredQueue.length) {
@@ -31326,6 +31961,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     const st = item.ppStatus;
                     let stBadge = '';
                     if (st === 'processing') stBadge = `<span title="In elaborazione…" style="background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;">⏳</span>`;
+                    else if (st === 'exported') stBadge = `<span title="Esportato per Claude Code: importa il file di Claude per creare la bozza" style="background:#f3e8ff;color:#7e22ce;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;">🟣 in attesa di Claude</span>`;
                     else if (st === 'done')  stBadge = `<span title="Generato con successo" style="background:#dcfce7;color:#14532d;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;">✅</span>`;
                     else if (st === 'skipped') stBadge = `<span title="${(item.ppReason||'Saltato').replace(/"/g,'&quot;')}" style="background:#f3f4f6;color:#6b7280;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;cursor:help;">⏭️</span><span style="font-size:10px;color:#9ca3af;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle;"> ${(item.ppReason||'').replace(/</g,'&lt;')}</span>`;
                     else if (st === 'error')   stBadge = `<span title="${(item.ppReason||'Errore').replace(/"/g,'&quot;')}" style="background:#fee2e2;color:#991b1b;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;cursor:help;">❌</span><span style="font-size:10px;color:#991b1b;margin-left:4px;">${(item.ppReason||'').replace(/</g,'&lt;').slice(0,60)}</span>`;
@@ -31382,7 +32018,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             }
             const items = Object.entries(_ppActiveScritto);
             if (!items.length && !_ppDraftScritto.length) {
-                el.innerHTML = draftsHtml + deferredBanner + '<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">Nessuna attività generata ancora.<br><span style="font-size:11px;">Vengono create automaticamente al salvataggio di un voto scritto, in un giorno senza verifiche.</span></div>';
+                el.innerHTML = claudeBar + draftsHtml + deferredBanner + '<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">Nessuna attività generata ancora.<br><span style="font-size:11px;">Vengono create automaticamente al salvataggio di un voto scritto, in un giorno senza verifiche.</span></div>';
                 return;
             }
             const hasCompleted = Object.values(_ppActiveScritto).some(x => x.status === 'completed' || x.status === 'expired');
@@ -31413,7 +32049,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                   </td>
                 </tr>`;
             }).join('');
-            el.innerHTML = draftsHtml + deferredBanner + cleanupBtn + `<div style="overflow-x:auto;">
+            el.innerHTML = claudeBar + draftsHtml + deferredBanner + cleanupBtn + `<div style="overflow-x:auto;">
               <table style="width:100%;border-collapse:collapse;font-size:12px;">
                 <thead><tr style="background:#f5f3ff;">
                   <th style="padding:7px 6px;text-align:left;font-size:11px;color:#555;">Codice</th>
