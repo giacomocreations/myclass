@@ -27586,10 +27586,10 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
                 return totMax > 0 ? Math.round((totPunti / totMax) * 100) / 10 : null;
             };
 
-            // Livello CEFR atteso in base all'anno (1→A1, 2→A1-A2, 3→A2)
+            // Livello CEFR atteso in base all'anno (1→A0-A1, 2→A1-A2, 3→A2, B1 solo per le eccellenze)
             const annoMatch = (task.classe||'').match(/^([123])/);
             const anno = annoMatch ? parseInt(annoMatch[1]) : null;
-            const cefrMap = { 1: 'A1', 2: 'A1-A2', 3: 'A2' };
+            const cefrMap = { 1: 'A0-A1', 2: 'A1-A2', 3: 'A2 (B1 solo per chi eccelle)' };
             const cefrLevel = anno ? cefrMap[anno] : 'A1-A2';
             const cefrNote = `Livello atteso per questa classe: ${cefrLevel} (scuola media italiana, anno ${anno || '?'}).`;
 
@@ -29651,22 +29651,35 @@ ${blocchiPerAlunno}`;
 
     // Genera quiz (15 domande mirate sugli errori reali) per un'attività piano scritto
     // Etichetta dell'anno di corso a partire dal nome classe ("1F"→prima, "2C"→seconda, "3E"→terza).
-    function _ppAnnoLabel(classeNome) {
+    // voto (facoltativo): livello CEFR del singolo alunno dentro la fascia dell'anno.
+    function _ppAnnoLabel(classeNome, voto = null) {
         const y = (String(classeNome || '').match(/[123]/) || [])[0];
-        if (y === '1') return { y, label: 'PRIMA media (1° anno di inglese)', livello: 'A1', anno: 'prima' };
-        if (y === '2') return { y, label: 'SECONDA media (2° anno di inglese)', livello: 'A1/A2', anno: 'seconda' };
-        if (y === '3') return { y, label: 'TERZA media (3° anno di inglese)', livello: 'A2', anno: 'terza' };
-        return { y: '', label: 'scuola secondaria di primo grado', livello: 'A1-A2', anno: '' };
+        const livello = _ppCefr(classeNome, voto);
+        if (y === '1') return { y, label: 'PRIMA media (1° anno di inglese)', livello, anno: 'prima' };
+        if (y === '2') return { y, label: 'SECONDA media (2° anno di inglese)', livello, anno: 'seconda' };
+        if (y === '3') return { y, label: 'TERZA media (3° anno di inglese)', livello, anno: 'terza' };
+        return { y: '', label: 'scuola secondaria di primo grado', livello, anno: '' };
+    }
+    // Livelli reali delle classi (indicazione del docente):
+    //   prima A0-A1 · seconda A1-A2 · terza A2-B1, con B1 SOLO da 9 in su e A2 sotto l'8.
+    // Dentro la fascia dell'anno il voto sposta l'alunno verso il basso o verso l'alto.
+    function _ppCefr(classeNome, voto = null) {
+        const y = (String(classeNome || '').match(/[123]/) || [])[0];
+        const v = voto == null || voto === '' || isNaN(Number(voto)) ? null : Number(voto);
+        if (y === '1') return v == null ? 'A0-A1' : v < 8 ? 'A0-A1 (principiante)' : 'A1';
+        if (y === '2') return v == null ? 'A1-A2' : v < 8 ? 'A1' : v < 9 ? 'A1-A2' : 'A2';
+        if (y === '3') return v == null ? 'A2-B1' : v < 8 ? 'A2' : v < 9 ? 'A2+ (verso B1, senza arrivarci)' : 'B1';
+        return v == null ? 'A1-A2' : v < 8 ? 'A1' : 'A2';
     }
 
     // Costruisce il blocco CONTESTO CLASSE+UNITÀ da iniettare nel prompt del Piano.
     // Serve quando NON ci sono i dati precisi del test (si fa affidamento su storico/
     // programmazione): vincola l'AI all'ANNO corretto e alle strutture reali dell'unità,
     // evitando che generi esercizi di un altro anno (es. Past Simple a una prima).
-    function _ppBuildClassContext(classeNome, unit) {
-        const A = _ppAnnoLabel(classeNome);
+    function _ppBuildClassContext(classeNome, unit, voto = null) {
+        const A = _ppAnnoLabel(classeNome, voto);
         const righe = [];
-        righe.push(`- Classe: ${classeNome || 'N/D'} — ${A.label}, livello CEFR ${A.livello}.`);
+        righe.push(`- Classe: ${classeNome || 'N/D'} — ${A.label}. Livello CEFR di QUESTO alunno (in base all'anno e al voto): ${A.livello}. Non superarlo: frasi, lessico e strutture devono restare a questo livello.`);
 
         // Recupera grammatica/lessico/funzioni reali dell'unità dalla programmazione disciplinare.
         let unitInfo = '';
@@ -29755,7 +29768,7 @@ ${righe.join('\n')}
                 : `Lo studente ha un ${verInfo.layout === 2 ? 'PEI' : 'PDP per DSA'}: le sue verifiche sono in versione ${verInfo.label}.`;
             const _regole = isPei
                 ? `REGOLE VERSIONE PEI (obbligatorie, come nella sua verifica):
-- Livello A1/A2, frasi cortissime, una sola richiesta per domanda, lessico di base dell'unità.
+- Livello più semplice di quello della classe (in prima A0), frasi cortissime, una sola richiesta per domanda, lessico di base dell'unità.
 - Tipi ammessi: SOLO "multiple-choice" con 3 opzioni semplici (NON 4), "matching" con massimo 4 coppie, "drag-drop" con una frase brevissima e al massimo 4 parole. NIENTE fill-blanks, cloze o risposta libera.
 - OBBLIGATORIO su ogni domanda: "dsaLargeText": true e "referenceTable": "regola grammaticale breve (es. Past Simple: go→went)".
 - Distrattori chiaramente diversi dalla risposta giusta.`
@@ -29828,7 +29841,7 @@ Per le domande sulle unit precedenti: usa strutture grammaticali e lessico di qu
     + 'Focus ESCLUSIVAMENTE sulla struttura "' + (unit || 'English Grammar') + '", con scaffolding moderato.'
     : 'Nota: dati errori non disponibili — genera esercizi rappresentativi dell\'unità "' + (unit || 'English Grammar') + '" al livello approfondimento.');
 
-        const _classCtx = _ppBuildClassContext(classeNome, unit);
+        const _classCtx = _ppBuildClassContext(classeNome, unit, voto);
         const prompt = `Sei un docente esperto di inglese per scuola media italiana.
 Genera ESATTAMENTE ${nQ} domande per uno studente, unità: "${isNotesContext ? 'tutte le unit svolte (vedi note sotto)' : (unit || 'English Grammar')}".
 Prestazione nel test: ${prestazioneDesc}.
@@ -30266,7 +30279,7 @@ Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markd
 - Nessuna forma base tra parentesi, ma istruzioni molto chiare; nella cloze la word bank ha 1 solo distrattore.
 - Almeno 2 domande con distrattori plausibili (errori tipici di chi ha appena imparato la struttura).
 - Almeno 1 domanda di TRANSFER: la stessa struttura in un contesto nuovo e semplice (chat, biglietto, breve messaggio). Nell'istruzione scrivi "Transfer —" all'inizio (es. "**Transfer — completa la chat.**").`,
-            sfida: { livello: 'A1/A1+', parole: '100-130', frasi: 'frasi brevi e semplici, lessico noto di una prima media',
+            sfida: { livello: 'A1', parole: '100-130', frasi: 'frasi brevi e semplici, lessico noto di una prima media',
                      esercizi: 4, comp: null, errori: 3, scrittura: '30-40', strutture: 2, pScrittura: 4 }
         };
         if (y === '2') return {
@@ -30284,7 +30297,7 @@ Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markd
             y, nQ: 10,
             dist: '3 multiple-choice + 3 fill-blanks + 2 cloze + 1 matching + 1 drag-drop = 10 totali.',
             quiz: null,
-            sfida: { livello: 'A2+/B1', parole: '180-250', frasi: '', esercizi: 5, comp: '1-2 frasi', errori: 5, scrittura: '60-80', strutture: 3, pScrittura: 6, pComp: 3 }
+            sfida: { livello: 'B1 (alunni da 9,5 in su)', parole: '180-250', frasi: '', esercizi: 5, comp: '1-2 frasi', errori: 5, scrittura: '60-80', strutture: 3, pScrittura: 6, pComp: 3 }
         };
     }
     // Versione dei blocchi Sfida in cache: quelli salvati prima del livellamento per anno non si riusano
@@ -30600,7 +30613,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 versione: verInfo?.label || null,
                 consegna_quiz: P.prompt,
                 consegna_listening: lNeed.needed ? _pianoBuildListeningPrompt(unit || 'English Grammar', lNeed.level, lNeed.focus) : null,
-                consegna_speaking: prefix === 'APP' ? _pianoBuildSpeakingPrompt(unit, classeNome) : null,
+                consegna_speaking: prefix === 'APP' ? _pianoBuildSpeakingPrompt(unit, classeNome, voto) : null,
                 sfida
             }
         };
@@ -30854,18 +30867,20 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
     }
 
     // Genera speaking prompt per approfondimento via Haiku
-    // Livello per anno: prima A1 (più breve), seconda A2, terza B1
-    function _pianoBuildSpeakingPrompt(unit, classeNome = '') {
+    // Livello dell'alunno (anno + voto, vedi _ppCefr): B1 solo in terza da 9 in su
+    function _pianoBuildSpeakingPrompt(unit, classeNome = '', voto = null) {
         const y = _ppAnnoLabel(classeNome).y;
-        const cfg = y === '1' ? { lv: 'A1', max: 25, durata: '30-60 secondi', extra: 'Usa parole semplici e una domanda diretta sulla vita quotidiana dello studente.' }
-                  : y === '2' ? { lv: 'A2', max: 30, durata: '1 minuto circa', extra: '' }
-                  : { lv: 'B1', max: 40, durata: '1-2 minuti', extra: '' };
-        return `Scrivi UN breve speaking prompt (massimo ${cfg.max} parole, in inglese) per uno studente di scuola media italiana di livello ${cfg.lv} sull'unità "${unit}". 
+        const lv = _ppCefr(classeNome, voto);
+        const cfg = y === '1' ? { max: 20, durata: '30-60 secondi', extra: 'Parole semplicissime e una domanda diretta sulla vita quotidiana dello studente (sé stesso, famiglia, gusti, scuola).' }
+                  : y === '2' ? { max: 30, durata: '1 minuto circa', extra: 'Parole semplici, una domanda concreta legata alla sua esperienza.' }
+                  : lv.startsWith('B1') ? { max: 40, durata: '1-2 minuti', extra: '' }
+                  : { max: 35, durata: '1 minuto circa', extra: 'Domanda concreta, senza richiedere opinioni astratte.' };
+        return `Scrivi UN breve speaking prompt (massimo ${cfg.max} parole, in inglese) per uno studente di scuola media italiana di livello ${lv} sull'unità "${unit}". 
 Deve essere una domanda aperta che richiede ${cfg.durata} di parlato.${cfg.extra ? '\n' + cfg.extra : ''}
 Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
     }
-    async function _pianoGenerateSpeakingPrompt(unit, classeNome = '') {
-        const prompt = _pianoBuildSpeakingPrompt(unit, classeNome);
+    async function _pianoGenerateSpeakingPrompt(unit, classeNome = '', voto = null) {
+        const prompt = _pianoBuildSpeakingPrompt(unit, classeNome, voto);
         try {
             return (await _pianoAICall(prompt, null)).trim();
         } catch(e) {
@@ -31152,7 +31167,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         }
         if (challenge) console.log(`[Piano] ${studentName}: almeno 9,5 nella verifica → APP con blocco Sfida`);
         const activity = await _pianoGenerateActivity(studente, media, unit, 'APP', appContext, {}, classeNome, verInfo, { challenge });
-        const speaking = await _pianoGenerateSpeakingPrompt(unit, classeNome);
+        const speaking = await _pianoGenerateSpeakingPrompt(unit, classeNome, media);
         if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return 'error'; }
         // Aggiungi speaking prompt come item extra nel piano (incluso nella bozza)
         if (speaking) activity.speakingPrompt = speaking;
@@ -31794,8 +31809,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         const tipoDesc = qTypeLabels[q.type] || q.type;
         const argomento = topicOverride || draft.unit || 'English Grammar';
         const _lay = Number(draft.activity?.versionLayout?.originale) || 0;
-        const livello = _lay === 2 ? 'A1-A2 (versione PEI: frasi cortissime, lessico di base)'
-            : draft.voto < 5 ? 'A1-A2 (elementare)' : draft.voto < 7 ? 'A2-B1 (pre-intermedio)' : 'B1-B2 (intermedio)';
+        const livello = _lay === 2 ? 'più semplice della classe (versione PEI: frasi cortissime, lessico di base)'
+            : `${_ppCefr(draft.classeNome, draft.voto)} (${_ppAnnoLabel(draft.classeNome).anno || 'scuola media'})`;
         const _verRule = _lay === 2
             ? `\nVERSIONE PEI dello studente: domanda molto semplificata${q.type === 'multiple-choice' ? ', ESATTAMENTE 3 opzioni (campo "correct" = indice 0-2)' : ''}; aggiungi "dsaLargeText": true e "referenceTable": "regola grammaticale breve".`
             : _lay === 1
