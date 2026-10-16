@@ -29923,13 +29923,45 @@ ${blocchiPerAlunno}`;
         return prefix + '-' + r;
     }
 
+    // Firebase rifiuta chiavi con . # $ / [ ] (o vuote) e i valori undefined: un solo errore
+    // blocca tutta la consegna. Caso reale: nella categorization la mappa "correct" usa le
+    // frasi come chiavi ("There aren't any ham sandwiches today."). LiveLearn corregge con
+    // "answers" (indici): la mappa serve solo all'editor di MyClass e si toglie qui.
+    function _ppFirebaseSafe(activity) {
+        const bad = k => !k || /[.#$\/\[\]]/.test(k);
+        const walk = (v, path) => {
+            if (Array.isArray(v)) return v.map((x, i) => x === undefined ? null : walk(x, path + '.' + i));
+            if (!v || typeof v !== 'object') return v;
+            const out = {};
+            for (const [k, x] of Object.entries(v)) {
+                if (x === undefined) continue;
+                if (bad(k)) { console.warn(`[Piano] chiave non valida per Firebase tolta: ${path}."${k}"`); continue; }
+                out[k] = walk(x, path + '.' + k);
+            }
+            return out;
+        };
+        const clean = walk(activity, 'activity');
+        // Mappa "correct" (anche quella con chiavi valide) inutile in LiveLearn quando ci sono gli indici
+        const strip = (x, isCat) => {
+            if (isCat && x && x.correct && typeof x.correct === 'object' && !Array.isArray(x.correct)
+                && Array.isArray(x.answers) && x.answers.length) delete x.correct;
+        };
+        (clean.questions || []).forEach(q => {
+            if (!q || typeof q !== 'object') return;
+            strip(q, q.type === 'categorization');
+            if (q.type === 'listening' && q.question && typeof q.question === 'object')
+                strip(q.question, (q.subtype || q.question.type) === 'categorization');
+        });
+        return clean;
+    }
+
     // Scrittura atomica Firebase per un'attività piano
     // I piani non hanno scadenza (scelta del docente): nessun campo deadline.
     async function _pianoWriteFirebase({ studentSafe, studentName, code, prefix, activity, unit, voto, classeNome }) {
         let db;
         try { db = firebase.database(); } catch(e) { console.warn('[Piano] Firebase non disponibile'); return false; }
         // Foto riprese dalla verifica (PEI): entrano nelle domande solo adesso
-        activity = await _ppHydrateFoto(activity);
+        activity = _ppFirebaseSafe(await _ppHydrateFoto(activity));
         const now = Date.now();
         const sessionData = {
             activity, prefix, unit, voto,
