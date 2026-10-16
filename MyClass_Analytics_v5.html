@@ -24245,6 +24245,7 @@ ${sectionInstr}`;
                     })() : '';
                     body = `
                         ${jsonTable}
+                        ${task.type === 'valscritta' && task._autoRegenBlocked && !task.valDocente && !task.classroomBlock ? `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:6px 10px;font-size:12px;color:#92400e;margin-bottom:6px;">⚠️ La valutazione generata non ha le sezioni attese (o è andata persa). L'agente non la rigenera da solo per non consumare token: controlla il testo o premi 🔄 Rigenera.</div>` : ''}
                         <div class="agent-task-preview" id="agentPrev_${task.id}">${preview.replace(/</g,'&lt;')}</div>
                         <textarea class="agent-task-edit-area" id="${editId}" style="display:none;">${(task.content||'').replace(/</g,'&lt;')}</textarea>
                         <div class="agent-task-actions">
@@ -25477,6 +25478,50 @@ ${sectionInstr}`;
         return out;
     }
 
+    // Risposta leggibile per l'AI (valutazioni e analisi): negli abbinamenti e nelle
+    // categorie (anche dentro il listening) le risposte sono salvate come indici (0, 1…).
+    // Qui diventano parole, con ✓/✗ e la soluzione per ogni elemento: prima l'AI
+    // vedeva "0 / 1 / 0 / 0 / 1 / 1" e lo riportava così nella valutazione.
+    // null = tipo non gestito qui (si usa la formattazione di sempre).
+    function _readableAnswer(q, a, arrFn) {
+      if (!q || a === null || a === undefined) return null;
+      const isL = q.type === 'listening';
+      const inner = isL ? (q.question || {}) : q;
+      const sub = isL ? (q.subtype || inner.type) : q.type;
+      const toArr = v => Array.isArray(v) ? v : (v && typeof v === 'object' ? arrFn(v) : []);
+      const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? arrFn(a) : null);
+      const t = x => x && typeof x === 'object' ? String(x.text || x.label || x.word || '') : String(x ?? '');
+      const nm = x => t(x).trim().toLowerCase();
+      if (sub === 'matching' && arr) {
+        const L = toArr(inner.left), R = toArr(inner.right);
+        if (!L.length) return null;
+        return L.map((l, i) => {
+          const g = arr[i];
+          if (g == null || g === '') return `${t(l)} → (vuoto) ✗ (giusto: ${t(R[i])})`;
+          const ok = nm(R[g]) === nm(R[i]);
+          return `${t(l)} → ${R[g] != null ? t(R[g]) : String(g)} ${ok ? '✓' : `✗ (giusto: ${t(R[i])})`}`;
+        }).join('; ');
+      }
+      if (sub === 'categorization' && arr) {
+        const C = toArr(inner.categories || inner.columns), I = toArr(inner.items || inner.words), A = toArr(inner.answers);
+        const cmap = inner.correct && typeof inner.correct === 'object' && !Array.isArray(inner.correct) ? inner.correct : null;
+        if (!I.length) return null;
+        return I.map((it, i) => {
+          const g = arr[i];
+          let c = A[i];
+          if (c == null && cmap) { const ci = C.findIndex(x => nm(x) === nm(cmap[t(it)])); c = ci >= 0 ? ci : null; }
+          const gl = g == null || g === '' ? '(non classificato)' : (C[g] != null ? t(C[g]) : String(g));
+          const ok = c != null && g != null && g !== '' && Number(g) === Number(c);
+          return `"${t(it)}" → ${gl}${c == null ? '' : ok ? ' ✓' : ` ✗ (giusto: ${t(C[c])})`}`;
+        }).join('; ');
+      }
+      if (isL && sub === 'multiple-choice' && (typeof a === 'number' || /^\d+$/.test(String(a)))) {
+        const o = toArr(inner.options);
+        return o[Number(a)] != null ? t(o[Number(a)]) : null;
+      }
+      return null;
+    }
+
     function agentBuildDetailLines(questions, detailedResponse) {
         if (!questions?.length || !detailedResponse) return '';
         const answers  = agentFbArr(detailedResponse.answers);
@@ -25487,6 +25532,8 @@ ${sectionInstr}`;
         // ── Formatta la risposta dello studente leggibile per l'AI ──────────
         const fmtAns = (q, a) => {
             if (a === null || a === undefined) return '(non risposto)';
+            const rd = _readableAnswer(q, a, agentFbArr);
+            if (rd) return rd;
             if (q.type === 'listening') {
                 const inner = q.question || {};
                 const sub   = q.subtype || inner.type || '';
@@ -26024,7 +26071,16 @@ ${sectionInstr}`;
                                 return Math.abs(currentPct - (r.pct || 0)) > 1;
                             });
                             const _contentMissing = !existing.valDocente && !existing.classroomBlock;
-                            if (_contentMissing) {
+                            if (_contentMissing && (existing.generatedAt || existing.content)) {
+                                // Già generata una volta (testo senza sezioni riconosciute o perso per
+                                // memoria piena): NON si rigenera da sola a ogni controllo periodico,
+                                // costerebbe token ogni 30 minuti. Decide il docente con 🔄 Rigenera.
+                                if (!existing._autoRegenBlocked) {
+                                    existing._autoRegenBlocked = true;
+                                    agentSaveTasks(agentTasks);
+                                }
+                                console.log(`[Agente] ${tid}: ready ma senza sezioni riconosciute — NON rigenero da solo (usa 🔄 Rigenera)`);
+                            } else if (_contentMissing) {
                                 console.log(`[Agente] ${tid}: ready ma valutazione vuota — rigenero`);
                                 existing.status = 'pending'; existing.pendingAt = new Date().toISOString();
                                 agentSaveTasks(agentTasks);
@@ -26604,8 +26660,12 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
             const label = marker.replace(/^[=* ]+|[=* ]+$/g, '').trim();
             // Regex flessibile: trova il marcatore anche se Anthropic aggiunge asterischi,
             // spazi extra o leggere varianti di formattazione (es. **=== ARGO ===**)
+            // Accetta anche titoli senza "===" su una riga da soli: "## VALUTAZIONE DOCENTE",
+            // "**VALUTAZIONE DOCENTE**", "VALUTAZIONE DOCENTE:". Prima, se il modello non metteva
+            // gli "===", il task restava "pronto" ma vuoto e il controllo periodico lo rigenerava.
             const makeRe = (lbl) => new RegExp(
-                '[*]{0,2}={2,}\\s*' + lbl.replace(/ /g, '\\s+') + '\\s*={2,}[*]{0,2}', 'i'
+                '[*]{0,2}={2,}\\s*' + lbl.replace(/ /g, '\\s+') + '\\s*={2,}[*]{0,2}' +
+                '|(?:^|\\n)[ \\t]*(?:#{1,4}[ \\t]*)?[*]{0,2}[ \\t]*' + lbl.replace(/ /g, '\\s+') + '[ \\t]*[*]{0,2}[ \\t]*:?[ \\t]*(?=\\n|$)', 'i'
             );
             const re = makeRe(label);
             const match = re.exec(text);
@@ -27649,8 +27709,12 @@ ${REGOLE}
 Genera SOLO due blocchi (niente ARGO) con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ===\n${task.griglia ? ('Intestazione: ' + task.studentName + ', ' + task.classe + (task.unit ? ', ' + task.unit : '') + ', data ' + task.sessionDate + '.\n\n' + (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n' + '[analisi della prestazione in quest\'area basata sulla trascrizione]').join('\n\n') + '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma dei punteggi per area e Y il voto dalla tabella di conversione.') : ('Intestazione: nome, classe, data (' + task.sessionDate + '), unit, voto. Analisi per area' + (task.hasSlides ? ' (NON commentare le pause [slide])' : ' (includi fluency se rilevante: pause significative, ritmo)') + '. Analisi complessiva.')}\n=== CLASSROOM ===\nFeedback personale scritto allo studente, italiano, tono incoraggiante ma onesto. Struttura OBBLIGATORIA (separa ogni sezione con un ritorno a capo):\nSaluto: Ciao ${nomeBreve}, ecco il feedback sulla tua ultima verifica orale.\nPUNTI DI FORZA (almeno 2-3, specifici e tratti dalla trascrizione): descrivi cosa ha fatto bene con esempi concreti.\nAREE DI MIGLIORAMENTO (almeno 2, costruttive e pratiche): indica cosa migliorare e COME, con suggerimenti pratici per esercitarsi a casa.\nCONSIGLIO FINALE: una frase motivante personalizzata con il prossimo passo utile.\nLunghezza totale: 150-220 parole. Testo scorrevole, niente elenchi puntati, niente grassetti. Non menzionare il voto numerico.`;
 
             const raw = await agentCallAI(prompt, task, true);
+            // Accetta anche titoli senza "===" su una riga da soli: "## VALUTAZIONE DOCENTE",
+            // "**VALUTAZIONE DOCENTE**", "VALUTAZIONE DOCENTE:". Prima, se il modello non metteva
+            // gli "===", il task restava "pronto" ma vuoto e il controllo periodico lo rigenerava.
             const makeRe = (lbl) => new RegExp(
-                '[*]{0,2}={2,}\\s*' + lbl.replace(/ /g, '\\s+') + '\\s*={2,}[*]{0,2}', 'i'
+                '[*]{0,2}={2,}\\s*' + lbl.replace(/ /g, '\\s+') + '\\s*={2,}[*]{0,2}' +
+                '|(?:^|\\n)[ \\t]*(?:#{1,4}[ \\t]*)?[*]{0,2}[ \\t]*' + lbl.replace(/ /g, '\\s+') + '[ \\t]*[*]{0,2}[ \\t]*:?[ \\t]*(?=\\n|$)', 'i'
             );
             const _exSec = (text, marker) => {
                 const label = marker.replace(/^[=* ]+|[=* ]+$/g, '').trim();
@@ -28360,8 +28424,12 @@ ${blocchiPerAlunno}`;
 
             const raw = await agentCallAI(prompt, task, true);
 
+            // Accetta anche titoli senza "===" su una riga da soli: "## VALUTAZIONE DOCENTE",
+            // "**VALUTAZIONE DOCENTE**", "VALUTAZIONE DOCENTE:". Prima, se il modello non metteva
+            // gli "===", il task restava "pronto" ma vuoto e il controllo periodico lo rigenerava.
             const makeRe = (lbl) => new RegExp(
-                '[*]{0,2}={2,}\\s*' + lbl.replace(/ /g, '\\s+') + '\\s*={2,}[*]{0,2}', 'i'
+                '[*]{0,2}={2,}\\s*' + lbl.replace(/ /g, '\\s+') + '\\s*={2,}[*]{0,2}' +
+                '|(?:^|\\n)[ \\t]*(?:#{1,4}[ \\t]*)?[*]{0,2}[ \\t]*' + lbl.replace(/ /g, '\\s+') + '[ \\t]*[*]{0,2}[ \\t]*:?[ \\t]*(?=\\n|$)', 'i'
             );
             const _exSec = (text, marker) => {
                 const label = marker.replace(/^[=* ]+|[=* ]+$/g, '').trim();
@@ -31342,6 +31410,12 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
                 console.log(`[Piano] ⏭️ ${prefix} già attivo per ${studentName} (${unitEff}) — skip duplicato`);
                 return { outcome: 'skipped', reason: `${prefix} già attivo in locale` };
             }
+            // Bozza già generata e non ancora approvata: non se ne genera un'altra (token sprecati).
+            // Per rifarla c'è ↺ Rigenera sulla bozza.
+            if (_ppDraftScritto.some(x => x.studentSafe === studentSafe && x.unit === unitEff && x.prefix === prefix)) {
+                console.log(`[Piano] ⏭️ ${prefix} per ${studentName} (${unitEff}): bozza già in attesa di approvazione — skip`);
+                return { outcome: 'skipped', reason: 'Bozza già pronta in attesa di approvazione (usa ↺ Rigenera sulla bozza)' };
+            }
             try {
                 const dbDup = firebase.database();
                 const _dupCode = await _mcCodeOf(studentSafe);
@@ -31530,6 +31604,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         // Evita duplicati: controlla se esiste già un APP- per questa unit
         const existing = Object.values(_ppActiveScritto).find(x => x.studentSafe === studentSafe && x.unit === unit && x.status !== 'expired');
         if (existing) return 'duplicate';
+        // Bozza APP già generata e non approvata: niente doppione (per rifarla: ↺ Rigenera)
+        if (_ppDraftScritto.some(x => x.studentSafe === studentSafe && x.unit === unit && x.prefix === 'APP')) return 'duplicate';
         const code = _pianoGenCode('APP');
         _ppShowGenerating(studentName, 'APP', unit);
         // Errori della verifica (anche con voto alto vanno ripresi) + note e aree deboli
