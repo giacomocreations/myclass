@@ -2754,6 +2754,30 @@ async function toggleSessionRepeatable(code, on) {
   } catch (e) { alert('⚠️ Non riesco a modificare la sessione: ' + e.message); }
 }
 
+// Assegnate: toglie la scadenza dalla sessione e dall'avviso già scritto in bacheca
+// (StudentApp mostrava "Scade il …" e dopo quella data l'accesso veniva bloccato).
+async function removeSessionDeadline(code) {
+  if (!db || !code) return;
+  const row = (S._allSessions || []).find(([c]) => c === code);
+  const s = row ? row[1] : null;
+  if (!confirm('Togliere la scadenza' + (s && s.deadline ? ' del ' + s.deadline : '') + ' all\'attività ' + code + '?\n\nGli alunni potranno svolgerla quando vogliono e l\'avviso in bacheca non mostrerà più la data.')) return;
+  try {
+    await db.ref('livelearn/sessions/' + code + '/deadline').set(null);
+    if (s) delete s.deadline;
+    if (s && s.classId) {
+      const board = (await db.ref('livelearn/board/' + s.classId).get()).val() || {};
+      const upd = {};
+      Object.entries(board).forEach(([k, m]) => {
+        if (!m || m.type !== 'avviso_quiz' || m.sessionCode !== code) return;
+        upd[k + '/deadline'] = null;
+        if (typeof m.text === 'string') upd[k + '/text'] = m.text.replace(/\nScadenza: [^\n]*/g, '');
+      });
+      if (Object.keys(upd).length) await db.ref('livelearn/board/' + s.classId).update(upd);
+    }
+    renderSessionList();
+  } catch (e) { alert('⚠️ Non riesco a togliere la scadenza: ' + e.message); }
+}
+
 // Render della lista sessioni, filtrabile per modalità, stato e ricerca titolo.
 // L'ordine resta cronologico (dal più recente al più vecchio).
 function _sessionStatusOf(s) {
@@ -2874,6 +2898,10 @@ function renderSessionList() {
       ? `<button class="btn btn-sm" onclick="toggleSessionRepeatable('${code}', ${s.repeatable ? 'false' : 'true'})" title="${s.repeatable ? 'Gli alunni possono rifarla quante volte vogliono — clicca per permettere un solo tentativo' : 'Un solo tentativo — clicca per permettere di rifarla quante volte vogliono'}" style="white-space:nowrap;${s.repeatable ? 'background:#ede9fe;color:#5b21b6;border-color:#c4b5fd;' : ''}">🔁 ${s.repeatable ? 'Ripetibile' : 'Una volta'}</button>`
       : '';
 
+    const noDeadlineBtn = isAssigned && s.deadline
+      ? `<button class="btn btn-sm" onclick="removeSessionDeadline('${code}')" title="Togli la scadenza: gli alunni possono svolgerla quando vogliono" style="white-space:nowrap;">🗓 Togli scadenza</button>`
+      : '';
+
     const statusLabel = isActive ? '● Attiva' : isAssigned ? '📋 Assegnata' : 'Chiusa';
     const statusClass = isActive ? 'badge-green' : isAssigned ? 'badge-purple' : 'badge-gray';
 
@@ -2892,7 +2920,7 @@ function renderSessionList() {
         <span class="badge ${statusClass}">${statusLabel}</span>
         <button class="btn btn-sm" onclick="openLive('${code}', '${s.activityId}')">📊 Risultati</button>
         ${pdfAllBtn}
-        ${repeatBtn}
+        ${repeatBtn}${noDeadlineBtn}
         <button class="btn btn-sm" onclick="renameSession('${code}')" title="Rinomina sessione">✏️</button>
         ${convertBtn}
         ${(isActive || isAssigned) ? `<button class="btn btn-danger btn-sm" onclick="forceCloseSession('${code}')">Chiudi</button>` : ''}
@@ -9210,8 +9238,8 @@ async function studentEnterPlan(name, planCode, errEl) {
   const planData = planSnap.val();
   if (!planData || !planData.activity) return showErr(errEl, 'Attività non trovata per questo codice.');
 
-  const planStatus = planData.status || 'pending';
-  if (planStatus === 'expired') return showErr(errEl, '⏰ Questa attività è scaduta. Parla con il professore.');
+  // I piani non scadono e si possono rifare quante volte si vuole: anche quelli
+  // segnati 'expired' o 'completed' (inviati prima di questa scelta) restano svolgibili.
 
   // Verifica che il nome inserito corrisponda allo studente del piano
   const _normName = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
