@@ -1882,6 +1882,13 @@
                     <button class="agent-btn-run" id="agentRunBtn" onclick="agentRun()">▶ Esegui ora</button>
                     <button class="agent-btn-run" id="agentStopBtn" onclick="agentStopGeneration()" style="display:none;background:#c62828;border-color:#c62828;">⏹ Interrompi</button>
                     <button class="agent-btn-clear" onclick="agentClearCompleted()">🗑 Pulisci approvati</button>
+                    <label title="Chi genera le valutazioni delle verifiche scritte. Con Claude Code: 📤 esporti il file, lo fai elaborare a Claude Code e 📥 importi il risultato" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:#6d28d9;background:#f5f3ff;border:1.5px solid #c4b5fd;border-radius:8px;padding:4px 8px;">
+                        🟣 Valutazioni scritte:
+                        <select id="agentValGenBar" onchange="agentSetValGen(this.value)" style="border:none;background:transparent;font-size:12px;font-weight:700;color:#4c1d95;font-family:inherit;cursor:pointer;">
+                            <option value="auto">Automatico (Gemini/Anthropic)</option>
+                            <option value="claude">Claude Code (file)</option>
+                        </select>
+                    </label>
                     <button class="agent-btn-clear" onclick="agentForceRediscoverScritta()" style="background:#fff3e0;color:#e65100;border-color:#ffb74d;" title="Rimuove i task valscritta dismissed dal localStorage e rilancia la scansione">🔁 Riscopri scritto</button>
                     <span style="font-size:12px;color:#aaa;" id="agentNextRunLabel"></span>
                 </div>
@@ -23777,6 +23784,8 @@ ${sectionInstr}`;
         if (elAnthrModel) elAnthrModel.value = AGENT_ANTHROPIC_MODEL;
         const elValGen = document.getElementById('agentValGen');
         if (elValGen) elValGen.value = AGENT_VAL_GEN;
+        const elValGenBar = document.getElementById('agentValGenBar');
+        if (elValGenBar) elValGenBar.value = AGENT_VAL_GEN;
         if (elGCId   && !elGCId.matches(':focus'))    elGCId.value   = AGENT_GOOGLE_CLIENT_ID;
         const elDoCal = document.getElementById('agentDoCalendar');
         const elDoPiano = document.getElementById('agentDoPiano');
@@ -24218,6 +24227,7 @@ ${sectionInstr}`;
                         </div>
                     </div>` : '';
                     body = `
+                        ${task._autoRegenBlocked && !task.valDocente && !task.classroomBlock ? `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:6px 10px;font-size:12px;color:#92400e;margin-bottom:8px;">⚠️ La valutazione generata non ha le sezioni attese (o è andata persa). L'agente non la rigenera da solo per non consumare token: premi 🔄 Rigenera o 🟣 Rifai con Claude Code.</div>` : ''}
                         ${missingBlocksBanner}
                         ${vsTable}
                         ${vsCards}
@@ -24225,6 +24235,7 @@ ${sectionInstr}`;
                             ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')">📥 Importa voti &amp; feedback</button>` : ''}
                             ${task.status==='approved' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')" style="background:#7b3fa0;" title="Sovrascrive voti e feedback nello storico">🔄 Riscrivi storico</button>` : ''}
                             <button class="agent-btn-edit" onclick="agentRecalcAndRegenerate('${task.id}')">📊 Riprendi con dati aggiornati</button>
+                            <button class="agent-btn-edit" onclick="agentValToClaude('${task.id}')" title="Prepara la consegna per Claude Code (📤 esporta, 📥 importa): la valutazione attuale viene sostituita quando importi il file" style="background:#f5f3ff;color:#6d28d9;border-color:#c4b5fd;">🟣 Rifai con Claude Code</button>
                             <button class="agent-btn-edit" onclick="agentRegenerateMissing('${task.id}', true)" ${task.status==='processing'?'disabled':''} title="Argo non viene più generato in automatico: lo genera ora per gli alunni che non ce l'hanno">📝 Genera Argo (tutti)</button>
                             <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
@@ -27012,6 +27023,14 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
         agentRenderPanel();
         alert(`📥 Import da Claude completato: ${ok} valutazion${ok === 1 ? 'e pronta' : 'i pronte'} da approvare.` +
               (problemi.length ? `\n\n⚠️ Da controllare:\n• ${problemi.join('\n• ')}` : ''));
+    }
+
+    // Scelta del generatore dalla barra dell'agente (stessa impostazione del riquadro ⚙️)
+    function agentSetValGen(v) {
+        AGENT_VAL_GEN = v === 'claude' ? 'claude' : 'auto';
+        try { localStorage.setItem('agent_val_gen', AGENT_VAL_GEN); } catch(e) {}
+        ['agentValGen', 'agentValGenBar'].forEach(id => { const el = document.getElementById(id); if (el) el.value = AGENT_VAL_GEN; });
+        console.log('[Agente] Generatore valutazioni scritte:', AGENT_VAL_GEN === 'claude' ? 'Claude Code' : 'Automatico');
     }
 
     // Prepara la consegna per Claude Code anche se il generatore impostato è l'automatico
