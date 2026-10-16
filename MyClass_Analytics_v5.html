@@ -29677,7 +29677,9 @@ ${blocchiPerAlunno}`;
     // Serve quando NON ci sono i dati precisi del test (si fa affidamento su storico/
     // programmazione): vincola l'AI all'ANNO corretto e alle strutture reali dell'unità,
     // evitando che generi esercizi di un altro anno (es. Past Simple a una prima).
-    function _ppBuildClassContext(classeNome, unit, voto = null) {
+    // opts.soloVerifica (alunno PEI con la sua verifica): gli argomenti sono quelli della sua
+    // verifica, non quelli della programmazione della classe (es. la grammatica dell'unità).
+    function _ppBuildClassContext(classeNome, unit, voto = null, opts = {}) {
         const A = _ppAnnoLabel(classeNome, voto);
         const righe = [];
         righe.push(`- Classe: ${classeNome || 'N/D'} — ${A.label}. Livello CEFR di QUESTO alunno (in base all'anno e al voto): ${A.livello}. Non superarlo: frasi, lessico e strutture devono restare a questo livello.`);
@@ -29698,7 +29700,9 @@ ${blocchiPerAlunno}`;
             }
         } catch (e) { /* programmazione assente: si procede col solo anno */ }
 
-        if (unitInfo) {
+        if (opts.soloVerifica) {
+            righe.push(`- Argomenti di QUESTO alunno: SOLO quelli delle domande della sua verifica PEI riportate più sotto. La programmazione della classe NON vale per lui: non aggiungere grammatica o lessico che non compaiono nella sua verifica.`);
+        } else if (unitInfo) {
             righe.push(`- Contenuti reali dell'unità "${unit}" (da programmazione ${classeNome}): ${unitInfo}`);
         } else {
             righe.push(`- Contenuti dell'unità "${unit}": non disponibili in programmazione → deduci le strutture coerenti con il livello ${A.livello} di una classe ${A.anno || 'di scuola media'}.`);
@@ -29735,7 +29739,7 @@ ${righe.join('\n')}
         const fromTest = qs.length > 0;
         if (!fromTest) Object.assign(counts, { 'multiple-choice': 6, matching: 2, 'drag-drop': 2 });
         const tot = Object.values(counts).reduce((a, b) => a + b, 0);
-        const nQ = Math.max(6, Math.min(12, tot));
+        const nQ = Math.max(6, Math.min(15, tot));
         // Stesse proporzioni della verifica, riportate a nQ domande
         const types = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
         const scaled = {};
@@ -29751,16 +29755,29 @@ ${righe.join('\n')}
             ? Math.max(3, Number(Object.entries(mcLens.reduce((m, n) => (m[n] = (m[n] || 0) + 1, m), {})).sort((a, b) => b[1] - a[1])[0][0]))
             : 3;
         const K = ['type', 'text', 'question', 'options', 'correct', 'left', 'right', 'sentences', 'words', 'answers', 'categories', 'items', 'hint', 'referenceTable', 'points'];
-        const templates = qs.slice(0, 12).map((q, i) => {
+        const compact = q => {
             const o = {};
             K.forEach(k => { if (q[k] != null && !(k === 'question' && typeof q[k] !== 'string')) o[k] = q[k]; });
             if (o.text && o.question === o.text) delete o.question;
-            let s = JSON.stringify(o);
+            return o;
+        };
+        const templates = qs.slice(0, 15).map((q, i) => {
+            let s = JSON.stringify(compact(q));
             if (s.length > 450) s = s.slice(0, 450) + '…';
             return `  ${i + 1}. ${s}`;
         }).join('\n');
+        // Formato JSON di ogni tipo preso da una sua domanda (non da esempi su altri argomenti)
+        const examples = {};
+        qs.forEach(q => {
+            if (examples[q.type] || !_PP_PLAN_TYPES.includes(q.type)) return;
+            const o = compact(q);
+            if (o.text && o.question == null) { o.question = o.text; delete o.text; }
+            o.points = q.points || 1; o.dsaLargeText = true; o.errore = null;
+            const s = JSON.stringify(o);
+            if (s.length <= 600) examples[q.type] = s;
+        });
         return {
-            fromTest, nQ, mcOptions, templates,
+            fromTest, nQ, mcOptions, templates, examples,
             types: types,
             unsupported: [...new Set(qs.map(q => q.type).filter(t => !_PP_PLAN_TYPES.includes(t)))],
             dist: types.map(t => `${scaled[t]} ${t}`).join(' + ') + ` = ${nQ} totali`,
@@ -29834,7 +29851,12 @@ ${righe.join('\n')}
         const pei = isPei ? _ppPeiProfile(verInfo) : null;
         const nQ = isPei ? pei.nQ : (opts.nQ || 15);   // PEI: quante domande aveva la sua verifica
         const { testErrors, context: ctxDetails } = _ppSplitErrorDetails(errorDetails);
-        const errList = _ppErrorList(testErrors);
+        let errList = _ppErrorList(testErrors);
+        // Più errori che domande nella sua verifica PEI = errori calcolati su un'altra versione: si scartano
+        if (pei?.fromTest && errList.length > (verInfo.qs || []).length) {
+            console.warn(`[Piano] ${errList.length} errori ma la sua verifica ${verInfo.label} ha ${verInfo.qs.length} domande: errori di un'altra versione, ignorati`);
+            errList = [];
+        }
         const errReq = !errList.length ? 0
             : Math.min(errList.length, isPei ? nQ : prefix === 'APP' ? Math.ceil(nQ / 2) : Math.ceil(nQ * 2 / 3));
 
@@ -29887,10 +29909,11 @@ REGOLE VERSIONE PEI (obbligatorie, PREVALGONO su tutto il resto del prompt):
 - Usa SOLO questi tipi di esercizio, gli stessi della sua verifica: ${pei.types.join(', ')}.${pei.unsupported.length ? ` (Nella verifica c'erano anche esercizi di tipo ${pei.unsupported.join(', ')}: rifalli come "multiple-choice".)` : ''}
 - DISTRIBUZIONE come nella verifica: ${pei.dist}.
 - Stessa forma degli esercizi della verifica: consegna breve in italiano, frasi cortissime, una sola richiesta per domanda, ${pei.mcOptions} opzioni nella scelta multipla, al massimo 4 coppie nel matching, frase brevissima e al massimo 4 parole nel drag-drop.
+- ARGOMENTI: SOLO quelli presenti nelle domande della sua verifica. Se la verifica è solo di lessico (es. gli sport), il piano è solo di quel lessico: NIENTE grammatica che nella verifica non c'è (es. can, verbi, tempi verbali), anche se fa parte dell'unità della classe.
 - Stesse strutture e stesso lessico: cambia frasi ed esempi (non copiare le domande), ma l'esercizio deve essere riconoscibile.
 - NON alzare la difficoltà, NON aggiungere tipi di esercizio diversi, niente testi da leggere, niente scrittura, niente risposte libere, niente "Transfer".
 ${_lessico}
-- OBBLIGATORIO su ogni domanda: "dsaLargeText": true e "referenceTable": "regola grammaticale breve (es. Past Simple: go→went)".
+- OBBLIGATORIO su ogni domanda: "dsaLargeText": true e "referenceTable": un aiuto breve come nella sua verifica (mini-glossario, es. "football = calcio", oppure una regola breve se la verifica era di grammatica).
 - Distrattori chiaramente diversi dalla risposta giusta.
 ${pei.fromTest ? `DOMANDE DELLA SUA VERIFICA (versione ${verInfo.label}) — sono il MODELLO per tipi, forma e livello: rifalle con frasi nuove:\n${pei.templates}` : 'Verifica non disponibile: usa le regole qui sopra con lessico di base dell\'unità.'}
 ══════════════════════════════════════════════`;
@@ -29981,7 +30004,7 @@ Per le domande sulle unit precedenti: usa strutture grammaticali e lessico di qu
 ══════════════════════════════════════════════`
             : '';
 
-        const _classCtx = _ppBuildClassContext(classeNome, unit, voto);
+        const _classCtx = _ppBuildClassContext(classeNome, unit, voto, { soloVerifica: !!pei?.fromTest });
         const _desc = {
             'multiple-choice': `"multiple-choice" — scelta multipla con ${isPei ? pei.mcOptions : 4} opzioni (usa per strutture grammaticali ambigue)`,
             'fill-blanks':     '"fill-blanks" — completa la frase con una o più parole (usa per forme verbali, spelling)',
@@ -29992,7 +30015,7 @@ Per le domande sulle unit precedenti: usa strutture grammaticali e lessico di qu
         };
         const _fmt = {
             'multiple-choice': isPei
-                ? `{"type":"multiple-choice","question":"**Scegli.**\\nYesterday I ___ to school.","options":${JSON.stringify(['went', 'go', 'goes', 'going', 'gone'].slice(0, pei.mcOptions))},"correct":0,"points":1,"dsaLargeText":true,"referenceTable":"Past Simple: go → went","errore":null}`
+                ? `{"type":"multiple-choice","question":"**Scegli.**\\nI play ___ .","options":${JSON.stringify(['football', 'pizza', 'blue', 'cat', 'red'].slice(0, pei.mcOptions))},"correct":0,"points":1,"dsaLargeText":true,"referenceTable":"football = calcio","errore":null}`
                 : '{"type":"multiple-choice","question":"**Scegli la forma corretta.**\\nShe ___ to school yesterday.","options":["go","goes","went","gone"],"correct":2,"points":1,"errore":null}',
             'fill-blanks': '{"type":"fill-blanks","question":"**Completa con il Past Simple.**\\nLast night I ___ (watch) a film.","answers":["watched"],"points":1,"errore":null}\n{"type":"fill-blanks","question":"**Completa con il Past Simple irregolare.**\\nWe ___ (go) to the beach and ___ (have) ice cream.","answers":["went","had"],"points":2,"errore":null}',
             'cloze':           '{"type":"cloze","question":"**Scegli dalla word bank e completa.**\\nI ___ born in 2010. She ___ her homework yesterday.","answers":["was","did"],"hint":"word bank: was / were / did / made","points":2,"errore":null}',
@@ -30027,7 +30050,7 @@ Domande mescolate (non raggruppare per tipo). ${isPei ? 'Stesso livello della su
 Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni di tipo ("Scegli", "Completa", "Abbina", "Trascina").
 
 FORMATI JSON ESATTI per ogni tipo${errList.length ? ' (il campo "errore" è spiegato più sotto)' : ''}:
-${_types.map(t => _fmt[t]).join('\n')}
+${_types.map(t => (isPei && pei.examples[t]) || _fmt[t]).join('\n')}${isPei ? '\n(Formati presi dalla sua verifica: cambia frasi ed esempi, non copiarli.)' : ''}
 
 ${_has('fill-blanks') || _has('cloze') ? `IMPORTANTE per cloze e fill-blanks: "answers" ha UNA stringa per ogni ___. Il simbolo | separa SOLO forme ugualmente CORRETTE (es. "didn't|did not", "isn't|is not"): MAI mettere dopo | una parola sbagliata o un distrattore, perché verrebbe accettata come giusta.${_has('cloze') ? ' Nella cloze la word bank ("hint") contiene tutte le risposte più 1-2 distrattori.' : ''}
 IMPORTANTE per fill-blanks multi-blank: "answers" è array con un elemento per ogni blank.
@@ -31521,6 +31544,16 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
     // Ritorna null per la prova standard, altrimenti
     //   { name, label, layout (1 = DSA, 2 = PEI), source, qs (domande svolte) }.
     const _PP_VER_LABELS = { dsa: 'DSA', pei: 'PEI', pei_2: 'PEI 2', training_dsa: 'Training DSA', training_pei: 'Training PEI' };
+    // Versione assegnata all'alunno nella sessione (chiave di studentVersions).
+    // Le chiavi sono scritte con un'altra normalizzazione (maiuscole, spazi): confronto normalizzato,
+    // come in agentTaskValScritta. Senza, un alunno PEI 2 veniva confrontato con la prova originale.
+    function _ppSessionVersionOf(detail, studentSafe) {
+        const sv = detail?.studentVersions || {};
+        const nk = k => String(k || '').toLowerCase().replace(/[.#$[\]\/\s]/g, '_');
+        if (sv[studentSafe]) return sv[studentSafe];
+        const e = Object.entries(sv).find(([k]) => nk(k) === nk(studentSafe));
+        return e ? e[1] : null;
+    }
     async function _ppDetectTestVersion(studente, studentSafe, unit) {
         const _fromProfile = () => {
             if (studente?.supporto === 'PEI')     return { name: 'pei', label: 'PEI', layout: 2, source: 'profilo', qs: [] };
@@ -31534,10 +31567,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             if (!sess) return _fromProfile();
             const detail = await agentFetchSessionDetail(sess.code, db);
             if (!detail) return _fromProfile();
-            const sv = detail.studentVersions || {};
-            const nk = k => String(k || '').toLowerCase().replace(/[.#$[\]\/\s]/g, '_');
-            let ver = sv[studentSafe];
-            if (!ver) { const e = Object.entries(sv).find(([k]) => nk(k) === nk(studentSafe)); if (e) ver = e[1]; }
+            const ver = _ppSessionVersionOf(detail, studentSafe);
             if (!ver || ver === 'originale') return null;           // prova standard
             // R1: lettera neutra → nome versione tramite la legenda (solo docente)
             let name = ver;
@@ -31575,9 +31605,14 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             const dr = agentMatchResponse(detail, studentSafe);
             if (!dr) { console.warn(`[Piano] Firebase: nessuna risposta trovata per ${studentSafe} in ${targetSess.code}`); return ''; }
 
-            // Usa la versione per-studente se disponibile
-            const version = detail.studentVersions?.[studentSafe];
-            const qs = (version && detail.actVersions?.[version]) ? detail.actVersions[version] : detail.questions;
+            // Domande della versione che ha svolto (PEI 2, DSA, Fila B…): le risposte vanno
+            // confrontate con QUELLE, mai con la prova originale
+            const version = _ppSessionVersionOf(detail, studentSafe);
+            if (version && version !== 'originale' && !detail.actVersions?.[version]?.length) {
+                console.warn(`[Piano] Firebase: domande della versione "${version}" non trovate per ${studentSafe} — errori non calcolati`);
+                return '';
+            }
+            const qs = (version && version !== 'originale') ? detail.actVersions[version] : detail.questions;
             if (!qs?.length) return '';
 
             const lines = typeof agentBuildDetailLines === 'function' ? agentBuildDetailLines(qs, dr) : '';
