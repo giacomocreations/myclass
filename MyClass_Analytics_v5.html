@@ -25141,7 +25141,12 @@ ${sectionInstr}`;
             // LiveLearn "Escludi listening": in quella sessione le domande di ascolto
             // sono state tolte (originale e versioni) e le risposte sono indicizzate
             // sulla lista filtrata → qui va applicato lo stesso filtro.
-            const _noL = qs => sess.noListening ? qs.filter(q => !q || q.type !== 'listening') : qs;
+            // _oi (non enumerabile): posizione della domanda nell'attività su Firebase, serve per
+            // ritrovarne la foto anche quando il filtro listening sposta gli indici
+            const _noL = qs => {
+                qs.forEach((q, i) => { if (q && typeof q === 'object') Object.defineProperty(q, '_oi', { value: i, enumerable: false }); });
+                return sess.noListening ? qs.filter(q => !q || q.type !== 'listening') : qs;
+            };
             const questions = _noL(agentFbArr(act.questions));
             // ── Versioni per-studente (fila B/C/recupero) ──────────────────────────
             // sess.studentVersions → { [safeKey]: 'fila_b' | 'fila_c' | 'recupero' | ... }
@@ -29566,6 +29571,8 @@ ${blocchiPerAlunno}`;
     async function _pianoWriteFirebase({ studentSafe, studentName, code, prefix, activity, unit, voto, classeNome }) {
         let db;
         try { db = firebase.database(); } catch(e) { console.warn('[Piano] Firebase non disponibile'); return false; }
+        // Foto riprese dalla verifica (PEI): entrano nelle domande solo adesso
+        activity = await _ppHydrateFoto(activity);
         const now = Date.now();
         const sessionData = {
             activity, prefix, unit, voto,
@@ -29761,10 +29768,15 @@ ${righe.join('\n')}
             if (o.text && o.question === o.text) delete o.question;
             return o;
         };
-        const templates = qs.slice(0, 15).map((q, i) => {
+        // Numerate come nella verifica (stessi numeri degli errori Q1, Q2…). [FOTO] = la domanda aveva una foto.
+        const all = verInfo?.qs || [];
+        const photoMap = {};   // numero della domanda nella verifica → posizione nell'attività su Firebase
+        all.forEach((q, j) => { if (q && (q.image || q.imageKey)) photoMap[j + 1] = Number.isInteger(q._oi) ? q._oi : j; });
+        if (!verInfo?.activityId) Object.keys(photoMap).forEach(k => delete photoMap[k]);
+        const templates = all.map((q, j) => ({ q, n: j + 1 })).filter(x => x.q && typeof x.q === 'object' && x.q.type !== 'listening').slice(0, 15).map(({ q, n }) => {
             let s = JSON.stringify(compact(q));
             if (s.length > 450) s = s.slice(0, 450) + '…';
-            return `  ${i + 1}. ${s}`;
+            return `  ${n}.${photoMap[n] != null ? ' [FOTO]' : ''} ${s}`;
         }).join('\n');
         // Formato JSON di ogni tipo preso da una sua domanda (non da esempi su altri argomenti)
         const examples = {};
@@ -29777,7 +29789,7 @@ ${righe.join('\n')}
             if (s.length <= 600) examples[q.type] = s;
         });
         return {
-            fromTest, nQ, mcOptions, templates, examples,
+            fromTest, nQ, mcOptions, templates, examples, photoMap,
             types: types,
             unsupported: [...new Set(qs.map(q => q.type).filter(t => !_PP_PLAN_TYPES.includes(t)))],
             dist: types.map(t => `${scaled[t]} ${t}`).join(' + ') + ` = ${nQ} totali`,
@@ -29817,6 +29829,81 @@ ${righe.join('\n')}
         return [testErr, _pianoBuildAppContext(stu, unit)].filter(Boolean).join('\n\n');
     }
 
+    // ── FOTO nei piani PEI: si riusano le foto della sua verifica ─────────────
+    // La domanda porta "foto": n (numero della domanda della verifica) e, nella bozza, fotoRef
+    // { act, ver, i }: la foto si legge da Firebase solo per l'anteprima e quando il piano viene
+    // consegnato (nel localStorage delle bozze resterebbe troppo pesante).
+    const _PP_FOTO_RX = /\b(foto|immagin\w*|picture|photo|image)\b/i;
+    function _ppFotoNum(q) { const n = parseInt(q && q.foto, 10); return Number.isInteger(n) && n > 0 ? n : null; }
+    function _ppFotoProblem(q, check) {
+        if (!q || typeof q !== 'object' || q.image || q.fotoRef) return false;
+        const n = _ppFotoNum(q);
+        if (n != null) return !(check?.photos || []).includes(n);
+        return _PP_FOTO_RX.test(String(typeof q.question === 'string' ? q.question : (q.text || '')));
+    }
+    // Collega le foto (fotoRef) e scarta le domande che parlano di una foto che non c'è
+    function _ppApplyFoto(questions, check, ctx) {
+        return questions.filter(q => {
+            const n = _ppFotoNum(q);
+            if (n != null && ctx?.act && ctx.map?.[n] != null && (check?.photos || []).includes(n)) {
+                q.fotoRef = { act: ctx.act, ver: ctx.ver || 'originale', i: ctx.map[n] };
+                return true;
+            }
+            if (n != null) delete q.foto;
+            if (_ppFotoProblem(q, check)) { console.warn('[Piano] ✂️ Scartata domanda che parla di una foto che non c\'è:', String(q.question || q.text || '').slice(0, 80)); return false; }
+            return true;
+        });
+    }
+    const _ppFotoCache = new Map();
+    function _ppFotoLoad(ref) {
+        const k = `${ref.act}|${ref.ver}|${ref.i}`;
+        if (_ppFotoCache.has(k)) return _ppFotoCache.get(k);
+        const p = (async () => {
+            const db = firebase.database();
+            const base = `livelearn/activities/${ref.act}`;
+            const q = (await db.ref(ref.ver && ref.ver !== 'originale' ? `${base}/versions/${ref.ver}/${ref.i}` : `${base}/questions/${ref.i}`).get()).val();
+            if (q?.image) return q.image;
+            if (q?.imageKey) return (await db.ref(`${base}/media/${q.imageKey}`).get()).val() || null;
+            return null;
+        })().catch(e => { console.warn('[Piano] foto non caricata:', e.message); _ppFotoCache.delete(k); return null; });
+        _ppFotoCache.set(k, p);
+        return p;
+    }
+    // Anteprima nella bozza: segnaposto riempito dopo il render
+    function _ppFotoHtml(q) {
+        if (!q || typeof q !== 'object') return '';
+        if (q.image) return `<img src="${q.image}" alt="Foto della domanda" style="max-height:140px;max-width:100%;border-radius:8px;border:1px solid #e5e7eb;margin-bottom:6px;display:block;">`;
+        if (!q.fotoRef) return '';
+        clearTimeout(_ppFotoHtml._t);
+        _ppFotoHtml._t = setTimeout(_ppFotoFill, 0);
+        const r = q.fotoRef;
+        return `<div style="margin-bottom:6px;"><img data-ppfoto="${encodeURIComponent(JSON.stringify(r))}" alt="Foto della domanda ${q.foto || ''} della verifica" style="max-height:140px;max-width:100%;border-radius:8px;border:1px solid #e5e7eb;display:block;min-width:60px;min-height:40px;background:#f3f4f6;"><div style="font-size:11px;color:#6b7280;">🖼️ foto della domanda ${q.foto || r.i + 1} della verifica</div></div>`;
+    }
+    function _ppFotoFill() {
+        document.querySelectorAll('img[data-ppfoto]').forEach(img => {
+            if (img.dataset.ppDone) return;
+            img.dataset.ppDone = '1';
+            let r; try { r = JSON.parse(decodeURIComponent(img.dataset.ppfoto)); } catch { return; }
+            _ppFotoLoad(r).then(src => {
+                if (src) img.src = src;
+                else img.replaceWith(Object.assign(document.createElement('div'), { textContent: '⚠️ Foto non trovata: questa domanda verrà tolta alla consegna', style: 'font-size:12px;color:#b91c1c;font-weight:700;' }));
+            });
+        });
+    }
+    // Alla consegna: copia dell'attività con le foto dentro le domande. Domande con foto non trovata: tolte.
+    async function _ppHydrateFoto(activity) {
+        const qs = activity?.questions;
+        if (!Array.isArray(qs) || !qs.some(q => q && q.fotoRef && !q.image)) return activity;
+        const out = [];
+        for (const q of qs) {
+            if (!q || !q.fotoRef || q.image) { out.push(q); continue; }
+            const src = await _ppFotoLoad(q.fotoRef);
+            if (src) { const c = { ...q, image: src }; delete c.fotoRef; out.push(c); }
+            else console.warn('[Piano] ✂️ Foto non trovata alla consegna: domanda tolta');
+        }
+        return { ...activity, questions: out };
+    }
+
     // La consegna è stata rispettata? Errori della verifica ripresi (campo "errore"),
     // tipi ammessi e numero di opzioni (versione PEI). score: più alto = meglio.
     function _ppCheckCompliance(questions, check) {
@@ -29832,6 +29919,11 @@ ${righe.join('\n')}
             const badO = qs.map((q, i) => ({ i, q })).filter(x => x.q.type === 'multiple-choice' && Array.isArray(x.q.options) && x.q.options.length !== check.mcOptions);
             if (badO.length) out.problems.push(`domande ${badO.map(x => x.i + 1).join(', ')}: la scelta multipla deve avere ${check.mcOptions} opzioni, come nella sua verifica.`);
             out.score -= badO.length;
+        }
+        const badF = qs.map((q, i) => ({ i, q })).filter(x => _ppFotoProblem(x.q, check));
+        if (badF.length) {
+            out.problems.push(`domande ${badF.map(x => x.i + 1).join(', ')}: parlano di una foto ma non ce l'hanno. ${check.photos?.length ? `Aggiungi "foto" con il numero di una domanda della verifica che aveva la foto (${check.photos.join(', ')}) e chiedi ciò che quella foto mostra, oppure riscrivi la domanda senza foto.` : 'Il piano non ha immagini: riscrivi la domanda senza foto.'}`);
+            out.score -= badF.length;
         }
         if (check.errors?.length) {
             const cov = new Set(qs.flatMap(_ppErrIdsOf));
@@ -29913,6 +30005,9 @@ REGOLE VERSIONE PEI (obbligatorie, PREVALGONO su tutto il resto del prompt):
 - Stesse strutture e stesso lessico: cambia frasi ed esempi (non copiare le domande), ma l'esercizio deve essere riconoscibile.
 - NON alzare la difficoltà, NON aggiungere tipi di esercizio diversi, niente testi da leggere, niente scrittura, niente risposte libere, niente "Transfer".
 ${_lessico}
+${Object.keys(pei.photoMap).length
+    ? `- FOTO: le domande della verifica segnate [FOTO] avevano una foto (numeri ${Object.keys(pei.photoMap).join(', ')}). Puoi riusarle: aggiungi alla domanda "foto": <numero della domanda della verifica> e la foto viene inserita automaticamente. La foto mostra la risposta giusta di quella domanda (es. lo sport): chiedi la stessa cosa con consegna, ordine delle opzioni o distrattori diversi. Una domanda che parla di foto o immagini DEVE avere il campo "foto" con uno di quei numeri.`
+    : '- FOTO: il piano non ha immagini: NON scrivere mai "guarda la foto/immagine" o "look at the picture".'}
 - OBBLIGATORIO su ogni domanda: "dsaLargeText": true e "referenceTable": un aiuto breve come nella sua verifica (mini-glossario, es. "football = calcio", oppure una regola breve se la verifica era di grammatica).
 - Distrattori chiaramente diversi dalla risposta giusta.
 ${pei.fromTest ? `DOMANDE DELLA SUA VERIFICA (versione ${verInfo.label}) — sono il MODELLO per tipi, forma e livello: rifalle con frasi nuove:\n${pei.templates}` : 'Verifica non disponibile: usa le regole qui sopra con lessico di base dell\'unità.'}
@@ -30059,7 +30154,8 @@ CONTROLLO QUALITÀ (obbligatorio, prima di rispondere ricontrolla OGNI domanda):
 - la risposta indicata come corretta è davvero corretta, in inglese corretto;
 - esiste UNA sola risposta corretta: nella scelta multipla nessun distrattore deve essere accettabile; se in un completamento sono corrette più forme, elencale tutte con |;
 - il numero di ___ nel testo è uguale al numero di risposte;
-- la frase non suggerisce la risposta (niente indizi che la rendono ovvia senza conoscere la regola).
+- la frase non suggerisce la risposta (niente indizi che la rendono ovvia senza conoscere la regola);
+- ${isPei && Object.keys(pei.photoMap).length ? 'una domanda che parla di foto o immagini ha il campo "foto"' : 'il piano non ha immagini: niente "guarda la foto/immagine" o "look at the picture"'}.
 ${erroriSection}
 ${contestoSection}
 ${adattamentoSection}
@@ -30067,12 +30163,13 @@ Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdow
 
         const sysMsg = `Sei un docente esperto di inglese per scuola media italiana. Rispondi SEMPRE e SOLO con un array JSON valido, senza testo aggiuntivo, senza backtick, senza spiegazioni.${errList.length ? ' Le domande devono riprendere gli errori che lo studente ha fatto nella verifica, indicati con il loro codice nel campo "errore".' : ''}${isPei ? ' Lo studente ha un PEI: usa solo i tipi di esercizio della sua verifica, allo stesso livello.' : ''}`;
         // Controlli sulla risposta (vedi _ppCheckCompliance)
-        const check = (errList.length || isPei) ? {
+        const check = {
             nQ,
             errors: errList, errReq,
             allowedTypes: isPei ? pei.types : null,
-            mcOptions: isPei && pei.fromTest ? pei.mcOptions : null
-        } : null;
+            mcOptions: isPei && pei.fromTest ? pei.mcOptions : null,
+            photos: isPei ? Object.keys(pei.photoMap).map(Number) : []
+        };
         return { prompt, sysMsg, nQ, check, pei };
     }
 
@@ -30087,7 +30184,7 @@ Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdow
         const prompt = `Hai generato le domande qui sotto per un piano personalizzato, ma NON rispettano la consegna:
 ${comp.problems.map(p => '- ' + p).join('\n')}
 ${comp.missing.length ? `\nERRORI DELLA VERIFICA NON ANCORA RIPRESI:\n${comp.missing.map(e => `${e.id}: ${e.line}`).join('\n')}\n` : ''}
-Correggi l'array: ${comp.missing.length ? 'sostituisci le domande con "errore": null (o quelle in più sullo stesso errore) con domande nuove che riprendono gli errori mancanti, con il loro codice nel campo "errore"; ' : ''}${P.check.allowedTypes ? `rifai le domande con un tipo non ammesso usando solo ${P.check.allowedTypes.join(', ')}; ` : ''}lascia invariate le domande già corrette.
+Correggi l'array: ${comp.missing.length ? 'sostituisci le domande con "errore": null (o quelle in più sullo stesso errore) con domande nuove che riprendono gli errori mancanti, con il loro codice nel campo "errore"; ' : ''}${P.check.allowedTypes ? `rifai le domande con un tipo non ammesso usando solo ${P.check.allowedTypes.join(', ')}; ` : ''}correggi le domande che parlano di una foto senza averla; lascia invariate le domande già corrette.
 Restituisci l'array COMPLETO di ${P.nQ} domande, stessi formati JSON${errs.length ? ', campo "errore" su ogni domanda' : ''}.
 
 DOMANDE DA CORREGGERE:
@@ -30145,6 +30242,8 @@ ${P.prompt}`;
             questions = questions.filter(q => P.check.allowedTypes.includes(q.type));
             if (questions.length < before) console.warn(`[Piano] ✂️ PEI: ${before - questions.length} domande con tipo non presente nella sua verifica scartate`);
         }
+        // Foto: collega quelle della sua verifica, scarta le domande che citano una foto che non c'è
+        questions = _ppApplyFoto(questions, P.check, verInfo?.activityId ? { act: verInfo.activityId, ver: verInfo.verKey, map: P.pei?.photoMap } : null);
         if (!questions.length) return null;
         const _cov = _ppCheckCompliance(questions, P.check);
         if (_cov.total) console.log(`[Piano] 🎯 Errori della verifica ripresi: ${_cov.covered}/${_cov.total}${_cov.missing.length ? ' — non ripresi: ' + _cov.missing.map(e => e.id).join(', ') : ''}`);
@@ -30402,7 +30501,7 @@ Rivedi queste ${qs.length} domande. Per OGNI domanda controlla:
 2. Esiste UNA sola risposta corretta. Nella scelta multipla nessun distrattore deve essere accettabile: se lo è, sostituiscilo. Nei completamenti ("fill-blanks", "cloze") elenca con | tutte le forme ugualmente corrette (es. "didn't|did not") e MAI forme sbagliate.
 3. Il numero di ___ nel testo è uguale al numero di risposte; nel "drag-drop" ogni risposta compare in "words"; nel "matching" "left" e "right" hanno la stessa lunghezza; nella "categorization" "answers" ha, per ogni elemento di "items", l'indice (da 0) della sua categoria.
 4. Istruzione chiara in italiano, frase in inglese naturale, nessun indizio che renda ovvia la risposta.
-${bad.length ? 'PROBLEMI GIÀ RILEVATI DAL CONTROLLO AUTOMATICO (correggili):\n' + bad.map(b => `- domanda ${b.i + 1}: ${b.issues.join('; ')}`).join('\n') + '\n' : ''}Correggi SOLO ciò che è sbagliato e lascia invariato il resto. Stesso numero di domande, stesso ordine, stessi tipi, stessi campi JSON (compreso "errore").
+${bad.length ? 'PROBLEMI GIÀ RILEVATI DAL CONTROLLO AUTOMATICO (correggili):\n' + bad.map(b => `- domanda ${b.i + 1}: ${b.issues.join('; ')}`).join('\n') + '\n' : ''}Correggi SOLO ciò che è sbagliato e lascia invariato il resto. Stesso numero di domande, stesso ordine, stessi tipi, stessi campi JSON (compresi "errore" e "foto").
 Rispondi SOLO con l'array JSON corretto, senza testo prima o dopo, senza backtick.
 
 DOMANDE:
@@ -30413,7 +30512,10 @@ ${JSON.stringify(send)}`;
                 if (Array.isArray(rev) && rev.length >= Math.ceil(qs.length * 0.8)) {
                     const revN = rev.filter(q => q && typeof q === 'object').map(_ppNormalizeQuestion);
                     // il codice dell'errore ripreso non si perde nella revisione
-                    if (revN.length === qs.length) revN.forEach((q, i) => { if (q.errore == null && qs[i].errore != null) q.errore = qs[i].errore; });
+                    if (revN.length === qs.length) revN.forEach((q, i) => {
+                        if (q.errore == null && qs[i].errore != null) q.errore = qs[i].errore;
+                        if (q.foto == null && qs[i].foto != null) q.foto = qs[i].foto;
+                    });
                     const revBad = issuesOf(revN);
                     // La revisione si tiene solo se non peggiora il controllo automatico
                     if (revBad.length <= bad.length) { qs = revN; bad = revBad; }
@@ -30807,7 +30909,7 @@ Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markd
     const _PP_CLAUDE_CONSEGNA = `Sei Claude e prepari i PIANI PERSONALIZZATI di inglese (scuola media italiana) per MyClass / LiveLearn.
 Questo file è stato esportato da MyClass. Per OGNI elemento di "alunni":
 - genera l'array di domande seguendo ESATTAMENTE la sua "consegna_quiz" (numero di domande, tipi, livello, errori su cui lavorare, regole DSA/PEI);
-- se "controlli" non è null, la risposta deve superarli: almeno "errori_minimi" codici diversi di "errori_da_riprendere" (E1, E2…) nel campo "errore" delle domande, e ogni domanda con un codice esercita davvero quell'errore; con "tipi_ammessi" (alunni PEI: il piano è un ripasso della sua verifica, anche con voto alto) usa SOLO quei tipi; con "opzioni_scelta_multipla" ogni scelta multipla ha esattamente quel numero di opzioni;
+- se "controlli" non è null, la risposta deve superarli: almeno "errori_minimi" codici diversi di "errori_da_riprendere" (E1, E2…) nel campo "errore" delle domande, e ogni domanda con un codice esercita davvero quell'errore; con "tipi_ammessi" (alunni PEI: il piano è un ripasso della sua verifica, anche con voto alto) usa SOLO quei tipi; con "opzioni_scelta_multipla" ogni scelta multipla ha esattamente quel numero di opzioni; nessuna domanda parla di foto o immagini se non ha il campo "foto" con un numero di "foto_disponibili" (la foto della verifica viene inserita da MyClass);
 - se "consegna_listening" non è null, genera anche l'esercizio di listening seguendo quella consegna (testo scritto da te, letto poi dalla sintesi vocale);
 - se "consegna_speaking" non è null, scrivi lo speaking prompt richiesto;
 - se "piano" è "ORALE" non c'è nessun quiz: segui la sua "consegna_testo" e scrivi il testo del recupero orale (italiano, testo semplice, 200-280 parole, [NOME] al posto del nome).
@@ -30851,7 +30953,9 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
         return {
             local: { studentSafe, studentName, classeNome, unit, prefix, voto, code, draftId,
                      layout: verInfo?.layout || 0, versione: verInfo?.label || null, tagBreakdown: tagBreakdown || {}, sfida,
-                     tipiAmmessi: P.check?.allowedTypes || null, erroriTot: P.check?.errors?.length || 0 },
+                     tipiAmmessi: P.check?.allowedTypes || null, erroriTot: P.check?.errors?.length || 0,
+                     fotoCheck: { photos: P.check.photos },
+                     foto: verInfo?.activityId && P.pei ? { act: verInfo.activityId, ver: verInfo.verKey, map: P.pei.photoMap } : null },
             file: {
                 classe: classeNome || '', unit: unit || '', piano: prefix,
                 voto: Math.round(Number(voto) * 100) / 100,
@@ -30859,12 +30963,13 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 consegna_quiz: P.prompt,
                 consegna_listening: lNeed.needed ? _pianoBuildListeningPrompt(unit || 'English Grammar', lNeed.level, lNeed.focus) : null,
                 consegna_speaking: prefix === 'APP' && verInfo?.layout !== 2 ? _pianoBuildSpeakingPrompt(unit, classeNome, voto) : null,
-                controlli: P.check ? {
+                controlli: {
                     errori_da_riprendere: P.check.errors.map(e => e.id),
                     errori_minimi: P.check.errReq,
                     tipi_ammessi: P.check.allowedTypes,
-                    opzioni_scelta_multipla: P.check.mcOptions
-                } : null,
+                    opzioni_scelta_multipla: P.check.mcOptions,
+                    foto_disponibili: P.check.photos
+                },
                 sfida
             }
         };
@@ -31052,6 +31157,11 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             if (nBad) scartate.push(`${L.studentName}: ${nBad} esercizi non validi scartati`);
             if (!qs.length) { nonTrovati.push(`${L.studentName} (nessuna domanda valida)`); continue; }
             const activity = { questions: qs };
+            {
+                const nPrima = activity.questions.length;
+                activity.questions = _ppApplyFoto(activity.questions, L.fotoCheck || { photos: [] }, L.foto);
+                if (activity.questions.length < nPrima) scartate.push(`${L.studentName}: ${nPrima - activity.questions.length} esercizi che parlavano di una foto inesistente scartati`);
+            }
             if (L.erroriTot) activity.erroriCoperti = { n: Math.min(L.erroriTot, new Set(qs.flatMap(_ppErrIdsOf)).size), tot: L.erroriTot };
             if (L.sfida) {
                 const b = sfide[L.sfida] || _ppChallengeCacheGet(L.sfida);
@@ -31581,7 +31691,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             if (!layout) layout = /pei/.test(name) ? 2 : /dsa/.test(name) ? 1 : 0;
             if (!layout) return null;                                // Fila B/C, Training: standard
             const label = _PP_VER_LABELS[name] || (layout === 2 ? 'PEI' : 'DSA');
-            return { name, label, layout, source: 'verifica', qs: detail.actVersions?.[ver] || [] };
+            return { name, label, layout, source: 'verifica', qs: detail.actVersions?.[ver] || [], activityId: detail.activityId || null, verKey: ver };
         } catch(e) {
             console.warn('[Piano] _ppDetectTestVersion:', e.message);
             return _fromProfile();
@@ -32284,7 +32394,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
     // Preview "student-side" per ogni tipo di domanda nella bozza PP
     function _ppBuildPreview(q, idx) {
         const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        const previewWrap = (inner) => `<details style="margin-top:8px;"><summary style="font-size:15px;font-weight:700;color:#6c47ff;cursor:pointer;user-select:none;padding:4px 0;">👁 Anteprima studente</summary><div style="margin-top:7px;background:#f5f3ff;border:1px dashed #c4b5fd;border-radius:8px;padding:12px 14px;font-size:16px;">${inner}</div></details>`;
+        const previewWrap = (inner0) => { const inner = _ppFotoHtml(q) + inner0; return `<details style="margin-top:8px;"><summary style="font-size:15px;font-weight:700;color:#6c47ff;cursor:pointer;user-select:none;padding:4px 0;">👁 Anteprima studente</summary><div style="margin-top:7px;background:#f5f3ff;border:1px dashed #c4b5fd;border-radius:8px;padding:12px 14px;font-size:16px;">${inner}</div></details>` };
         // q.question e' un oggetto negli esercizi di listening: solo testo qui
         const qText = String(typeof q.question === 'string' ? q.question : (q.text || '')).replace(/\n/g,'<br>');
         const eSty = 'display:inline-block;background:#fff;border:1.5px solid #d1d5db;border-radius:6px;padding:3px 10px;margin:3px;font-size:15px;cursor:default;';

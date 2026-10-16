@@ -11,6 +11,7 @@ Il file esportato da MyClass (`"formato": "myclass-piani-export"`) è autosuffic
 2. Per ogni elemento di `alunni` segui `consegna_quiz`, poi `consegna_listening` e `consegna_speaking` se non sono `null`. Se il `piano` è `ORALE` non c'è quiz: segui `consegna_testo` e restituisci `{ "ref", "testo" }`, con `[NOME]` al posto del nome.
    - Errori della verifica: se la consegna elenca errori con codice (`E1`, `E2`…), ogni domanda ha il campo `"errore"` con il codice che riprende (o `null`), e le domande esercitano davvero quella struttura con frasi nuove. Vale per tutti i piani, anche per l'approfondimento.
    - Versione PEI (`versione` PEI / PEI 2 / Training PEI): il piano è un **ripasso della sua verifica**, qualunque sia il voto. Stessi tipi di esercizio della verifica riportata nella consegna, stessa forma e stesso livello; niente tipi nuovi, niente testi da leggere, scrittura o "Transfer". Con l'approfondimento si può allargare un poco il lessico dello stesso tema (es. altri sport).
+   - Foto: Claude non può creare immagini. Una domanda può riusare la foto di una domanda della verifica segnata `[FOTO]` con `"foto": <numero>`; MyClass inserisce la foto. Senza quel campo nessuna domanda deve dire "guarda la foto/immagine" o "look at the picture".
 3. Per ogni elemento di `sfide` segui la sua `consegna`: genera un solo blocco per ogni chiave.
 4. Scrivi `piani_da_claude.json` nella cartella di lavoro, nel formato indicato in `consegna_generale`. Copia `export_id` e ogni `ref` esattamente come sono.
 5. Prima di consegnare, verifica con uno script (Node o Python) che il file sia JSON valido e controlla:
@@ -20,7 +21,7 @@ Il file esportato da MyClass (`"formato": "myclass-piani-export"`) è autosuffic
    - nel drag-drop ogni risposta compare in `words`;
    - nella categorization `answers` ha un indice per ogni elemento di `items`;
    - ogni listening ha un `ttsText` di almeno 30 parole;
-   - per ogni alunno con `controlli`: i codici diversi nel campo `errore` sono almeno `errori_minimi`; con `tipi_ammessi` nessuna domanda ha un altro tipo; con `opzioni_scelta_multipla` ogni multiple-choice ha esattamente quel numero di opzioni.
+   - per ogni alunno con `controlli`: i codici diversi nel campo `errore` sono almeno `errori_minimi`; con `tipi_ammessi` nessuna domanda ha un altro tipo; con `opzioni_scelta_multipla` ogni multiple-choice ha esattamente quel numero di opzioni; ogni domanda che parla di foto/immagini ha `foto` con un numero di `foto_disponibili`.
 6. Mostra al docente il file creato e un riepilogo: numero di piani, sfide, errori ripresi per alunno (es. 5/6) ed eventuali dubbi.
 
 Non inserire mai nomi di alunni: nel file ci sono solo i `ref`. Non salvare né committare il file esportato né quello prodotto: contengono dati scolastici.
