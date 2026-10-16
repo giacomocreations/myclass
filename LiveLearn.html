@@ -10120,6 +10120,50 @@ function answerText(q, a) {
   return String(a);
 }
 
+// Risposta leggibile per l'AI (valutazioni e analisi): negli abbinamenti e nelle
+// categorie (anche dentro il listening) le risposte sono salvate come indici (0, 1…).
+// Qui diventano parole, con ✓/✗ e la soluzione per ogni elemento: prima l'AI
+// vedeva "0 / 1 / 0 / 0 / 1 / 1" e lo riportava così nella valutazione.
+// null = tipo non gestito qui (si usa la formattazione di sempre).
+function _readableAnswer(q, a, arrFn) {
+  if (!q || a === null || a === undefined) return null;
+  const isL = q.type === 'listening';
+  const inner = isL ? (q.question || {}) : q;
+  const sub = isL ? (q.subtype || inner.type) : q.type;
+  const toArr = v => Array.isArray(v) ? v : (v && typeof v === 'object' ? arrFn(v) : []);
+  const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? arrFn(a) : null);
+  const t = x => x && typeof x === 'object' ? String(x.text || x.label || x.word || '') : String(x ?? '');
+  const nm = x => t(x).trim().toLowerCase();
+  if (sub === 'matching' && arr) {
+    const L = toArr(inner.left), R = toArr(inner.right);
+    if (!L.length) return null;
+    return L.map((l, i) => {
+      const g = arr[i];
+      if (g == null || g === '') return `${t(l)} → (vuoto) ✗ (giusto: ${t(R[i])})`;
+      const ok = nm(R[g]) === nm(R[i]);
+      return `${t(l)} → ${R[g] != null ? t(R[g]) : String(g)} ${ok ? '✓' : `✗ (giusto: ${t(R[i])})`}`;
+    }).join('; ');
+  }
+  if (sub === 'categorization' && arr) {
+    const C = toArr(inner.categories || inner.columns), I = toArr(inner.items || inner.words), A = toArr(inner.answers);
+    const cmap = inner.correct && typeof inner.correct === 'object' && !Array.isArray(inner.correct) ? inner.correct : null;
+    if (!I.length) return null;
+    return I.map((it, i) => {
+      const g = arr[i];
+      let c = A[i];
+      if (c == null && cmap) { const ci = C.findIndex(x => nm(x) === nm(cmap[t(it)])); c = ci >= 0 ? ci : null; }
+      const gl = g == null || g === '' ? '(non classificato)' : (C[g] != null ? t(C[g]) : String(g));
+      const ok = c != null && g != null && g !== '' && Number(g) === Number(c);
+      return `"${t(it)}" → ${gl}${c == null ? '' : ok ? ' ✓' : ` ✗ (giusto: ${t(C[c])})`}`;
+    }).join('; ');
+  }
+  if (isL && sub === 'multiple-choice' && (typeof a === 'number' || /^\d+$/.test(String(a)))) {
+    const o = toArr(inner.options);
+    return o[Number(a)] != null ? t(o[Number(a)]) : null;
+  }
+  return null;
+}
+
 function evaluateAnswer(q, a) {
   const pts = q.points || 1;
   if (q.type === 'multiple-choice') { const ok=a===q.correct; return {scorable:true,correct:ok,points:pts,detail:ok?'':'Corretta: <strong>'+esc(q.options[q.correct])+'</strong>'}; }
@@ -12794,7 +12838,9 @@ async function runAIAnalysis(apiKey, questions, answers, pct, mode, isRecovery, 
     const pts = q.points || 1;
     let ans = '—';
     if (a !== undefined && a !== null) {
-      if (q.type === 'multiple-choice') ans = q.options[a] || '?';
+      const rd = _readableAnswer(q, a, fbArr);
+      if (rd) ans = rd;
+      else if (q.type === 'multiple-choice') ans = q.options[a] || '?';
       else if (Array.isArray(a)) ans = a.join(' / ');
       else ans = String(a);
     }
@@ -12949,7 +12995,9 @@ async function runGlobalAnalysis(apiKey, origQuestions, origAnswers, origPct, mo
     const a = origAnswers[i]; const r = evaluateAnswer(q, a);
     let ans = '\u2014';
     if (a !== undefined && a !== null) {
-      if (q.type === 'multiple-choice') ans = (q.options||[])[a] || '?';
+      const rd = _readableAnswer(q, a, fbArr);
+      if (rd) ans = rd;
+      else if (q.type === 'multiple-choice') ans = (q.options||[])[a] || '?';
       else if (Array.isArray(a)) ans = a.join(' / ');
       else ans = String(a);
     }
@@ -12965,7 +13013,9 @@ async function runGlobalAnalysis(apiKey, origQuestions, origAnswers, origPct, mo
       const a = recAns[i]; const r = evaluateAnswer(q, a);
       let ans = '\u2014';
       if (a !== undefined && a !== null) {
-        if (q.type === 'multiple-choice') ans = (q.options||[])[a] || '?';
+        const rd = _readableAnswer(q, a, fbArr);
+        if (rd) ans = rd;
+        else if (q.type === 'multiple-choice') ans = (q.options||[])[a] || '?';
         else if (Array.isArray(a)) ans = a.join(' / ');
         else ans = String(a);
       }

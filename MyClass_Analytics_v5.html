@@ -1985,6 +1985,13 @@
                                 <option value="haiku" selected>Claude Haiku 5.5 &mdash; pi&ugrave; veloce ed economico</option>
                             </select>
                         </div>
+                        <div class="agent-field">
+                            <label>&#x1F7E3; Generatore valutazioni scritte</label>
+                            <select id="agentValGen" onchange="agentSaveSettings()" style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid #c8d0e7;background:#fff;font-size:13px;font-family:inherit;">
+                                <option value="auto" selected>Automatico (Gemini &rarr; Anthropic)</option>
+                                <option value="claude">Claude Code (file da esportare e importare)</option>
+                            </select>
+                        </div>
                         <div class="agent-field" style="grid-column:1/-1;">
                             <label>📅 Google Client ID (per Calendar)</label>
                             <input type="text" id="agentGoogleClientId" placeholder="12345...apps.googleusercontent.com" onchange="agentSaveSettings()">
@@ -20587,6 +20594,8 @@ ${blocco.regole}`;
     // ── Variabili globali agente ──────────────────────────────────────────
     let AGENT_ANTHROPIC_KEY   = localStorage.getItem('agent_anthropic_key')   || '';
     let AGENT_ANTHROPIC_MODEL = localStorage.getItem('agent_anthropic_model') || 'haiku'; // 'sonnet' | 'haiku'
+    // Generatore delle valutazioni scritte: 'auto' (Gemini → Anthropic) | 'claude' (file per Claude Code)
+    let AGENT_VAL_GEN = localStorage.getItem('agent_val_gen') === 'claude' ? 'claude' : 'auto';
     let AGENT_GOOGLE_CLIENT_ID = localStorage.getItem('agent_google_client_id') || '';
     let AGENT_AUTO_TIME   = localStorage.getItem('agent_auto_time') || '14:30';
     // Ora di attivazione per giorno della settimana: indice 0=domenica … 6=sabato.
@@ -20764,7 +20773,7 @@ ${blocco.regole}`;
         // dalla memoria in QUESTA sessione. Solo i task NON-attivi
         // (approved/dismissed/failed/error esaurito) possono essere sfoltiti, perché
         // i loro dati sono già su Firebase (responses + marker agentDone).
-        const ACTIVE = new Set(['pending','processing','ready','error']);
+        const ACTIVE = new Set(['pending','processing','ready','error','awaiting_claude']);
         const isActive = t =>
             ACTIVE.has(t.status) &&
             !(t.status === 'error' && (t.retryCount || 0) >= AGENT_MAX_RETRY);
@@ -20897,6 +20906,7 @@ ${blocco.regole}`;
     function agentSaveSettings() {
         const _elTime=document.getElementById('agentAutoTime_1'), _elAnthr=document.getElementById('agentAnthropicKey'),
               _elAnthrModel=document.getElementById('agentAnthropicModel'),
+              _elValGen=document.getElementById('agentValGen'),
               _elGCal=document.getElementById('agentGoogleClientId'), _elDoCal=document.getElementById('agentDoCalendar'),
               _elDoPiano=document.getElementById('agentDoPiano'), _elDoScr=document.getElementById('agentDoScritte'),
               _elDoOral=document.getElementById('agentDoOrali');
@@ -20909,6 +20919,8 @@ ${blocco.regole}`;
         if (_elTime)    AGENT_AUTO_TIME        = _elTime.value || '14:30';
         if (_elAnthr)      AGENT_ANTHROPIC_KEY    = _elAnthr.value.trim();
         if (_elAnthrModel) AGENT_ANTHROPIC_MODEL  = _elAnthrModel.value || 'haiku';
+        if (_elValGen)     AGENT_VAL_GEN          = _elValGen.value === 'claude' ? 'claude' : 'auto';
+        localStorage.setItem('agent_val_gen', AGENT_VAL_GEN);
         if (_elGCal)    AGENT_GOOGLE_CLIENT_ID = _elGCal.value.trim();
         if (_elDoCal)   AGENT_DO_CALENDAR      = _elDoCal.checked;
         if (_elDoPiano) AGENT_DO_PIANO         = _elDoPiano.checked;
@@ -23763,6 +23775,8 @@ ${sectionInstr}`;
         if (elAntKey && !elAntKey.matches(':focus'))  elAntKey.value = AGENT_ANTHROPIC_KEY;
         const elAnthrModel = document.getElementById('agentAnthropicModel');
         if (elAnthrModel) elAnthrModel.value = AGENT_ANTHROPIC_MODEL;
+        const elValGen = document.getElementById('agentValGen');
+        if (elValGen) elValGen.value = AGENT_VAL_GEN;
         if (elGCId   && !elGCId.matches(':focus'))    elGCId.value   = AGENT_GOOGLE_CLIENT_ID;
         const elDoCal = document.getElementById('agentDoCalendar');
         const elDoPiano = document.getElementById('agentDoPiano');
@@ -23835,6 +23849,7 @@ ${sectionInstr}`;
             error:                '❌ Errore',
             awaiting_transcript:  '✍️ Trascrizione richiesta',
             awaiting_speakers:    '👥 Associa parlanti',
+            awaiting_claude:      '🟣 In attesa di Claude Code',
         };
         const aiLabels = {
             gemini:    '<span class="agent-ai-badge gemini">🟢 Gemini</span>',
@@ -23842,12 +23857,13 @@ ${sectionInstr}`;
             llama:     '<span class="agent-ai-badge ollama">🟡 Llama</span>',
             gemma:     '<span class="agent-ai-badge ollama">🟡 Gemma</span>',
             qwen:      '<span class="agent-ai-badge qwen">🔵 Qwen3</span>',
+            claude:    '<span class="agent-ai-badge anthropic">🟣 Claude Code</span>',
         };
 
         // Ordina: ready → processing → awaiting_transcript → pending → error → approved
         // I task 'dismissed' normali sono invisibili (guardia anti-regen);
         // i recuperi dismessi automaticamente per voto già sufficiente mostrano una nota.
-        const order = { ready:0, processing:1, awaiting_speakers:2, awaiting_transcript:2, pending:3, error:4, approved:5 };
+        const order = { ready:0, processing:1, awaiting_claude:2, awaiting_speakers:2, awaiting_transcript:2, pending:3, error:4, approved:5 };
         const sorted = [...agentTasks]
             .filter(t => t.status !== 'dismissed')
             // Task ripristinati come scheletro da Firebase (approved ma senza dati):
@@ -24245,6 +24261,7 @@ ${sectionInstr}`;
                     })() : '';
                     body = `
                         ${jsonTable}
+                        ${task.type === 'valscritta' && task._autoRegenBlocked && !task.valDocente && !task.classroomBlock ? `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:6px 10px;font-size:12px;color:#92400e;margin-bottom:6px;">⚠️ La valutazione generata non ha le sezioni attese (o è andata persa). L'agente non la rigenera da solo per non consumare token: controlla il testo o premi 🔄 Rigenera.</div>` : ''}
                         <div class="agent-task-preview" id="agentPrev_${task.id}">${preview.replace(/</g,'&lt;')}</div>
                         <textarea class="agent-task-edit-area" id="${editId}" style="display:none;">${(task.content||'').replace(/</g,'&lt;')}</textarea>
                         <div class="agent-task-actions">
@@ -24258,6 +24275,7 @@ ${sectionInstr}`;
                             <button class="agent-btn-edit" onclick="agentToggleEdit('${task.id}','${editId}')">✏️ Modifica</button>
                             <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
                             ${task.type==='valscritta' ? `<button class="agent-btn-edit" onclick="agentRecalcAndRegenerate('${task.id}')">📊 Riprendi con dati aggiornati</button>` : ''}
+                            ${task.type==='valscritta' ? `<button class="agent-btn-edit" onclick="agentValToClaude('${task.id}')" title="Prepara la consegna per Claude Code: la valutazione attuale resta finché non importi il file">🟣 Rifai con Claude Code</button>` : ''}
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                         </div>`;}
 
@@ -24276,6 +24294,16 @@ ${sectionInstr}`;
                 body = `<div style="color:#c62828;font-size:13px;padding:8px 0;">⚠️ ${(task.error||'').replace(/</g,'&lt;')}<br><small style="opacity:0.7">${handleLost ? '📁 Riseleziona la cartella audio nell\'agente e riesegui.' : `Tentativo ${retries}/${AGENT_MAX_RETRY}`}</small></div>
                     <div class="agent-task-actions">
                         ${!handleLost ? `<button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Riprova</button>` : ''}
+                        <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                    </div>`;
+            } else if (task.status === 'awaiting_claude') {
+                body = `<div style="background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px;padding:8px 12px;font-size:13px;color:#5b21b6;">
+                        🟣 Consegna pronta per Claude Code. Esporta il file (insieme alle altre valutazioni in attesa), fallo elaborare a Claude Code e importa il file che crea: la valutazione diventa pronta da approvare come sempre.
+                    </div>
+                    <div class="agent-task-actions">
+                        <button class="agent-btn-approve" onclick="agentValExportForClaude()">📤 Esporta per Claude</button>
+                        <button class="agent-btn-edit" onclick="agentValImportFromClaude()">📥 Importa da Claude</button>
+                        <button class="agent-btn-edit" onclick="agentValGenerateNow('${task.id}')" title="Genera subito con il generatore automatico (Gemini → Anthropic)">⚡ Genera con Gemini/Haiku</button>
                         <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                     </div>`;
             } else if (task.status === 'awaiting_transcript') {
@@ -24509,6 +24537,14 @@ ${sectionInstr}`;
                 </div>
             </div>`;
         }).join('')
+            + (() => {
+                const nC = agentTasks.filter(t => t.status === 'awaiting_claude').length;
+                return nC ? `<div style="margin-top:10px;padding:10px 12px;background:#f5f3ff;border:1.5px solid #c4b5fd;border-radius:10px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <strong style="color:#6d28d9;flex:1;min-width:200px;">🟣 ${nC} valutazion${nC === 1 ? 'e' : 'i'} in attesa di Claude Code</strong>
+                    <button class="agent-btn-approve" onclick="agentValExportForClaude()">📤 Esporta per Claude</button>
+                    <button class="agent-btn-edit" onclick="agentValImportFromClaude()">📥 Importa da Claude</button>
+                </div>` : '';
+            })()
             + (dismissedRecuperi.length
                 ? `<div style="margin-top:12px;padding:10px 12px;background:#fff8e1;border:1.5px solid #ffe082;border-radius:10px;font-size:12px;">
                     <strong style="color:#f57f17;">🟡 Recuperi saltati automaticamente</strong>
@@ -25477,6 +25513,50 @@ ${sectionInstr}`;
         return out;
     }
 
+    // Risposta leggibile per l'AI (valutazioni e analisi): negli abbinamenti e nelle
+    // categorie (anche dentro il listening) le risposte sono salvate come indici (0, 1…).
+    // Qui diventano parole, con ✓/✗ e la soluzione per ogni elemento: prima l'AI
+    // vedeva "0 / 1 / 0 / 0 / 1 / 1" e lo riportava così nella valutazione.
+    // null = tipo non gestito qui (si usa la formattazione di sempre).
+    function _readableAnswer(q, a, arrFn) {
+      if (!q || a === null || a === undefined) return null;
+      const isL = q.type === 'listening';
+      const inner = isL ? (q.question || {}) : q;
+      const sub = isL ? (q.subtype || inner.type) : q.type;
+      const toArr = v => Array.isArray(v) ? v : (v && typeof v === 'object' ? arrFn(v) : []);
+      const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? arrFn(a) : null);
+      const t = x => x && typeof x === 'object' ? String(x.text || x.label || x.word || '') : String(x ?? '');
+      const nm = x => t(x).trim().toLowerCase();
+      if (sub === 'matching' && arr) {
+        const L = toArr(inner.left), R = toArr(inner.right);
+        if (!L.length) return null;
+        return L.map((l, i) => {
+          const g = arr[i];
+          if (g == null || g === '') return `${t(l)} → (vuoto) ✗ (giusto: ${t(R[i])})`;
+          const ok = nm(R[g]) === nm(R[i]);
+          return `${t(l)} → ${R[g] != null ? t(R[g]) : String(g)} ${ok ? '✓' : `✗ (giusto: ${t(R[i])})`}`;
+        }).join('; ');
+      }
+      if (sub === 'categorization' && arr) {
+        const C = toArr(inner.categories || inner.columns), I = toArr(inner.items || inner.words), A = toArr(inner.answers);
+        const cmap = inner.correct && typeof inner.correct === 'object' && !Array.isArray(inner.correct) ? inner.correct : null;
+        if (!I.length) return null;
+        return I.map((it, i) => {
+          const g = arr[i];
+          let c = A[i];
+          if (c == null && cmap) { const ci = C.findIndex(x => nm(x) === nm(cmap[t(it)])); c = ci >= 0 ? ci : null; }
+          const gl = g == null || g === '' ? '(non classificato)' : (C[g] != null ? t(C[g]) : String(g));
+          const ok = c != null && g != null && g !== '' && Number(g) === Number(c);
+          return `"${t(it)}" → ${gl}${c == null ? '' : ok ? ' ✓' : ` ✗ (giusto: ${t(C[c])})`}`;
+        }).join('; ');
+      }
+      if (isL && sub === 'multiple-choice' && (typeof a === 'number' || /^\d+$/.test(String(a)))) {
+        const o = toArr(inner.options);
+        return o[Number(a)] != null ? t(o[Number(a)]) : null;
+      }
+      return null;
+    }
+
     function agentBuildDetailLines(questions, detailedResponse) {
         if (!questions?.length || !detailedResponse) return '';
         const answers  = agentFbArr(detailedResponse.answers);
@@ -25487,6 +25567,8 @@ ${sectionInstr}`;
         // ── Formatta la risposta dello studente leggibile per l'AI ──────────
         const fmtAns = (q, a) => {
             if (a === null || a === undefined) return '(non risposto)';
+            const rd = _readableAnswer(q, a, agentFbArr);
+            if (rd) return rd;
             if (q.type === 'listening') {
                 const inner = q.question || {};
                 const sub   = q.subtype || inner.type || '';
@@ -26024,7 +26106,16 @@ ${sectionInstr}`;
                                 return Math.abs(currentPct - (r.pct || 0)) > 1;
                             });
                             const _contentMissing = !existing.valDocente && !existing.classroomBlock;
-                            if (_contentMissing) {
+                            if (_contentMissing && (existing.generatedAt || existing.content)) {
+                                // Già generata una volta (testo senza sezioni riconosciute o perso per
+                                // memoria piena): NON si rigenera da sola a ogni controllo periodico,
+                                // costerebbe token ogni 30 minuti. Decide il docente con 🔄 Rigenera.
+                                if (!existing._autoRegenBlocked) {
+                                    existing._autoRegenBlocked = true;
+                                    agentSaveTasks(agentTasks);
+                                }
+                                console.log(`[Agente] ${tid}: ready ma senza sezioni riconosciute — NON rigenero da solo (usa 🔄 Rigenera)`);
+                            } else if (_contentMissing) {
                                 console.log(`[Agente] ${tid}: ready ma valutazione vuota — rigenero`);
                                 existing.status = 'pending'; existing.pendingAt = new Date().toISOString();
                                 agentSaveTasks(agentTasks);
@@ -26278,6 +26369,172 @@ ${sectionInstr}`;
         } catch(e) {
             console.warn('[Agente] _agentRefreshTaskResponses:', e.message);
         }
+    }
+
+    // Risposta dell'AI (Gemini, Anthropic o il file di Claude Code) → blocchi della valutazione
+    // e testi per alunno. results = dati per alunno (task.importData).
+    function _agentApplyValScrittaRaw(task, raw, results) {
+        const extractSection = (text, marker) => {
+            // Estrae il label dal marcatore (es. "ARGO" da "=== ARGO ===")
+            const label = marker.replace(/^[=* ]+|[=* ]+$/g, '').trim();
+            // Regex flessibile: trova il marcatore anche se Anthropic aggiunge asterischi,
+            // spazi extra o leggere varianti di formattazione (es. **=== ARGO ===**)
+            // Accetta anche titoli senza "===" su una riga da soli: "## VALUTAZIONE DOCENTE",
+            // "**VALUTAZIONE DOCENTE**", "VALUTAZIONE DOCENTE:". Prima, se il modello non metteva
+            // gli "===", il task restava "pronto" ma vuoto e il controllo periodico lo rigenerava.
+            const makeRe = (lbl) => new RegExp(
+                '[*]{0,2}={2,}\\s*' + lbl.replace(/ /g, '\\s+') + '\\s*={2,}[*]{0,2}' +
+                '|(?:^|\\n)[ \\t]*(?:#{1,4}[ \\t]*)?[*]{0,2}[ \\t]*' + lbl.replace(/ /g, '\\s+') + '[ \\t]*[*]{0,2}[ \\t]*:?[ \\t]*(?=\\n|$)', 'i'
+            );
+            const re = makeRe(label);
+            const match = re.exec(text);
+            if (!match) return '';
+            const after = text.slice(match.index + match[0].length);
+            const otherLabels = ['VALUTAZIONE DOCENTE', 'ARGO', 'CLASSROOM'].filter(l => l !== label);
+            let end = after.length;
+            for (const l of otherLabels) {
+                const m = makeRe(l).exec(after);
+                if (m && m.index < end) end = m.index;
+            }
+            return after.slice(0, end).trim();
+        };
+
+        task.valDocente     = extractSection(raw, '=== VALUTAZIONE DOCENTE ===');
+        // Argo non si genera piu' in automatico: solo su richiesta (pulsanti "Genera Argo")
+        task.argoBlock      = '';
+        task.classroomBlock = extractSection(raw, '=== CLASSROOM ===');
+        // Diagnostica: segnala sezioni mancanti (causa comune: risposta troncata per token limit)
+        const missingBlocks = [];
+        if (!task.valDocente)     missingBlocks.push('VALUTAZIONE DOCENTE');
+        if (!task.classroomBlock) missingBlocks.push('CLASSROOM');
+        if (missingBlocks.length) {
+            console.warn(`[Agente] ⚠️ Blocchi mancanti nella risposta AI: ${missingBlocks.join(', ')} — risposta troncata? (raw length: ${raw.length} chars)`);
+        } else {
+            console.log(`[Agente] ✅ Tutti i blocchi generati (raw: ${raw.length} chars, provider: ${task.aiProvider})`);
+        }
+        task.importData     = results;
+
+        // Parsifica valDocente in mappa per-alunno usando header "--- ALUNNO: Nome ---"
+        // con matching normalizzato per gestire inversione nome/cognome dell'AI
+        const _saStNorm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+        const studentAnalysis = {};
+        if (task.valDocente) {
+            const headers = [...task.valDocente.matchAll(/^---\s*ALUNNO:\s*(.+?)\s*---$/gim)];
+            const chunks  = task.valDocente.split(/^---\s*ALUNNO:.*?---$/gim);
+            headers.forEach((m, i) => {
+                const nome = m[1].trim();
+                const testo = (chunks[i + 1] || '').trim();
+                if (nome && testo) studentAnalysis[nome] = testo;
+            });
+            // Fallback normalizzato: abbina per insieme di parole (gestisce nome/cognome invertiti)
+            for (const r of results) {
+                if (studentAnalysis[r.nome]) continue; // già trovato con match esatto
+                const rWords = _saStNorm(r.nome).split(/\s+/).filter(w => w.length > 1);
+                // Prima prova matching per insieme di parole su chiavi già parsificate
+                const matched = Object.entries(studentAnalysis).find(([k]) => {
+                    const kw = _saStNorm(k).split(/\s+/).filter(w => w.length > 1);
+                    return rWords.length >= 2 && kw.length >= 2 &&
+                        rWords.every(w => kw.includes(w)) && kw.every(w => rWords.includes(w));
+                });
+                if (matched) { studentAnalysis[r.nome] = matched[1]; continue; }
+                // Poi cerca per linee nel testo grezzo
+                const lines = task.valDocente.split('\n');
+                let start = lines.findIndex(l => rWords.every(p => _saStNorm(l).includes(p)));
+                if (start !== -1) {
+                    let end = lines.length;
+                    for (const r2 of results) {
+                        if (r2.nome === r.nome) continue;
+                        const p2 = _saStNorm(r2.nome).split(/\s+/).filter(w => w.length > 1);
+                        for (let li = start + 1; li < end; li++) {
+                            if (p2.every(p => _saStNorm(lines[li]).includes(p))) { end = li; break; }
+                        }
+                    }
+                    studentAnalysis[r.nome] = lines.slice(start, end).join('\n').trim();
+                }
+            }
+        }
+        task.studentAnalysis = studentAnalysis;
+
+        // Parsifica argoBlock per alunno con matching normalizzato
+        const studentArgo = {};
+        if (task.argoBlock) {
+            const aHdrs  = [...task.argoBlock.matchAll(/^---\s*ALUNNO:\s*(.+?)\s*---$/gim)];
+            const aChunk = task.argoBlock.split(/^---\s*ALUNNO:.*?---$/gim);
+            aHdrs.forEach((m, i) => {
+                const nome = m[1].trim();
+                const txt  = (aChunk[i + 1] || '').trim();
+                if (nome && txt) studentArgo[nome] = txt;
+            });
+            // Fallback normalizzato
+            for (const r of results) {
+                if (studentArgo[r.nome]) continue;
+                const rWords = _saStNorm(r.nome).split(/\s+/).filter(w => w.length > 1);
+                const matched = Object.entries(studentArgo).find(([k]) => {
+                    const kw = _saStNorm(k).split(/\s+/).filter(w => w.length > 1);
+                    return rWords.length >= 2 && kw.length >= 2 &&
+                        rWords.every(w => kw.includes(w)) && kw.every(w => rWords.includes(w));
+                });
+                if (matched) { studentArgo[r.nome] = matched[1]; continue; }
+                const lines = task.argoBlock.split('\n');
+                const start = lines.findIndex(l => rWords.every(p => _saStNorm(l).includes(p)));
+                if (start !== -1) {
+                    let end = lines.length;
+                    for (const r2 of results) {
+                        if (r2.nome === r.nome) continue;
+                        const p2 = _saStNorm(r2.nome).split(/\s+/).filter(w => w.length > 1);
+                        for (let li = start + 1; li < end; li++) {
+                            if (p2.every(p => _saStNorm(lines[li]).includes(p))) { end = li; break; }
+                        }
+                    }
+                    studentArgo[r.nome] = lines.slice(start, end).join('\n').trim();
+                }
+            }
+        }
+        task.studentArgo = studentArgo;
+
+        // Parsifica classroomBlock per alunno con matching normalizzato
+        const studentClassroom = {};
+        if (task.classroomBlock) {
+            const cHdrs  = [...task.classroomBlock.matchAll(/^---\s*ALUNNO:\s*(.+?)\s*---$/gim)];
+            const cChunk = task.classroomBlock.split(/^---\s*ALUNNO:.*?---$/gim);
+            cHdrs.forEach((m, i) => {
+                const nome = m[1].trim();
+                const txt  = (cChunk[i + 1] || '').trim();
+                if (nome && txt) studentClassroom[nome] = txt;
+            });
+            // Fallback: cerca "Ciao [primoNome]" oppure matching normalizzato
+            for (const r of results) {
+                if (studentClassroom[r.nome]) continue;
+                const rWords = _saStNorm(r.nome).split(/\s+/).filter(w => w.length > 1);
+                const matched = Object.entries(studentClassroom).find(([k]) => {
+                    const kw = _saStNorm(k).split(/\s+/).filter(w => w.length > 1);
+                    return rWords.length >= 2 && kw.length >= 2 &&
+                        rWords.every(w => kw.includes(w)) && kw.every(w => rWords.includes(w));
+                });
+                if (matched) { studentClassroom[r.nome] = matched[1]; continue; }
+                const primoNome = r.nome.split(/\s+/).pop().toLowerCase(); // cognome nella pos finale se "Cognome Nome"
+                const lines = task.classroomBlock.split('\n');
+                // Cerca sia "Ciao PrimoNome" che "Ciao Cognome" (AI potrebbe usare primo token)
+                const allTokens = r.nome.toLowerCase().split(/\s+/);
+                let start = lines.findIndex(l => allTokens.some(t => l.toLowerCase().startsWith('ciao ' + t)));
+                if (start === -1) start = lines.findIndex(l => rWords.every(p => _saStNorm(l).includes(p)));
+                if (start !== -1) {
+                    let end = lines.length;
+                    for (const r2 of results) {
+                        if (r2.nome === r.nome) continue;
+                        const pn2 = r2.nome.toLowerCase().split(/\s+/);
+                        for (let li = start + 1; li < end; li++) {
+                            if (pn2.some(t => lines[li].toLowerCase().startsWith('ciao ' + t))) { end = li; break; }
+                        }
+                    }
+                    studentClassroom[r.nome] = lines.slice(start, end).join('\n').trim();
+                }
+            }
+        }
+        task.studentClassroom = studentClassroom;
+        task.content         = task.valDocente || raw;
+        task.status          = 'ready';
+        task.generatedAt     = new Date().toISOString();
     }
 
     // Genera valutazioni per una sessione scritta
@@ -26599,168 +26856,178 @@ Poi la scheda strutturata:
 - Solo per chi ha RECUPERO_FAST: dopo l'analisi della prima prova aggiungi la parte "Recupero (T1: x%, T2: y%)": analisi per area del recupero con gli errori specifici dalla tabella del recupero, poi un confronto con la prima prova (aree migliorate, errori corretti, errori persistenti) e una valutazione globale che spiega il voto finale.
 Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiungere separatori tra schede oltre all'header.`;
 
-        const extractSection = (text, marker) => {
-            // Estrae il label dal marcatore (es. "ARGO" da "=== ARGO ===")
-            const label = marker.replace(/^[=* ]+|[=* ]+$/g, '').trim();
-            // Regex flessibile: trova il marcatore anche se Anthropic aggiunge asterischi,
-            // spazi extra o leggere varianti di formattazione (es. **=== ARGO ===**)
-            const makeRe = (lbl) => new RegExp(
-                '[*]{0,2}={2,}\\s*' + lbl.replace(/ /g, '\\s+') + '\\s*={2,}[*]{0,2}', 'i'
-            );
-            const re = makeRe(label);
-            const match = re.exec(text);
-            if (!match) return '';
-            const after = text.slice(match.index + match[0].length);
-            const otherLabels = ['VALUTAZIONE DOCENTE', 'ARGO', 'CLASSROOM'].filter(l => l !== label);
-            let end = after.length;
-            for (const l of otherLabels) {
-                const m = makeRe(l).exec(after);
-                if (m && m.index < end) end = m.index;
-            }
-            return after.slice(0, end).trim();
-        };
-
+        // Claude Code: niente chiamata AI, la consegna si esporta su file (📤) e il testo
+        // torna con 📥 Importa. I dati per alunno restano nel task fino all'import.
+        if ((AGENT_VAL_GEN === 'claude' && !task._forceAuto) || task._viaClaude) {
+            delete task._viaClaude; delete task._forceAuto;
+            task.importData   = results;
+            task.claudePrompt = prompt;
+            task.status       = 'awaiting_claude';
+            task.awaitingAt   = new Date().toISOString();
+            console.log(`[Agente] ${task.id}: consegna pronta per Claude Code (📤 Esporta per Claude)`);
+            return;
+        }
+        delete task._forceAuto;
         try {
             const raw = await agentCallAI(prompt, task, true);
-            task.valDocente     = extractSection(raw, '=== VALUTAZIONE DOCENTE ===');
-            // Argo non si genera piu' in automatico: solo su richiesta (pulsanti "Genera Argo")
-            task.argoBlock      = '';
-            task.classroomBlock = extractSection(raw, '=== CLASSROOM ===');
-            // Diagnostica: segnala sezioni mancanti (causa comune: risposta troncata per token limit)
-            const missingBlocks = [];
-            if (!task.valDocente)     missingBlocks.push('VALUTAZIONE DOCENTE');
-            if (!task.classroomBlock) missingBlocks.push('CLASSROOM');
-            if (missingBlocks.length) {
-                console.warn(`[Agente] ⚠️ Blocchi mancanti nella risposta AI: ${missingBlocks.join(', ')} — risposta troncata? (raw length: ${raw.length} chars)`);
-            } else {
-                console.log(`[Agente] ✅ Tutti i blocchi generati (raw: ${raw.length} chars, provider: ${task.aiProvider})`);
-            }
-            task.importData     = results;
-
-            // Parsifica valDocente in mappa per-alunno usando header "--- ALUNNO: Nome ---"
-            // con matching normalizzato per gestire inversione nome/cognome dell'AI
-            const _saStNorm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
-            const studentAnalysis = {};
-            if (task.valDocente) {
-                const headers = [...task.valDocente.matchAll(/^---\s*ALUNNO:\s*(.+?)\s*---$/gim)];
-                const chunks  = task.valDocente.split(/^---\s*ALUNNO:.*?---$/gim);
-                headers.forEach((m, i) => {
-                    const nome = m[1].trim();
-                    const testo = (chunks[i + 1] || '').trim();
-                    if (nome && testo) studentAnalysis[nome] = testo;
-                });
-                // Fallback normalizzato: abbina per insieme di parole (gestisce nome/cognome invertiti)
-                for (const r of results) {
-                    if (studentAnalysis[r.nome]) continue; // già trovato con match esatto
-                    const rWords = _saStNorm(r.nome).split(/\s+/).filter(w => w.length > 1);
-                    // Prima prova matching per insieme di parole su chiavi già parsificate
-                    const matched = Object.entries(studentAnalysis).find(([k]) => {
-                        const kw = _saStNorm(k).split(/\s+/).filter(w => w.length > 1);
-                        return rWords.length >= 2 && kw.length >= 2 &&
-                            rWords.every(w => kw.includes(w)) && kw.every(w => rWords.includes(w));
-                    });
-                    if (matched) { studentAnalysis[r.nome] = matched[1]; continue; }
-                    // Poi cerca per linee nel testo grezzo
-                    const lines = task.valDocente.split('\n');
-                    let start = lines.findIndex(l => rWords.every(p => _saStNorm(l).includes(p)));
-                    if (start !== -1) {
-                        let end = lines.length;
-                        for (const r2 of results) {
-                            if (r2.nome === r.nome) continue;
-                            const p2 = _saStNorm(r2.nome).split(/\s+/).filter(w => w.length > 1);
-                            for (let li = start + 1; li < end; li++) {
-                                if (p2.every(p => _saStNorm(lines[li]).includes(p))) { end = li; break; }
-                            }
-                        }
-                        studentAnalysis[r.nome] = lines.slice(start, end).join('\n').trim();
-                    }
-                }
-            }
-            task.studentAnalysis = studentAnalysis;
-
-            // Parsifica argoBlock per alunno con matching normalizzato
-            const studentArgo = {};
-            if (task.argoBlock) {
-                const aHdrs  = [...task.argoBlock.matchAll(/^---\s*ALUNNO:\s*(.+?)\s*---$/gim)];
-                const aChunk = task.argoBlock.split(/^---\s*ALUNNO:.*?---$/gim);
-                aHdrs.forEach((m, i) => {
-                    const nome = m[1].trim();
-                    const txt  = (aChunk[i + 1] || '').trim();
-                    if (nome && txt) studentArgo[nome] = txt;
-                });
-                // Fallback normalizzato
-                for (const r of results) {
-                    if (studentArgo[r.nome]) continue;
-                    const rWords = _saStNorm(r.nome).split(/\s+/).filter(w => w.length > 1);
-                    const matched = Object.entries(studentArgo).find(([k]) => {
-                        const kw = _saStNorm(k).split(/\s+/).filter(w => w.length > 1);
-                        return rWords.length >= 2 && kw.length >= 2 &&
-                            rWords.every(w => kw.includes(w)) && kw.every(w => rWords.includes(w));
-                    });
-                    if (matched) { studentArgo[r.nome] = matched[1]; continue; }
-                    const lines = task.argoBlock.split('\n');
-                    const start = lines.findIndex(l => rWords.every(p => _saStNorm(l).includes(p)));
-                    if (start !== -1) {
-                        let end = lines.length;
-                        for (const r2 of results) {
-                            if (r2.nome === r.nome) continue;
-                            const p2 = _saStNorm(r2.nome).split(/\s+/).filter(w => w.length > 1);
-                            for (let li = start + 1; li < end; li++) {
-                                if (p2.every(p => _saStNorm(lines[li]).includes(p))) { end = li; break; }
-                            }
-                        }
-                        studentArgo[r.nome] = lines.slice(start, end).join('\n').trim();
-                    }
-                }
-            }
-            task.studentArgo = studentArgo;
-
-            // Parsifica classroomBlock per alunno con matching normalizzato
-            const studentClassroom = {};
-            if (task.classroomBlock) {
-                const cHdrs  = [...task.classroomBlock.matchAll(/^---\s*ALUNNO:\s*(.+?)\s*---$/gim)];
-                const cChunk = task.classroomBlock.split(/^---\s*ALUNNO:.*?---$/gim);
-                cHdrs.forEach((m, i) => {
-                    const nome = m[1].trim();
-                    const txt  = (cChunk[i + 1] || '').trim();
-                    if (nome && txt) studentClassroom[nome] = txt;
-                });
-                // Fallback: cerca "Ciao [primoNome]" oppure matching normalizzato
-                for (const r of results) {
-                    if (studentClassroom[r.nome]) continue;
-                    const rWords = _saStNorm(r.nome).split(/\s+/).filter(w => w.length > 1);
-                    const matched = Object.entries(studentClassroom).find(([k]) => {
-                        const kw = _saStNorm(k).split(/\s+/).filter(w => w.length > 1);
-                        return rWords.length >= 2 && kw.length >= 2 &&
-                            rWords.every(w => kw.includes(w)) && kw.every(w => rWords.includes(w));
-                    });
-                    if (matched) { studentClassroom[r.nome] = matched[1]; continue; }
-                    const primoNome = r.nome.split(/\s+/).pop().toLowerCase(); // cognome nella pos finale se "Cognome Nome"
-                    const lines = task.classroomBlock.split('\n');
-                    // Cerca sia "Ciao PrimoNome" che "Ciao Cognome" (AI potrebbe usare primo token)
-                    const allTokens = r.nome.toLowerCase().split(/\s+/);
-                    let start = lines.findIndex(l => allTokens.some(t => l.toLowerCase().startsWith('ciao ' + t)));
-                    if (start === -1) start = lines.findIndex(l => rWords.every(p => _saStNorm(l).includes(p)));
-                    if (start !== -1) {
-                        let end = lines.length;
-                        for (const r2 of results) {
-                            if (r2.nome === r.nome) continue;
-                            const pn2 = r2.nome.toLowerCase().split(/\s+/);
-                            for (let li = start + 1; li < end; li++) {
-                                if (pn2.some(t => lines[li].toLowerCase().startsWith('ciao ' + t))) { end = li; break; }
-                            }
-                        }
-                        studentClassroom[r.nome] = lines.slice(start, end).join('\n').trim();
-                    }
-                }
-            }
-            task.studentClassroom = studentClassroom;
-            task.content         = task.valDocente || raw;
-            task.status          = 'ready';
-            task.generatedAt     = new Date().toISOString();
+            _agentApplyValScrittaRaw(task, raw, results);
         } catch(e) {
             task.status = 'error'; task.error = 'Generazione AI: ' + e.message;
         }
+    }
+    // ═══════════════════════════════════════════════════════════════════════
+    //  VALUTAZIONI SCRITTE CON CLAUDE CODE (come i piani personalizzati)
+    // ═══════════════════════════════════════════════════════════════════════
+    // Il file esportato non contiene nomi: ogni alunno è [A1], [A2]… e il nome si
+    // rimette all'import, da questo stesso browser (la corrispondenza resta qui).
+    const _AGENT_VAL_CLAUDE_CONSEGNA = `Sei Claude e prepari le VALUTAZIONI delle verifiche scritte di inglese (scuola media italiana) per MyClass / LiveLearn.
+Questo file è stato esportato da MyClass. "ruolo" contiene le tue istruzioni di ruolo: seguile come istruzioni di sistema.
+Per OGNI elemento di "valutazioni" segui ESATTAMENTE la sua "consegna" e scrivi il testo richiesto, con i blocchi e i marcatori indicati (=== CLASSROOM === e === VALUTAZIONE DOCENTE ===, in quest'ordine).
+ALUNNI SENZA NOMI: ogni alunno è indicato da un codice tra parentesi quadre ([A1], [A2]…, elenco in "alunni").
+- Negli header scrivi il codice: "--- ALUNNO: [A1] ---".
+- Nel testo, dove andrebbe il nome dell'alunno (es. "Ciao [nome]"), scrivi [NOME_A1] con il codice di quell'alunno: MyClass lo sostituisce con il nome vero.
+- Non inventare nomi.
+DATI: usa solo i dati della consegna (percentuali, voti, tabelle per domanda). Non inventare numeri né risposte; cita le risposte date e quelle corrette come sono scritte.
+OUTPUT: crea UN file "valutazioni_da_claude.json" (solo JSON valido) con questa struttura:
+{
+  "formato": "myclass-valutazioni-import",
+  "versione": 1,
+  "export_id": "<copia export_id di questo file>",
+  "valutazioni": [ { "ref": "<ref>", "testo": "<testo completo con i due blocchi>" } ]
+}
+Una voce per ogni elemento di "valutazioni", stesso ordine, "ref" copiato esattamente.
+Prima di consegnare verifica con uno script che il file sia JSON valido e che ogni "testo" contenga i due marcatori e, in entrambi i blocchi, un header per ogni codice di "alunni".
+Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente): lì rivede e approva come sempre.`;
+
+    function _agentValManifest() { try { return JSON.parse(localStorage.getItem('agent_val_claude_manifest') || '{}'); } catch { return {}; } }
+    function _agentValManifestSave(exportId, entries) {
+        const all = _agentValManifest();
+        all[exportId] = { at: Date.now(), entries };
+        Object.keys(all).sort((a, b) => all[b].at - all[a].at).slice(10).forEach(k => delete all[k]);
+        try { localStorage.setItem('agent_val_claude_manifest', JSON.stringify(all)); } catch(e) { console.warn('[Agente] manifest Claude non salvato:', e.message); }
+    }
+    // Codici degli alunni di una valutazione: nome come nei dati (r.nome), nome di battesimo, varianti da togliere
+    function _agentValCodes(task) {
+        const cls = (data.classi || []).find(c => c.nome === task.classe)
+            || (data.classi || []).find(c => c.nome.replace(/\s+/g, '').toUpperCase() === String(task.classe || '').replace(/\s+/g, '').toUpperCase());
+        return (task.importData || []).map((r, i) => {
+            const stu = cls?.studenti?.find(s => _mcToSafe(`${s.cognome} ${s.nome}`) === r.safe || _mcToSafe(`${s.nome} ${s.cognome}`) === r.safe);
+            const nome = String(r.nome || r.displayName || '').trim();
+            const words = nome.split(/\s+/).filter(Boolean);
+            const varianti = [nome, words.slice().reverse().join(' '),
+                stu ? `${stu.cognome} ${stu.nome}` : '', stu ? `${stu.nome} ${stu.cognome}` : '']
+                .map(x => String(x || '').trim()).filter(x => x.length > 2);
+            return { code: 'A' + (i + 1), nome, primo: stu?.nome || words[words.length - 1] || nome, varianti: [...new Set(varianti)] };
+        });
+    }
+    function _agentValPseudo(text, codes) {
+        let t = String(text || '');
+        const all = codes.flatMap(c => c.varianti.map(v => ({ v, code: c.code }))).sort((a, b) => b.v.length - a.v.length);
+        for (const { v, code } of all) {
+            const re = new RegExp('(^|[^\\p{L}])(' + v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')(?![\\p{L}])', 'giu');
+            t = t.replace(re, `$1[${code}]`);
+        }
+        return t;
+    }
+
+    function agentValExportForClaude() {
+        const list = agentTasks.filter(t => t.type === 'valscritta' && t.status === 'awaiting_claude' && t.claudePrompt && t.importData?.length);
+        if (!list.length) { alert('Nessuna valutazione in attesa di Claude Code.'); return; }
+        const exportId = (Date.now().toString(36) + Math.random().toString(36).slice(2, 5)).toUpperCase().slice(-7);
+        const manifest = {};
+        const valutazioni = list.map((t, i) => {
+            const ref = `${exportId}-${i + 1}`;
+            const codes = _agentValCodes(t);
+            manifest[ref] = { taskId: t.id, codes: codes.map(({ code, nome, primo }) => ({ code, nome, primo })) };
+            return {
+                ref, classe: t.classe || '', data: t.sessionDate || '', attivita: t.unit || '',
+                alunni: codes.map(c => `[${c.code}]`),
+                consegna: _agentValPseudo(t.claudePrompt, codes)
+            };
+        });
+        _agentValManifestSave(exportId, manifest);
+        const fileObj = {
+            formato: 'myclass-valutazioni-export', versione: 1, export_id: exportId,
+            creato: new Date().toISOString(),
+            consegna_generale: _AGENT_VAL_CLAUDE_CONSEGNA,
+            ruolo: AGENT_SYSTEM,
+            valutazioni
+        };
+        const blob = new Blob([JSON.stringify(fileObj, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+        a.href = URL.createObjectURL(blob);
+        a.download = `valutazioni_per_claude_${ts}.json`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        alert(`🟣 File per Claude Code scaricato: ${list.length} valutazion${list.length === 1 ? 'e' : 'i'}.\n\n` +
+              `1. Apri una sessione di Claude Code e allega il file "${a.download}".\n` +
+              `2. Scrivi: "Genera le valutazioni seguendo la consegna nel file".\n` +
+              `3. Scarica il file "valutazioni_da_claude.json" che Claude crea.\n` +
+              `4. Qui premi "📥 Importa da Claude": le valutazioni diventano pronte e le approvi come sempre.\n\n` +
+              `Nel file non ci sono nomi: gli alunni sono [A1], [A2]… e solo questo browser sa ricollegarli, quindi importa da questo stesso computer.`);
+    }
+
+    function agentValImportFromClaude() {
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = '.json,application/json';
+        inp.onchange = async () => {
+            const f = inp.files && inp.files[0];
+            if (!f) return;
+            try { _agentValApplyImport(JSON.parse(await f.text())); }
+            catch(e) { alert('❌ Import non riuscito: ' + e.message); }
+        };
+        inp.click();
+    }
+
+    function _agentValApplyImport(fd) {
+        if (fd?.formato === 'myclass-valutazioni-export') throw new Error('questo è il file ESPORTATO da MyClass: serve quello creato da Claude ("valutazioni_da_claude.json").');
+        if (!fd || !Array.isArray(fd.valutazioni)) throw new Error('manca l\'elenco "valutazioni".');
+        const all = _agentValManifest();
+        const findLocal = ref => { for (const m of Object.values(all)) if (m?.entries?.[ref]) return m.entries[ref]; return null; };
+        let ok = 0;
+        const problemi = [];
+        for (const v of fd.valutazioni) {
+            const L = v && findLocal(v.ref);
+            const task = L && agentTasks.find(t => t.id === L.taskId);
+            if (!L || !task) { problemi.push(`${v?.ref || '?'}: valutazione sconosciuta in questo browser`); continue; }
+            if (!task.importData?.length) { problemi.push(`${task.classe} ${task.unit || ''}: dati degli alunni non più disponibili, premi 🔄 Rigenera`); continue; }
+            let testo = String(v.testo || '').trim();
+            if (!testo) { problemi.push(`${task.classe} ${task.unit || ''}: testo vuoto`); continue; }
+            const byCode = Object.fromEntries((L.codes || []).map(c => [c.code, c]));
+            testo = testo.replace(/\[NOME_(A\d+)\]/g, (m, c) => byCode[c]?.primo ?? m)
+                         .replace(/\[(A\d+)\]/g, (m, c) => byCode[c]?.nome ?? m);
+            _agentApplyValScrittaRaw(task, testo, task.importData);
+            task.aiProvider = 'claude';
+            delete task.claudePrompt; delete task._autoRegenBlocked; delete task.error;
+            const mancanti = [!task.classroomBlock && 'CLASSROOM', !task.valDocente && 'VALUTAZIONE DOCENTE'].filter(Boolean);
+            const senza = task.importData.filter(r => !task.studentAnalysis?.[r.nome]).map(r => r.nome);
+            if (mancanti.length) problemi.push(`${task.classe} ${task.unit || ''}: blocchi mancanti (${mancanti.join(', ')})`);
+            else if (senza.length) problemi.push(`${task.classe} ${task.unit || ''}: valutazione docente mancante per ${senza.join(', ')}`);
+            ok++;
+        }
+        agentSaveTasks(agentTasks);
+        agentBadgeUpdate();
+        agentRenderPanel();
+        alert(`📥 Import da Claude completato: ${ok} valutazion${ok === 1 ? 'e pronta' : 'i pronte'} da approvare.` +
+              (problemi.length ? `\n\n⚠️ Da controllare:\n• ${problemi.join('\n• ')}` : ''));
+    }
+
+    // Prepara la consegna per Claude Code anche se il generatore impostato è l'automatico
+    async function agentValToClaude(taskId) {
+        const t = agentTasks.find(x => x.id === taskId);
+        if (!t) return;
+        t._viaClaude = true;
+        await agentRegenerate(taskId);
+    }
+    // Genera subito con Gemini/Anthropic una valutazione in attesa di Claude Code
+    async function agentValGenerateNow(taskId) {
+        const t = agentTasks.find(x => x.id === taskId);
+        if (!t) return;
+        t._forceAuto = true;
+        delete t.claudePrompt;
+        await agentRegenerate(taskId);
     }
 
         // Approva valutazioni scritte: 3 file + voti MyClass + Firebase
@@ -27649,8 +27916,12 @@ ${REGOLE}
 Genera SOLO due blocchi (niente ARGO) con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ===\n${task.griglia ? ('Intestazione: ' + task.studentName + ', ' + task.classe + (task.unit ? ', ' + task.unit : '') + ', data ' + task.sessionDate + '.\n\n' + (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n' + '[analisi della prestazione in quest\'area basata sulla trascrizione]').join('\n\n') + '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma dei punteggi per area e Y il voto dalla tabella di conversione.') : ('Intestazione: nome, classe, data (' + task.sessionDate + '), unit, voto. Analisi per area' + (task.hasSlides ? ' (NON commentare le pause [slide])' : ' (includi fluency se rilevante: pause significative, ritmo)') + '. Analisi complessiva.')}\n=== CLASSROOM ===\nFeedback personale scritto allo studente, italiano, tono incoraggiante ma onesto. Struttura OBBLIGATORIA (separa ogni sezione con un ritorno a capo):\nSaluto: Ciao ${nomeBreve}, ecco il feedback sulla tua ultima verifica orale.\nPUNTI DI FORZA (almeno 2-3, specifici e tratti dalla trascrizione): descrivi cosa ha fatto bene con esempi concreti.\nAREE DI MIGLIORAMENTO (almeno 2, costruttive e pratiche): indica cosa migliorare e COME, con suggerimenti pratici per esercitarsi a casa.\nCONSIGLIO FINALE: una frase motivante personalizzata con il prossimo passo utile.\nLunghezza totale: 150-220 parole. Testo scorrevole, niente elenchi puntati, niente grassetti. Non menzionare il voto numerico.`;
 
             const raw = await agentCallAI(prompt, task, true);
+            // Accetta anche titoli senza "===" su una riga da soli: "## VALUTAZIONE DOCENTE",
+            // "**VALUTAZIONE DOCENTE**", "VALUTAZIONE DOCENTE:". Prima, se il modello non metteva
+            // gli "===", il task restava "pronto" ma vuoto e il controllo periodico lo rigenerava.
             const makeRe = (lbl) => new RegExp(
-                '[*]{0,2}={2,}\\s*' + lbl.replace(/ /g, '\\s+') + '\\s*={2,}[*]{0,2}', 'i'
+                '[*]{0,2}={2,}\\s*' + lbl.replace(/ /g, '\\s+') + '\\s*={2,}[*]{0,2}' +
+                '|(?:^|\\n)[ \\t]*(?:#{1,4}[ \\t]*)?[*]{0,2}[ \\t]*' + lbl.replace(/ /g, '\\s+') + '[ \\t]*[*]{0,2}[ \\t]*:?[ \\t]*(?=\\n|$)', 'i'
             );
             const _exSec = (text, marker) => {
                 const label = marker.replace(/^[=* ]+|[=* ]+$/g, '').trim();
@@ -28360,8 +28631,12 @@ ${blocchiPerAlunno}`;
 
             const raw = await agentCallAI(prompt, task, true);
 
+            // Accetta anche titoli senza "===" su una riga da soli: "## VALUTAZIONE DOCENTE",
+            // "**VALUTAZIONE DOCENTE**", "VALUTAZIONE DOCENTE:". Prima, se il modello non metteva
+            // gli "===", il task restava "pronto" ma vuoto e il controllo periodico lo rigenerava.
             const makeRe = (lbl) => new RegExp(
-                '[*]{0,2}={2,}\\s*' + lbl.replace(/ /g, '\\s+') + '\\s*={2,}[*]{0,2}', 'i'
+                '[*]{0,2}={2,}\\s*' + lbl.replace(/ /g, '\\s+') + '\\s*={2,}[*]{0,2}' +
+                '|(?:^|\\n)[ \\t]*(?:#{1,4}[ \\t]*)?[*]{0,2}[ \\t]*' + lbl.replace(/ /g, '\\s+') + '[ \\t]*[*]{0,2}[ \\t]*:?[ \\t]*(?=\\n|$)', 'i'
             );
             const _exSec = (text, marker) => {
                 const label = marker.replace(/^[=* ]+|[=* ]+$/g, '').trim();
@@ -31342,6 +31617,12 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
                 console.log(`[Piano] ⏭️ ${prefix} già attivo per ${studentName} (${unitEff}) — skip duplicato`);
                 return { outcome: 'skipped', reason: `${prefix} già attivo in locale` };
             }
+            // Bozza già generata e non ancora approvata: non se ne genera un'altra (token sprecati).
+            // Per rifarla c'è ↺ Rigenera sulla bozza.
+            if (_ppDraftScritto.some(x => x.studentSafe === studentSafe && x.unit === unitEff && x.prefix === prefix)) {
+                console.log(`[Piano] ⏭️ ${prefix} per ${studentName} (${unitEff}): bozza già in attesa di approvazione — skip`);
+                return { outcome: 'skipped', reason: 'Bozza già pronta in attesa di approvazione (usa ↺ Rigenera sulla bozza)' };
+            }
             try {
                 const dbDup = firebase.database();
                 const _dupCode = await _mcCodeOf(studentSafe);
@@ -31530,6 +31811,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         // Evita duplicati: controlla se esiste già un APP- per questa unit
         const existing = Object.values(_ppActiveScritto).find(x => x.studentSafe === studentSafe && x.unit === unit && x.status !== 'expired');
         if (existing) return 'duplicate';
+        // Bozza APP già generata e non approvata: niente doppione (per rifarla: ↺ Rigenera)
+        if (_ppDraftScritto.some(x => x.studentSafe === studentSafe && x.unit === unit && x.prefix === 'APP')) return 'duplicate';
         const code = _pianoGenCode('APP');
         _ppShowGenerating(studentName, 'APP', unit);
         // Errori della verifica (anche con voto alto vanno ripresi) + note e aree deboli
