@@ -32599,6 +32599,80 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
     }
 
     // Scarta una bozza scritto senza inviarla
+    // ── "➕ Piano per un alunno": rimette in coda un singolo alunno ──────────
+    // Serve per esempio dopo aver scartato la sua bozza (lo scarto lo toglie anche dalla coda).
+    // Si sceglie classe, alunno, unit (dai suoi voti) e tipo; poi "⚡ Elabora selezionati".
+    function ppAddStudentDialog() {
+        document.getElementById('ppAddOverlay')?.remove();
+        const esc = x => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const classi = (data.classi || []).filter(c => (c.studenti || []).length);
+        const ov = document.createElement('div');
+        ov.id = 'ppAddOverlay';
+        ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;';
+        ov.onclick = e => { if (e.target === ov) ov.remove(); };
+        const sel = 'width:100%;padding:8px 10px;border-radius:8px;border:1px solid #c8d0e7;font-size:13px;font-family:inherit;margin-top:4px;';
+        ov.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:18px 20px;font-family:inherit;">
+            <div style="font-size:16px;font-weight:800;color:#4c1d95;margin-bottom:12px;">➕ Piano per un alunno</div>
+            <label style="font-size:12px;font-weight:700;color:#555;">Classe<select id="ppAddClasse" style="${sel}">${classi.map((c, i) => `<option value="${i}">${esc(c.nome)}</option>`).join('')}</select></label>
+            <label style="font-size:12px;font-weight:700;color:#555;display:block;margin-top:10px;">Alunno<select id="ppAddStu" style="${sel}"></select></label>
+            <label style="font-size:12px;font-weight:700;color:#555;display:block;margin-top:10px;">Unit (dai suoi voti)<select id="ppAddUnit" style="${sel}"></select></label>
+            <label style="font-size:12px;font-weight:700;color:#555;display:block;margin-top:10px;">Tipo<select id="ppAddTipo" style="${sel}"><option value="scritto">📝 Scritto (recupero / consolidamento / approfondimento in base al voto)</option><option value="orale">🗣️ Recupero orale</option></select></label>
+            <div id="ppAddInfo" style="font-size:12px;color:#6b7280;margin-top:8px;"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+              <button onclick="document.getElementById('ppAddOverlay')?.remove()" style="padding:7px 14px;border-radius:8px;border:1px solid #d1d5db;background:#fff;cursor:pointer;font-family:inherit;">Annulla</button>
+              <button onclick="ppAddStudentConfirm()" style="padding:7px 16px;border-radius:8px;border:none;background:#6c47ff;color:#fff;font-weight:700;cursor:pointer;font-family:inherit;">Metti in coda</button>
+            </div>
+          </div>`;
+        document.body.appendChild(ov);
+        const elC = ov.querySelector('#ppAddClasse'), elS = ov.querySelector('#ppAddStu'), elU = ov.querySelector('#ppAddUnit'), elT = ov.querySelector('#ppAddTipo'), info = ov.querySelector('#ppAddInfo');
+        const curCls = () => classi[Number(elC.value)];
+        const curStu = () => (curCls()?.studenti || [])[Number(elS.value)];
+        const fillUnits = () => {
+            const stu = curStu(), tipo = elT.value;
+            const voti = [...((tipo === 'orale' ? stu?.orale : stu?.scritto) || [])].filter(g => g && (g.unit || g.titolo))
+                .sort((a, b) => new Date(b.data) - new Date(a.data));
+            const seen = new Set(), units = [];
+            voti.forEach(g => { const u = g.unit || g.titolo; if (!seen.has(u)) { seen.add(u); units.push({ u, voto: g.voto, data: g.data }); } });
+            elU.innerHTML = units.length ? units.map(x => `<option value="${esc(x.u)}">${esc(x.u)} · voto ${esc(x.voto)}${x.data ? ' · ' + new Date(x.data).toLocaleDateString('it-IT') : ''}</option>`).join('')
+                : '<option value="">— nessun voto ' + (tipo === 'orale' ? 'orale' : 'scritto') + ' —</option>';
+            const k = stu ? _mcToSafe(`${stu.cognome} ${stu.nome}`) : '';
+            const bozza = _ppDraftScritto.some(d => d.studentSafe === k && d.unit === elU.value);
+            const inviato = Object.values(_ppActiveScritto).some(a => a.studentSafe === k && a.unit === elU.value);
+            info.textContent = bozza ? 'C\'è già una sua bozza per questa unit: usa ↺ Rigenera sulla bozza.'
+                : inviato ? 'Ha già un piano inviato per questa unit: verrà saltato finché non lo rimuovi dal tab 📋 Attività inviate.' : '';
+        };
+        const fillStu = () => {
+            elS.innerHTML = [...(curCls()?.studenti || [])].map((st, i) => ({ st, i }))
+                .sort((a, b) => `${a.st.cognome} ${a.st.nome}`.localeCompare(`${b.st.cognome} ${b.st.nome}`, 'it'))
+                .map(({ st, i }) => `<option value="${i}">${esc(st.cognome)} ${esc(st.nome)}</option>`).join('');
+            fillUnits();
+        };
+        elC.onchange = fillStu; elS.onchange = fillUnits; elT.onchange = fillUnits; elU.onchange = fillUnits;
+        fillStu();
+    }
+    async function ppAddStudentConfirm() {
+        const ov = document.getElementById('ppAddOverlay');
+        if (!ov) return;
+        const classi = (data.classi || []).filter(c => (c.studenti || []).length);
+        const cls = classi[Number(ov.querySelector('#ppAddClasse').value)];
+        const stu = (cls?.studenti || [])[Number(ov.querySelector('#ppAddStu').value)];
+        const unit = ov.querySelector('#ppAddUnit').value;
+        const tipo = ov.querySelector('#ppAddTipo').value;
+        if (!cls || !stu || !unit) { alert('Scegli classe, alunno e una unit con un voto.'); return; }
+        const safe = _mcToSafe(`${stu.cognome} ${stu.nome}`);
+        try {
+            await _pianoCheckTrigger(stu, tipo, unit, cls.nome, false);   // force=false → va in coda
+        } catch(e) { alert('❌ Non riesco a metterlo in coda: ' + e.message); return; }
+        const item = _ppDeferredQueue.find(i => i.studentSafe === safe && i.tipo === tipo);
+        if (!item) { alert('❌ Nessun voto trovato per questa unit: non è stato messo in coda.'); return; }
+        delete item.ppStatus; delete item.ppReason;
+        _ppDeferredExcluded.delete(_ppDefKey(item));
+        _ppSavDeferred();
+        ov.remove();
+        ppSwitchTab(0);
+        alert(`✅ ${stu.cognome} ${stu.nome} (${unit}) è in coda.\n\nNel riquadro della coda premi "⚡ Elabora selezionati" (puoi lasciare spuntato solo lui) e scegli il generatore.`);
+    }
+
     function ppDiscardScritto(id) {
         if (!confirm('Scartare questa bozza? L\'attività non verrà inviata all\'alunno.')) return;
         const d = _ppDraftScritto.find(x => x.id === id);
@@ -33278,7 +33352,9 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 });
                 draftsHtml = `<div style="margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ IN ATTESA DI APPROVAZIONE (${_ppDraftScritto.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire la sua attività</span></div>${draftCards}</div>`;
             }
-            const claudeBar = _ppClaudeBarHtml();
+            const claudeBar = `<div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+                <button onclick="ppAddStudentDialog()" title="Rimetti in coda un alunno (es. dopo aver scartato la sua bozza) e generane il piano" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1.5px solid #6c47ff;background:#fff;color:#6c47ff;cursor:pointer;font-weight:700;font-family:inherit;">➕ Piano per un alunno</button>
+              </div>` + _ppClaudeBarHtml();
             // Banner coda differita (attività in attesa di un giorno libero da verifiche)
             let deferredBanner = '';
             _ppPruneDeferred();
