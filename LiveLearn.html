@@ -9265,6 +9265,7 @@ async function studentEnterPlan(name, planCode, errEl) {
   S.qIndex = 0;
   S.studentScore = 0;
   S.answers = new Array((S.activity.questions||[]).length).fill(null);
+  S.joinedAt = Date.now();   // durata del tentativo (registrata tra i tentativi del piano)
 
   document.getElementById('view-student-enter').style.display = 'none';
   showView('student-activity');
@@ -9272,12 +9273,24 @@ async function studentEnterPlan(name, planCode, errEl) {
 }
 
 // Scrive il risultato di un'attività piano su Firebase
-async function _writePlanResult(pct) {
+// det: dettaglio del tentativo (punti, risposte, tempi) → recovery_sessions/…/attempts/<n>,
+// così il docente vede quante volte l'ha fatto e come (prima restava solo l'ultimo punteggio).
+async function _writePlanResult(pct, det) {
   if (!S._planCode || !S._planStuCode) return;
   const path = 'livelearn/recovery_sessions/' + S._planStuCode + '/' + S._planCode;
   try {
     const snap = await db.ref(path + '/attemptCount').get();
     const prev = (snap.val()||0);
+    if (det) {
+      // Scrittura separata: se le regole non la accettano, punteggio e conteggio si salvano comunque
+      try {
+        await db.ref(path + '/attempts/' + prev).set(JSON.parse(JSON.stringify({
+          n: prev + 1, pct, score: det.score ?? null, maxPts: det.maxPts ?? null,
+          startedAt: det.joinedAt || null, submittedAt: det.submittedAt || Date.now(),
+          answers: det.answers || null, aiScores: det.aiScores || null, questionTimes: det.questionTimes || null
+        })));
+      } catch(e) { console.warn('[PlanResult] dettaglio tentativo non salvato:', e.message); }
+    }
     await db.ref(path).update({
       lastScore:     pct,
       attemptCount:  prev + 1,
@@ -10471,7 +10484,10 @@ async function submitAnswers(auto) {
   if (S._planCode) {
     const _totalPlanPts = (S.activity.questions||[]).reduce((s,q)=>s+(q.points||1),0);
     const _planPct = _totalPlanPts > 0 ? Math.round(finalScore / _totalPlanPts * 100) : null;
-    if (_planPct !== null) _writePlanResult(_planPct);
+    if (_planPct !== null) _writePlanResult(_planPct, {
+      score: finalScore, maxPts: _totalPlanPts, answers: payload.answers, aiScores: payload.aiScores,
+      questionTimes: payload.questionTimes, joinedAt: S.joinedAt, submittedAt
+    });
   }
   showStudentDone();
 }
@@ -12824,6 +12840,12 @@ async function restartAssignedActivity() {
 // Riavvia il test del piano personalizzato dall'inizio (riprova illimitata).
 function restartPlanActivity() {
   document.getElementById('plan-retry-box')?.remove();
+  // Stato pulito come per le assegnate (anche le cache di drag-drop, matching, riordino, categorie)
+  Object.keys(S).forEach(k => { if (/^(ddState_|matchShuffle_|matchColors_|roState_|reorderState_|catState_)/.test(k)) delete S[k]; });
+  S.skipped = [];
+  S.questionStartTimes = [];
+  S.questionEndTimes = [];
+  S.joinedAt = Date.now();
   S.qIndex = 0;
   S.studentScore = 0;
   S.answers = new Array((S.activity.questions||[]).length).fill(null);

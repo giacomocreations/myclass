@@ -29575,6 +29575,66 @@ ${blocchiPerAlunno}`;
         renderPianoPersPanel();
     }
 
+    // ── Risultati di un piano inviato: tutti i tentativi, domanda per domanda ──
+    // LiveLearn salva ogni tentativo in recovery_sessions/<codice alunno>/<piano>/attempts.
+    // I tentativi fatti prima di questo salvataggio hanno solo ultimo punteggio e conteggio.
+    async function ppShowPlanResults(code) {
+        const item = _ppActiveScritto[code];
+        if (!item) return;
+        const esc = x => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        document.getElementById('ppResOverlay')?.remove();
+        const ov = document.createElement('div');
+        ov.id = 'ppResOverlay';
+        ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;';
+        ov.onclick = e => { if (e.target === ov) ov.remove(); };
+        ov.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:760px;width:100%;max-height:88vh;overflow:auto;padding:18px 20px;font-family:inherit;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;">
+              <div><div style="font-size:16px;font-weight:800;color:#4c1d95;">📊 ${esc(item.studentName)} — ${esc(code)}</div>
+              <div style="font-size:12px;color:#6b7280;">${esc(item.unit || '')}</div></div>
+              <button onclick="document.getElementById('ppResOverlay')?.remove()" style="border:none;background:#f3f4f6;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:14px;">✕</button>
+            </div>
+            <div id="ppResBody" style="font-size:13px;color:#555;">⏳ Carico i tentativi…</div>
+          </div>`;
+        document.body.appendChild(ov);
+        const body = ov.querySelector('#ppResBody');
+        try {
+            const key = item.stuCode || await _mcCodeOf(item.studentSafe);
+            if (!key) throw new Error('alunno senza codice personale');
+            const rs = (await firebase.database().ref(`livelearn/recovery_sessions/${key}/${code}`).get()).val();
+            if (!rs) throw new Error('piano non trovato su Firebase');
+            const qs = agentFbArr(rs.activity?.questions || []);
+            const attempts = agentFbArr(rs.attempts || []).filter(Boolean).sort((a, b) => (a.submittedAt || 0) - (b.submittedAt || 0));
+            const n = Math.max(rs.attemptCount || 0, attempts.length);
+            const fmtD = t => t ? new Date(t).toLocaleString('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+            const fmtDur = (a, b) => { if (!a || !b || b < a) return ''; const m = Math.round((b - a) / 60000); return m < 1 ? '<1 min' : m + ' min'; };
+            let html = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+                <div style="background:#f5f3ff;border-radius:10px;padding:8px 14px;"><div style="font-size:11px;color:#6d28d9;font-weight:700;">TENTATIVI</div><div style="font-size:20px;font-weight:800;color:#4c1d95;">${n}</div></div>
+                <div style="background:#ecfdf5;border-radius:10px;padding:8px 14px;"><div style="font-size:11px;color:#047857;font-weight:700;">ULTIMO</div><div style="font-size:20px;font-weight:800;color:#065f46;">${rs.lastScore != null ? rs.lastScore + '%' : '—'}</div></div>
+                ${attempts.length ? `<div style="background:#eff6ff;border-radius:10px;padding:8px 14px;"><div style="font-size:11px;color:#1d4ed8;font-weight:700;">MIGLIORE</div><div style="font-size:20px;font-weight:800;color:#1e3a8a;">${Math.max(...attempts.map(a => a.pct ?? 0))}%</div></div>` : ''}
+                <div style="background:#f9fafb;border-radius:10px;padding:8px 14px;"><div style="font-size:11px;color:#6b7280;font-weight:700;">ULTIMA VOLTA</div><div style="font-size:14px;font-weight:700;color:#374151;margin-top:4px;">${fmtD(rs.lastAttemptAt)}</div></div>
+              </div>`;
+            if (!n) html += '<div style="color:#6b7280;">Non l\'ha ancora svolto.</div>';
+            if (n > attempts.length) html += `<div style="font-size:12px;color:#92400e;background:#fef3c7;border-radius:8px;padding:6px 10px;margin-bottom:10px;">${n - attempts.length} tentativ${n - attempts.length === 1 ? 'o' : 'i'} fatt${n - attempts.length === 1 ? 'o' : 'i'} prima dell'aggiornamento: di quell${n - attempts.length === 1 ? 'o' : 'i'} c'è solo il conteggio (e l'ultimo punteggio).</div>`;
+            attempts.slice().reverse().forEach((a, ri) => {
+                const lines = qs.length && a.answers ? agentBuildDetailLines(qs, { answers: a.answers, aiScores: a.aiScores || {}, questionTimes: a.questionTimes || [] }) : '';
+                const rows = (lines || '').split('\n').filter(Boolean).map(l => {
+                    const m = l.match(/\b(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)pt/);
+                    const ok = m && parseFloat(m[1]) >= parseFloat(m[2]);
+                    const part = m && !ok && parseFloat(m[1]) > 0;
+                    return `<div style="padding:5px 8px;border-left:3px solid ${ok ? '#10b981' : part ? '#f59e0b' : '#ef4444'};background:${ok ? '#f0fdf4' : part ? '#fffbeb' : '#fef2f2'};border-radius:4px;margin-bottom:4px;font-size:12px;line-height:1.5;">${esc(l)}</div>`;
+                }).join('');
+                html += `<details ${ri === 0 ? 'open' : ''} style="border:1px solid #e5e7eb;border-radius:10px;padding:8px 12px;margin-bottom:8px;">
+                    <summary style="cursor:pointer;font-weight:700;color:#374151;">Tentativo ${a.n || attempts.length - ri} · <span style="color:${(a.pct ?? 0) >= 60 ? '#047857' : '#b91c1c'};">${a.pct != null ? a.pct + '%' : '—'}</span>
+                      <span style="font-weight:400;color:#6b7280;font-size:12px;"> · ${fmtD(a.submittedAt)}${fmtDur(a.startedAt, a.submittedAt) ? ' · ' + fmtDur(a.startedAt, a.submittedAt) : ''}${a.score != null && a.maxPts ? ` · ${a.score}/${a.maxPts} pt` : ''}</span></summary>
+                    <div style="margin-top:8px;">${rows || '<div style="color:#6b7280;font-size:12px;">Dettaglio delle risposte non disponibile.</div>'}</div>
+                  </details>`;
+            });
+            body.innerHTML = html;
+        } catch(e) {
+            body.innerHTML = `<div style="color:#b91c1c;">⚠️ Non riesco a leggere i tentativi: ${esc(e.message)}</div>`;
+        }
+    }
+
     // Rimuove tutte le attività completate o scadute dalla coda
     async function ppCleanupCompleted() {
         const toRemove = Object.entries(_ppActiveScritto)
@@ -33195,6 +33255,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                   <td style="padding:8px 6px;font-size:12px;text-align:center;">${scoreHtml}</td>
                   <td style="padding:8px 6px;font-size:12px;text-align:center;color:#666;">${attHtml}</td>
                   <td style="padding:6px 4px;text-align:center;">
+                    <button onclick="ppShowPlanResults('${code}')" title="Vedi i tentativi: quante volte l'ha fatto e come" style="background:#f5f3ff;border:1px solid #c4b5fd;border-radius:6px;color:#6d28d9;cursor:pointer;font-size:12px;padding:2px 6px;line-height:1;margin-right:4px;">📊</button>
                     <button onclick="ppRegenActiveScritto('${code}')" title="Rigenera bozza" style="background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;color:#1d4ed8;cursor:pointer;font-size:12px;padding:2px 6px;line-height:1;margin-right:4px;font-weight:700;">↺</button><button onclick="ppRemoveActivity('${code}')" title="Rimuovi attività dalla coda" style="background:none;border:1px solid #fca5a5;border-radius:6px;color:#dc2626;cursor:pointer;font-size:12px;padding:2px 6px;line-height:1;">🗑</button>
                   </td>
                 </tr>`;
