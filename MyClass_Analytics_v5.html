@@ -25557,7 +25557,8 @@ ${sectionInstr}`;
             const aiS = (detailedResponse.aiScores     || {})[i];
             const t   = times[i];
             const tag    = q.tag ? `, ${q.tag}` : '';
-            const qtext  = (q.text || q.question?.text || '').replace(/\*\*/g, '').substring(0, 90);
+            // Una riga per domanda (gli "a capo" spezzavano la riga e si perdeva il testo)
+            const qtext  = (q.text || q.question?.text || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim().substring(0, 140);
             const ansText = fmtAns(q, a);
             const expText = fmtExp(q);
 
@@ -29721,9 +29722,121 @@ ${righe.join('\n')}
     // Costruisce il prompt del quiz (usato sia per Haiku/Gemini/Ollama sia nel file per Claude Code).
     // opts.nQ: numero di domande; opts.level (_ppChallengeLevel): piano da 9,5 in su livellato per anno
     // (prima 6 domande, seconda 8, terza 10 + blocco Sfida).
+    // Tipi di domanda che il piano sa generare, validare e mostrare in LiveLearn.
+    const _PP_PLAN_TYPES = ['multiple-choice', 'fill-blanks', 'cloze', 'matching', 'drag-drop', 'categorization'];
+
+    // Verifica PEI (PEI, PEI 2, Training PEI) → il piano è un RIPASSO della sua verifica:
+    // stessi tipi di esercizio, stesso numero (6-12), stesse opzioni nella scelta multipla.
+    // I tipi della verifica che il piano non sa fare diventano scelta multipla.
+    function _ppPeiProfile(verInfo) {
+        const qs = (verInfo?.qs || []).filter(q => q && typeof q === 'object' && q.type && q.type !== 'listening');
+        const counts = {};
+        qs.forEach(q => { const t = _PP_PLAN_TYPES.includes(q.type) ? q.type : 'multiple-choice'; counts[t] = (counts[t] || 0) + 1; });
+        const fromTest = qs.length > 0;
+        if (!fromTest) Object.assign(counts, { 'multiple-choice': 6, matching: 2, 'drag-drop': 2 });
+        const tot = Object.values(counts).reduce((a, b) => a + b, 0);
+        const nQ = Math.max(6, Math.min(12, tot));
+        // Stesse proporzioni della verifica, riportate a nQ domande
+        const types = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+        const scaled = {};
+        types.forEach(t => { scaled[t] = Math.max(1, Math.round(counts[t] * nQ / tot)); });
+        let diff = nQ - Object.values(scaled).reduce((a, b) => a + b, 0);
+        for (let i = 0; diff !== 0 && i < 50; i++) {
+            const t = types[i % types.length];
+            if (diff > 0) { scaled[t]++; diff--; } else if (scaled[t] > 1) { scaled[t]--; diff++; }
+        }
+        const mcLens = qs.filter(q => q.type === 'multiple-choice' && Array.isArray(q.options)).map(q => q.options.length);
+        // la scelta multipla del piano ha almeno 3 opzioni (vedi _ppValidateQuestion)
+        const mcOptions = mcLens.length
+            ? Math.max(3, Number(Object.entries(mcLens.reduce((m, n) => (m[n] = (m[n] || 0) + 1, m), {})).sort((a, b) => b[1] - a[1])[0][0]))
+            : 3;
+        const K = ['type', 'text', 'question', 'options', 'correct', 'left', 'right', 'sentences', 'words', 'answers', 'categories', 'items', 'hint', 'referenceTable', 'points'];
+        const templates = qs.slice(0, 12).map((q, i) => {
+            const o = {};
+            K.forEach(k => { if (q[k] != null && !(k === 'question' && typeof q[k] !== 'string')) o[k] = q[k]; });
+            if (o.text && o.question === o.text) delete o.question;
+            let s = JSON.stringify(o);
+            if (s.length > 450) s = s.slice(0, 450) + '…';
+            return `  ${i + 1}. ${s}`;
+        }).join('\n');
+        return {
+            fromTest, nQ, mcOptions, templates,
+            types: types,
+            unsupported: [...new Set(qs.map(q => q.type).filter(t => !_PP_PLAN_TYPES.includes(t)))],
+            dist: types.map(t => `${scaled[t]} ${t}`).join(' + ') + ` = ${nQ} totali`,
+            hasListening: (verInfo?.qs || []).some(q => q && q.type === 'listening')
+        };
+    }
+
+    // errorDetails può contenere gli errori della verifica ("ERRORI COMMESSI NELLA VERIFICA…")
+    // seguiti, dopo una riga vuota, dal contesto dell'approfondimento (note discorsive / aree deboli).
+    function _ppSplitErrorDetails(errorDetails = '') {
+        const s = String(errorDetails || '');
+        if (!/^ERRORI COMMESSI/.test(s)) return { testErrors: '', context: s };
+        const k = s.indexOf('\n\n');
+        return k < 0 ? { testErrors: s, context: '' } : { testErrors: s.slice(0, k), context: s.slice(k + 2).trim() };
+    }
+    // Righe d'errore numerate E1, E2… (il piano dichiara su ogni domanda quale errore riprende)
+    function _ppErrorList(testErrors = '') {
+        return String(testErrors || '').split('\n').slice(1).map(l => l.trim()).filter(Boolean)
+            .map((line, i) => ({ id: 'E' + (i + 1), line }));
+    }
+    function _ppErrIdsOf(q) {
+        const v = q && q.errore;
+        if (v == null) return [];
+        return (String(Array.isArray(v) ? v.join(',') : v).toUpperCase().match(/E\d+/g) || []);
+    }
+
+    // Errori della verifica dell'unità per il piano. Vale anche per l'approfondimento:
+    // un alunno con 8 che ha sbagliato what/which deve ritrovarli nel piano.
+    // Per APP si aggiungono note discorsive e aree deboli delle unit precedenti.
+    async function _ppPlanErrorDetails(stu, studentSafe, classeNome, unit, prefix, given = '') {
+        let testErr = /^ERRORI COMMESSI/.test(given || '') ? given : '';
+        if (!testErr) {
+            try { testErr = await _ppFetchLastTestErrorsFromFirebase(studentSafe, classeNome, unit) || ''; }
+            catch(e) { console.warn('[Piano] errori verifica non recuperati:', e.message); }
+        }
+        if (prefix !== 'APP') return testErr;
+        return [testErr, _pianoBuildAppContext(stu, unit)].filter(Boolean).join('\n\n');
+    }
+
+    // La consegna è stata rispettata? Errori della verifica ripresi (campo "errore"),
+    // tipi ammessi e numero di opzioni (versione PEI). score: più alto = meglio.
+    function _ppCheckCompliance(questions, check) {
+        const out = { problems: [], covered: 0, total: 0, missing: [], score: 0 };
+        if (!check || !Array.isArray(questions)) return out;
+        const qs = questions.filter(q => q && typeof q === 'object');
+        if (check.allowedTypes) {
+            const badT = qs.map((q, i) => ({ i, t: q.type })).filter(x => x.t !== 'listening' && !check.allowedTypes.includes(x.t));
+            if (badT.length) out.problems.push(`domande ${badT.map(x => x.i + 1).join(', ')}: tipo non ammesso (${[...new Set(badT.map(x => x.t))].join(', ')}). Usa SOLO: ${check.allowedTypes.join(', ')}.`);
+            out.score -= badT.length;
+        }
+        if (check.mcOptions) {
+            const badO = qs.map((q, i) => ({ i, q })).filter(x => x.q.type === 'multiple-choice' && Array.isArray(x.q.options) && x.q.options.length !== check.mcOptions);
+            if (badO.length) out.problems.push(`domande ${badO.map(x => x.i + 1).join(', ')}: la scelta multipla deve avere ${check.mcOptions} opzioni, come nella sua verifica.`);
+            out.score -= badO.length;
+        }
+        if (check.errors?.length) {
+            const cov = new Set(qs.flatMap(_ppErrIdsOf));
+            out.total = check.errors.length;
+            out.covered = check.errors.filter(e => cov.has(e.id)).length;
+            out.missing = check.errors.filter(e => !cov.has(e.id));
+            if (out.covered < check.errReq) {
+                out.problems.push(`gli errori della verifica ripresi sono ${out.covered} (servono almeno ${check.errReq}). Mancano: ${out.missing.map(e => e.id).join(', ')}.`);
+            }
+            out.score += out.covered;
+        }
+        return out;
+    }
+
     function _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails = '', tagBreakdown = {}, classeNome = '', verInfo = null, opts = {}) {
         const isPei = verInfo?.layout === 2, isDsa = verInfo?.layout === 1;
-        const nQ = isPei ? 10 : (opts.nQ || 15);   // PEI: attività più breve, come la sua verifica
+        const pei = isPei ? _ppPeiProfile(verInfo) : null;
+        const nQ = isPei ? pei.nQ : (opts.nQ || 15);   // PEI: quante domande aveva la sua verifica
+        const { testErrors, context: ctxDetails } = _ppSplitErrorDetails(errorDetails);
+        const errList = _ppErrorList(testErrors);
+        const errReq = !errList.length ? 0
+            : Math.min(errList.length, isPei ? nQ : prefix === 'APP' ? Math.ceil(nQ / 2) : Math.ceil(nQ * 2 / 3));
 
         // Descrizione della prestazione nel test (non livello CEFR globale)
         const prestazioneDesc =
@@ -29735,7 +29848,9 @@ ${righe.join('\n')}
 
         // Istruzioni di difficoltà specifiche per piano
         const difficoltaSpec =
-            prefix === 'REC'
+            isPei
+                ? `LIVELLO DOMANDE — RIPASSO DELLA SUA VERIFICA (versione ${verInfo.label}): stesso livello e stessi esercizi della verifica che ha svolto, vedi le REGOLE PEI in fondo. Qualunque sia il voto (anche alto) NON è un approfondimento: niente "Transfer", niente difficoltà in più.`
+            : prefix === 'REC'
                 ? `LIVELLO DOMANDE — RECUPERO:
 - Frasi brevi e semplici, vocabolario di base dell'unità.
 - Ogni domanda deve avere scaffolding esplicito: hint tra parentesi (es. "(usa il Past Simple)"), word bank abbondante nel cloze, distrattori molto diversi nel multiple-choice.
@@ -29756,7 +29871,30 @@ ${righe.join('\n')}
 
         // ── Versione adattata (DSA / PEI) svolta nella verifica ──────────────
         let adattamentoSection = '';
-        if (verInfo) {
+        if (isPei) {
+            const _src = verInfo.source === 'verifica'
+                ? `Nella verifica di questa unità lo studente NON ha svolto la prova standard ma la versione ${verInfo.label}.`
+                : `Lo studente ha un PEI: le sue verifiche sono in versione ${verInfo.label}.`;
+            const _lessico = prefix === 'APP'
+                ? `- Puoi allargare un poco il lessico dello STESSO tema dell'unità (es. se nella verifica c'erano alcuni sport, aggiungi 2-3 altri sport semplici) in al massimo ${Math.ceil(nQ / 3)} domande, sempre con gli stessi tipi di esercizio.`
+                : `- Resta sul lessico della verifica: al massimo 1-2 parole nuove dello stesso tema (es. un altro sport se nella verifica c'erano gli sport).`;
+            adattamentoSection = `
+══════════════════════════════════════════════
+⚠️ STUDENTE CON VERSIONE ${verInfo.label.toUpperCase()} — IL PIANO È UN RIPASSO DELLA SUA VERIFICA
+${_src}
+Il voto ${voto}/10 si riferisce a QUELLA versione. Qualunque sia il voto (anche alto) e il percorso (${prefix}), il piano NON è un recupero o un approfondimento standard: è un RIPASSO costruito sugli esercizi della verifica che ha svolto, che deve riconoscere e saper fare da solo.
+REGOLE VERSIONE PEI (obbligatorie, PREVALGONO su tutto il resto del prompt):
+- Usa SOLO questi tipi di esercizio, gli stessi della sua verifica: ${pei.types.join(', ')}.${pei.unsupported.length ? ` (Nella verifica c'erano anche esercizi di tipo ${pei.unsupported.join(', ')}: rifalli come "multiple-choice".)` : ''}
+- DISTRIBUZIONE come nella verifica: ${pei.dist}.
+- Stessa forma degli esercizi della verifica: consegna breve in italiano, frasi cortissime, una sola richiesta per domanda, ${pei.mcOptions} opzioni nella scelta multipla, al massimo 4 coppie nel matching, frase brevissima e al massimo 4 parole nel drag-drop.
+- Stesse strutture e stesso lessico: cambia frasi ed esempi (non copiare le domande), ma l'esercizio deve essere riconoscibile.
+- NON alzare la difficoltà, NON aggiungere tipi di esercizio diversi, niente testi da leggere, niente scrittura, niente risposte libere, niente "Transfer".
+${_lessico}
+- OBBLIGATORIO su ogni domanda: "dsaLargeText": true e "referenceTable": "regola grammaticale breve (es. Past Simple: go→went)".
+- Distrattori chiaramente diversi dalla risposta giusta.
+${pei.fromTest ? `DOMANDE DELLA SUA VERIFICA (versione ${verInfo.label}) — sono il MODELLO per tipi, forma e livello: rifalle con frasi nuove:\n${pei.templates}` : 'Verifica non disponibile: usa le regole qui sopra con lessico di base dell\'unità.'}
+══════════════════════════════════════════════`;
+        } else if (verInfo) {
             // Esempi delle domande che ha DAVVERO affrontato: fissano il livello di partenza
             const _ex = (verInfo.qs || []).filter(q => q && q.type !== 'listening').slice(0, 6).map((q, i) => {
                 const t = String(typeof q.question === 'string' ? q.question : (q.text || '')).replace(/\s+/g, ' ').slice(0, 160);
@@ -29765,14 +29903,8 @@ ${righe.join('\n')}
             }).join('\n');
             const _src = verInfo.source === 'verifica'
                 ? `Nella verifica di questa unità lo studente NON ha svolto la prova standard ma la versione ${verInfo.label}.`
-                : `Lo studente ha un ${verInfo.layout === 2 ? 'PEI' : 'PDP per DSA'}: le sue verifiche sono in versione ${verInfo.label}.`;
-            const _regole = isPei
-                ? `REGOLE VERSIONE PEI (obbligatorie, come nella sua verifica):
-- Livello più semplice di quello della classe (in prima A0), frasi cortissime, una sola richiesta per domanda, lessico di base dell'unità.
-- Tipi ammessi: SOLO "multiple-choice" con 3 opzioni semplici (NON 4), "matching" con massimo 4 coppie, "drag-drop" con una frase brevissima e al massimo 4 parole. NIENTE fill-blanks, cloze o risposta libera.
-- OBBLIGATORIO su ogni domanda: "dsaLargeText": true e "referenceTable": "regola grammaticale breve (es. Past Simple: go→went)".
-- Distrattori chiaramente diversi dalla risposta giusta.`
-                : `REGOLE VERSIONE DSA (obbligatorie, come nella sua verifica):
+                : `Lo studente ha un PDP per DSA: le sue verifiche sono in versione ${verInfo.label}.`;
+            const _regole = `REGOLE VERSIONE DSA (obbligatorie, come nella sua verifica):
 - Le domande di completamento diventano "multiple-choice" con 4 opzioni (una domanda per ogni spazio): NIENTE fill-blanks, cloze o risposta libera.
 - Frasi brevi e chiare, una richiesta per domanda, istruzioni in grassetto, nessun trabocchetto ortografico.
 - Mantieni "matching" e "drag-drop" (frasi brevi, poche parole).
@@ -29790,100 +29922,172 @@ Le regole di questa sezione PREVALGONO sui tipi, sulla distribuzione e sul livel
 ══════════════════════════════════════════════`;
         }
 
-        const hasErrors = errorDetails.trim().length > 0;
-        // Per APP: errorDetails può contenere note discorsive multi-unit o aree deboli da unit precedenti
-        const isNotesContext   = prefix === 'APP' && hasErrors && errorDetails.startsWith('NOTE DISCORSIVE');
-        const isPreviousWeak   = prefix === 'APP' && hasErrors && !isNotesContext && errorDetails.startsWith('AREE DEBOLI');
-        const isCurrentErrors  = hasErrors && !isNotesContext && !isPreviousWeak;
+        // Per APP il contesto (dopo gli errori della verifica) può contenere note discorsive
+        // multi-unit o aree deboli da unit precedenti. Per i PEI il piano è un ripasso della
+        // sua verifica: il contesto delle altre unit non si usa.
+        const ctxUse = isPei ? '' : ctxDetails;
+        const isNotesContext   = prefix === 'APP' && ctxUse.startsWith('NOTE DISCORSIVE');
+        const isPreviousWeak   = prefix === 'APP' && !isNotesContext && ctxUse.startsWith('AREE DEBOLI');
+        const nErrQ = !errList.length ? 0 : isPei ? errReq : prefix === 'APP' ? Math.ceil(nQ / 2) : Math.ceil(nQ * 2 / 3);
 
-        const erroriSection = isCurrentErrors
+        const erroriSection = errList.length
             ? `
 ══════════════════════════════════════════════
-ERRORI REALI COMMESSI DALLO STUDENTE NELLA VERIFICA (unità: "${unit || 'English Grammar'}"):
-${errorDetails}
+ERRORI REALI COMMESSI DALLO STUDENTE NELLA VERIFICA (unità: "${unit || 'English Grammar'}") — ognuno ha un codice:
+${errList.map(e => `${e.id}: ${e.line}`).join('\n')}
 
-⚠️ ISTRUZIONI VINCOLANTI:
-1. Almeno ${Math.ceil(nQ * 2 / 3)} delle ${nQ} domande devono esercitare DIRETTAMENTE le strutture in cui ha sbagliato sopra.
-2. Usa gli errori come base per costruire ogni domanda — NON generare domande generiche.
-3. RIMANI STRETTAMENTE nell'unità "${unit || 'English Grammar'}". NON introdurre strutture di altre unità o anni precedenti, anche se gli errori del test le menzionano come confronto.
-4. Se un errore riguarda una struttura di una unit diversa, IGNORALA — è contesto, non argomento.
+⚠️ ISTRUZIONI VINCOLANTI (vengono controllate automaticamente):
+1. ${errList.length <= errReq ? 'OGNI errore elencato' : `Almeno ${errReq} errori DIVERSI tra quelli elencati (i più importanti)`} deve essere ripreso da almeno una domanda: stessa struttura o stesso lessico in cui ha sbagliato (es. se ha confuso what/which, domande su what/which), con frasi NUOVE — non copiare la frase della verifica.
+2. Almeno ${nErrQ} delle ${nQ} domande devono esercitare DIRETTAMENTE gli errori sopra. Se più errori riguardano la stessa struttura, quella struttura merita più domande.${prefix === 'APP' && !isPei ? ' Sono domande di approfondimento: stessa struttura, ma contesti nuovi e un po\' più impegnativi. Le altre domande coprono il resto dell\'unità.' : ''}
+3. Su OGNI domanda aggiungi il campo "errore" con il codice dell'errore che riprende (es. "errore":"E2"), oppure "errore":null se non ne riprende nessuno. Metti il codice SOLO se la domanda esercita davvero quella struttura.
+4. RIMANI STRETTAMENTE nell'unità "${unit || 'English Grammar'}": NON introdurre strutture di altre unità o di anni precedenti.
 ══════════════════════════════════════════════`
-            : isNotesContext
+            : isPei
+            ? '\nNessun errore registrato: ripassa in modo equilibrato tutti gli esercizi della sua verifica.'
+            : prefix === 'REC'
+            ? '\nISTRUZIONE — RECUPERO SENZA DATI ERRORI:\n'
+    + 'Non hai i dati degli errori specifici dello studente, ma il voto basso indica lacune significative.\n'
+    + 'Concentrati sulle strutture FONDAMENTALI di questa unità, quelle che generano più errori tipici a questo livello.\n'
+    + 'NON introdurre strutture di altre unità. Rimani STRETTAMENTE sull\'unità "' + (unit || 'English Grammar') + '" e sulle sue strutture di base.'
+            : prefix === 'CON'
+            ? '\nISTRUZIONE — CONSOLIDAMENTO SENZA DATI ERRORI:\n'
+    + 'Non hai i dati degli errori specifici dello studente, ma il voto sufficiente/discreto indica padronanza parziale.\n'
+    + 'Genera domande che testano le strutture più comuni e gli ERRORI TIPICI di questa unità (es. per il Past Simple: irregolari, forma negativa, forma interrogativa, uso corretto dell\'ausiliare).\n'
+    + 'NON generare domande generiche o di approfondimento avanzato. NON coprire altre unità.\n'
+    + 'Focus ESCLUSIVAMENTE sulla struttura "' + (unit || 'English Grammar') + '", con scaffolding moderato.'
+            : isNotesContext || isPreviousWeak ? ''
+            : '\nNota: dati errori non disponibili — genera esercizi rappresentativi dell\'unità "' + (unit || 'English Grammar') + '" al livello approfondimento.';
+
+        // Approfondimento: note discorsive / aree deboli delle altre unit (dopo gli errori della verifica)
+        const nCtxQ = errList.length ? Math.max(2, nQ - nErrQ) : nQ;
+        const contestoSection = isNotesContext
             ? `
 ══════════════════════════════════════════════
-${errorDetails}
+${ctxUse}
 
-⚠️ ISTRUZIONE VINCOLANTE — COPERTURA MULTI-UNIT:
-- Distribuisci le ${nQ} domande su TUTTE le unit elencate sopra (non concentrarti solo sull'unit corrente).
+⚠️ ISTRUZIONE — COPERTURA MULTI-UNIT${errList.length ? ` (solo per le ${nCtxQ} domande che non riprendono gli errori della verifica)` : ''}:
+- Distribuisci ${errList.length ? 'queste' : `le ${nQ}`} domande sulle unit elencate sopra (non concentrarti solo sull'unit corrente).
 - Usa le note discorsive per ogni unit per capire cosa è stato svolto e quali strutture testare.
-- Per ogni unit con note, genera almeno 2-3 domande sui contenuti specifici citati.
 - Se una nota menziona difficoltà, quella struttura merita più domande di rinforzo.
 - NON inventare argomenti non presenti nelle note (es. non includere tematiche di 3a media se non citate).
 ══════════════════════════════════════════════`
             : isPreviousWeak
             ? `
 ══════════════════════════════════════════════
-${errorDetails}
+${ctxUse}
 
-DISTRIBUZIONE SUGGERITA: ${nQ - 5}-${nQ - 4} domande sull'unità corrente ("${unit}") + 4-5 domande sulle aree deboli elencate sopra.
+DISTRIBUZIONE SUGGERITA: ${errList.length ? `oltre alle domande sugli errori della verifica, 2-3 domande` : `${nQ - 5}-${nQ - 4} domande sull'unità corrente ("${unit}") + 4-5 domande`} sulle aree deboli elencate sopra.
 Per le domande sulle unit precedenti: usa strutture grammaticali e lessico di quelle unit, non dell'unità corrente.
 ══════════════════════════════════════════════`
-            : '\n' + (prefix === 'REC'
-    ? 'ISTRUZIONE — RECUPERO SENZA DATI ERRORI:\n'
-    + 'Non hai i dati degli errori specifici dello studente, ma il voto basso indica lacune significative.\n'
-    + 'Concentrati sulle strutture FONDAMENTALI di questa unità, quelle che generano più errori tipici a questo livello.\n'
-    + 'NON introdurre strutture di altre unità. Rimani STRETTAMENTE sull\'unità "' + (unit || 'English Grammar') + '" e sulle sue strutture di base.'
-    : prefix === 'CON'
-    ? 'ISTRUZIONE — CONSOLIDAMENTO SENZA DATI ERRORI:\n'
-    + 'Non hai i dati degli errori specifici dello studente, ma il voto sufficiente/discreto indica padronanza parziale.\n'
-    + 'Genera domande che testano le strutture più comuni e gli ERRORI TIPICI di questa unità (es. per il Past Simple: irregolari, forma negativa, forma interrogativa, uso corretto dell\'ausiliare).\n'
-    + 'NON generare domande generiche o di approfondimento avanzato. NON coprire altre unità.\n'
-    + 'Focus ESCLUSIVAMENTE sulla struttura "' + (unit || 'English Grammar') + '", con scaffolding moderato.'
-    : 'Nota: dati errori non disponibili — genera esercizi rappresentativi dell\'unità "' + (unit || 'English Grammar') + '" al livello approfondimento.');
+            : '';
 
         const _classCtx = _ppBuildClassContext(classeNome, unit, voto);
+        const _desc = {
+            'multiple-choice': `"multiple-choice" — scelta multipla con ${isPei ? pei.mcOptions : 4} opzioni (usa per strutture grammaticali ambigue)`,
+            'fill-blanks':     '"fill-blanks" — completa la frase con una o più parole (usa per forme verbali, spelling)',
+            'cloze':           '"cloze" — come fill-blanks ma con word bank visibile (usa per lessico e preposizioni)',
+            'matching':        '"matching" — abbina elementi colonna sinistra a colonna destra (usa per coppie irregolari, definizioni)',
+            'drag-drop':       '"drag-drop" — trascina le parole nella posizione giusta in una frase (usa per word order, sintassi)',
+            'categorization':  '"categorization" — classifica le parole nelle categorie giuste (usa per lessico)'
+        };
+        const _fmt = {
+            'multiple-choice': isPei
+                ? `{"type":"multiple-choice","question":"**Scegli.**\\nYesterday I ___ to school.","options":${JSON.stringify(['went', 'go', 'goes', 'going', 'gone'].slice(0, pei.mcOptions))},"correct":0,"points":1,"dsaLargeText":true,"referenceTable":"Past Simple: go → went","errore":null}`
+                : '{"type":"multiple-choice","question":"**Scegli la forma corretta.**\\nShe ___ to school yesterday.","options":["go","goes","went","gone"],"correct":2,"points":1,"errore":null}',
+            'fill-blanks': '{"type":"fill-blanks","question":"**Completa con il Past Simple.**\\nLast night I ___ (watch) a film.","answers":["watched"],"points":1,"errore":null}\n{"type":"fill-blanks","question":"**Completa con il Past Simple irregolare.**\\nWe ___ (go) to the beach and ___ (have) ice cream.","answers":["went","had"],"points":2,"errore":null}',
+            'cloze':           '{"type":"cloze","question":"**Scegli dalla word bank e completa.**\\nI ___ born in 2010. She ___ her homework yesterday.","answers":["was","did"],"hint":"word bank: was / were / did / made","points":2,"errore":null}',
+            'matching':        '{"type":"matching","question":"**Abbina il verbo alla forma irregolare.**","left":["go","have","see","buy"],"right":["went","had","saw","bought"],"points":2,"errore":null}',
+            'drag-drop':       '{"type":"drag-drop","question":"**Trascina le parole nell\'ordine corretto.**\\nYesterday / she / didn\'t / go / to school","sentences":["Yesterday she ___ ___ to school."],"words":["didn\'t","go","went","not","does"],"answers":["didn\'t","go"],"points":2,"errore":null}',
+            'categorization':  '{"type":"categorization","question":"**Classifica le parole.**","categories":["Sport","Food"],"items":["tennis","pizza","football","pasta"],"answers":[0,1,0,1],"points":2,"errore":null}'
+        };
+        const _types = isPei ? pei.types : ['multiple-choice', 'fill-blanks', 'cloze', 'matching', 'drag-drop'];
+        const _typesHead = isPei
+            ? `TIPI DI DOMANDA AMMESSI (SOLO questi, gli stessi della sua verifica):`
+            : isDsa
+            ? 'TIPI DI DOMANDA: vedi le REGOLE DELLA VERSIONE ' + verInfo.label + ' in fondo (prevalgono su questo elenco). Formati di riferimento:'
+            : 'TIPI DI DOMANDA DA USARE (mix obbligatorio — usa tutti e 5 i tipi):';
+        const _dist = isPei ? 'DISTRIBUZIONE (come nella sua verifica): ' + pei.dist + '.'
+            : isDsa ? 'DISTRIBUZIONE: 9 multiple-choice + 3 matching + 3 drag-drop = 15 totali.'
+            : opts.level ? 'DISTRIBUZIONE: ' + opts.level.dist
+            : nQ === 10 ? 'DISTRIBUZIONE: 3 multiple-choice + 3 fill-blanks + 2 cloze + 1 matching + 1 drag-drop = 10 totali.'
+            : 'DISTRIBUZIONE: 4 multiple-choice + 4 fill-blanks + 3 cloze + 2 matching + 2 drag-drop = 15 totali.';
+        const _has = t => _types.includes(t);
         const prompt = `Sei un docente esperto di inglese per scuola media italiana.
-Genera ESATTAMENTE ${nQ} domande per uno studente, unità: "${isNotesContext ? 'tutte le unit svolte (vedi note sotto)' : (unit || 'English Grammar')}".
+Genera ESATTAMENTE ${nQ} domande per uno studente, unità: "${isNotesContext && !errList.length ? 'tutte le unit svolte (vedi note sotto)' : (unit || 'English Grammar')}".
 Prestazione nel test: ${prestazioneDesc}.
 ${_classCtx}
 
 ${difficoltaSpec}
 
-${verInfo ? 'TIPI DI DOMANDA: vedi le REGOLE DELLA VERSIONE ' + verInfo.label + ' in fondo (prevalgono su questo elenco). Formati di riferimento:' : 'TIPI DI DOMANDA DA USARE (mix obbligatorio — usa tutti e 5 i tipi):'}
-1. "multiple-choice" — scelta multipla con 4 opzioni (usa per strutture grammaticali ambigue)
-2. "fill-blanks" — completa la frase con una o più parole (usa per forme verbali, spelling)
-3. "cloze" — come fill-blanks ma con word bank visibile (usa per lessico e preposizioni)
-4. "matching" — abbina elementi colonna sinistra a colonna destra (usa per coppie irregolari, definizioni)
-5. "drag-drop" — trascina le parole nella posizione giusta in una frase (usa per word order, sintassi)
+${_typesHead}
+${_types.map((t, i) => `${i + 1}. ${_desc[t]}`).join('\n')}
 
-${isPei ? 'DISTRIBUZIONE: 6 multiple-choice (3 opzioni) + 2 matching + 2 drag-drop = 10 totali.' : isDsa ? 'DISTRIBUZIONE: 9 multiple-choice + 3 matching + 3 drag-drop = 15 totali.' : opts.level ? 'DISTRIBUZIONE: ' + opts.level.dist : nQ === 10 ? 'DISTRIBUZIONE: 3 multiple-choice + 3 fill-blanks + 2 cloze + 1 matching + 1 drag-drop = 10 totali.' : 'DISTRIBUZIONE: 4 multiple-choice + 4 fill-blanks + 3 cloze + 2 matching + 2 drag-drop = 15 totali.'}
-Domande mescolate (non raggruppare per tipo). Difficoltà variata, non progressiva.
+${_dist}
+Domande mescolate (non raggruppare per tipo). ${isPei ? 'Stesso livello della sua verifica, senza salti di difficoltà.' : 'Difficoltà variata, non progressiva.'}
 Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni di tipo ("Scegli", "Completa", "Abbina", "Trascina").
 
-FORMATI JSON ESATTI per ogni tipo:
-{"type":"multiple-choice","question":"**Scegli la forma corretta.**\nShe ___ to school yesterday.","options":["go","goes","went","gone"],"correct":2,"points":1}
-{"type":"fill-blanks","question":"**Completa con il Past Simple.**\nLast night I ___ (watch) a film.","answers":["watched"],"points":1}
-{"type":"fill-blanks","question":"**Completa con il Past Simple irregolare.**\nWe ___ (go) to the beach and ___ (have) ice cream.","answers":["went","had"],"points":2}
-{"type":"cloze","question":"**Scegli dalla word bank e completa.**\nI ___ born in 2010. She ___ her homework yesterday.","answers":["was","did"],"hint":"word bank: was / were / did / made","points":2}
-{"type":"matching","question":"**Abbina il verbo alla forma irregolare.**","left":["go","have","see","buy"],"right":["went","had","saw","bought"],"points":2}
-{"type":"drag-drop","question":"**Trascina le parole nell'ordine corretto.**\nYesterday / she / didn't / go / to school","sentences":["Yesterday she ___ ___ to school."],"words":["didn't","go","went","not","does"],"answers":["didn't","go"],"points":2}
+FORMATI JSON ESATTI per ogni tipo${errList.length ? ' (il campo "errore" è spiegato più sotto)' : ''}:
+${_types.map(t => _fmt[t]).join('\n')}
 
-IMPORTANTE per cloze e fill-blanks: "answers" ha UNA stringa per ogni ___. Il simbolo | separa SOLO forme ugualmente CORRETTE (es. "didn't|did not", "isn't|is not"): MAI mettere dopo | una parola sbagliata o un distrattore, perché verrebbe accettata come giusta. Nella cloze la word bank ("hint") contiene tutte le risposte più 1-2 distrattori.
+${_has('fill-blanks') || _has('cloze') ? `IMPORTANTE per cloze e fill-blanks: "answers" ha UNA stringa per ogni ___. Il simbolo | separa SOLO forme ugualmente CORRETTE (es. "didn't|did not", "isn't|is not"): MAI mettere dopo | una parola sbagliata o un distrattore, perché verrebbe accettata come giusta.${_has('cloze') ? ' Nella cloze la word bank ("hint") contiene tutte le risposte più 1-2 distrattori.' : ''}
 IMPORTANTE per fill-blanks multi-blank: "answers" è array con un elemento per ogni blank.
-IMPORTANTE per matching: "left" e "right" hanno stesso numero di elementi, abbinamento posizionale (left[0]↔right[0] ecc.).
-IMPORTANTE per drag-drop: "sentences" ha ___ per ogni parola da inserire, "answers" è array ordinato delle parole corrette, e ogni risposta compare in "words".
-
+` : ''}${_has('matching') ? 'IMPORTANTE per matching: "left" e "right" hanno stesso numero di elementi, abbinamento posizionale (left[0]↔right[0] ecc.).\n' : ''}${_has('drag-drop') ? 'IMPORTANTE per drag-drop: "sentences" ha ___ per ogni parola da inserire, "answers" è array ordinato delle parole corrette, e ogni risposta compare in "words".\n' : ''}${_has('categorization') ? 'IMPORTANTE per categorization: "answers" ha, per ogni elemento di "items" nello stesso ordine, l\'indice (da 0) della sua categoria.\n' : ''}${errList.length ? '' : 'Il campo "errore" lascialo a null.\n'}
 CONTROLLO QUALITÀ (obbligatorio, prima di rispondere ricontrolla OGNI domanda):
 - la risposta indicata come corretta è davvero corretta, in inglese corretto;
 - esiste UNA sola risposta corretta: nella scelta multipla nessun distrattore deve essere accettabile; se in un completamento sono corrette più forme, elencale tutte con |;
 - il numero di ___ nel testo è uguale al numero di risposte;
 - la frase non suggerisce la risposta (niente indizi che la rendono ovvia senza conoscere la regola).
 ${erroriSection}
+${contestoSection}
 ${adattamentoSection}
 Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdown.`;
 
-        const sysMsg = `Sei un docente esperto di inglese per scuola media italiana. Rispondi SEMPRE e SOLO con un array JSON valido, senza testo aggiuntivo, senza backtick, senza spiegazioni.${hasErrors ? ' Ogni domanda deve esercitare direttamente le strutture in cui lo studente ha sbagliato nella verifica.' : ''}`;
-        return { prompt, sysMsg, nQ };
+        const sysMsg = `Sei un docente esperto di inglese per scuola media italiana. Rispondi SEMPRE e SOLO con un array JSON valido, senza testo aggiuntivo, senza backtick, senza spiegazioni.${errList.length ? ' Le domande devono riprendere gli errori che lo studente ha fatto nella verifica, indicati con il loro codice nel campo "errore".' : ''}${isPei ? ' Lo studente ha un PEI: usa solo i tipi di esercizio della sua verifica, allo stesso livello.' : ''}`;
+        // Controlli sulla risposta (vedi _ppCheckCompliance)
+        const check = (errList.length || isPei) ? {
+            nQ,
+            errors: errList, errReq,
+            allowedTypes: isPei ? pei.types : null,
+            mcOptions: isPei && pei.fromTest ? pei.mcOptions : null
+        } : null;
+        return { prompt, sysMsg, nQ, check, pei };
+    }
+
+    // Se la risposta non rispetta la consegna (errori della verifica non ripresi, tipi o opzioni
+    // diversi dalla verifica PEI) si chiede UNA correzione mirata, con l'elenco dei problemi.
+    // Si tiene la versione corretta solo se è davvero migliore.
+    async function _pianoEnforceCompliance(questions, P) {
+        const comp = _ppCheckCompliance(questions, P.check);
+        if (!comp.problems.length) return questions;
+        console.warn('[Piano] ⚠️ Consegna non rispettata:', comp.problems.join(' | '));
+        const errs = P.check.errors || [];
+        const prompt = `Hai generato le domande qui sotto per un piano personalizzato, ma NON rispettano la consegna:
+${comp.problems.map(p => '- ' + p).join('\n')}
+${comp.missing.length ? `\nERRORI DELLA VERIFICA NON ANCORA RIPRESI:\n${comp.missing.map(e => `${e.id}: ${e.line}`).join('\n')}\n` : ''}
+Correggi l'array: ${comp.missing.length ? 'sostituisci le domande con "errore": null (o quelle in più sullo stesso errore) con domande nuove che riprendono gli errori mancanti, con il loro codice nel campo "errore"; ' : ''}${P.check.allowedTypes ? `rifai le domande con un tipo non ammesso usando solo ${P.check.allowedTypes.join(', ')}; ` : ''}lascia invariate le domande già corrette.
+Restituisci l'array COMPLETO di ${P.nQ} domande, stessi formati JSON${errs.length ? ', campo "errore" su ogni domanda' : ''}.
+
+DOMANDE DA CORREGGERE:
+${JSON.stringify(questions)}
+
+CONSEGNA ORIGINALE (da rispettare):
+${P.prompt}`;
+        try {
+            const raw = await _pianoAICall(prompt, P.sysMsg);
+            const fixed = _pianoParseJson(raw, '[');
+            if (Array.isArray(fixed) && fixed.length >= Math.ceil(questions.length * 0.8)) {
+                const comp2 = _ppCheckCompliance(fixed, P.check);
+                if (comp2.score > comp.score || (comp2.score === comp.score && comp2.problems.length < comp.problems.length)) {
+                    console.log(`[Piano] ✅ Correzione applicata${comp2.total ? ` (errori ripresi ${comp.covered} → ${comp2.covered}/${comp2.total})` : ''}`);
+                    return fixed;
+                }
+            }
+            console.warn('[Piano] Correzione non migliorativa: tengo le domande originali');
+        } catch(e) {
+            if (e.name === 'AbortError') throw e;
+            console.warn('[Piano] Correzione consegna non riuscita:', e.message);
+        }
+        return questions;
     }
 
     // verInfo (da _ppDetectTestVersion): l'alunno ha svolto la verifica in versione
@@ -29908,9 +30112,19 @@ Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdow
             console.warn('[Piano] JSON quiz non valido | raw preview:', String(raw).slice(0, 300));
             return null;
         }
+        // La consegna è stata seguita? (errori della verifica ripresi, tipi PEI) — se no, una correzione mirata
+        questions = await _pianoEnforceCompliance(questions, P);
         // Controllo automatico + revisione AI: corregge risposte sbagliate e formati rotti
         questions = await _pianoReviewQuestions(questions, { unit, prefix, voto, verInfo });
+        if (P.check?.allowedTypes) {
+            // PEI: un tipo di esercizio che non era nella sua verifica non arriva all'alunno
+            const before = questions.length;
+            questions = questions.filter(q => P.check.allowedTypes.includes(q.type));
+            if (questions.length < before) console.warn(`[Piano] ✂️ PEI: ${before - questions.length} domande con tipo non presente nella sua verifica scartate`);
+        }
         if (!questions.length) return null;
+        const _cov = _ppCheckCompliance(questions, P.check);
+        if (_cov.total) console.log(`[Piano] 🎯 Errori della verifica ripresi: ${_cov.covered}/${_cov.total}${_cov.missing.length ? ' — non ripresi: ' + _cov.missing.map(e => e.id).join(', ') : ''}`);
         if (questions.length < Math.min(10, P.nQ)) console.warn(`[Piano] ⚠️ Quiz incompleto: ${questions.length}/${P.nQ} domande`);
         else console.log(`[Piano] ✅ Quiz OK: ${questions.length} domande, tipi: ${[...new Set(questions.map(q=>q.type))].join(', ')}`);
 
@@ -29926,6 +30140,7 @@ Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdow
         }
 
         const activity = { questions };
+        if (_cov.total) activity.erroriCoperti = { n: _cov.covered, tot: _cov.total };
         if (challenge) {
             const block = await _pianoGetChallengeBlock(classeNome, unit);
             if (block) {
@@ -30164,7 +30379,7 @@ Rivedi queste ${qs.length} domande. Per OGNI domanda controlla:
 2. Esiste UNA sola risposta corretta. Nella scelta multipla nessun distrattore deve essere accettabile: se lo è, sostituiscilo. Nei completamenti ("fill-blanks", "cloze") elenca con | tutte le forme ugualmente corrette (es. "didn't|did not") e MAI forme sbagliate.
 3. Il numero di ___ nel testo è uguale al numero di risposte; nel "drag-drop" ogni risposta compare in "words"; nel "matching" "left" e "right" hanno la stessa lunghezza; nella "categorization" "answers" ha, per ogni elemento di "items", l'indice (da 0) della sua categoria.
 4. Istruzione chiara in italiano, frase in inglese naturale, nessun indizio che renda ovvia la risposta.
-${bad.length ? 'PROBLEMI GIÀ RILEVATI DAL CONTROLLO AUTOMATICO (correggili):\n' + bad.map(b => `- domanda ${b.i + 1}: ${b.issues.join('; ')}`).join('\n') + '\n' : ''}Correggi SOLO ciò che è sbagliato e lascia invariato il resto. Stesso numero di domande, stesso ordine, stessi tipi, stessi campi JSON.
+${bad.length ? 'PROBLEMI GIÀ RILEVATI DAL CONTROLLO AUTOMATICO (correggili):\n' + bad.map(b => `- domanda ${b.i + 1}: ${b.issues.join('; ')}`).join('\n') + '\n' : ''}Correggi SOLO ciò che è sbagliato e lascia invariato il resto. Stesso numero di domande, stesso ordine, stessi tipi, stessi campi JSON (compreso "errore").
 Rispondi SOLO con l'array JSON corretto, senza testo prima o dopo, senza backtick.
 
 DOMANDE:
@@ -30174,6 +30389,8 @@ ${JSON.stringify(send)}`;
                 const rev = _pianoParseJson(raw, '[');
                 if (Array.isArray(rev) && rev.length >= Math.ceil(qs.length * 0.8)) {
                     const revN = rev.filter(q => q && typeof q === 'object').map(_ppNormalizeQuestion);
+                    // il codice dell'errore ripreso non si perde nella revisione
+                    if (revN.length === qs.length) revN.forEach((q, i) => { if (q.errore == null && qs[i].errore != null) q.errore = qs[i].errore; });
                     const revBad = issuesOf(revN);
                     // La revisione si tiene solo se non peggiora il controllo automatico
                     if (revBad.length <= bad.length) { qs = revN; bad = revBad; }
@@ -30195,6 +30412,9 @@ ${JSON.stringify(send)}`;
     // Il listening è un punto debole? Righe [listening] tra gli errori della verifica
     // o percentuale LISTENING sotto il 60%. Livello del testo: PEI/DSA o fascia del piano.
     function _ppListeningNeed(prefix, errorDetails = '', tagBreakdown = {}, verInfo = null) {
+        // PEI: il piano è un ripasso della sua verifica → listening solo se lì c'era
+        if (verInfo?.layout === 2 && verInfo.qs?.length && !verInfo.qs.some(q => q && q.type === 'listening'))
+            return { needed: false, level: 'PEI', focus: '', reason: 'nessun listening nella sua verifica PEI' };
         const pct = tagBreakdown?.LISTENING ?? tagBreakdown?.listening ?? null;
         const isErrList = errorDetails && !/^(NOTE DISCORSIVE|AREE DEBOLI)/.test(errorDetails);
         const lines = isErrList
@@ -30564,6 +30784,7 @@ Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markd
     const _PP_CLAUDE_CONSEGNA = `Sei Claude e prepari i PIANI PERSONALIZZATI di inglese (scuola media italiana) per MyClass / LiveLearn.
 Questo file è stato esportato da MyClass. Per OGNI elemento di "alunni":
 - genera l'array di domande seguendo ESATTAMENTE la sua "consegna_quiz" (numero di domande, tipi, livello, errori su cui lavorare, regole DSA/PEI);
+- se "controlli" non è null, la risposta deve superarli: almeno "errori_minimi" codici diversi di "errori_da_riprendere" (E1, E2…) nel campo "errore" delle domande, e ogni domanda con un codice esercita davvero quell'errore; con "tipi_ammessi" (alunni PEI: il piano è un ripasso della sua verifica, anche con voto alto) usa SOLO quei tipi; con "opzioni_scelta_multipla" ogni scelta multipla ha esattamente quel numero di opzioni;
 - se "consegna_listening" non è null, genera anche l'esercizio di listening seguendo quella consegna (testo scritto da te, letto poi dalla sintesi vocale);
 - se "consegna_speaking" non è null, scrivi lo speaking prompt richiesto;
 - se "piano" è "ORALE" non c'è nessun quiz: segui la sua "consegna_testo" e scrivi il testo del recupero orale (italiano, testo semplice, 200-280 parole, [NOME] al posto del nome).
@@ -30606,14 +30827,21 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
         const sfida = challenge ? _ppChallengeKey(classeNome, unit) : null;
         return {
             local: { studentSafe, studentName, classeNome, unit, prefix, voto, code, draftId,
-                     layout: verInfo?.layout || 0, versione: verInfo?.label || null, tagBreakdown: tagBreakdown || {}, sfida },
+                     layout: verInfo?.layout || 0, versione: verInfo?.label || null, tagBreakdown: tagBreakdown || {}, sfida,
+                     tipiAmmessi: P.check?.allowedTypes || null, erroriTot: P.check?.errors?.length || 0 },
             file: {
                 classe: classeNome || '', unit: unit || '', piano: prefix,
                 voto: Math.round(Number(voto) * 100) / 100,
                 versione: verInfo?.label || null,
                 consegna_quiz: P.prompt,
                 consegna_listening: lNeed.needed ? _pianoBuildListeningPrompt(unit || 'English Grammar', lNeed.level, lNeed.focus) : null,
-                consegna_speaking: prefix === 'APP' ? _pianoBuildSpeakingPrompt(unit, classeNome, voto) : null,
+                consegna_speaking: prefix === 'APP' && verInfo?.layout !== 2 ? _pianoBuildSpeakingPrompt(unit, classeNome, voto) : null,
+                controlli: P.check ? {
+                    errori_da_riprendere: P.check.errors.map(e => e.id),
+                    errori_minimi: P.check.errReq,
+                    tipi_ammessi: P.check.allowedTypes,
+                    opzioni_scelta_multipla: P.check.mcOptions
+                } : null,
                 sfida
             }
         };
@@ -30624,13 +30852,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
         const stu = _ppDraftStudent(d);
         if (!stu) throw new Error('studente non trovato nei dati');
         const verInfo = await _ppDetectTestVersion(stu, d.studentSafe, d.unit);
-        let errorDetails = '', challenge = false;
-        if (d.prefix === 'APP') {
-            errorDetails = _pianoBuildAppContext(stu, d.unit);
-            challenge = _ppChallengeEligible(stu, d.unit, verInfo);
-        } else {
-            try { errorDetails = await _ppFetchLastTestErrorsFromFirebase(d.studentSafe, d.classeNome, d.unit) || ''; } catch(e) {}
-        }
+        const errorDetails = await _ppPlanErrorDetails(stu, d.studentSafe, d.classeNome, d.unit, d.prefix);
+        const challenge = d.prefix === 'APP' && _ppChallengeEligible(stu, d.unit, verInfo);
         return _ppBuildExportEntry({ studente: stu, studentSafe: d.studentSafe, studentName: d.studentName, classeNome: d.classeNome,
             unit: d.unit, prefix: d.prefix, voto: d.voto, code: d.code, errorDetails, tagBreakdown: d.tagBreakdown || {}, verInfo, challenge, draftId: d.id });
     }
@@ -30794,6 +31017,11 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             let qs = (Array.isArray(p.questions) ? p.questions : []).filter(q => q && typeof q === 'object').map(_ppNormalizeQuestion);
             let nBad = qs.filter(bad).length;
             qs = qs.filter(q => !bad(q));
+            if (Array.isArray(L.tipiAmmessi)) {
+                // PEI: solo i tipi di esercizio della sua verifica
+                const nT = qs.filter(q => !L.tipiAmmessi.includes(q.type)).length;
+                if (nT) { qs = qs.filter(q => L.tipiAmmessi.includes(q.type)); scartate.push(`${L.studentName}: ${nT} esercizi con tipo non presente nella sua verifica PEI scartati`); }
+            }
             if (p.listening && typeof p.listening === 'object') {
                 const l = _ppNormalizeQuestion(p.listening);
                 if (l.type === 'listening' && !bad(l)) qs.push(l); else nBad++;
@@ -30801,6 +31029,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             if (nBad) scartate.push(`${L.studentName}: ${nBad} esercizi non validi scartati`);
             if (!qs.length) { nonTrovati.push(`${L.studentName} (nessuna domanda valida)`); continue; }
             const activity = { questions: qs };
+            if (L.erroriTot) activity.erroriCoperti = { n: Math.min(L.erroriTot, new Set(qs.flatMap(_ppErrIdsOf)).size), tot: L.erroriTot };
             if (L.sfida) {
                 const b = sfide[L.sfida] || _ppChallengeCacheGet(L.sfida);
                 if (b) { activity.passageText = b.passageText; activity.questions = [...qs, ...JSON.parse(JSON.stringify(b.questions))]; activity.challenge = true; }
@@ -30813,7 +31042,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             const target = (L.draftId && _ppDraftScritto.find(x => x.id === L.draftId))
                 || _ppDraftScritto.find(x => x.studentSafe === L.studentSafe && x.unit === L.unit && x.prefix === L.prefix);
             if (target) {
-                if (!activity.speakingPrompt && target.activity?.speakingPrompt) activity.speakingPrompt = target.activity.speakingPrompt;
+                if (!activity.speakingPrompt && target.activity?.speakingPrompt && L.layout !== 2) activity.speakingPrompt = target.activity.speakingPrompt;
                 target.activity = activity;
                 target.source = 'claude';
                 target.regenAt = Date.now();
@@ -30948,7 +31177,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             if (!prefix) {
                 // Voto > 7 scritto: controlla approfondimento
                 // Se force=true (elaborazione manuale), aspetta il risultato per mostrare lo stato corretto
-                const appRes = await _pianoCheckApprofondimento(studente, unitEff, classeNome, force);
+                const appRes = await _pianoCheckApprofondimento(studente, unitEff, classeNome, force, errorDetails);
                 if (force) {
                     if (appRes === 'generated')      return { outcome: 'generated' };
                     if (appRes === 'below_threshold') return { outcome: 'skipped', reason: `Voto ${voto} > 7 ma media < 8 — nessun APP generato` };
@@ -31139,7 +31368,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         return `AREE DEBOLI DA UNIT PRECEDENTI (integra 4-5 domande su questi argomenti):\n${lines}`;
     }
 
-    async function _pianoCheckApprofondimento(studente, unit, classeNome, force = false) {
+    async function _pianoCheckApprofondimento(studente, unit, classeNome, force = false, testErrors = '') {
         const sG = (studente.scritto || []).filter(g => !unit || g.unit === unit || g.titolo?.includes(unit));
         const oG = (studente.orale  || []).filter(g => !unit || g.unit === unit || g.titolo?.includes(unit));
         // In modalità normale serve entrambi i voti; in force (elaborazione manuale)
@@ -31157,7 +31386,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         if (existing) return 'duplicate';
         const code = _pianoGenCode('APP');
         _ppShowGenerating(studentName, 'APP', unit);
-        const appContext = _pianoBuildAppContext(studente, unit);
+        // Errori della verifica (anche con voto alto vanno ripresi) + note e aree deboli
+        const appContext = await _ppPlanErrorDetails(studente, studentSafe, classeNome, unit, 'APP', testErrors);
         const verInfo = await _ppDetectTestVersion(studente, studentSafe, unit);
         if (verInfo) console.log(`[Piano] ${studentName}: verifica in versione ${verInfo.label} (${verInfo.source}) → APP adattato`);
         const challenge = _ppChallengeEligible(studente, unit, verInfo);
@@ -31167,7 +31397,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         }
         if (challenge) console.log(`[Piano] ${studentName}: almeno 9,5 nella verifica → APP con blocco Sfida`);
         const activity = await _pianoGenerateActivity(studente, media, unit, 'APP', appContext, {}, classeNome, verInfo, { challenge });
-        const speaking = await _pianoGenerateSpeakingPrompt(unit, classeNome, media);
+        // PEI: il piano è un ripasso della verifica, niente speaking prompt
+        const speaking = verInfo?.layout === 2 ? null : await _pianoGenerateSpeakingPrompt(unit, classeNome, media);
         if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return 'error'; }
         // Aggiungi speaking prompt come item extra nel piano (incluso nella bozza)
         if (speaking) activity.speakingPrompt = speaking;
@@ -31659,17 +31890,12 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
     // Rigenera una bozza con il generatore già impostato (_ppSetGenProvider). Lancia in caso di errore.
     async function _ppRegenDraftCore(d, stu) {
         const verInfo = await _ppDetectTestVersion(stu, d.studentSafe, d.unit);
-        let errorDetails = '', challenge = false;
-        if (d.prefix !== 'APP') {
-            try { errorDetails = await _ppFetchLastTestErrorsFromFirebase(d.studentSafe, d.classeNome, d.unit); } catch(e) {}
-        } else {
-            errorDetails = _pianoBuildAppContext(stu, d.unit);
-            challenge = _ppChallengeEligible(stu, d.unit, verInfo);
-        }
+        const errorDetails = await _ppPlanErrorDetails(stu, d.studentSafe, d.classeNome, d.unit, d.prefix);
+        const challenge = d.prefix === 'APP' && _ppChallengeEligible(stu, d.unit, verInfo);
         const activity = await _pianoGenerateActivity(stu, d.voto, d.unit, d.prefix, errorDetails, d.tagBreakdown || {}, d.classeNome, verInfo, { challenge });
         if (!activity) throw new Error('generazione quiz fallita (errore AI)');
         const old = (d.activity && !Array.isArray(d.activity)) ? d.activity : {};
-        if (old.speakingPrompt) activity.speakingPrompt = old.speakingPrompt;
+        if (old.speakingPrompt && verInfo?.layout !== 2) activity.speakingPrompt = old.speakingPrompt;
         d.activity = activity;
         d.source = _ppGenProvider;
         if (verInfo) d.versione = verInfo.label; else delete d.versione;
@@ -31884,17 +32110,13 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         ppSwitchTab(0);
         _ppShowGenerating(item.studentName, prefix, item.unit);
 
-        // Tenta recupero errori da Firebase
-        let errorDetails = '';
-        try {
-            errorDetails = await _ppFetchLastTestErrorsFromFirebase(item.studentSafe, item.classeNome, item.unit);
-            if (errorDetails) console.log(`[Piano Regen] ✅ Errori da Firebase per ${item.studentName}`);
-            else console.log(`[Piano Regen] ⚠️ Nessun errore Firebase — generazione generica per unit "${item.unit}"`);
-        } catch(e) { console.warn('[Piano Regen] Firebase fetch:', e.message); }
+        // Errori della verifica da Firebase (per APP anche note e aree deboli)
+        const errorDetails = await _ppPlanErrorDetails(stu, item.studentSafe, item.classeNome, item.unit, prefix);
+        if (/^ERRORI COMMESSI/.test(errorDetails)) console.log(`[Piano Regen] ✅ Errori da Firebase per ${item.studentName}`);
+        else console.log(`[Piano Regen] ⚠️ Nessun errore Firebase per unit "${item.unit}"`);
 
         const verInfo = await _ppDetectTestVersion(stu, item.studentSafe, item.unit);
         const challenge = prefix === 'APP' && _ppChallengeEligible(stu, item.unit, verInfo);
-        if (prefix === 'APP') errorDetails = _pianoBuildAppContext(stu, item.unit);
         const activity = await _pianoGenerateActivity(stu, item.voto, item.unit, prefix, errorDetails, item.tagBreakdown || {}, item.classeNome, verInfo, { challenge });
         const genEl = document.getElementById('ppGen_' + _mcToSafe(item.studentName));
         if (genEl) genEl.remove();
@@ -32290,6 +32512,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                             <span style="font-size:16px;color:#B45309;user-select:none;">${isCollapsed ? '▶' : '▼'}</span>
                             <div style="font-size:14px;font-weight:700;color:#78350F;">${d.studentName}</div>
                             ${d.source ? `<span title="Generata con ${_ppGenLabel(d.source)}" style="background:${d.source === 'claude' ? '#f3e8ff' : d.source === 'auto' ? '#f3f4f6' : '#dbeafe'};color:${d.source === 'claude' ? '#7e22ce' : d.source === 'auto' ? '#4b5563' : '#1e40af'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">${d.source === 'claude' ? '🟣 Claude' : d.source === 'auto' ? '⚙️ Auto' : '🔵 Haiku 5.5'}</span>` : ''}
+                            ${d.activity?.erroriCoperti ? (() => { const c = d.activity.erroriCoperti, ok = c.n >= c.tot; return `<span title="Errori della verifica ripresi nelle domande del piano: ${c.n} su ${c.tot}" style="background:${ok ? '#dcfce7' : '#fef3c7'};color:${ok ? '#166534' : '#92400e'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">🎯 errori ${c.n}/${c.tot}</span>`; })() : ''}
                             ${d.activity?.challenge ? `<span title="Include il blocco Sfida (lettura, caccia all'errore, scrittura guidata)" style="background:#fce7f3;color:#9d174d;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">🏆 Sfida</span>` : ''}
                             ${d.versione ? `<span title="Piano adattato: nella verifica ha svolto la versione ${d.versione}" style="background:${/PEI/.test(d.versione)?'#dbeafe':'#ffedd5'};color:${/PEI/.test(d.versione)?'#1e40af':'#9a3412'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">${/PEI/.test(d.versione)?'📘':'🔤'} ${d.versione}</span>`
                               : (() => { const _sup = _ppDraftStudent(d)?.supporto;
