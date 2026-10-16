@@ -46,7 +46,7 @@ messaging.onBackgroundMessage(payload => {
 });
 
 // ── CAMBIA QUESTO NUMERO AD OGNI DEPLOY ────────────────────────
-const CACHE_VERSION = 'v14';
+const CACHE_VERSION = 'v15';
 // ───────────────────────────────────────────────────────────────
 
 const CACHE_NAME = 'studentapp-' + CACHE_VERSION;
@@ -54,6 +54,8 @@ const CACHE_NAME = 'studentapp-' + CACHE_VERSION;
 const PRECACHE_URLS = [
   './StudentApp.html',
   './student-manifest.json',
+  './icons/icon-192.png',
+  './icons/badge-72.png',
 ];
 
 // ── INSTALL ────────────────────────────────────────────────────
