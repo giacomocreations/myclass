@@ -29949,6 +29949,15 @@ ${righe.join('\n')}
             console.warn(`[Piano] ${errList.length} errori ma la sua verifica ${verInfo.label} ha ${verInfo.qs.length} domande: errori di un'altra versione, ignorati`);
             errList = [];
         }
+        // Foto riproponibili: PEI = tutte quelle della sua verifica; altre prove = quelle delle domande sbagliate
+        let fotoCtx = null;
+        if (isPei) {
+            if (verInfo.activityId && Object.keys(pei.photoMap).length) fotoCtx = { act: verInfo.activityId, ver: verInfo.verKey, map: pei.photoMap };
+        } else if (opts.photoCtx && errList.length) {
+            const nums = errList.map(e => Number((e.line.match(/^Q(\d+)\[/) || [])[1])).filter(n => opts.photoCtx.map[n] != null);
+            if (nums.length) fotoCtx = { act: opts.photoCtx.act, ver: opts.photoCtx.ver, map: Object.fromEntries(nums.map(n => [n, opts.photoCtx.map[n]])) };
+        }
+        const photoNums = fotoCtx ? Object.keys(fotoCtx.map).map(Number) : [];
         const errReq = !errList.length ? 0
             : Math.min(errList.length, isPei ? nQ : prefix === 'APP' ? Math.ceil(nQ / 2) : Math.ceil(nQ * 2 / 3));
 
@@ -30005,8 +30014,8 @@ REGOLE VERSIONE PEI (obbligatorie, PREVALGONO su tutto il resto del prompt):
 - Stesse strutture e stesso lessico: cambia frasi ed esempi (non copiare le domande), ma l'esercizio deve essere riconoscibile.
 - NON alzare la difficoltà, NON aggiungere tipi di esercizio diversi, niente testi da leggere, niente scrittura, niente risposte libere, niente "Transfer".
 ${_lessico}
-${Object.keys(pei.photoMap).length
-    ? `- FOTO: le domande della verifica segnate [FOTO] avevano una foto (numeri ${Object.keys(pei.photoMap).join(', ')}). Puoi riusarle: aggiungi alla domanda "foto": <numero della domanda della verifica> e la foto viene inserita automaticamente. La foto mostra la risposta giusta di quella domanda (es. lo sport): chiedi la stessa cosa con consegna, ordine delle opzioni o distrattori diversi. Una domanda che parla di foto o immagini DEVE avere il campo "foto" con uno di quei numeri.`
+${photoNums.length
+    ? `- FOTO: le domande della verifica segnate [FOTO] avevano una foto (numeri ${photoNums.join(', ')}). Puoi riusarle: aggiungi alla domanda "foto": <numero della domanda della verifica> e la foto viene inserita automaticamente. La foto mostra la risposta giusta di quella domanda (es. lo sport): chiedi la stessa cosa con consegna, ordine delle opzioni o distrattori diversi. Una domanda che parla di foto o immagini DEVE avere il campo "foto" con uno di quei numeri.`
     : '- FOTO: il piano non ha immagini: NON scrivere mai "guarda la foto/immagine" o "look at the picture".'}
 - OBBLIGATORIO su ogni domanda: "dsaLargeText": true e "referenceTable": un aiuto breve come nella sua verifica (mini-glossario, es. "football = calcio", oppure una regola breve se la verifica era di grammatica).
 - Distrattori chiaramente diversi dalla risposta giusta.
@@ -30052,13 +30061,14 @@ Le regole di questa sezione PREVALGONO sui tipi, sulla distribuzione e sul livel
             ? `
 ══════════════════════════════════════════════
 ERRORI REALI COMMESSI DALLO STUDENTE NELLA VERIFICA (unità: "${unit || 'English Grammar'}") — ognuno ha un codice:
-${errList.map(e => `${e.id}: ${e.line}`).join('\n')}
+${errList.map(e => `${e.id}: ${e.line}${photoNums.includes(Number((e.line.match(/^Q(\d+)\[/) || [])[1])) ? ' [FOTO]' : ''}`).join('\n')}
 
 ⚠️ ISTRUZIONI VINCOLANTI (vengono controllate automaticamente):
 1. ${errList.length <= errReq ? 'OGNI errore elencato' : `Almeno ${errReq} errori DIVERSI tra quelli elencati (i più importanti)`} deve essere ripreso da almeno una domanda: stessa struttura o stesso lessico in cui ha sbagliato (es. se ha confuso what/which, domande su what/which), con frasi NUOVE — non copiare la frase della verifica.
 2. Almeno ${nErrQ} delle ${nQ} domande devono esercitare DIRETTAMENTE gli errori sopra. Se più errori riguardano la stessa struttura, quella struttura merita più domande.${prefix === 'APP' && !isPei ? ' Sono domande di approfondimento: stessa struttura, ma contesti nuovi e un po\' più impegnativi. Le altre domande coprono il resto dell\'unità.' : ''}
 3. Su OGNI domanda aggiungi il campo "errore" con il codice dell'errore che riprende (es. "errore":"E2"), oppure "errore":null se non ne riprende nessuno. Metti il codice SOLO se la domanda esercita davvero quella struttura.
-4. RIMANI STRETTAMENTE nell'unità "${unit || 'English Grammar'}": NON introdurre strutture di altre unità o di anni precedenti.
+4. RIMANI STRETTAMENTE nell'unità "${unit || 'English Grammar'}": NON introdurre strutture di altre unità o di anni precedenti.${photoNums.length && !isPei ? `
+5. FOTO: gli errori segnati [FOTO] erano domande con una foto. Puoi riproporre quella foto aggiungendo alla domanda "foto": <numero della domanda della verifica> (es. "foto": ${photoNums[0]} per Q${photoNums[0]}): la foto viene inserita automaticamente. La foto mostra la risposta giusta di quella domanda: chiedi la stessa cosa con frase, consegna o opzioni diverse. Una domanda che parla di foto o immagini DEVE avere il campo "foto" con uno di questi numeri: ${photoNums.join(', ')}.` : ''}
 ══════════════════════════════════════════════`
             : isPei
             ? '\nNessun errore registrato: ripassa in modo equilibrato tutti gli esercizi della sua verifica.'
@@ -30155,7 +30165,7 @@ CONTROLLO QUALITÀ (obbligatorio, prima di rispondere ricontrolla OGNI domanda):
 - esiste UNA sola risposta corretta: nella scelta multipla nessun distrattore deve essere accettabile; se in un completamento sono corrette più forme, elencale tutte con |;
 - il numero di ___ nel testo è uguale al numero di risposte;
 - la frase non suggerisce la risposta (niente indizi che la rendono ovvia senza conoscere la regola);
-- ${isPei && Object.keys(pei.photoMap).length ? 'una domanda che parla di foto o immagini ha il campo "foto"' : 'il piano non ha immagini: niente "guarda la foto/immagine" o "look at the picture"'}.
+- ${photoNums.length ? 'una domanda che parla di foto o immagini ha il campo "foto"' : 'il piano non ha immagini: niente "guarda la foto/immagine" o "look at the picture"'}.
 ${erroriSection}
 ${contestoSection}
 ${adattamentoSection}
@@ -30168,9 +30178,9 @@ Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdow
             errors: errList, errReq,
             allowedTypes: isPei ? pei.types : null,
             mcOptions: isPei && pei.fromTest ? pei.mcOptions : null,
-            photos: isPei ? Object.keys(pei.photoMap).map(Number) : []
+            photos: photoNums
         };
-        return { prompt, sysMsg, nQ, check, pei };
+        return { prompt, sysMsg, nQ, check, pei, fotoCtx };
     }
 
     // Se la risposta non rispetta la consegna (errori della verifica non ripresi, tipi o opzioni
@@ -30218,7 +30228,8 @@ ${P.prompt}`;
     async function _pianoGenerateActivity(studente, voto, unit, prefix, errorDetails = '', tagBreakdown = {}, classeNome = '', verInfo = null, opts = {}) {
         const challenge = prefix === 'APP' && !!opts.challenge;
         const _lv = challenge ? _ppChallengeLevel(classeNome) : null;
-        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, _lv ? { nQ: _lv.nQ, level: _lv } : {});
+        const photoCtx = verInfo?.layout === 2 ? null : await _ppTestPhotoCtx(_mcToSafe(`${studente.cognome} ${studente.nome}`), unit);
+        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, { ...(_lv ? { nQ: _lv.nQ, level: _lv } : {}), photoCtx });
         let raw = '';
         try {
             raw = await _pianoAICall(P.prompt, P.sysMsg);
@@ -30243,7 +30254,7 @@ ${P.prompt}`;
             if (questions.length < before) console.warn(`[Piano] ✂️ PEI: ${before - questions.length} domande con tipo non presente nella sua verifica scartate`);
         }
         // Foto: collega quelle della sua verifica, scarta le domande che citano una foto che non c'è
-        questions = _ppApplyFoto(questions, P.check, verInfo?.activityId ? { act: verInfo.activityId, ver: verInfo.verKey, map: P.pei?.photoMap } : null);
+        questions = _ppApplyFoto(questions, P.check, P.fotoCtx);
         if (!questions.length) return null;
         const _cov = _ppCheckCompliance(questions, P.check);
         if (_cov.total) console.log(`[Piano] 🎯 Errori della verifica ripresi: ${_cov.covered}/${_cov.total}${_cov.missing.length ? ' — non ripresi: ' + _cov.missing.map(e => e.id).join(', ') : ''}`);
@@ -30945,9 +30956,10 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
     var _ppExportCollector = null;
 
     // Voce dell'export: "local" resta in questo browser (nomi, codici), "file" va a Claude (senza nomi).
-    function _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix, voto, code, errorDetails = '', tagBreakdown = {}, verInfo = null, challenge = false, draftId = null }) {
+    async function _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix, voto, code, errorDetails = '', tagBreakdown = {}, verInfo = null, challenge = false, draftId = null }) {
         const _lv = challenge ? _ppChallengeLevel(classeNome) : null;
-        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, _lv ? { nQ: _lv.nQ, level: _lv } : {});
+        const photoCtx = verInfo?.layout === 2 ? null : await _ppTestPhotoCtx(studentSafe, unit);
+        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, { ...(_lv ? { nQ: _lv.nQ, level: _lv } : {}), photoCtx });
         const lNeed = _ppListeningNeed(prefix, errorDetails, tagBreakdown, verInfo);
         const sfida = challenge ? _ppChallengeKey(classeNome, unit) : null;
         return {
@@ -30955,7 +30967,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                      layout: verInfo?.layout || 0, versione: verInfo?.label || null, tagBreakdown: tagBreakdown || {}, sfida,
                      tipiAmmessi: P.check?.allowedTypes || null, erroriTot: P.check?.errors?.length || 0,
                      fotoCheck: { photos: P.check.photos },
-                     foto: verInfo?.activityId && P.pei ? { act: verInfo.activityId, ver: verInfo.verKey, map: P.pei.photoMap } : null },
+                     foto: P.fotoCtx },
             file: {
                 classe: classeNome || '', unit: unit || '', piano: prefix,
                 voto: Math.round(Number(voto) * 100) / 100,
@@ -31362,7 +31374,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             if (verInfo) console.log(`[Piano] ${studentName}: verifica in versione ${verInfo.label} (${verInfo.source}) → piano adattato`);
             // Export per Claude Code: si raccoglie la consegna invece di generare
             if (_ppExportCollector) {
-                _ppExportCollector.push(_ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit: unitEff, prefix, voto, code, errorDetails, tagBreakdown, verInfo }));
+                _ppExportCollector.push(await _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit: unitEff, prefix, voto, code, errorDetails, tagBreakdown, verInfo }));
                 return { outcome: 'exported' };
             }
             const activity = await _pianoGenerateActivity(studente, voto, unitEff, prefix, errorDetails, tagBreakdown, classeNome, verInfo);
@@ -31525,7 +31537,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         if (verInfo) console.log(`[Piano] ${studentName}: verifica in versione ${verInfo.label} (${verInfo.source}) → APP adattato`);
         const challenge = _ppChallengeEligible(studente, unit, verInfo);
         if (_ppExportCollector) {
-            _ppExportCollector.push(_ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix: 'APP', voto: media, code, errorDetails: appContext, tagBreakdown: {}, verInfo, challenge }));
+            _ppExportCollector.push(await _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix: 'APP', voto: media, code, errorDetails: appContext, tagBreakdown: {}, verInfo, challenge }));
             return 'exported';
         }
         if (challenge) console.log(`[Piano] ${studentName}: almeno 9,5 nella verifica → APP con blocco Sfida`);
@@ -31594,6 +31606,36 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
 
     // Sessione LiveLearn più recente dell'alunno per la unit indicata (history Firebase).
     // Nessun fallback su un'altra unit: contaminerebbe il piano. null se non trovata.
+    // Dettaglio della sessione per i piani: lo stesso test serve più volte di fila (versione,
+    // errori, foto) e a tutta la classe → si scarica una volta ogni 2 minuti.
+    const _ppDetailCache = new Map();
+    function _ppSessionDetail(code, db) {
+        const c = _ppDetailCache.get(code);
+        if (c && Date.now() - c.at < 120000) return c.p;
+        const p = agentFetchSessionDetail(code, db).then(d => { if (!d) _ppDetailCache.delete(code); return d; });
+        _ppDetailCache.set(code, { at: Date.now(), p });
+        return p;
+    }
+    // Foto della verifica che l'alunno ha svolto (la sua versione): { act, ver, map: { n° domanda → posizione su Firebase } }
+    async function _ppTestPhotoCtx(studentSafe, unit) {
+        try {
+            const db = firebase.database();
+            const sess = await _ppFindUnitSession(studentSafe, unit, db);
+            if (!sess) return null;
+            const detail = await _ppSessionDetail(sess.code, db);
+            if (!detail?.activityId) return null;
+            const ver = _ppSessionVersionOf(detail, studentSafe);
+            const isVer = !!(ver && ver !== 'originale' && detail.actVersions?.[ver]?.length);
+            const qs = isVer ? detail.actVersions[ver] : (detail.questions || []);
+            const map = {};
+            qs.forEach((q, j) => { if (q && (q.image || q.imageKey)) map[j + 1] = Number.isInteger(q._oi) ? q._oi : j; });
+            return Object.keys(map).length ? { act: detail.activityId, ver: isVer ? ver : 'originale', map } : null;
+        } catch(e) {
+            console.warn('[Piano] foto della verifica non lette:', e.message);
+            return null;
+        }
+    }
+
     async function _ppFindUnitSession(studentSafe, unitTarget, db) {
         const _ppB = await _mcHistBase(studentSafe);
         const histSnap = _ppB
@@ -31675,7 +31717,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         try {
             const sess = await _ppFindUnitSession(studentSafe, unit, db);
             if (!sess) return _fromProfile();
-            const detail = await agentFetchSessionDetail(sess.code, db);
+            const detail = await _ppSessionDetail(sess.code, db);
             if (!detail) return _fromProfile();
             const ver = _ppSessionVersionOf(detail, studentSafe);
             if (!ver || ver === 'originale') return null;           // prova standard
@@ -31709,7 +31751,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             if (!targetSess) return '';
             console.log(`[Piano] Firebase: sessione trovata per unit "${unitTarget}": ${targetSess.code} ("${targetSess.activityTitle||'?'}")`);
 
-            const detail = await agentFetchSessionDetail(targetSess.code, db);
+            const detail = await _ppSessionDetail(targetSess.code, db);
             if (!detail) { console.warn(`[Piano] Firebase: agentFetchSessionDetail fallito per ${targetSess.code}`); return ''; }
 
             const dr = agentMatchResponse(detail, studentSafe);
