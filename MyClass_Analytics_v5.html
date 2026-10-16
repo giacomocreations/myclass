@@ -1955,9 +1955,11 @@
                     <div style="display:flex;gap:0;border:1.5px solid #e0e4ff;border-radius:12px;overflow:hidden;margin-bottom:12px;">
                         <button id="ppTab0" onclick="ppSwitchTab(0)" style="flex:1;padding:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:#6c47ff;color:#fff;font-family:inherit;">📝 Scritto</button>
                         <button id="ppTab1" onclick="ppSwitchTab(1)" style="flex:1;padding:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:#f0eeff;color:#6c47ff;font-family:inherit;">🗣️ Orale (approvazione)</button>
+                        <button id="ppTab2" onclick="ppSwitchTab(2)" style="flex:1;padding:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:#f0eeff;color:#6c47ff;font-family:inherit;">📋 Attività inviate</button>
                     </div>
                     <div id="ppBody0"></div>
                     <div id="ppBody1" style="display:none;"></div>
+                    <div id="ppBody2" style="display:none;"></div>
                 </div>
                 </div><!-- /pane piano -->
 
@@ -32851,9 +32853,138 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         renderPianoPersPanel();
     }
 
+    // ── Tab "Attività inviate": fisarmonica per classe e unit, selezione e rimozione ──
+    const _ppActSel = new Set();
+    const _ppActOpen = new Set((() => { try { return JSON.parse(localStorage.getItem('pp_act_open') || '[]'); } catch { return []; } })());
+    function _ppActGroups() {
+        const byClass = new Map();
+        Object.entries(_ppActiveScritto).forEach(([code, it]) => {
+            const c = it.classeNome || '(senza classe)', u = it.unit || '(senza unit)';
+            if (!byClass.has(c)) byClass.set(c, new Map());
+            const byUnit = byClass.get(c);
+            if (!byUnit.has(u)) byUnit.set(u, []);
+            byUnit.get(u).push([code, it]);
+        });
+        const unitNum = u => { const m = String(u).match(/\d+/); return m ? Number(m[0]) : 9999; };
+        return [...byClass.entries()].sort((a, b) => a[0].localeCompare(b[0], 'it', { numeric: true }))
+            .map(([c, byUnit]) => [c, [...byUnit.entries()]
+                .sort((a, b) => unitNum(a[0]) - unitNum(b[0]) || a[0].localeCompare(b[0], 'it'))
+                .map(([u, list]) => [u, list.sort((x, y) => String(x[1].studentName || '').localeCompare(String(y[1].studentName || ''), 'it'))])]);
+    }
+    function _ppActiveTabHtml() {
+        const all = Object.keys(_ppActiveScritto);
+        [..._ppActSel].forEach(c => { if (!_ppActiveScritto[c]) _ppActSel.delete(c); });
+        if (!all.length) return '<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">Nessuna attività inviata.</div>';
+        const esc = x => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const enc = x => encodeURIComponent(x).replace(/'/g, '%27');
+        const nSel = _ppActSel.size;
+        const hasCompleted = Object.values(_ppActiveScritto).some(x => x.status === 'completed' || x.status === 'expired');
+        const btn = (label, onclick, style, title = '') => `<button onclick="${onclick}" title="${esc(title)}" style="font-size:11px;padding:5px 12px;border-radius:8px;cursor:pointer;font-weight:700;font-family:inherit;${style}">${label}</button>`;
+        const allSel = nSel === all.length;
+        let html = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+            <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;color:#4c1d95;cursor:pointer;"><input type="checkbox" ${allSel ? 'checked' : ''} onchange="ppActToggleAll(this.checked)" style="width:15px;height:15px;"> Tutte (${all.length})</label>
+            ${btn(`🗑 Rimuovi selezionate${nSel ? ` (${nSel})` : ''}`, 'ppActRemoveSelected()', nSel ? 'border:1.5px solid #dc2626;background:#dc2626;color:#fff;' : 'border:1px solid #e5e7eb;background:#f9fafb;color:#9ca3af;', 'Rimuove le attività spuntate (anche da Firebase): gli alunni non le vedono più')}
+            ${hasCompleted ? btn('🧹 Rimuovi completate', 'ppCleanupCompleted()', 'border:1px solid #d1d5db;background:#fff;color:#666;') : ''}
+            ${btn('🗑 Rimuovi tutte', 'ppActRemoveAll()', 'border:1px solid #fca5a5;background:#fff;color:#dc2626;', 'Rimuove tutte le attività inviate')}
+          </div>`;
+        const groupCb = (codes, key) => {
+            const n = codes.filter(c => _ppActSel.has(c)).length;
+            return `<input type="checkbox" ${n && n === codes.length ? 'checked' : ''} onclick="event.stopPropagation()" onchange="ppActToggleGroup('${enc(key)}',this.checked)" title="Seleziona tutto il gruppo" style="width:15px;height:15px;cursor:pointer;">`;
+        };
+        _ppActGroups().forEach(([classe, units]) => {
+            const cCodes = units.flatMap(([, list]) => list.map(([c]) => c));
+            const cKey = 'C|' + classe;
+            const done = units.flatMap(([, l]) => l).filter(([, it]) => it.status === 'completed').length;
+            html += `<details ${_ppActOpen.has(cKey) ? 'open' : ''} ontoggle="ppActOpenToggle('${enc(cKey)}',this.open)" style="border:1.5px solid #ddd6fe;border-radius:10px;margin-bottom:8px;background:#fff;">
+              <summary style="padding:9px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;font-weight:800;color:#4c1d95;background:#f5f3ff;border-radius:10px;">
+                ${groupCb(cCodes, cKey)} 🏫 ${esc(classe)} <span style="font-weight:600;color:#6b7280;font-size:12px;">· ${cCodes.length} attività · ${done} svolte</span>
+              </summary>
+              <div style="padding:6px 10px 10px;">`;
+            units.forEach(([unit, list]) => {
+                const uCodes = list.map(([c]) => c);
+                const uKey = 'U|' + classe + '|' + unit;
+                html += `<details ${_ppActOpen.has(uKey) ? 'open' : ''} ontoggle="ppActOpenToggle('${enc(uKey)}',this.open)" style="border:1px solid #e5e7eb;border-radius:8px;margin-top:6px;">
+                  <summary style="padding:7px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;font-weight:700;color:#374151;font-size:13px;">
+                    ${groupCb(uCodes, uKey)} 📘 ${esc(unit)} <span style="font-weight:600;color:#6b7280;font-size:12px;">· ${uCodes.length}</span>
+                  </summary>
+                  <div style="overflow-x:auto;padding:0 6px 6px;"><table style="width:100%;border-collapse:collapse;font-size:12px;">
+                    <thead><tr style="background:#faf5ff;">
+                      <th style="width:24px;"></th>
+                      <th style="padding:6px;text-align:left;font-size:11px;color:#555;">Studente</th>
+                      <th style="padding:6px;text-align:left;font-size:11px;color:#555;">Codice</th>
+                      <th style="padding:6px;text-align:center;font-size:11px;color:#555;">Stato</th>
+                      <th style="padding:6px;text-align:center;font-size:11px;color:#555;">Ultimo</th>
+                      <th style="padding:6px;text-align:center;font-size:11px;color:#555;">Tentativi</th>
+                      <th></th>
+                    </tr></thead><tbody>${list.map(([code, item]) => {
+                        const statusIcon = item.status === 'completed' ? '✅' : item.status === 'expired' ? '⏰' : '⏳';
+                        const pfxBg = code.startsWith('REC') ? '#FEE2E2' : code.startsWith('CON') ? '#DCFCE7' : '#DBEAFE';
+                        const pfxCol = code.startsWith('REC') ? '#991B1B' : code.startsWith('CON') ? '#14532D' : '#1E3A5F';
+                        const pianoUrl = `./StudentApp.html?safe=${encodeURIComponent(item.studentSafe)}&name=${encodeURIComponent(item.studentName || '')}&piano=${encodeURIComponent(code)}`;
+                        return `<tr style="border-bottom:0.5px solid #eee;${_ppActSel.has(code) ? 'background:#fef2f2;' : ''}">
+                          <td style="padding:6px;"><input type="checkbox" ${_ppActSel.has(code) ? 'checked' : ''} onchange="ppActToggle('${code}',this.checked)" style="width:15px;height:15px;cursor:pointer;"></td>
+                          <td style="padding:6px;font-weight:600;">${esc(item.studentName)}</td>
+                          <td style="padding:6px;"><a href="${pianoUrl}" target="_blank" title="Apri StudentApp per ${esc(item.studentName)}" style="text-decoration:none;"><span style="background:${pfxBg};color:${pfxCol};border-radius:4px;padding:1px 6px;font-size:11px;font-weight:700;">${code}</span></a></td>
+                          <td style="padding:6px;text-align:center;">${statusIcon}</td>
+                          <td style="padding:6px;text-align:center;">${item.lastScore != null ? `<span style="font-weight:700;color:#059669;">${item.lastScore}%</span>` : '—'}</td>
+                          <td style="padding:6px;text-align:center;color:#666;">${item.attemptCount > 0 ? item.attemptCount : '—'}</td>
+                          <td style="padding:4px;text-align:right;white-space:nowrap;">
+                            <button onclick="ppShowPlanResults('${code}')" title="Vedi i tentativi: quante volte l'ha fatto e come" style="background:#f5f3ff;border:1px solid #c4b5fd;border-radius:6px;color:#6d28d9;cursor:pointer;font-size:12px;padding:2px 6px;">📊</button>
+                            <button onclick="ppRegenActiveScritto('${code}')" title="Rigenera bozza" style="background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;color:#1d4ed8;cursor:pointer;font-size:12px;padding:2px 6px;">↺</button>
+                            <button onclick="ppRemoveActivity('${code}')" title="Rimuovi questa attività" style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;color:#dc2626;cursor:pointer;font-size:12px;padding:2px 6px;">🗑</button>
+                          </td>
+                        </tr>`;
+                    }).join('')}</tbody></table></div>
+                </details>`;
+            });
+            html += `</div></details>`;
+        });
+        return html;
+    }
+    function _ppActRerender() { const el = document.getElementById('ppBody2'); if (el && _ppTabActive === 2) el.innerHTML = _ppActiveTabHtml(); }
+    function ppActOpenToggle(keyEnc, open) {
+        const k = decodeURIComponent(keyEnc);
+        if (open) _ppActOpen.add(k); else _ppActOpen.delete(k);
+        try { localStorage.setItem('pp_act_open', JSON.stringify([..._ppActOpen])); } catch(e) {}
+    }
+    function ppActToggle(code, on) { if (on) _ppActSel.add(code); else _ppActSel.delete(code); _ppActRerender(); }
+    function ppActToggleAll(on) { _ppActSel.clear(); if (on) Object.keys(_ppActiveScritto).forEach(c => _ppActSel.add(c)); _ppActRerender(); }
+    function ppActToggleGroup(keyEnc, on) {
+        const [kind, classe, unit] = decodeURIComponent(keyEnc).split('|');
+        Object.entries(_ppActiveScritto).forEach(([code, it]) => {
+            if ((it.classeNome || '(senza classe)') !== classe) return;
+            if (kind === 'U' && (it.unit || '(senza unit)') !== unit) return;
+            if (on) _ppActSel.add(code); else _ppActSel.delete(code);
+        });
+        _ppActRerender();
+    }
+    // Rimozione di più attività insieme (locale + Firebase), una sola conferma
+    async function _ppActRemoveMany(codes, label) {
+        codes = codes.filter(c => _ppActiveScritto[c]);
+        if (!codes.length) { alert('Nessuna attività selezionata.'); return; }
+        if (!confirm(`Rimuovere ${label} (${codes.length})?\n\nVengono eliminate anche da Firebase: gli alunni non le vedono più in StudentApp.`)) return;
+        let db2; try { db2 = firebase.database(); } catch(e) { db2 = null; }
+        const updates = {};
+        for (const code of codes) {
+            const item = _ppActiveScritto[code];
+            delete _ppActiveScritto[code];
+            _ppActSel.delete(code);
+            const k = item.stuCode || item.studentSafe;
+            updates[`livelearn/recovery_sessions/${k}/${code}`] = null;
+            updates[`livelearn/recovery_lookup/${code}`] = null;
+            updates[`studentapp/personal_plan/${k}/${code}`] = null;
+            updates[`livelearn/history_priv/${k}/sessions/${code}`] = null;
+        }
+        _ppSavActive();
+        if (db2) { try { await db2.ref().update(updates); } catch(e) { console.warn('[Piano] Rimozione Firebase parziale:', e.message); } }
+        renderPianoPersPanel();
+    }
+    function ppActRemoveSelected() { return _ppActRemoveMany([..._ppActSel], 'le attività selezionate'); }
+    function ppActRemoveAll() { return _ppActRemoveMany(Object.keys(_ppActiveScritto), 'TUTTE le attività inviate'); }
+
     function ppSwitchTab(idx) {
         _ppTabActive = idx;
-        [0, 1].forEach(i => {
+        [0, 1, 2].forEach(i => {
             const btn = document.getElementById('ppTab' + i);
             const body = document.getElementById('ppBody' + i);
             if (btn) { btn.style.background = i === idx ? '#6c47ff' : '#f0eeff'; btn.style.color = i === idx ? '#fff' : '#6c47ff'; }
@@ -32986,22 +33117,6 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         if (_ppTabActive === 0) {
             const el = document.getElementById('ppBody0');
             if (!el) return;
-            // Aggiorna dati da Firebase in background
-            let db2;
-            try { db2 = firebase.database(); } catch(e) { db2 = null; }
-            if (db2 && Object.keys(_ppActiveScritto).length) {
-                for (const [code, item] of Object.entries(_ppActiveScritto)) {
-                    try {
-                        // stuCode = assetto nuovo; studentSafe resta per le voci
-                        // gia' in localStorage prima della migrazione.
-                        const _refKey = item.stuCode || item.studentSafe;
-                        const snap = await db2.ref('livelearn/recovery_sessions/' + _refKey + '/' + code).get();
-                        const v = snap.val();
-                        if (v) { item.lastScore = v.lastScore; item.attemptCount = v.attemptCount || 0; item.status = v.status || 'pending'; }
-                    } catch(e) {}
-                }
-                _ppSavActive(); // persisti lo stato aggiornato da Firebase
-            }
             // ── SEZIONE BOZZE (in attesa approvazione docente) ───────────────
             let draftsHtml = '';
             if (_ppDraftScritto.length) {
@@ -33123,9 +33238,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                             ${d.activity?.erroriCoperti ? (() => { const c = d.activity.erroriCoperti, ok = c.n >= c.tot; return `<span title="Errori della verifica ripresi nelle domande del piano: ${c.n} su ${c.tot}" style="background:${ok ? '#dcfce7' : '#fef3c7'};color:${ok ? '#166534' : '#92400e'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">🎯 errori ${c.n}/${c.tot}</span>`; })() : ''}
                             ${d.activity?.challenge ? `<span title="Include il blocco Sfida (lettura, caccia all'errore, scrittura guidata)" style="background:#fce7f3;color:#9d174d;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">🏆 Sfida</span>` : ''}
                             ${d.versione ? `<span title="Piano adattato: nella verifica ha svolto la versione ${d.versione}" style="background:${/PEI/.test(d.versione)?'#dbeafe':'#ffedd5'};color:${/PEI/.test(d.versione)?'#1e40af':'#9a3412'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">${/PEI/.test(d.versione)?'📘':'🔤'} ${d.versione}</span>`
-                              : (() => { const _sup = _ppDraftStudent(d)?.supporto;
-                                  return (_sup === 'PEI' || _sup === 'PDP_DSA') && !d.regenAt
-                                    ? `<span title="Bozza creata prima dell'adattamento DSA/PEI: premi ↺ Rigenera per adattarla alla versione che ha svolto" style="background:#fee2e2;color:#991b1b;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">⚠️ ${_sup === 'PEI' ? 'PEI' : 'DSA'} — da rigenerare</span>` : ''; })()}
+                              : ''}
                           </div>
                           <div style="font-size:12px;color:#B45309;margin-top:3px;margin-left:24px;">${d.unit||''} · voto ${d.voto} · ${new Date(d.createdAt).toLocaleString('it',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})} · codice: <strong>${d.code}</strong></div>
                           <div style="margin-top:5px;margin-left:24px;display:flex;flex-wrap:wrap;gap:4px;">${typeBar}</div>
@@ -33245,54 +33358,34 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     </div>
                 </div>`;
             }
-            const items = Object.entries(_ppActiveScritto);
-            if (!items.length && !_ppDraftScritto.length) {
-                el.innerHTML = claudeBar + draftsHtml + deferredBanner + '<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">Nessuna attività generata ancora.<br><span style="font-size:11px;">Vengono create automaticamente al salvataggio di un voto scritto, in un giorno senza verifiche.</span></div>';
-                return;
+            const nInv = Object.keys(_ppActiveScritto).length;
+            el.innerHTML = claudeBar + draftsHtml + deferredBanner + (_ppDraftScritto.length ? '' :
+                `<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">Nessuna bozza da approvare.${nInv ? `<br><span style="font-size:11px;">Le ${nInv} attività già inviate sono nel tab <a href="#" onclick="ppSwitchTab(2);return false;" style="color:#6c47ff;font-weight:700;">📋 Attività inviate</a>.</span>` : ''}</div>`);
+        }
+
+        // ── Tab 2: Attività inviate (per classe e unit) ──────────────────
+        const tab2Btn = document.getElementById('ppTab2');
+        if (tab2Btn) {
+            const nInv = Object.keys(_ppActiveScritto).length;
+            tab2Btn.textContent = nInv ? `📋 Attività inviate (${nInv})` : '📋 Attività inviate';
+        }
+        if (_ppTabActive === 2) {
+            const el = document.getElementById('ppBody2');
+            if (!el) return;
+            el.innerHTML = _ppActiveTabHtml() + '<div style="font-size:11px;color:#9ca3af;margin-top:6px;">⏳ Aggiorno punteggi e tentativi…</div>';
+            // Punteggi e tentativi aggiornati da Firebase (in parallelo)
+            let db2; try { db2 = firebase.database(); } catch(e) { db2 = null; }
+            if (db2 && Object.keys(_ppActiveScritto).length) {
+                await Promise.all(Object.entries(_ppActiveScritto).map(async ([code, item]) => {
+                    try {
+                        // stuCode = assetto nuovo; studentSafe resta per le voci gia' in localStorage prima della migrazione
+                        const v = (await db2.ref('livelearn/recovery_sessions/' + (item.stuCode || item.studentSafe) + '/' + code).get()).val();
+                        if (v) { item.lastScore = v.lastScore; item.attemptCount = v.attemptCount || 0; item.status = v.status || 'pending'; }
+                    } catch(e) {}
+                }));
+                _ppSavActive();
             }
-            const hasCompleted = Object.values(_ppActiveScritto).some(x => x.status === 'completed' || x.status === 'expired');
-            const cleanupBtn = hasCompleted
-                ? `<button onclick="ppCleanupCompleted()" style="font-size:11px;padding:4px 12px;border-radius:8px;border:1px solid #d1d5db;background:#fff;color:#666;cursor:pointer;margin-bottom:8px;">🧹 Rimuovi completati/scaduti</button>`
-                : '';
-            const rows = items.map(([code, item]) => {
-                const statusIcon = item.status === 'completed' ? '✅' : item.status === 'expired' ? '⏰' : '⏳';
-                const scoreHtml = item.lastScore != null ? `<span style="font-weight:700;color:#059669;">${item.lastScore}%</span>` : '—';
-                const attHtml = item.attemptCount > 0 ? `${item.attemptCount} tent.` : '—';
-                const pfxBg = code.startsWith('REC') ? '#FEE2E2' : code.startsWith('CON') ? '#DCFCE7' : '#DBEAFE';
-                const pfxCol = code.startsWith('REC') ? '#991B1B' : code.startsWith('CON') ? '#14532D' : '#1E3A5F';
-                const pianoUrl = `./StudentApp.html?safe=${encodeURIComponent(item.studentSafe)}&name=${encodeURIComponent(item.studentName||'')}&piano=${encodeURIComponent(code)}`;
-                return `<tr style="border-bottom:0.5px solid #eee;">
-                  <td style="padding:8px 6px;">
-                    <a href="${pianoUrl}" target="_blank" title="Apri StudentApp per ${item.studentName} — attività ${code}" style="text-decoration:none;">
-                      <span style="background:${pfxBg};color:${pfxCol};border-radius:4px;padding:1px 6px;font-size:11px;font-weight:700;cursor:pointer;border-bottom:1.5px dashed ${pfxCol};display:inline-block;">${code}</span>
-                    </a>
-                    <button onclick="navigator.clipboard.writeText('${pianoUrl}').then(()=>{ this.textContent='✅'; setTimeout(()=>this.textContent='📋',1200); })" title="Copia link" style="background:none;border:none;cursor:pointer;font-size:11px;padding:0 2px;vertical-align:middle;">📋</button>
-                  </td>
-                  <td style="padding:8px 6px;font-size:12px;">${item.studentName}</td>
-                  <td style="padding:8px 6px;font-size:11px;color:#555;">${item.unit||'—'}</td>
-                  <td style="padding:8px 6px;font-size:12px;text-align:center;">${statusIcon}</td>
-                  <td style="padding:8px 6px;font-size:12px;text-align:center;">${scoreHtml}</td>
-                  <td style="padding:8px 6px;font-size:12px;text-align:center;color:#666;">${attHtml}</td>
-                  <td style="padding:6px 4px;text-align:center;">
-                    <button onclick="ppShowPlanResults('${code}')" title="Vedi i tentativi: quante volte l'ha fatto e come" style="background:#f5f3ff;border:1px solid #c4b5fd;border-radius:6px;color:#6d28d9;cursor:pointer;font-size:12px;padding:2px 6px;line-height:1;margin-right:4px;">📊</button>
-                    <button onclick="ppRegenActiveScritto('${code}')" title="Rigenera bozza" style="background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;color:#1d4ed8;cursor:pointer;font-size:12px;padding:2px 6px;line-height:1;margin-right:4px;font-weight:700;">↺</button><button onclick="ppRemoveActivity('${code}')" title="Rimuovi attività dalla coda" style="background:none;border:1px solid #fca5a5;border-radius:6px;color:#dc2626;cursor:pointer;font-size:12px;padding:2px 6px;line-height:1;">🗑</button>
-                  </td>
-                </tr>`;
-            }).join('');
-            el.innerHTML = claudeBar + draftsHtml + deferredBanner + cleanupBtn + `<div style="overflow-x:auto;">
-              <table style="width:100%;border-collapse:collapse;font-size:12px;">
-                <thead><tr style="background:#f5f3ff;">
-                  <th style="padding:7px 6px;text-align:left;font-size:11px;color:#555;">Codice</th>
-                  <th style="padding:7px 6px;text-align:left;font-size:11px;color:#555;">Studente</th>
-                  <th style="padding:7px 6px;text-align:left;font-size:11px;color:#555;">Unità</th>
-                  <th style="padding:7px 6px;text-align:center;font-size:11px;color:#555;">Stato</th>
-                  <th style="padding:7px 6px;text-align:center;font-size:11px;color:#555;">Score</th>
-                  <th style="padding:7px 6px;text-align:center;font-size:11px;color:#555;">Tentativi</th>
-                  <th style="padding:7px 6px;text-align:center;font-size:11px;color:#555;"></th>
-                </tr></thead>
-                <tbody>${rows}</tbody>
-              </table>
-            </div>`;
+            if (_ppTabActive === 2) el.innerHTML = _ppActiveTabHtml();
         }
 
                 // ── Tab 1: Orale (approvazione) ──────────────────────────────────
