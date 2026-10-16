@@ -10384,7 +10384,8 @@ Rispondi SOLO con il JSON.`;
             //    "Unit 2" e "Unit 5" restano correttamente distinte anche se
             //    condividono parole nel titolo descrittivo.
             const _unitNum = s => {
-                const m = s.match(/\bunit[aà]?\s*0*(\d+)/i) || s.match(/\bu\s*0*(\d+)\b/i);
+                // "Unit 7", "Unità 7", "Unit test 7", "U7"
+                const m = s.match(/\bunit[aà]?\s*(?:test\s*)?0*(\d+)/i) || s.match(/\bu\s*0*(\d+)\b/i);
                 return m ? parseInt(m[1], 10) : null;
             };
             const nA = _unitNum(lcA), nB = _unitNum(lcB);
@@ -31787,6 +31788,80 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         }
     }
 
+    // ── Materiali della unit per il messaggio del piano (REC/CON) ─────────────
+    // Fonti: risorse allegate alle lezioni della unit già fatte (svolte o con data passata),
+    // link pubblicati in bacheca che citano la unit (o pubblicati con una sua lezione),
+    // risorse dell'archivio con la unit tra i tag. Prima si guardavano solo le lezioni
+    // segnate "svolta": i link messi in bacheca non venivano mai trovati.
+    const _ppMatCache = new Map();
+    function _ppMatKey(classeNome, unit) { return `${classeNome || ''}|${unit || ''}`; }
+    function _ppMatCached(classeNome, unit) {
+        const c = _ppMatCache.get(_ppMatKey(classeNome, unit));
+        return c && c.list && Date.now() - c.at < 300000 ? c.list : undefined;
+    }
+    async function _ppUnitMateriali(classeNome, unit) {
+        const key = _ppMatKey(classeNome, unit);
+        const c = _ppMatCache.get(key);
+        if (c && Date.now() - c.at < 300000) return c.list || c.p;
+        const p = (async () => {
+            const norm = x => String(x || '').replace(/\s+/g, '').toLowerCase();
+            const cls = (data.classi || []).find(x => x.nome === classeNome) || (data.classi || []).find(x => norm(x.nome) === norm(classeNome));
+            const out = [], seen = new Set();
+            const add = (titolo, url, tipo) => {
+                const k = url ? String(url).trim() : 'T:' + norm(titolo);
+                if (!titolo && !url) return;
+                if (seen.has(k)) return;
+                seen.add(k);
+                out.push({ titolo: titolo || url, url: url || '', tipo: tipo || '' });
+            };
+            const oggi = new Date().toISOString().slice(0, 10);
+            const piano = cls?.pianificazione?.piano || [];
+            const lezUnit = piano.filter(lz => _matchUnit(lz.unit || lz.unit_classificata || '', unit) && (lz.stato === 'svolta' || String(lz.data || '').slice(0, 10) <= oggi));
+            const dateUnit = new Set(lezUnit.map(lz => String(lz.data || '').slice(0, 10)).filter(Boolean));
+            lezUnit.forEach(lz => (lz.risorse || []).forEach(rid => {
+                const r = typeof rid === 'object' ? rid : (data.risorseLezioni || []).find(x => x.id === rid);
+                if (r) add(r.titolo, r.url, r.tipo);
+            }));
+            (data.risorseLezioni || []).forEach(r => {
+                const tags = Array.isArray(r.tags) ? r.tags.join(' ') : String(r.tags || '');
+                if (tags && _matchUnit(tags, unit)) add(r.titolo, r.url, r.tipo);
+            });
+            if (cls) {
+                try {
+                    const classId = cls.nome.replace(/\s+/g, '_').toLowerCase();
+                    const board = (await firebase.database().ref('livelearn/board/' + classId).get()).val() || {};
+                    Object.entries(board).forEach(([k, m]) => {
+                        if (!m || m.from !== 'teacher' || !m.url || m.type === 'piano' || m.visibility === 'private') return;
+                        const testo = `${m.text || ''} ${m.linkTitle || ''}`;
+                        const dl = (k.match(/^lezmat_(\d{4}-\d{2}-\d{2})/) || [])[1];
+                        if (_matchUnit(testo, unit) || (dl && dateUnit.has(dl))) {
+                            const tit = m.linkTitle || String(m.text || '').replace(/^📎\s*Materiale\s*—\s*/, '').replace(/https?:\/\/\S+/g, '').trim().slice(0, 80);
+                            add(tit, m.url, m.type);
+                        }
+                    });
+                } catch(e) { console.warn('[Piano] bacheca non letta per i materiali:', e.message); }
+            }
+            _ppMatCache.set(key, { at: Date.now(), list: out });
+            return out;
+        })().catch(e => { console.warn('[Piano] materiali unit:', e.message); _ppMatCache.delete(key); return []; });
+        _ppMatCache.set(key, { at: Date.now(), p });
+        return p;
+    }
+    // Anteprima nella bozza: riquadro riempito quando i materiali sono stati cercati
+    function _ppMatFill() {
+        document.querySelectorAll('[data-ppmat]').forEach(el => {
+            if (el.dataset.ppDone) return;
+            el.dataset.ppDone = '1';
+            const [cn, un] = JSON.parse(decodeURIComponent(el.dataset.ppmat));
+            _ppUnitMateriali(cn, un).then(list => { el.innerHTML = _ppMatHtml(list, un); });
+        });
+    }
+    function _ppMatHtml(list, unit) {
+        const esc = x => String(x || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        if (!list || !list.length) return '<div style="font-size:12px;color:#6b7280;margin-top:5px;font-style:italic;">Nessun materiale trovato per questa unit (lezioni, bacheca e archivio risorse).</div>';
+        return `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #bfdbfe;"><div style="font-size:12px;font-weight:700;color:#1e3a8a;margin-bottom:3px;">📎 Materiali allegati al messaggio per ${esc(unit || 'questa unit')} (${list.length}):</div>${list.map(r => `<div style="font-size:12px;color:#1e40af;margin-top:3px;">• <a href="${esc(r.url || '#')}" target="_blank" style="color:#1e40af;">${esc(r.titolo)}</a></div>`).join('')}</div>`;
+    }
+
     // Scrive un messaggio tipo "piano" nella Bacheca per l'alunno
     async function _ppPianoPublishToBacheca({ classId, studentSafe, studentName, code, prefix, unit, voto, text, isOrale }) {
         let db2; try { db2 = firebase.database(); } catch(e) { return; }
@@ -31810,14 +31885,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             try {
                 // Cerca la classe corrispondente
                 const cls = (data.classi || []).find(c => c.nome && classId && c.nome.replace(/\s+/g,'_').toLowerCase() === classId);
-                const piano = cls?.pianificazione?.piano || [];
-                const svolte = piano.filter(lz => lz.stato === 'svolta' && _matchUnit(lz.unit || '', unit));
-                svolte.forEach(lz => {
-                    (lz.risorse || []).forEach(rid => {
-                        const r = (data.risorseLezioni || []).find(x => x.id === rid);
-                        if (r && !materialiList.find(m => m.id === rid)) materialiList.push(r);
-                    });
-                });
+                if (cls) materialiList = await _ppUnitMateriali(cls.nome, unit);
                 if (materialiList.length) {
                     materialiText = '\n\n📚 Rivedi i materiali utilizzati in questa unit:';
                     materialiList.forEach(r => { materialiText += `\n• ${r.titolo}${r.url ? ' → ' + r.url : ''}`; });
@@ -32662,31 +32730,22 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                         const prefixLbl = d.prefix === 'REC' ? 'recupero' : d.prefix === 'CON' ? 'consolidamento' : 'approfondimento';
                         let msgTxt = `${emoji} Piano ${prefixLbl} scritto — ${d.unit||''} · voto ${d.voto} · Codice: ${d.code}`;
                         // Materiali unit (REC + CON, cioè risultati sotto l'80%)
+                        // I materiali si cercano in lezioni, bacheca e archivio (asincrono): riquadro riempito dopo il render
                         let materialeHtml = '';
-                        if ((d.prefix === 'REC' || d.prefix === 'CON') && d.unit && typeof _matchUnit === 'function') {
-                            try {
-                                const cls = (data.classi || []).find(c => c.nome === d.classeNome);
-                                const piano = cls?.pianificazione?.piano || [];
-                                const svolte = piano.filter(lz => lz.stato === 'svolta' && _matchUnit(lz.unit || '', d.unit));
-                                const mats = [];
-                                svolte.forEach(lz => {
-                                    (lz.risorse || []).forEach(rid => {
-                                        const r = (data.risorseLezioni || []).find(x => x.id === rid);
-                                        if (r && !mats.find(m => m.id === rid)) mats.push(r);
-                                    });
-                                });
-                                if (mats.length) {
-                                    msgTxt += '\n\n📚 Rivedi i materiali utilizzati in questa unit:';
-                                    mats.forEach(r => { msgTxt += `\n• ${r.titolo}${r.url ? ' → ' + r.url : ''}`; });
-                                    materialeHtml = mats.map(r => `<div style="font-size:12px;color:#1e40af;margin-top:3px;">• <a href="${r.url||'#'}" target="_blank" style="color:#1e40af;">${r.titolo}</a></div>`).join('');
-                                }
-                            } catch(e) {}
+                        if ((d.prefix === 'REC' || d.prefix === 'CON') && d.unit) {
+                            const cached = _ppMatCached(d.classeNome, d.unit);
+                            if (cached) materialeHtml = _ppMatHtml(cached, d.unit);
+                            else {
+                                materialeHtml = `<div data-ppmat="${encodeURIComponent(JSON.stringify([d.classeNome || '', d.unit]))}"><div style="font-size:12px;color:#6b7280;margin-top:5px;">⏳ Cerco i materiali della unit (lezioni, bacheca, archivio)…</div></div>`;
+                                clearTimeout(_ppMatFill._t);
+                                _ppMatFill._t = setTimeout(_ppMatFill, 0);
+                            }
                         }
                         const deepLink = `https://giacomocreations.github.io/myclass/StudentApp.html?safe=${encodeURIComponent(d.studentSafe)}&name=${encodeURIComponent(d.studentName)}&piano=${encodeURIComponent(d.code)}`;
                         return `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-top:8px;">
                           <div style="font-size:11px;font-weight:700;color:#1e3a8a;letter-spacing:.3px;margin-bottom:6px;">📨 ANTEPRIMA MESSAGGIO BACHECA</div>
                           <div style="font-size:13px;font-weight:600;color:#1e40af;white-space:pre-line;">${msgTxt.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
-                          ${materialeHtml ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #bfdbfe;"><div style="font-size:12px;font-weight:700;color:#1e3a8a;margin-bottom:3px;">📎 Allegati trovati per ${d.unit||'questa unit'}:</div>${materialeHtml}</div>` : ((d.prefix === 'REC' || d.prefix === 'CON') ? '<div style="font-size:12px;color:#6b7280;margin-top:5px;font-style:italic;">Nessun materiale allegato trovato nelle lezioni svolte per questa unit.</div>' : '')}
+                          ${materialeHtml}
                           <div style="margin-top:7px;"><a href="${deepLink}" target="_blank" style="font-size:11px;color:#6c47ff;font-weight:700;">🔗 Link studente</a></div>
                         </div>`;
                     })();
