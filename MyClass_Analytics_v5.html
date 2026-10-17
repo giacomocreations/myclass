@@ -19180,7 +19180,21 @@ ${blocco.regole}`;
     }
 
     // Mappa costruita da livelearn/students gia' letto (nessuna lettura qui)
+    // Alunni tester di LiveLearn (livelearn/students/<codice>.tester): nomi in
+    // forma "parole ordinate", per riconoscerli comunque siano scritti
+    let _mcTesterFirme = new Set();
+    const _mcFirmaNome = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(w => w.length > 1).sort().join(' ');
+    // Le prove di un tester non si valutano: non e' un alunno di MyClass
+    function _agentEUnTester(st) {
+      if (!_mcTesterFirme.size || !st) return false;
+      const dr = st.detailedResponse || {};
+      return [st.displayName, String(st.safe || '').replace(/_/g, ' '), dr.name, dr.aliasOf]
+        .some(n => n && _mcTesterFirme.has(_mcFirmaNome(n)));
+    }
+
     function _mcCodeMapFrom(studs) {
+      _mcTesterFirme = new Set(Object.values(studs || {}).filter(s => s && s.tester && s.name).map(s => _mcFirmaNome(s.name)));
       const map = {};
       Object.entries(studs || {}).forEach(([code, s]) => {
         if (!s || !s.name) return;
@@ -25278,6 +25292,7 @@ ${sectionInstr}`;
     // Si tiene la voce col nome del registro. Vale anche per i task gia' creati
     // prima della correzione: la rigenerazione passa di qui.
     function _agentDedupeStudents(students, classeObj) {
+        if (Array.isArray(students)) students = students.filter(st => !_agentEUnTester(st));
         if (!Array.isArray(students) || students.length < 2) return students || [];
         const nrm   = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
         const words = s => nrm(s).split(' ').filter(w => w.length > 1).sort().join(' ');
@@ -25900,6 +25915,7 @@ ${sectionInstr}`;
         for (const [classId, { classe, sessionMap }] of Object.entries(foundByHistory)) {
             for (const [code, group] of Object.entries(sessionMap)) {
                 agentCheckAbort(); // ← interrompi se l'utente ha premuto Stop
+                group.students = group.students.filter(st => !_agentEUnTester(st));
                 if (group.students.length < 1) continue;
                 if (group.mode === 'practice') {
                     console.log(`[Agente] ${classe.nome}: skip ${code} — practice mode`);
