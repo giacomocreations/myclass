@@ -20259,7 +20259,7 @@ ${blocco.regole}`;
         for (const s of classe.studenti) {
           try { await _autoSyncStudentMyClass(s, classe.nome); } catch(e) {}
         }
-        try { await _syncOrarioTester(classe); } catch(e) {}
+        try { await _syncClasseTester(classe); } catch(e) {}
         console.log('[AutoSync] ✅ Statistiche sincronizzate per', classe.nome);
       }, 4000); // aspetta 4 secondi dopo l'ultimo saveData prima di scrivere su Firebase
     }
@@ -20351,7 +20351,7 @@ ${blocco.regole}`;
         }
       }
 
-      try { await _syncOrarioTester(classe); } catch(e) { console.warn('[Sync] orario tester:', e.message); }
+      try { await _syncClasseTester(classe); } catch(e) { console.warn('[Sync] dati classe ai tester:', e.message); }
 
       if (btn) {
         btn.textContent = ok>0 ? `✅ ${ok} studenti sincronizzati` : '❌ Errore';
@@ -20385,8 +20385,10 @@ ${blocco.regole}`;
     // Gli alunni tester (creati in LiveLearn) non sono tra gli studenti di
     // MyClass, quindi non ricevevano il ramo myclass: senza orario la
     // StudentApp non sapeva quando scadono i compiti e non li mostrava in
-    // calendario. Ricevono solo orario e giorni saltati/sospesi della classe.
-    async function _syncOrarioTester(classe) {
+    // calendario, e non vedevano gli obiettivi pubblicati. Ricevono i dati
+    // della classe (orario, giorni saltati/sospesi, obiettivi delle unit
+    // pubblicate, senza esiti perche' non hanno prove in MyClass).
+    async function _syncClasseTester(classe) {
       const db = firebase.database();
       const classId = classe.nome.replace(/\s+/g,'_').toLowerCase();
       const studs = (await db.ref('livelearn/students').get()).val() || {};
@@ -20401,6 +20403,7 @@ ${blocco.regole}`;
         orarioSettimana: orarioSettimana.length ? orarioSettimana : null,
         giorniSaltati:   Object.keys(giorniSaltati).length ? giorniSaltati : null,
         giorniSospesi:   [...GIORNI_SOSPESI],
+        obiettivi:       typeof _obiettiviForSync === 'function' ? _obiettiviForSync({}, classe) : null,
         syncedAt:        Date.now()
       };
       await Promise.all(codes.map(code => db.ref('livelearn/history_priv/'+code+'/myclass').update(upd)));
