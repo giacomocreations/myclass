@@ -437,7 +437,6 @@ const S = {
   sessions: {}, myclass: null, summary: null,
   lessons: [], feedback: [], boardMsgs: [], boardTab: 'msgs',
   personalPlan: [], recoverySessions: {}, _pianoSeen: new Set(),
-  autoval: {}, _autovalOff: false,
   homeworkFilter: 'all', statFilter: 'all',
   calYear: new Date().getFullYear(), calMonth: new Date().getMonth(),
   selectedDate: null, chartInstances: {},
@@ -977,13 +976,6 @@ function setupRealtimeListeners(){
   };
   ppRef.on('value', ppFn);
   S._listeners.push({ref:ppRef, fn:ppFn});
-
-  // AUTOVALUTAZIONE OBIETTIVI (la scrive l'alunno, la legge il docente in MyClass).
-  // Se le regole Firebase non danno ancora accesso al ramo, i pulsanti spariscono.
-  const avRef = db.ref('studentapp/autovalutazione/'+S.code);
-  const avFn = snap => { S.autoval = snap.val()||{}; S._autovalOff = false; _obvRerender(); };
-  avRef.on('value', avFn, err => { console.warn('[Autovalutazione] non disponibile:', err && err.message); S._autovalOff = true; _obvRerender(); });
-  S._listeners.push({ref:avRef, fn:avFn});
 
   // RECOVERY SESSIONS (risultati attività REC-/CON-/APP-)
   const rsRef = db.ref('livelearn/recovery_sessions/'+S.code);
@@ -2090,60 +2082,14 @@ function _obvUnita(){
     .filter(u=>u.items.length)
     .sort((a,b)=>(a.ord||0)-(b.ord||0));
 }
-// Autovalutazione: prima della verifica l'alunno dice come si sente su ogni
-// obiettivo; quando il docente mostra gli esiti resta visibile accanto.
-const _OBV_AUTO = [[2,'😀','Lo so fare'],[1,'😐','Quasi'],[0,'😟','Non ancora']];
-function _obvKey(unit){ return String(unit||'').replace(/[.#$\[\]\/]/g,'_').slice(0,120) || 'unit'; }
-function _obvAutoOf(u, id){
-  const v = S.autoval?.[_obvKey(u.unit)]?.r?.[id];
-  return v==null ? null : _OBV_AUTO.find(a=>a[0]===Number(v)) || null;
-}
-function _obvRerender(){
-  renderObiettiviCard();
-  if(document.getElementById('scr-stats')?.classList.contains('active') && S.myclass){
-    ['radar-chart','grades-chart','spark-chart','ll-trend-chart'].forEach(id=>destroyChart(id));
-    renderStats();
-  }
-}
-async function setAutoval(ord, id, v){
-  const u = _obvUnita().find(x=>x.ord===ord);
-  if(!u || u.esiti || S._autovalOff) return;
-  const k = _obvKey(u.unit);
-  const e = S.autoval[k] || (S.autoval[k] = { unit:u.unit, r:{} });
-  e.r = e.r || {};
-  if(Number(e.r[id])===v) delete e.r[id]; else e.r[id] = v;   // secondo tocco: toglie
-  _obvRerender();
-  try {
-    await db.ref('studentapp/autovalutazione/'+S.code+'/'+k).set({ unit:u.unit, ts:Date.now(), r:e.r });
-  } catch(err){
-    console.warn('[Autovalutazione] salvataggio:', err && err.message);
-    S._autovalOff = true; _obvRerender();
-    alert('Non è stato possibile salvare la tua autovalutazione. Avvisa il prof.');
-  }
-}
 function _obvRigheHtml(u){
-  const puoi = !u.esiti && !S._autovalOff;
   return u.items.map(it=>{
     const st = u.esiti ? (_OBV_STATI[it.s] || _OBV_STATI.np) : null;
-    const mio = it.id ? _obvAutoOf(u, it.id) : null;
-    const bottoni = puoi && it.id ? `<div style="display:flex;gap:5px;margin-top:5px;flex-wrap:wrap;">${_OBV_AUTO.map(([v,e,l])=>{
-        const sel = mio && mio[0]===v;
-        return `<button onclick="event.stopPropagation();setAutoval(${Number(u.ord)||0},'${esc(it.id)}',${v})" style="border:1px solid ${sel?'var(--purple)':'var(--border)'};background:${sel?'var(--purple-light)':'#fff'};color:${sel?'var(--purple-dark)':'var(--muted)'};border-radius:14px;padding:3px 9px;font-size:11px;font-weight:${sel?700:500};cursor:pointer;font-family:inherit;">${e} ${l}</button>`;
-      }).join('')}</div>` : '';
-    const tuo = u.esiti && mio ? `<span style="font-size:10px;color:var(--muted);margin-left:6px;">· tu: ${mio[1]} ${mio[2].toLowerCase()}</span>` : '';
     return `<div style="display:flex;gap:9px;align-items:flex-start;padding:6px 0;border-top:0.5px solid var(--border);">
       <span style="font-size:14px;line-height:1.35;flex-shrink:0;" title="${st?st.label:''}">${st?st.icon:'<span style="color:var(--purple);font-weight:800;">○</span>'}</span>
-      <div style="flex:1;font-size:13px;line-height:1.4;color:var(--text);">${esc(it.t)}${st?`<div style="font-size:10px;color:var(--muted);margin-top:1px;">${it.s!=='raggiunto'?st.label:''}${tuo}</div>`:''}${bottoni}</div>
+      <div style="flex:1;font-size:13px;line-height:1.4;color:var(--text);">${esc(it.t)}${st&&it.s!=='raggiunto'?`<div style="font-size:10px;color:var(--muted);margin-top:1px;">${st.label}</div>`:''}</div>
     </div>`;
   }).join('');
-}
-// Invito all'autovalutazione sopra l'elenco (solo prima degli esiti)
-function _obvInvitoHtml(u){
-  if(u.esiti || S._autovalOff || !u.items.some(it=>it.id)) return '';
-  const fatti = u.items.filter(it=>it.id && _obvAutoOf(u, it.id)).length;
-  return `<div style="font-size:11px;color:var(--purple-dark);background:var(--purple-light);border-radius:8px;padding:6px 9px;margin:4px 0 6px;line-height:1.4;">
-    Come ti senti su ogni obiettivo? Tocca una faccina: dopo la verifica la confronterai con il risultato.${fatti?` <b>${fatti}/${u.items.length}</b>`:''}
-  </div>`;
 }
 function _obvConteggio(u){
   const ok = u.items.filter(it=>it.s==='raggiunto').length;
@@ -2174,7 +2120,7 @@ function renderObiettiviCard(){
       </div>
       <span style="font-size:13px;color:var(--purple);flex-shrink:0;">${chiuso?'▾':'▴'}</span>
     </div>
-    ${chiuso?'':`<div style="margin-top:8px;">${u.esiti?_obvConteggio(u):_obvInvitoHtml(u)}${_obvRigheHtml(u)}</div>
+    ${chiuso?'':`<div style="margin-top:8px;">${u.esiti?_obvConteggio(u):''}${_obvRigheHtml(u)}</div>
     ${unita.length>1?`<div style="text-align:right;margin-top:6px;"><button onclick="navTab(2,'scr-stats')" style="background:none;border:none;color:var(--purple);font-size:12px;font-weight:600;cursor:pointer;padding:0;font-family:inherit;">Tutte le unit →</button></div>`:''}`}
   </div>`;
 }
@@ -2190,9 +2136,9 @@ function _obvStatsHtml(mc){
         ${esc(u.unit)}${u.corrente?' <span style="font-size:10px;font-weight:700;color:#fff;background:var(--purple);border-radius:8px;padding:1px 6px;">in corso</span>':''}
         ${u.esiti?`<span style="font-size:11px;font-weight:600;color:var(--muted);"> · ${u.items.filter(it=>it.s==='raggiunto').length}/${u.items.length} ✅</span>`:''}
       </summary>
-      ${u.esiti?_obvConteggio(u):_obvInvitoHtml(u)}${_obvRigheHtml(u)}
+      ${u.esiti?_obvConteggio(u):''}${_obvRigheHtml(u)}
     </details>`).join('')}
-    ${unita.some(u=>u.esiti)?`<div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">✅ raggiunto · 🟡 ci sei quasi · 🔴 da rinforzare · ⬜ ancora da verificare${Object.keys(S.autoval||{}).length?' · «tu» = la tua autovalutazione':''}</div>`:''}
+    ${unita.some(u=>u.esiti)?`<div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">✅ raggiunto · 🟡 ci sei quasi · 🔴 da rinforzare · ⬜ ancora da verificare</div>`:''}
   </div>`;
 }
 

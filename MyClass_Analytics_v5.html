@@ -34388,7 +34388,7 @@ Rispondi SOLO con JSON valido, niente altro:
             u.obiettivi.forEach(o => {
                 const st = obvStato(studente, classe, u, nomeU, o, fonti);
                 if (st.stato === 'escluso') return;
-                const it = { id: o.id, t: o.testo, a: o.area };
+                const it = { t: o.testo, a: o.area };
                 if (u.obiettiviEsitiVisibili) it.s = st.stato;
                 items.push(it);
             });
@@ -34734,49 +34734,6 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         _obvRender();
     }
 
-    // ── Autovalutazione degli alunni ────────────────────────────────────
-    // La scrive l'alunno nella StudentApp prima della verifica:
-    //   studentapp/autovalutazione/{codice}/{unit} = { unit, ts, r: {id obiettivo: 2 | 1 | 0} }
-    // (2 = lo so fare, 1 = quasi, 0 = non ancora). MyClass la copia sull'alunno
-    // (studente.obiettiviAuto) per confrontarla con gli esiti.
-    const OBV_AUTO = { 2: { icon: '😀', label: 'lo so fare' }, 1: { icon: '😐', label: 'quasi' }, 0: { icon: '😟', label: 'non ancora' } };
-    const OBV_REGOLA_AUTO = '"autovalutazione": { "$codice": { ".read": "auth != null", ".write": "auth != null" } }';
-
-    function _obvAutoAlunno(s, nomeU, oid) {
-        const e = Object.values(s?.obiettiviAuto || {}).find(x => x && x.unit === nomeU);
-        const v = e?.r?.[oid];
-        return v == null ? null : (OBV_AUTO[Number(v)] ? Number(v) : null);
-    }
-    // Autovalutazione diversa dall'esito: si sopravvaluta o si sottovaluta
-    function _obvScarto(v, stato) {
-        if (v == null) return null;
-        if (v === 2 && stato === 'non_raggiunto') return 'sopra';
-        if (v === 0 && stato === 'raggiunto') return 'sotto';
-        return null;
-    }
-    async function obvCaricaAutovalutazioni(classe) {
-        let db;
-        try { db = firebase.database(); } catch (e) { return; }
-        let cambiate = false, negato = null;
-        for (const s of (classe.studenti || [])) {
-            try {
-                const code = await _mcCodeOf(_toSafe(`${s.cognome} ${s.nome}`));
-                if (!code) continue;
-                const val = (await db.ref('studentapp/autovalutazione/' + code).get()).val() || null;
-                if (JSON.stringify(val) !== JSON.stringify(s.obiettiviAuto || null)) {
-                    if (val) s.obiettiviAuto = val; else delete s.obiettiviAuto;
-                    cambiate = true;
-                }
-            } catch (e) {
-                if (/permission/i.test(e.message || e.code || '')) { negato = e.message; break; }
-            }
-        }
-        _obvUI.autoErr = negato;
-        _obvUI.autoLetta = classe;
-        if (cambiate) saveData();
-        if (document.getElementById('obvOverlay') && _obvUI.tab === 'esiti') _obvRender();
-    }
-
     // ── Finestra "🎯 Obiettivi" ─────────────────────────────────────────
     let _obvUI = { ci: null, ui: null, tab: 'obiettivi' };
 
@@ -34792,11 +34749,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         _obvRender();
     }
     function obvApriUnita(i) { _obvUI.ui = i; _obvUI.tab = 'obiettivi'; _obvUI.edit = null; _obvRender(); }
-    function obvTab(t) {
-        _obvUI.tab = t; _obvUI.edit = null; _obvRender();
-        const classe = data.classi?.[_obvUI.ci];
-        if (t === 'esiti' && classe && _obvUI.autoLetta !== classe) obvCaricaAutovalutazioni(classe);
-    }
+    function obvTab(t) { _obvUI.tab = t; _obvUI.edit = null; _obvRender(); }
     function obvChiudi() { document.getElementById('obvOverlay')?.remove(); }
 
     const _OBV_BTN = 'padding:6px 14px;border-radius:12px;border:1.5px solid #667eea;background:white;color:#4f46e5;cursor:pointer;font-size:13px;font-weight:700;font-family:inherit;';
@@ -34900,30 +34853,24 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         const ob = u.obiettivi || [];
         if (!ob.length) return `<p style="color:#999;font-size:13px;">Prima crea gli obiettivi della unit.</p>`;
         const studenti = classe.studenti || [];
-        const conteggi = ob.map(() => ({ ok: 0, val: 0, auto: 0, scarti: 0 }));
+        const conteggi = ob.map(() => ({ ok: 0, val: 0 }));
         const righe = studenti.map((s, si) => {
             const fonti = _obvFonti(s, classe, nomeU);
             const minimi = _obvSoloMinimi(s, u);
             const celle = ob.map((o, k) => {
                 const st = obvStato(s, classe, u, nomeU, o, fonti);
                 if (st.stato !== 'np' && st.stato !== 'escluso') { conteggi[k].val++; if (st.stato === 'raggiunto') conteggi[k].ok++; }
-                const av = _obvAutoAlunno(s, nomeU, o.id);
-                const scarto = _obvScarto(av, st.stato);
-                if (av != null) conteggi[k].auto++;
-                if (scarto) conteggi[k].scarti++;
                 const tip = [
                     `${OBV_STATI[st.stato].label}${st.manuale ? ' (deciso dal docente)' : ''}`,
                     st.manuale && st.auto !== st.stato ? `Calcolato: ${OBV_STATI[st.auto].label}` : '',
                     st.pct != null ? `Media dati: ${st.pct}%` : '',
                     ...st.fonti,
-                    av != null ? `Autovalutazione: ${OBV_AUTO[av].icon} ${OBV_AUTO[av].label}${scarto === 'sopra' ? ' (si sopravvaluta)' : scarto === 'sotto' ? ' (si sottovaluta)' : ''}` : '',
                     'Clic per cambiare'
                 ].filter(Boolean).join('\n');
-                const stile = (st.manuale ? 'outline:2px solid #4f46e5;' : scarto ? 'outline:2px dashed #f59e0b;' : '') + (st.provvisorio && !st.manuale ? 'opacity:.55;' : '');
+                const stile = (st.manuale ? 'outline:2px solid #4f46e5;' : '') + (st.provvisorio && !st.manuale ? 'opacity:.55;' : '');
                 return `<td style="text-align:center;padding:3px;"><button onclick="obvCambiaEsito(${si},'${o.id}')" title="${_obvEsc(tip)}" style="${stile}border:1px solid #e8eaf6;background:white;border-radius:8px;padding:3px 6px;cursor:pointer;min-width:44px;font-family:inherit;">
                     <div style="font-size:15px;line-height:1.1;">${OBV_STATI[st.stato].icon}</div>
                     ${st.pct != null && !st.manuale && st.stato !== 'escluso' ? `<div style="font-size:9px;color:#888;">${st.pct}%</div>` : ''}
-                    ${av != null ? `<div style="font-size:11px;line-height:1.1;">${OBV_AUTO[av].icon}</div>` : ''}
                 </button></td>`;
             }).join('');
             return `<tr style="border-top:1px solid #f0f0f5;">
@@ -34936,21 +34883,14 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
                 Calcolato dalle prove della unit: domande abbinate a ciascun obiettivo (scheda 🔗) o, se il test non è abbinato, parziali per area; voto e griglia dell'orale (le funzioni contano scritto e orale).
                 ✅ da ${OBV_SOGLIA_OK}% · 🟡 da ${OBV_SOGLIA_PARZ}% · 🔴 sotto · ⚪ nessuna prova · ➖ non previsto (PEI: solo i minimi). Senza l'orale dettagliato vale la prima impressione della griglia LIVE (cella sbiadita).
                 Clic su una cella per correggere: il bordo blu indica una tua decisione. Passa sopra una cella per vedere da quali dati viene.
-                Sotto l'esito, la faccina è l'autovalutazione dell'alunno (😀 lo so fare · 😐 quasi · 😟 non ancora); il bordo arancio tratteggiato segnala chi si sopravvaluta o si sottovaluta.
             </div>
-            ${_obvUI.autoErr ? `<div style="font-size:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px;margin-bottom:10px;line-height:1.5;">
-                ⚠️ Le autovalutazioni non sono leggibili: le regole di Firebase non danno ancora accesso al ramo <code>studentapp/autovalutazione</code>.
-                In Firebase Console → Realtime Database → Regole, dentro <code>"studentapp"</code> aggiungi:<br><code style="user-select:all;">${_obvEsc(OBV_REGOLA_AUTO)}</code><br>e pubblica. Finché manca, la StudentApp non mostra le faccine.
-            </div>` : ''}
             <div style="overflow-x:auto;">
                 <table style="border-collapse:collapse;width:100%;">
                     <thead><tr><th style="text-align:left;padding:5px 8px;font-size:12px;color:#888;">Alunno</th>
                         ${ob.map((o, k) => `<th style="padding:4px;font-size:12px;color:#4f46e5;" title="${_obvEsc(o.testo)}">O${k + 1}</th>`).join('')}</tr></thead>
                     <tbody>${righe}</tbody>
                     <tfoot><tr style="border-top:2px solid #e8eaf6;"><td style="padding:6px 8px;font-size:12px;color:#888;">Raggiunto</td>
-                        ${conteggi.map(c => `<td style="text-align:center;font-size:11px;color:#555;">${c.val ? `${c.ok}/${c.val}` : '—'}</td>`).join('')}</tr>
-                        ${conteggi.some(c => c.auto) ? `<tr><td style="padding:2px 8px;font-size:12px;color:#888;" title="Alunni che si sono autovalutati · in arancio quanti si sopravvalutano o si sottovalutano">Autovalutati · scarti</td>
-                        ${conteggi.map(c => `<td style="text-align:center;font-size:11px;color:#555;">${c.auto ? `${c.auto}${c.scarti ? ` · <span style="color:#d97706;font-weight:700;">${c.scarti}</span>` : ''}` : '—'}</td>`).join('')}</tr>` : ''}</tfoot>
+                        ${conteggi.map(c => `<td style="text-align:center;font-size:11px;color:#555;">${c.val ? `${c.ok}/${c.val}` : '—'}</td>`).join('')}</tr></tfoot>
                 </table>
             </div>
             <div style="margin-top:16px;padding:12px 14px;border-radius:10px;background:${u.obiettiviEsitiVisibili ? '#f0fdf4' : '#f7f8fc'};border:1px solid ${u.obiettiviEsitiVisibili ? '#bbf7d0' : '#e8eaf6'};display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
