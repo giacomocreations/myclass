@@ -2078,8 +2078,8 @@ async function requestAnalisiDidattica(){
 // items:[{t: testo, a: area, s: stato}]}]. Lo stato c'e' solo quando il docente
 // ha mostrato gli esiti della unit.
 const _OBV_STATI = {
-  raggiunto:     { icon:'✅', label:'Raggiunto' },
-  parziale:      { icon:'🟡', label:'Ci sei quasi' },
+  raggiunto:     { icon:'✅', label:'Raggiunto pienamente' },
+  parziale:      { icon:'🟡', label:'Raggiunto, da consolidare' },
   non_raggiunto: { icon:'🔴', label:'Da rinforzare' },
   np:            { icon:'⬜', label:'Ancora da verificare' }
 };
@@ -2145,12 +2145,14 @@ function _obvInvitoHtml(u){
     Come ti senti su ogni obiettivo? Tocca una faccina: dopo la verifica la confronterai con il risultato.${fatti?` <b>${fatti}/${u.items.length}</b>`:''}
   </div>`;
 }
+// Raggiunti = pienamente (✅) + da consolidare (🟡): la barra li mostra in due colori
+function _obvRaggiunti(u){ return u.items.filter(it=>it.s==='raggiunto'||it.s==='parziale').length; }
 function _obvConteggio(u){
-  const ok = u.items.filter(it=>it.s==='raggiunto').length;
-  const pct = Math.round(ok/u.items.length*100);
+  const pieno = u.items.filter(it=>it.s==='raggiunto').length;
+  const ok = _obvRaggiunti(u), n = u.items.length;
   return `<div style="display:flex;align-items:center;gap:8px;margin:4px 0 8px;">
-    <div style="flex:1;height:6px;border-radius:3px;background:var(--purple-light);overflow:hidden;"><div style="width:${pct}%;height:100%;background:#1D9E75;"></div></div>
-    <span style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap;">${ok} di ${u.items.length} raggiunti</span>
+    <div style="flex:1;height:6px;border-radius:3px;background:var(--purple-light);overflow:hidden;display:flex;"><div style="width:${Math.round(pieno/n*100)}%;height:100%;background:#1D9E75;"></div><div style="width:${Math.round((ok-pieno)/n*100)}%;height:100%;background:#EF9F27;"></div></div>
+    <span style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap;">${ok} di ${n} raggiunti${ok && pieno<ok?` (${pieno} pienamente)`:''}</span>
   </div>`;
 }
 function _obvChiuso(){ try{ return localStorage.getItem('ll_obv_card_chiusa')==='1'; }catch(e){ return false; } }
@@ -2188,11 +2190,11 @@ function _obvStatsHtml(mc){
     ${unita.map(u=>`<details ${u===corr?'open':''} style="margin-bottom:6px;">
       <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--purple-dark);padding:4px 0;">
         ${esc(u.unit)}${u.corrente?' <span style="font-size:10px;font-weight:700;color:#fff;background:var(--purple);border-radius:8px;padding:1px 6px;">in corso</span>':''}
-        ${u.esiti?`<span style="font-size:11px;font-weight:600;color:var(--muted);"> · ${u.items.filter(it=>it.s==='raggiunto').length}/${u.items.length} ✅</span>`:''}
+        ${u.esiti?`<span style="font-size:11px;font-weight:600;color:var(--muted);"> · ${_obvRaggiunti(u)}/${u.items.length} raggiunti</span>`:''}
       </summary>
       ${u.esiti?_obvConteggio(u):_obvInvitoHtml(u)}${_obvRigheHtml(u)}
     </details>`).join('')}
-    ${unita.some(u=>u.esiti)?`<div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">✅ raggiunto · 🟡 ci sei quasi · 🔴 da rinforzare · ⬜ ancora da verificare${Object.keys(S.autoval||{}).length?' · «tu» = la tua autovalutazione':''}</div>`:''}
+    ${unita.some(u=>u.esiti)?`<div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">✅ raggiunto pienamente · 🟡 raggiunto, da consolidare · 🔴 da rinforzare · ⬜ ancora da verificare${Object.keys(S.autoval||{}).length?' · «tu» = la tua autovalutazione':''}</div>`:''}
   </div>`;
 }
 

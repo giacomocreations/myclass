@@ -34068,16 +34068,16 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         WRITING:    { label: '✍️ Scrittura',           bg: '#e0f2fe', color: '#075985' }
     };
     const OBV_STATI = {
-        raggiunto:     { icon: '✅', label: 'Raggiunto' },
-        parziale:      { icon: '🟡', label: 'In via di acquisizione' },
+        raggiunto:     { icon: '✅', label: 'Raggiunto pienamente' },
+        parziale:      { icon: '🟡', label: 'Raggiunto, da consolidare' },
         non_raggiunto: { icon: '🔴', label: 'Non ancora raggiunto' },
         np:            { icon: '⚪', label: 'Non ancora valutato' },
         escluso:       { icon: '➖', label: 'Non previsto per l\'alunno' }
     };
     // Clic sulla cella degli esiti: automatico → raggiunto → parziale → non raggiunto → non previsto → automatico
     const OBV_CICLO = [null, 'raggiunto', 'parziale', 'non_raggiunto', 'escluso'];
-    // Soglie come la scala voti: 6 (60%) raggiunto, 5 (50%) in via di acquisizione
-    const OBV_SOGLIA_OK = 60, OBV_SOGLIA_PARZ = 50;
+    // Soglie: da 75% raggiunto pienamente, da 60% (il 6) raggiunto da consolidare, sotto non raggiunto
+    const OBV_SOGLIA_OK = 75, OBV_SOGLIA_PARZ = 60;
     const OBV_AREE_SCRITTE = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
     // Macroaree della griglia orale che contano anche per gli obiettivi di lessico e strutture
     const _OBV_RE_GRIGLIA = {
@@ -34928,13 +34928,13 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         const ob = u.obiettivi || [];
         if (!ob.length) return `<p style="color:#999;font-size:13px;">Prima crea gli obiettivi della unit.</p>`;
         const studenti = classe.studenti || [];
-        const conteggi = ob.map(() => ({ ok: 0, val: 0, auto: 0, scarti: 0 }));
+        const conteggi = ob.map(() => ({ ok: 0, pieno: 0, val: 0, auto: 0, scarti: 0 }));
         const righe = studenti.map((s, si) => {
             const fonti = _obvFonti(s, classe, nomeU);
             const minimi = _obvSoloMinimi(s, u);
             const celle = ob.map((o, k) => {
                 const st = obvStato(s, classe, u, nomeU, o, fonti);
-                if (st.stato !== 'np' && st.stato !== 'escluso') { conteggi[k].val++; if (st.stato === 'raggiunto') conteggi[k].ok++; }
+                if (st.stato !== 'np' && st.stato !== 'escluso') { conteggi[k].val++; if (st.stato === 'raggiunto' || st.stato === 'parziale') conteggi[k].ok++; if (st.stato === 'raggiunto') conteggi[k].pieno++; }
                 const av = _obvAutoAlunno(s, nomeU, o.id);
                 const scarto = _obvScarto(av, st.stato);
                 if (av != null) conteggi[k].auto++;
@@ -34975,8 +34975,8 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
                     <thead><tr><th style="text-align:left;padding:5px 8px;font-size:12px;color:#888;">Alunno</th>
                         ${ob.map((o, k) => `<th style="padding:4px;font-size:12px;color:#4f46e5;" title="${_obvEsc(o.testo)}">O${k + 1}</th>`).join('')}</tr></thead>
                     <tbody>${righe}</tbody>
-                    <tfoot><tr style="border-top:2px solid #e8eaf6;"><td style="padding:6px 8px;font-size:12px;color:#888;">Raggiunto</td>
-                        ${conteggi.map(c => `<td style="text-align:center;font-size:11px;color:#555;">${c.val ? `${c.ok}/${c.val}` : '—'}</td>`).join('')}</tr>
+                    <tfoot><tr style="border-top:2px solid #e8eaf6;"><td style="padding:6px 8px;font-size:12px;color:#888;" title="Alunni che hanno raggiunto l'obiettivo (✅ + 🟡) su quelli valutati; tra parentesi quelli che l'hanno raggiunto pienamente">Raggiunto (pieno)</td>
+                        ${conteggi.map(c => `<td style="text-align:center;font-size:11px;color:#555;">${c.val ? `${c.ok}/${c.val} <span style="color:#16a34a;">(${c.pieno})</span>` : '—'}</td>`).join('')}</tr>
                         ${conteggi.some(c => c.auto) ? `<tr><td style="padding:2px 8px;font-size:12px;color:#888;" title="Alunni che si sono autovalutati · in arancio quanti si sopravvalutano o si sottovalutano">Autovalutati · scarti</td>
                         ${conteggi.map(c => `<td style="text-align:center;font-size:11px;color:#555;">${c.auto ? `${c.auto}${c.scarti ? ` · <span style="color:#d97706;font-weight:700;">${c.scarti}</span>` : ''}` : '—'}</td>`).join('')}</tr>` : ''}</tfoot>
                 </table>
