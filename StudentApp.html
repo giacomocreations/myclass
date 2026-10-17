@@ -242,6 +242,7 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
       </div>
 
       <div class="scroll-body" id="agenda-body">
+        <div id="obiettivi-card"></div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">
           <div class="sec-lbl" id="day-events-label" style="margin-bottom:0">PROSSIMI EVENTI</div>
           <button id="btn-reset-day" onclick="resetCalDay()" style="display:none;background:none;border:none;color:var(--purple);font-size:11px;font-weight:600;cursor:pointer;padding:0;font-family:inherit">← Prossimi eventi</button>
@@ -918,6 +919,7 @@ function setupRealtimeListeners(){
     if(val){
       S.myclass = val;
       renderOrarioBanner();
+      renderObiettiviCard();
       // Re-renderizza agenda e compiti: nextLessonDate dipende da orarioSettimana
       // che potrebbe arrivare DOPO le lezioni (se loadAllData fallisce in rete)
       renderAgendaEvents(S.selectedDate||null);
@@ -1028,6 +1030,7 @@ async function bootApp(){
   renderValutazioni();
   renderAgendaEvents(null);
   renderOrarioBanner();
+  renderObiettiviCard();
   navTab(0,'scr-agenda');
   maybeShowInstallBanner();
   maybeRequestPushPermission();
@@ -2062,6 +2065,83 @@ async function requestAnalisiDidattica(){
   }
 }
 
+// ── OBIETTIVI DI APPRENDIMENTO ────────────────────────────────────────────
+// Pubblicati da MyClass in myclass.obiettivi: [{unit, ord, corrente, esiti,
+// items:[{t: testo, a: area, s: stato}]}]. Lo stato c'e' solo quando il docente
+// ha mostrato gli esiti della unit.
+const _OBV_STATI = {
+  raggiunto:     { icon:'✅', label:'Raggiunto' },
+  parziale:      { icon:'🟡', label:'Ci sei quasi' },
+  non_raggiunto: { icon:'🔴', label:'Da rinforzare' },
+  np:            { icon:'⬜', label:'Ancora da verificare' }
+};
+function _obvArr(v){ return Array.isArray(v) ? v.filter(Boolean) : (v && typeof v==='object' ? Object.values(v).filter(Boolean) : []); }
+function _obvUnita(){
+  return _obvArr(S.myclass?.obiettivi)
+    .map(u=>({...u, items:_obvArr(u.items)}))
+    .filter(u=>u.items.length)
+    .sort((a,b)=>(a.ord||0)-(b.ord||0));
+}
+function _obvRigheHtml(u){
+  return u.items.map(it=>{
+    const st = u.esiti ? (_OBV_STATI[it.s] || _OBV_STATI.np) : null;
+    return `<div style="display:flex;gap:9px;align-items:flex-start;padding:6px 0;border-top:0.5px solid var(--border);">
+      <span style="font-size:14px;line-height:1.35;flex-shrink:0;" title="${st?st.label:''}">${st?st.icon:'<span style="color:var(--purple);font-weight:800;">○</span>'}</span>
+      <div style="flex:1;font-size:13px;line-height:1.4;color:var(--text);">${esc(it.t)}${st&&it.s!=='raggiunto'?`<div style="font-size:10px;color:var(--muted);margin-top:1px;">${st.label}</div>`:''}</div>
+    </div>`;
+  }).join('');
+}
+function _obvConteggio(u){
+  const ok = u.items.filter(it=>it.s==='raggiunto').length;
+  const pct = Math.round(ok/u.items.length*100);
+  return `<div style="display:flex;align-items:center;gap:8px;margin:4px 0 8px;">
+    <div style="flex:1;height:6px;border-radius:3px;background:var(--purple-light);overflow:hidden;"><div style="width:${pct}%;height:100%;background:#1D9E75;"></div></div>
+    <span style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap;">${ok} di ${u.items.length} raggiunti</span>
+  </div>`;
+}
+function _obvChiuso(){ try{ return localStorage.getItem('ll_obv_card_chiusa')==='1'; }catch(e){ return false; } }
+function toggleObiettiviCard(){
+  try{ localStorage.setItem('ll_obv_card_chiusa', _obvChiuso()?'0':'1'); }catch(e){}
+  renderObiettiviCard();
+}
+// Agenda: obiettivi della unit in corso
+function renderObiettiviCard(){
+  const el=document.getElementById('obiettivi-card');
+  if(!el) return;
+  const unita=_obvUnita();
+  const u=unita.find(x=>x.corrente) || unita[unita.length-1];
+  if(!u){ el.innerHTML=''; return; }
+  const chiuso=_obvChiuso();
+  el.innerHTML=`<div class="card" style="border-color:var(--purple-mid);background:#f7f6ff;margin-bottom:12px;padding:12px 14px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;" onclick="toggleObiettiviCard()">
+      <div style="min-width:0;">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--purple-dark);">🎯 ${u.esiti?'I MIEI OBIETTIVI':'IN QUESTA UNIT IMPARERAI A…'}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(u.unit)}</div>
+      </div>
+      <span style="font-size:13px;color:var(--purple);flex-shrink:0;">${chiuso?'▾':'▴'}</span>
+    </div>
+    ${chiuso?'':`<div style="margin-top:8px;">${u.esiti?_obvConteggio(u):''}${_obvRigheHtml(u)}</div>
+    ${unita.length>1?`<div style="text-align:right;margin-top:6px;"><button onclick="navTab(2,'scr-stats')" style="background:none;border:none;color:var(--purple);font-size:12px;font-weight:600;cursor:pointer;padding:0;font-family:inherit;">Tutte le unit →</button></div>`:''}`}
+  </div>`;
+}
+// Statistiche: obiettivi di tutte le unit pubblicate
+function _obvStatsHtml(mc){
+  const unita=_obvUnita();
+  if(!unita.length) return '';
+  const corr=unita.find(x=>x.corrente) || unita[unita.length-1];
+  return `<div class="card" style="margin-bottom:12px;">
+    <div class="sec-lbl" style="margin-bottom:8px;">🎯 I MIEI OBIETTIVI</div>
+    ${unita.map(u=>`<details ${u===corr?'open':''} style="margin-bottom:6px;">
+      <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--purple-dark);padding:4px 0;">
+        ${esc(u.unit)}${u.corrente?' <span style="font-size:10px;font-weight:700;color:#fff;background:var(--purple);border-radius:8px;padding:1px 6px;">in corso</span>':''}
+        ${u.esiti?`<span style="font-size:11px;font-weight:600;color:var(--muted);"> · ${u.items.filter(it=>it.s==='raggiunto').length}/${u.items.length} ✅</span>`:''}
+      </summary>
+      ${u.esiti?_obvConteggio(u):''}${_obvRigheHtml(u)}
+    </details>`).join('')}
+    ${unita.some(u=>u.esiti)?`<div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">✅ raggiunto · 🟡 ci sei quasi · 🔴 da rinforzare · ⬜ ancora da verificare</div>`:''}
+  </div>`;
+}
+
 function renderStats(){
   let html='';
   const mc=S.myclass;
@@ -2173,6 +2253,9 @@ function renderStats(){
     </div>`;
   }
   html+=`</div>`;
+
+  // ── Obiettivi di apprendimento delle unit ──────────────────────
+  html+=_obvStatsHtml(mc);
 
   // ── Radar competenze ────────────────────────────────────────────
   // Solo dati reali delle prove (mc.competenze, calcolato da MyClass): le aree
