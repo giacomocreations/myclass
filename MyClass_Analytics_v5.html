@@ -34740,7 +34740,10 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
     // (2 = lo so fare, 1 = quasi, 0 = non ancora). MyClass la copia sull'alunno
     // (studente.obiettiviAuto) per confrontarla con gli esiti.
     const OBV_AUTO = { 2: { icon: '😀', label: 'lo so fare' }, 1: { icon: '😐', label: 'quasi' }, 0: { icon: '😟', label: 'non ancora' } };
-    const OBV_REGOLA_AUTO = '"autovalutazione": { "$codice": { ".read": "auth != null", ".write": "auth != null" } }';
+    // Regola Firebase del ramo (provata con l'emulatore): l'alunno scrive solo le
+    // faccine (0/1/2) di un codice esistente, non cancella e non aggiunge altro;
+    // il docente legge e cancella tutto.
+    const OBV_REGOLA_AUTO = '"autovalutazione": {".read": "auth != null && auth.uid === \'8RtaYMmlVme4Tzk7bu1Gvjjd1wu1\'", ".write": "auth != null && auth.uid === \'8RtaYMmlVme4Tzk7bu1Gvjjd1wu1\'", "$codice": {".read": "auth != null", "$unit": {".write": "auth != null && (auth.uid === \'8RtaYMmlVme4Tzk7bu1Gvjjd1wu1\' || (newData.exists() && $unit.length <= 120 && root.child(\'livelearn/students\').child($codice).exists()))", ".validate": "newData.hasChildren([\'unit\', \'ts\'])", "unit": {".validate": "newData.isString() && newData.val().length <= 200"}, "ts": {".validate": "newData.isNumber()"}, "r": {".validate": "newData.hasChildren()", "$obiettivo": {".validate": "$obiettivo.length <= 40 && newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2)"}}, "$altro": {".validate": false}}}}';
 
     function _obvAutoAlunno(s, nomeU, oid) {
         const e = Object.values(s?.obiettiviAuto || {}).find(x => x && x.unit === nomeU);
@@ -34940,7 +34943,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
             </div>
             ${_obvUI.autoErr ? `<div style="font-size:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px;margin-bottom:10px;line-height:1.5;">
                 ⚠️ Le autovalutazioni non sono leggibili: le regole di Firebase non danno ancora accesso al ramo <code>studentapp/autovalutazione</code>.
-                In Firebase Console → Realtime Database → Regole, dentro <code>"studentapp"</code> aggiungi:<br><code style="user-select:all;">${_obvEsc(OBV_REGOLA_AUTO)}</code><br>e pubblica. Finché manca, la StudentApp non mostra le faccine.
+                In Firebase Console → Realtime Database → Regole, dentro <code>"studentapp"</code> aggiungi (con una virgola dopo):<br><code style="user-select:all;display:block;word-break:break-all;background:#fff;padding:6px;border-radius:6px;margin:4px 0;">${_obvEsc(OBV_REGOLA_AUTO)}</code>e pubblica. Finché manca, la StudentApp non mostra le faccine.
             </div>` : ''}
             <div style="overflow-x:auto;">
                 <table style="border-collapse:collapse;width:100%;">
