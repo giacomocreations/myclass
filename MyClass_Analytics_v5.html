@@ -19107,7 +19107,7 @@ ${blocco.regole}`;
         for (const [sessionCode, perAlunno] of Object.entries(inbox)) {
           for (const [safeName, dep] of Object.entries(perAlunno || {})) {
             if (!dep || !dep.entry) continue;
-            const code = await _mcCodeOf(dep.safeName || safeName);
+            const code = await _mcCodeOf(dep.safeName || safeName, dep.classId);
             if (!code) {
               // Senza codice il deposito NON si sposta e NON si cancella:
               // meglio un dato fermo che un dato perso o messo su un percorso
@@ -19193,16 +19193,26 @@ ${blocco.regole}`;
         .some(n => n && _mcTesterFirme.has(_mcFirmaNome(n)));
     }
 
+    // Oltre a { safe → codice } la mappa ha { 'classe|safe' → codice } e, in
+    // _doppi, i nomi che stanno in piu' classi (i tester si chiamano spesso
+    // uguali): la sola chiave per nome portava il risultato all'omonimo
+    // dell'altra classe.
     function _mcCodeMapFrom(studs) {
       _mcTesterFirme = new Set(Object.values(studs || {}).filter(s => s && s.tester && s.name).map(s => _mcFirmaNome(s.name)));
       const map = {};
+      const doppi = new Set();
+      Object.defineProperty(map, '_doppi', { value: doppi, enumerable: false });
       Object.entries(studs || {}).forEach(([code, s]) => {
         if (!s || !s.name) return;
-        map[_mcSafeKey(s.name)] = code;
+        const k = _mcSafeKey(s.name);
+        if (map[k] && map[k] !== code) doppi.add(k);
+        map[k] = code;
+        if (s.classId) map[s.classId + '|' + k] = code;
         const parts = String(s.name).trim().split(/\s+/);
         if (parts.length >= 2) {
           const inv = _mcSafeKey(parts.slice(1).join(' ') + ' ' + parts[0]);
           if (!map[inv]) map[inv] = code;
+          if (s.classId && !map[s.classId + '|' + inv]) map[s.classId + '|' + inv] = code;
         }
       });
       return map;
@@ -19260,16 +19270,22 @@ ${blocco.regole}`;
 
     // Ritorna il codice personale, o null se l'alunno non ne ha ancora uno.
     // null NON e' un ripiego sul nome: senza codice l'invio privato si ferma.
-    async function _mcCodeOf(nameOrSafe) {
+    // Con classId vale l'alunno di quella classe; fuori classe solo un nome
+    // che non sta in piu' classi.
+    async function _mcCodeOf(nameOrSafe, classId) {
       if (!nameOrSafe) return null;
       const map = await _mcLoadCodeMap();
       const k = _mcSafeKey(nameOrSafe);
-      if (map[k]) return map[k];
       const parts = String(nameOrSafe).trim().split(/\s+/);
-      if (parts.length >= 2) {
-        const inv = _mcSafeKey(parts.slice(1).join(' ') + ' ' + parts[0]);
-        if (map[inv]) return map[inv];
+      const inv = parts.length >= 2 ? _mcSafeKey(parts.slice(1).join(' ') + ' ' + parts[0]) : null;
+      if (classId) {
+        if (map[classId + '|' + k]) return map[classId + '|' + k];
+        if (inv && map[classId + '|' + inv]) return map[classId + '|' + inv];
+        const doppi = map._doppi || new Set();
+        if (doppi.has(k) || (inv && doppi.has(inv))) return null;
       }
+      if (map[k]) return map[k];
+      if (inv && map[inv]) return map[inv];
       return null;
     }
 
@@ -19418,7 +19434,7 @@ ${blocco.regole}`;
             // e' la chiave del ramo board_priv. Senza codice l'invio privato
             // non e' possibile — e non si ripiega sul nome, perche' un ramo
             // indicizzato per nome sarebbe leggibile da chiunque.
-            const code = _codeMap[safe] || '';
+            const code = _codeMap[_mcClassId() + '|' + safe] || _codeMap[safe] || '';
             if (!code) {
               return `<label style="display:flex;align-items:center;gap:9px;padding:8px 12px;font-size:13px;border-bottom:1px solid #f5f5f5;opacity:.55;cursor:not-allowed;" title="Nessun codice personale. Generalo da LiveLearn → Codici accesso studenti.">
                 <input type="checkbox" class="mc-dest-stud" value="" data-name="${display}" disabled
@@ -19714,7 +19730,7 @@ ${blocco.regole}`;
           _mcLoadCodeMap()
         ]);
         const nameByCode = {};
-        Object.entries(codeMap).forEach(([safe, c]) => { if (!nameByCode[c]) nameByCode[c] = safe; });
+        Object.entries(codeMap).forEach(([safe, c]) => { if (!safe.includes('|') && !nameByCode[c]) nameByCode[c] = safe; });
         const raw  = snap.val() || {};
         const privMsgs = [];
         Object.entries(snapPriv.val() || {}).forEach(([code, byKey]) => {
