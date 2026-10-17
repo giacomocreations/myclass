@@ -436,7 +436,7 @@ const S = {
   classId: null, className: null,
   sessions: {}, myclass: null, summary: null,
   lessons: [], feedback: [], boardMsgs: [], boardTab: 'msgs',
-  personalPlan: [], recoverySessions: {}, _pianoSeen: new Set(),
+  personalPlan: [], recoverySessions: {}, _pianoSeen: new Set(), _assignInfo: {},
   autoval: {}, _autovalOff: false,
   homeworkFilter: 'all', statFilter: 'all',
   calYear: new Date().getFullYear(), calMonth: new Date().getMonth(),
@@ -779,7 +779,7 @@ function doLogout(){
   S.sessions={}; S.myclass=null; S.summary=null;
   S.lessons=[]; S.feedback=[]; S.boardMsgs=[];
   S._analisiRequest=null;
-  S.personalPlan=[]; S.recoverySessions={}; S._pianoSeen=new Set();
+  S.personalPlan=[]; S.recoverySessions={}; S._pianoSeen=new Set(); S._assignInfo={};
   Object.keys(S.chartInstances).forEach(id=>destroyChart(id));
   document.getElementById('code-input').value='';
   document.getElementById('login-err').style.display='none';
@@ -879,6 +879,10 @@ function setupRealtimeListeners(){
     const unread = S.boardMsgs.filter(m=>!m.readBy?.[S.code]).length;
     document.getElementById('board-badge').style.display = unread>0?'block':'none';
     renderBoard();
+    // Gli avvisi delle attivita' assegnate finiscono anche tra i test da fare:
+    // stato e consegna si rileggono, la sessione puo' essere stata chiusa.
+    S._assignInfo = {};
+    renderCompiti();
   };
 
   const _pubBase = 'livelearn/board/'+S.classId;
@@ -1667,12 +1671,55 @@ function openLesson(key){
   };
 }
 
+// ── ATTIVITÀ ASSEGNATE DA LIVELEARN ───────────────────────────────────────
+// Arrivano solo come avviso in bacheca (type 'avviso_quiz'): la sezione Test
+// mostrava le sessioni concluse e i compiti delle lezioni, quindi l'attività
+// ancora da svolgere non c'era. Resta tra le cose da fare finché la sessione
+// è aperta, non è scaduta e l'alunno non l'ha consegnata (se è ripetibile
+// resta, segnata come già svolta).
+function _assignedTodo(){
+  const today = new Date().toISOString().slice(0,10);
+  const seen = new Set(), out = [];
+  (S.boardMsgs||[]).forEach(m=>{
+    const code = m && m.type==='avviso_quiz' ? m.sessionCode : null;
+    if(!code || seen.has(code)) return;
+    seen.add(code);
+    const info = S._assignInfo[code];
+    if(info===undefined){ _loadAssignInfo(code); return; }
+    if(!info || info==='loading' || info.status!=='assigned') return;
+    const done = info.done || !!S.sessions[code];
+    if(done && !info.repeatable) return;
+    const deadline = info.deadline || m.deadline || null;
+    if(deadline && deadline < today) return;
+    out.push({ code, title: info.title || (m.text||'').split('\n')[0].replace(/^📋 Compito assegnato:\s*/,''),
+               deadline, done, url: m.url ? ensureUrl(m.url) : ('LiveLearn.html?code='+code) });
+  });
+  return out.sort((a,b)=>(a.deadline||'9999').localeCompare(b.deadline||'9999'));
+}
+
+async function _loadAssignInfo(code){
+  S._assignInfo[code] = 'loading';
+  let info = null;
+  try {
+    const sess = (await db.ref('livelearn/sessions/'+code).get()).val();
+    if(sess){
+      let done = false;
+      try { const r = await _leggiMiaRisposta(db, code, S.studentName, S.studentSafe); done = !!(r && r.submittedAt); } catch(e){}
+      info = { status: sess.status, deadline: sess.deadline||null, title: sess.title||'', repeatable: !!sess.repeatable, done };
+    }
+  } catch(e){ /* sessione non leggibile: non si mostra */ }
+  if(S._assignInfo[code] !== 'loading') return; // bacheca cambiata nel frattempo
+  S._assignInfo[code] = info;
+  renderCompiti();
+}
+
 // ── COMPITI ───────────────────────────────────────────────────────────────
 function renderCompiti(){
   const sessions = Object.values(S.sessions).sort((a,b)=>(b.ts||0)-(a.ts||0));
   const filter = S.homeworkFilter;
   const filtered = filter==='all'?sessions:sessions.filter(s=>(s.mode||'test')===filter||s.status===filter);
   const pending = S.lessons.filter(l=>l.compiti && extractHwDate(l.compiti) && daysUntil(extractHwDate(l.compiti))>=0);
+  const assegnati = _assignedTodo();
 
   let html = `<div class="toggle-row">
     <button class="toggle-opt ${filter==='all'?'active':''}" onclick="setHwFilter('all')">Tutti</button>
@@ -1681,8 +1728,25 @@ function renderCompiti(){
     <button class="toggle-opt ${filter==='assigned'?'active':''}" onclick="setHwFilter('assigned')">Assegnati</button>
   </div>`;
 
+  const daFare = (filter==='all' ? pending.length : 0) + ((filter==='all'||filter==='assigned') ? assegnati.length : 0);
+  if(daFare) html += `<div class="sec-lbl">DA FARE</div>`;
+  if(filter==='all'||filter==='assigned'){
+    assegnati.forEach(a=>{
+      html += `<div class="card" style="margin-bottom:8px;border-left:3px solid #6c47ff;border-radius:0 14px 14px 0">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+          <div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600;color:var(--text)">${esc(a.title||'Attività assegnata')}</div>
+            <div style="display:flex;gap:5px;margin-top:4px;flex-wrap:wrap">
+              <span class="pill pill-indigo">Assegnato</span>
+              <span class="pill pill-gray">Codice ${esc(a.code)}</span>
+              ${a.done?`<span class="pill pill-teal">Già svolto · puoi rifarlo</span>`:''}
+            </div>
+          </div>${a.deadline?scadBadge(a.deadline):''}
+        </div>
+        <a href="${esc(a.url).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" style="display:block;padding:10px;background:var(--purple);color:#fff;border-radius:10px;text-align:center;font-size:13px;font-weight:600;text-decoration:none">▶ Svolgi in LiveLearn</a>
+      </div>`;
+    });
+  }
   if(pending.length&&filter==='all'){
-    html += `<div class="sec-lbl">DA FARE</div>`;
     pending.forEach(l=>{
       const hw = stripHwDate(l.compiti)||l.titolo;
       const hwDate = extractHwDate(l.compiti);
