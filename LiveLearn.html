@@ -6495,17 +6495,28 @@ async function _llStudents(force) {
 }
 
 // Codice personale a partire dal nominativo (o dal safe). null se non esiste.
-async function _llCodeOf(nameOrSafe) {
+// Con classId vale prima l'alunno di quella classe: lo stesso nome puo' stare
+// in due classi (i tester si chiamano spesso uguali) e il primo trovato era
+// spesso quello dell'altra classe, che riceveva il risultato al posto suo.
+// Fuori classe si ripiega solo su un nome unico.
+async function _llCodeOf(nameOrSafe, classId) {
   if (!nameOrSafe) return null;
   const target = _toSafe(nameOrSafe);
   const all = await _llStudents();
+  const trovati = [];
   for (const [code, s] of Object.entries(all)) {
     if (!s || !s.name) continue;
-    if (_toSafe(s.name) === target) return code;
     const p = String(s.name).trim().split(/\s+/);
-    if (p.length >= 2 && _toSafe(p.slice(1).join(' ') + ' ' + p[0]) === target) return code;
+    if (_toSafe(s.name) === target ||
+        (p.length >= 2 && _toSafe(p.slice(1).join(' ') + ' ' + p[0]) === target)) {
+      if (!classId) return code;
+      trovati.push([code, s]);
+    }
   }
-  return null;
+  if (!classId) return null;
+  const inClasse = trovati.find(([, s]) => s.classId === classId);
+  if (inClasse) return inClasse[0];
+  return trovati.length === 1 ? trovati[0][0] : null;
 }
 
 // Base del ramo storico personale, oppure null se l'alunno non ha codice.
@@ -7596,13 +7607,13 @@ async function _llSyncStudentHistory(code, key, prevAlias, opts) {
   // anche quando il nome digitato non somiglia al proprio.
   entry.respKey = key;
 
-  const ownerCode = await _llCodeOf(owner);
+  const ownerCode = await _llCodeOf(owner, sess.classId);
 
   // Proprietari sbagliati da ripulire
   const stale = new Set();
   for (const n of [r.name, key, prevAlias]) {
     if (!n) continue;
-    const c = await _llCodeOf(n);
+    const c = await _llCodeOf(n, sess.classId);
     if (c && c !== ownerCode) stale.add(c);
   }
   const touched = [];

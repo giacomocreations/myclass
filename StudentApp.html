@@ -935,6 +935,26 @@ function setupRealtimeListeners(){
   mcRef.on('value', mcFn);
   S._listeners.push({ref:mcRef, fn:mcFn});
 
+  // TEST E RIEPILOGO: prima si leggevano solo all'accesso, e un test smistato
+  // da MyClass mentre l'app era aperta non compariva fino al rientro.
+  const sessRef = db.ref('livelearn/history_priv/'+S.code+'/sessions');
+  const sessFn = snap => {
+    S.sessions = snap.val() || {};
+    renderCompiti();
+    _refreshSessionScores().catch(()=>{});
+    if(document.getElementById('scr-stats')?.classList.contains('active')){
+      ['radar-chart','grades-chart','spark-chart','ll-trend-chart'].forEach(id=>destroyChart(id));
+      renderStats();
+    }
+  };
+  sessRef.on('value', sessFn);
+  S._listeners.push({ref:sessRef, fn:sessFn});
+
+  const sumRef = db.ref('livelearn/history_priv/'+S.code+'/summary');
+  const sumFn = snap => { S.summary = snap.val(); };
+  sumRef.on('value', sumFn);
+  S._listeners.push({ref:sumRef, fn:sumFn});
+
   // ANALISI DIDATTICA RICHIESTE (agente)
   // ⚠️ Chiave = codice personale. Il nodo di classe conteneva
   // { nome, code } per ogni richiedente: l'elenco nome → codice
