@@ -923,6 +923,7 @@ function setupRealtimeListeners(){
       renderObiettiviCard();
       // Re-renderizza agenda e compiti: nextLessonDate dipende da orarioSettimana
       // che potrebbe arrivare DOPO le lezioni (se loadAllData fallisce in rete)
+      buildCal();
       renderAgendaEvents(S.selectedDate||null);
       renderCompiti();
       if(document.getElementById('scr-stats')?.classList.contains('active')){
@@ -1247,12 +1248,33 @@ function computeHwDate(l){
   return (d && d >= today) ? d : null;
 }
 
+// Giorni di lezione della classe (1=Lun…7=Dom). Di norma l'orario arriva da
+// MyClass in history_priv/<codice>/myclass; chi non ce l'ha (alunno tester,
+// alunno non ancora sincronizzato) lo ricava dai giorni delle lezioni
+// pubblicate nelle ultime 5 settimane: senza orario i compiti non avevano
+// scadenza e sparivano da calendario e prossimi eventi.
+function _lessonWeekdays(){
+  const mc = S.myclass;
+  if(mc?.orarioSettimana?.length) return new Set(mc.orarioSettimana.map(s=>s.giornoNum));
+  const dates = S.lessons.map(l=>l.data).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d||'')).sort();
+  if(!dates.length) return null;
+  const from = new Date(dates[dates.length-1]+'T12:00:00');
+  from.setDate(from.getDate()-35);
+  const fromIso = from.toISOString().slice(0,10);
+  const days = new Set();
+  dates.filter(d=>d>=fromIso).forEach(d=>{
+    const g = new Date(d+'T12:00:00').getDay();
+    days.add(g===0 ? 7 : g);
+  });
+  return days.size ? days : null;
+}
+
 function nextLessonDate(fromIso){
   const mc = S.myclass;
-  if(!mc?.orarioSettimana?.length) return null;
-  const lessonDays = new Set(mc.orarioSettimana.map(s=>s.giornoNum)); // 1=Lun…6=Sab
-  const skipped    = mc.giorniSaltati   || {};  // assenze/festività specifiche della classe
-  const sospesi    = new Set(mc.giorniSospesi || []); // festività nazionali dal calendario MyClass
+  const lessonDays = _lessonWeekdays();
+  if(!lessonDays) return null;
+  const skipped    = mc?.giorniSaltati   || {};  // assenze/festività specifiche della classe
+  const sospesi    = new Set(mc?.giorniSospesi || []); // festività nazionali dal calendario MyClass
   const MAX_DAYS   = 60;
   const d = new Date(fromIso + 'T12:00:00');
   for(let i=1; i<=MAX_DAYS; i++){
