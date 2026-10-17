@@ -14708,6 +14708,18 @@ async function processMyClassData(parsed) {
     showImportResult('danger', '⚠️ Nessuna classe trovata nel file.');
     return;
   }
+  // I tester non sono in MyClass: si tengono quelli gia' presenti in LiveLearn
+  let prev = null;
+  if (db) { try { prev = (await db.ref('livelearn/classes').get()).val(); } catch(e) {} }
+  if (!prev) { try { prev = JSON.parse(localStorage.getItem('livelearn_classes') || '{}'); } catch(e) { prev = {}; } }
+  Object.entries(prev || {}).forEach(([id, c]) => {
+    if (!c) return;
+    if (c.tester && !classesData[id]) { classesData[id] = c; return; }   // classe Tester
+    const testers = c.testers || [];
+    if (!testers.length || !classesData[id]) return;
+    testers.forEach(t => { if (!classesData[id].studenti.includes(t)) classesData[id].studenti.push(t); });
+    classesData[id].testers = testers;
+  });
 
   // Salva sempre in localStorage come fallback
   localStorage.setItem('livelearn_classes', JSON.stringify(classesData));
@@ -14878,13 +14890,14 @@ async function renderClassesTab() {
       <h3>${esc(c.nome)}</h3>
       <div class="cc-meta">${(c.studenti||[]).length} studenti · Aggiornato ${fmtDate(c.updatedAt)}</div>
       <div class="student-chip-list">
-        ${(c.studenti||[]).slice(0,8).map(n=>`<span class="student-chip">${esc(n)}</span>`).join('')}
+        ${[...(c.testers||[]), ...(c.studenti||[]).filter(n=>!(c.testers||[]).includes(n))].slice(0,8).map(n=>`<span class="student-chip"${(c.testers||[]).includes(n)?' style="background:#e0f2fe;color:#0e7490;" title="Alunno tester: le sue prove non vanno nelle valutazioni"':''}>${(c.testers||[]).includes(n)?'🧪 ':''}${esc(n)}</span>`).join('')}
         ${(c.studenti||[]).length > 8 ? `<span class="student-chip" style="background:#e8fdf5;color:#16a37f;">+${(c.studenti||[]).length-8} altri</span>` : ''}
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:4px;flex-wrap:wrap;">
         <button class="btn btn-sm btn-primary" style="font-size:12px;" onclick="event.stopPropagation();openClassStats('${esc(id)}')">📊 Statistiche</button>
         <button class="btn btn-sm" style="font-size:12px;background:#d97706;color:#fff;border-color:#d97706;" onclick="event.stopPropagation();openBacheca('${esc(id)}','${esc(c.nome)}')">📢 Bacheca</button>
-        <button class="btn btn-sm" style="font-size:12px;background:#0e7490;color:#fff;border-color:#0e7490;" onclick="event.stopPropagation();addTesterToClass('${esc(id)}')">➕ Tester</button>
+        <button class="btn btn-sm" style="font-size:12px;background:#0e7490;color:#fff;border-color:#0e7490;" onclick="event.stopPropagation();addTesterToClass('${esc(id)}')" title="Aggiunge un alunno finto per provare StudentApp e LiveLearn come un alunno">➕ Tester</button>
+        ${(c.testers||[]).length ? `<button class="btn btn-sm" style="font-size:12px;background:#fff;color:#0e7490;border-color:#0e7490;" onclick="event.stopPropagation();removeTesterFromClass('${esc(id)}')" title="Toglie il tester e cancella i suoi dati di prova">➖ Tester</button>` : ''}
         <button class="btn btn-sm btn-danger" style="font-size:12px;" onclick="event.stopPropagation();deleteClass('${esc(id)}')">Elimina</button>
       </div>
     </div>
@@ -15370,6 +15383,7 @@ function _pathsForCode(classId, code) {
     'livelearn/recovery_sessions/' + code,
     'studentapp/personal_plan/' + code,
     'studentapp/notifications/' + code,
+    'studentapp/autovalutazione/' + code,
     'englishtown/progress/' + code
   ];
 }
@@ -15831,6 +15845,7 @@ async function regenerateSingleCode(classId, oldCode) {
     ['livelearn/recovery_sessions/' + oldCode,        'livelearn/recovery_sessions/' + newCode],
     ['studentapp/personal_plan/' + oldCode,           'studentapp/personal_plan/' + newCode],
     ['studentapp/notifications/' + oldCode,           'studentapp/notifications/' + newCode],
+    ['studentapp/autovalutazione/' + oldCode,         'studentapp/autovalutazione/' + newCode],
     ['englishtown/progress/' + oldCode,               'englishtown/progress/' + newCode]
   ];
   const updates = {};
@@ -16153,8 +16168,38 @@ async function _loadBachecaMsgs() {
   }
 }
 
+// ── ALUNNI TESTER ───────────────────────────────────────────────────
+// Un tester e' un alunno finto con cui il docente prova StudentApp e LiveLearn
+// dal punto di vista di un alunno, anche dentro una classe vera.
+//   livelearn/classes/<classe>.testers  nomi dei tester (sono anche in studenti)
+//   livelearn/students/<codice>.tester  true: MyClass non valuta le sue prove
+// L'import da MyClass conserva i tester e le classi Tester (processMyClassData).
+async function _creaCodiceTester(classId, className, nome) {
+  let existing = {};
+  try { existing = (await db.ref('livelearn/students').get()).val() || {}; } catch(e) {}
+  const gia = Object.entries(existing).find(([, v]) => v && v.classId === classId && v.name === nome);
+  if (gia) {
+    if (!gia[1].tester) await db.ref('livelearn/students/' + gia[0] + '/tester').set(true);
+    return gia[0];
+  }
+  let code;
+  do { code = _genCode(); } while (existing[code]);
+  await db.ref('livelearn/students/' + code).set({ name: nome, classId, className, createdAt: Date.now(), tester: true });
+  return code;
+}
+
+function _mostraCodiciTester(className, righe) {
+  const testo = righe.map(r => r.nome + ': ' + r.code).join('\n');
+  try { navigator.clipboard && navigator.clipboard.writeText(testo); } catch(e) {}
+  alert('🧪 Tester di ' + className + '\n\n' + testo + '\n\n' +
+    'Codice copiato negli appunti. Usalo per entrare nella StudentApp e nei test LiveLearn di questa classe ' +
+    '(meglio da un altro browser o in una finestra anonima, così resti collegato come docente qui).\n\n' +
+    'Le prove del tester non finiscono nelle valutazioni di MyClass.');
+}
+
 async function addTesterToClass(classId) {
-  const name = prompt('Nome dello studente tester da aggiungere:');
+  if (!db) { alert('Firebase non configurato.'); return; }
+  const name = prompt('Nome dello studente tester da aggiungere:', 'Tester Prova');
   if (!name || !name.trim()) return;
   const nomeTester = name.trim();
 
@@ -16168,20 +16213,66 @@ async function addTesterToClass(classId) {
   if (!classes[classId]) { alert('Classe non trovata.'); return; }
 
   const studenti = (classes[classId].studenti || []);
-  if (studenti.includes(nomeTester)) { alert(`"${nomeTester}" è già nella classe.`); return; }
+  const testers = (classes[classId].testers || []);
+  if (studenti.includes(nomeTester) && !testers.includes(nomeTester)) { alert(`"${nomeTester}" è già un alunno della classe: scegli un altro nome.`); return; }
 
-  studenti.push(nomeTester);
+  if (!studenti.includes(nomeTester)) studenti.push(nomeTester);
+  if (!testers.includes(nomeTester)) testers.push(nomeTester);
   classes[classId].studenti = studenti;
+  classes[classId].testers = testers;
   classes[classId].updatedAt = Date.now();
 
-  // Salva su Firebase e localStorage
-  if (db) { try { await db.ref('livelearn/classes/' + classId).set(classes[classId]); } catch(e) { console.warn('Firebase err:', e.message); } }
+  try { await db.ref('livelearn/classes/' + classId).set(classes[classId]); }
+  catch(e) { alert('Salvataggio non riuscito: ' + e.message); return; }
   const local = JSON.parse(localStorage.getItem('livelearn_classes') || '{}');
   local[classId] = classes[classId];
   localStorage.setItem('livelearn_classes', JSON.stringify(local));
 
-  alert(`✅ "${nomeTester}" aggiunto a ${classes[classId].nome}.
-Ora vai su 🔑 Gestisci codici → ⚡ Genera tutti per creare il suo codice.`);
+  let code;
+  try { code = await _creaCodiceTester(classId, classes[classId].nome, nomeTester); }
+  catch(e) { alert('Tester aggiunto, ma il codice non è stato creato: ' + e.message + '\nCrealo da 🔑 Gestisci codici → ⚡ Genera tutti.'); renderClassesTab(); return; }
+  _mostraCodiciTester(classes[classId].nome, [{ nome: nomeTester, code }]);
+  renderClassesTab();
+}
+
+// Toglie un tester dalla classe e cancella il suo codice e i suoi dati
+async function removeTesterFromClass(classId) {
+  if (!db) { alert('Firebase non configurato.'); return; }
+  let cl = null;
+  try { cl = (await db.ref('livelearn/classes/' + classId).get()).val(); } catch(e) {}
+  const testers = (cl && cl.testers) || [];
+  if (!testers.length) { alert('Questa classe non ha tester.'); return; }
+  let nome = testers[0];
+  if (testers.length > 1) {
+    const n = prompt('Quale tester togliere?\n\n' + testers.map((t, i) => (i + 1) + '. ' + t).join('\n'), '1');
+    if (!n) return;
+    nome = testers[Number(n) - 1];
+    if (!nome) { alert('Numero non valido.'); return; }
+  }
+  if (!confirm('Togliere il tester "' + nome + '" da ' + cl.nome + '?\n\nIl suo codice smette di funzionare e i suoi dati di prova (cronologia, bacheca privata, piani) vengono cancellati.')) return;
+  let studs = {};
+  try { studs = (await db.ref('livelearn/students').get()).val() || {}; } catch(e) {}
+  const wipe = {};
+  Object.entries(studs).forEach(([code, v]) => {
+    if (v && v.classId === classId && v.name === nome && v.tester) {
+      _pathsForCode(classId, code).forEach(p => { wipe[p] = null; });
+      wipe['livelearn/history_priv/' + code] = null;
+      wipe['myclass/accessLog/' + classId + '/' + code] = null;
+      wipe['myclass/agentRequests/' + classId + '/' + code] = null;
+      wipe['livelearn/students/' + code] = null;
+    }
+  });
+  cl.studenti = (cl.studenti || []).filter(n => n !== nome);
+  cl.testers = testers.filter(n => n !== nome);
+  if (!cl.testers.length) delete cl.testers;
+  cl.updatedAt = Date.now();
+  wipe['livelearn/classes/' + classId] = cl;
+  try { await db.ref().update(wipe); }
+  catch(e) { alert('Rimozione non riuscita: ' + e.message); return; }
+  const local = JSON.parse(localStorage.getItem('livelearn_classes') || '{}');
+  local[classId] = cl;
+  localStorage.setItem('livelearn_classes', JSON.stringify(local));
+  alert('✅ Tester "' + nome + '" tolto da ' + cl.nome + '.');
   renderClassesTab();
 }
 
@@ -16197,13 +16288,19 @@ async function createTesterClass() {
   if (raw) {
     raw.split('\n').map(s => s.trim()).filter(Boolean).forEach(s => studenti.push(s));
   }
-  const classData = { nome, studenti, updatedAt: Date.now() };
-  // Salva su Firebase e localStorage
-  try { await db.ref('livelearn/classes/' + id).set(classData); } catch(e) { console.warn('Firebase write err:', e.message); }
+  // tester: true → l'import da MyClass non la cancella
+  const classData = { nome, studenti, testers: studenti.slice(), tester: true, updatedAt: Date.now() };
+  try { await db.ref('livelearn/classes/' + id).set(classData); }
+  catch(e) { alert('Salvataggio non riuscito: ' + e.message); return; }
   const local = JSON.parse(localStorage.getItem('livelearn_classes') || '{}');
   local[id] = classData;
   localStorage.setItem('livelearn_classes', JSON.stringify(local));
-  alert(`✅ Classe "${nome}" creata con ${studenti.length} studenti.`);
+  const righe = [];
+  for (const n of studenti) {
+    try { righe.push({ nome: n, code: await _creaCodiceTester(id, nome, n) }); } catch(e) { console.warn('[Tester] codice:', e.message); }
+  }
+  if (righe.length) _mostraCodiciTester(nome, righe);
+  else alert(`✅ Classe "${nome}" creata con ${studenti.length} studenti.`);
   renderClassesTab();
 }
 

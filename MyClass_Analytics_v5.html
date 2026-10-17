@@ -19180,7 +19180,21 @@ ${blocco.regole}`;
     }
 
     // Mappa costruita da livelearn/students gia' letto (nessuna lettura qui)
+    // Alunni tester di LiveLearn (livelearn/students/<codice>.tester): nomi in
+    // forma "parole ordinate", per riconoscerli comunque siano scritti
+    let _mcTesterFirme = new Set();
+    const _mcFirmaNome = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(w => w.length > 1).sort().join(' ');
+    // Le prove di un tester non si valutano: non e' un alunno di MyClass
+    function _agentEUnTester(st) {
+      if (!_mcTesterFirme.size || !st) return false;
+      const dr = st.detailedResponse || {};
+      return [st.displayName, String(st.safe || '').replace(/_/g, ' '), dr.name, dr.aliasOf]
+        .some(n => n && _mcTesterFirme.has(_mcFirmaNome(n)));
+    }
+
     function _mcCodeMapFrom(studs) {
+      _mcTesterFirme = new Set(Object.values(studs || {}).filter(s => s && s.tester && s.name).map(s => _mcFirmaNome(s.name)));
       const map = {};
       Object.entries(studs || {}).forEach(([code, s]) => {
         if (!s || !s.name) return;
@@ -25278,6 +25292,7 @@ ${sectionInstr}`;
     // Si tiene la voce col nome del registro. Vale anche per i task gia' creati
     // prima della correzione: la rigenerazione passa di qui.
     function _agentDedupeStudents(students, classeObj) {
+        if (Array.isArray(students)) students = students.filter(st => !_agentEUnTester(st));
         if (!Array.isArray(students) || students.length < 2) return students || [];
         const nrm   = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
         const words = s => nrm(s).split(' ').filter(w => w.length > 1).sort().join(' ');
@@ -25900,6 +25915,7 @@ ${sectionInstr}`;
         for (const [classId, { classe, sessionMap }] of Object.entries(foundByHistory)) {
             for (const [code, group] of Object.entries(sessionMap)) {
                 agentCheckAbort(); // ← interrompi se l'utente ha premuto Stop
+                group.students = group.students.filter(st => !_agentEUnTester(st));
                 if (group.students.length < 1) continue;
                 if (group.mode === 'practice') {
                     console.log(`[Agente] ${classe.nome}: skip ${code} — practice mode`);
@@ -34052,16 +34068,16 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         WRITING:    { label: '✍️ Scrittura',           bg: '#e0f2fe', color: '#075985' }
     };
     const OBV_STATI = {
-        raggiunto:     { icon: '✅', label: 'Raggiunto' },
-        parziale:      { icon: '🟡', label: 'In via di acquisizione' },
+        raggiunto:     { icon: '✅', label: 'Raggiunto pienamente' },
+        parziale:      { icon: '🟡', label: 'Raggiunto, da consolidare' },
         non_raggiunto: { icon: '🔴', label: 'Non ancora raggiunto' },
         np:            { icon: '⚪', label: 'Non ancora valutato' },
         escluso:       { icon: '➖', label: 'Non previsto per l\'alunno' }
     };
     // Clic sulla cella degli esiti: automatico → raggiunto → parziale → non raggiunto → non previsto → automatico
     const OBV_CICLO = [null, 'raggiunto', 'parziale', 'non_raggiunto', 'escluso'];
-    // Soglie come la scala voti: 6 (60%) raggiunto, 5 (50%) in via di acquisizione
-    const OBV_SOGLIA_OK = 60, OBV_SOGLIA_PARZ = 50;
+    // Soglie: da 75% raggiunto pienamente, da 60% (il 6) raggiunto da consolidare, sotto non raggiunto
+    const OBV_SOGLIA_OK = 75, OBV_SOGLIA_PARZ = 60;
     const OBV_AREE_SCRITTE = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
     // Macroaree della griglia orale che contano anche per gli obiettivi di lessico e strutture
     const _OBV_RE_GRIGLIA = {
@@ -34590,9 +34606,13 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         try { db = firebase.database(); } catch (e) { alert('Firebase non disponibile: ' + e.message); return; }
         const st = document.getElementById('obvDomStatus');
         const say = t => { if (st) st.textContent = t; };
+        // Solo le verifiche che danno il voto: i voti scritti li crea l'agente dai
+        // test (le esercitazioni non diventano voti). Esclusi anche i piani
+        // personalizzati (REC/CON/APP: domande diverse, contano col loro voto).
         const sessioni = new Map();   // codice sessione → [{s, g}]
         (classe.studenti || []).forEach(s => (s.scritto || []).forEach(g => {
             if (!g?.sessionCode || g.recupero === 'escludi' || !_matchUnit(g.unit, nomeU)) return;
+            if (/^(REC|CON|APP)/i.test(g.sessionCode)) return;
             if (!sessioni.has(g.sessionCode)) sessioni.set(g.sessionCode, []);
             sessioni.get(g.sessionCode).push({ s, g });
         }));
@@ -34602,7 +34622,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
             alert('Nessuna verifica scritta di LiveLearn trovata per questa unit (i voti devono essere stati importati dall\'agente).');
             return;
         }
-        let alunni = 0, chiamate = 0;
+        let alunni = 0, chiamate = 0, esercitazioni = 0;
         const errori = [];
         const usate = {};   // activityId → versioni usate dagli alunni con un voto
         const usa = (act, ver) => (usate[act] || (usate[act] = new Set())).add(ver);
@@ -34611,6 +34631,9 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
             n++;
             say(`⏳ Verifica ${n}/${sessioni.size}: lettura risposte…`);
             try {
+                // Test trasformato in esercitazione dopo il voto: non conta
+                const modo = (await db.ref('livelearn/sessions/' + code + '/mode').get()).val();
+                if (modo === 'practice') { esercitazioni++; continue; }
                 const detail = await agentFetchSessionDetail(code, db);
                 if (!detail?.activityId) throw new Error('sessione non trovata');
                 attivita.add(detail.activityId);
@@ -34644,6 +34667,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         alert(`🔗 ${attivita.size} verific${attivita.size === 1 ? 'a collegata' : 'he collegate'}`
             + (alunni ? `, risposte di ${alunni} prove lette` : '')
             + (chiamate ? `, ${chiamate} abbinament${chiamate === 1 ? 'o' : 'i'} fatti con l'AI` : '') + '.'
+            + (esercitazioni ? `\n${esercitazioni} sessioni ignorate perché ora sono esercitazioni.` : '')
             + (errori.length ? `\n\nProblemi:\n${errori.join('\n')}` : '')
             + '\n\nControlla gli abbinamenti con "✏️ Rivedi" e correggi dove serve.');
     }
@@ -34653,6 +34677,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
     async function obvDopoVerificaScritta(classe, task) {
         try {
             if (!classe || !task?.activityId || task.isRecupero || task.isConsolidamento) return;
+            if (/^(REC|CON|APP)/i.test(task.sessionCode || '')) return;
             const unita = classe.pianificazione?.programmazione?.unita || [];
             const i = unita.findIndex((x, k) => _matchUnit(task.unit, _obvNomeU(x, k)));
             const u = unita[i];
@@ -34903,13 +34928,13 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         const ob = u.obiettivi || [];
         if (!ob.length) return `<p style="color:#999;font-size:13px;">Prima crea gli obiettivi della unit.</p>`;
         const studenti = classe.studenti || [];
-        const conteggi = ob.map(() => ({ ok: 0, val: 0, auto: 0, scarti: 0 }));
+        const conteggi = ob.map(() => ({ ok: 0, pieno: 0, val: 0, auto: 0, scarti: 0 }));
         const righe = studenti.map((s, si) => {
             const fonti = _obvFonti(s, classe, nomeU);
             const minimi = _obvSoloMinimi(s, u);
             const celle = ob.map((o, k) => {
                 const st = obvStato(s, classe, u, nomeU, o, fonti);
-                if (st.stato !== 'np' && st.stato !== 'escluso') { conteggi[k].val++; if (st.stato === 'raggiunto') conteggi[k].ok++; }
+                if (st.stato !== 'np' && st.stato !== 'escluso') { conteggi[k].val++; if (st.stato === 'raggiunto' || st.stato === 'parziale') conteggi[k].ok++; if (st.stato === 'raggiunto') conteggi[k].pieno++; }
                 const av = _obvAutoAlunno(s, nomeU, o.id);
                 const scarto = _obvScarto(av, st.stato);
                 if (av != null) conteggi[k].auto++;
@@ -34950,8 +34975,8 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
                     <thead><tr><th style="text-align:left;padding:5px 8px;font-size:12px;color:#888;">Alunno</th>
                         ${ob.map((o, k) => `<th style="padding:4px;font-size:12px;color:#4f46e5;" title="${_obvEsc(o.testo)}">O${k + 1}</th>`).join('')}</tr></thead>
                     <tbody>${righe}</tbody>
-                    <tfoot><tr style="border-top:2px solid #e8eaf6;"><td style="padding:6px 8px;font-size:12px;color:#888;">Raggiunto</td>
-                        ${conteggi.map(c => `<td style="text-align:center;font-size:11px;color:#555;">${c.val ? `${c.ok}/${c.val}` : '—'}</td>`).join('')}</tr>
+                    <tfoot><tr style="border-top:2px solid #e8eaf6;"><td style="padding:6px 8px;font-size:12px;color:#888;" title="Alunni che hanno raggiunto l'obiettivo (✅ + 🟡) su quelli valutati; tra parentesi quelli che l'hanno raggiunto pienamente">Raggiunto (pieno)</td>
+                        ${conteggi.map(c => `<td style="text-align:center;font-size:11px;color:#555;">${c.val ? `${c.ok}/${c.val} <span style="color:#16a34a;">(${c.pieno})</span>` : '—'}</td>`).join('')}</tr>
                         ${conteggi.some(c => c.auto) ? `<tr><td style="padding:2px 8px;font-size:12px;color:#888;" title="Alunni che si sono autovalutati · in arancio quanti si sopravvalutano o si sottovalutano">Autovalutati · scarti</td>
                         ${conteggi.map(c => `<td style="text-align:center;font-size:11px;color:#555;">${c.auto ? `${c.auto}${c.scarti ? ` · <span style="color:#d97706;font-weight:700;">${c.scarti}</span>` : ''}` : '—'}</td>`).join('')}</tr>` : ''}</tfoot>
                 </table>
