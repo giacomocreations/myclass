@@ -25318,6 +25318,47 @@ ${sectionInstr}`;
         return null;
     }
 
+    // Punti presi per ogni domanda dalla risposta di un alunno (manuale > AI >
+    // automatico; listening e risposte libere senza voto riconciliati col totale
+    // dr.score). Serve ai parziali per area e agli obiettivi della unit.
+    function _agentPuntiPerDomanda(sQs, dr) {
+        const ms  = dr.manualScores || {};
+        const as2 = dr.aiScores     || {};
+        const qmo = dr.questionMaxOverrides || {};
+        const ans = agentFbArr(dr.answers);
+        const maxDi = (q, i) => (qmo[i] != null && !isNaN(Number(qmo[i]))) ? Number(qmo[i]) : (q.points || 1);
+
+        const perQ = new Array(sQs.length).fill(0);
+        let sumKnown = 0;
+        const uncertain = [];   // listening/free-response senza manual/ai → riconcilia col totale
+        sQs.forEach((q, i) => {
+            const em = maxDi(q, i);
+            if (em <= 0) return;                       // escluso dalla valutazione
+            if (ms[i] != null) { perQ[i] = Number(ms[i]); sumKnown += perQ[i]; return; }
+            const op = q.points || 1;
+            const scale = v => op > 0 ? Math.round(v / op * em * 100) / 100 : v;
+            if (as2[i] != null) { perQ[i] = scale(Number(as2[i])); sumKnown += perQ[i]; return; }
+            // Il listening annidato è la fonte storica dei tag sbagliati: lo si
+            // riconcilia col totale autoritativo dr.score invece di rivalutarlo.
+            if (q.type === 'listening') { uncertain.push(i); return; }
+            const raw = _agentEvalPts(q, ans[i]);
+            if (raw == null) { uncertain.push(i); return; }   // free-response senza AI
+            perQ[i] = scale(raw);
+            sumKnown += perQ[i];
+        });
+
+        // Riconcilia le domande incerte col totale autoritativo dr.score.
+        if (dr.score != null && uncertain.length) {
+            const residuo = Math.max(0, Number(dr.score) - sumKnown);
+            const maxUnc = uncertain.reduce((s, i) => s + maxDi(sQs[i], i), 0) || 1;
+            uncertain.forEach(i => {
+                const em = maxDi(sQs[i], i);
+                perQ[i] = Math.min(em, Math.round(residuo * (em / maxUnc) * 100) / 100);
+            });
+        }
+        return { perQ, maxDi };
+    }
+
     // ── Converte oggetto Firebase indicizzato in array JS ─────────────────
     function agentFbArr(v) {
         if (Array.isArray(v)) return v;
@@ -26320,6 +26361,7 @@ ${sectionInstr}`;
                     students: group.students, questions: detail?.questions || [],
                     studentVersions: detail?.studentVersions || {},
                     actVersions:     detail?.actVersions     || {},
+                    activityId:      detail?.activityId      || null,
                     ..._taskIsRecupero      && { isRecupero: true },
                     ..._taskIsConsolidamento && { isConsolidamento: true },
                     ...(_recSuperfluoReason ? {
@@ -26387,6 +26429,7 @@ ${sectionInstr}`;
             if (detail?.questions?.length) task.questions = detail.questions;
             if (detail?.studentVersions)   task.studentVersions = detail.studentVersions;
             if (detail?.actVersions)        task.actVersions     = detail.actVersions;
+            if (detail?.activityId)         task.activityId      = detail.activityId;
         } catch(e) {
             console.warn('[Agente] _agentRefreshTaskResponses:', e.message);
         }
@@ -26720,45 +26763,15 @@ ${sectionInstr}`;
             // (di norma c'è una sola listening → prende esattamente i suoi punti reali).
             // Così il tag LISTENING è sempre coerente col voto complessivo.
             let tags = sess.tagBreakdown || {};
+            let domande = null;   // punti per domanda: servono agli obiettivi della unit
             if (dr && sQs.length && sMaxPts > 0) {
                 // Stessa logica di LiveLearn._buildHistoryEntry: massimo per domanda con
                 // questionMaxOverrides (0 = esercizio escluso), punti manuali > AI > auto
                 // (AI e auto riscalati sull'override). Prima i tag usavano q.points grezzi e
                 // non valutavano matching/reorder/drag-drop/categorization → % sballate.
-                const ms  = dr.manualScores || {};
-                const as2 = dr.aiScores     || {};
-                const qmo = dr.questionMaxOverrides || {};
-                const ans = agentFbArr(dr.answers);
-                const maxDi = (q, i) => (qmo[i] != null && !isNaN(Number(qmo[i]))) ? Number(qmo[i]) : (q.points || 1);
-
-                const perQ = new Array(sQs.length).fill(0);
-                let sumKnown = 0;
-                const uncertain = [];   // listening/free-response senza manual/ai → riconcilia col totale
-                sQs.forEach((q, i) => {
-                    const em = maxDi(q, i);
-                    if (em <= 0) return;                       // escluso dalla valutazione
-                    if (ms[i] != null) { perQ[i] = Number(ms[i]); sumKnown += perQ[i]; return; }
-                    const op = q.points || 1;
-                    const scale = v => op > 0 ? Math.round(v / op * em * 100) / 100 : v;
-                    if (as2[i] != null) { perQ[i] = scale(Number(as2[i])); sumKnown += perQ[i]; return; }
-                    // Il listening annidato è la fonte storica dei tag sbagliati: lo si
-                    // riconcilia col totale autoritativo dr.score invece di rivalutarlo.
-                    if (q.type === 'listening') { uncertain.push(i); return; }
-                    const raw = _agentEvalPts(q, ans[i]);
-                    if (raw == null) { uncertain.push(i); return; }   // free-response senza AI
-                    perQ[i] = scale(raw);
-                    sumKnown += perQ[i];
-                });
-
-                // Riconcilia le domande incerte col totale autoritativo dr.score.
-                if (dr.score != null && uncertain.length) {
-                    const residuo = Math.max(0, Number(dr.score) - sumKnown);
-                    const maxUnc = uncertain.reduce((s, i) => s + maxDi(sQs[i], i), 0) || 1;
-                    uncertain.forEach(i => {
-                        const em = maxDi(sQs[i], i);
-                        perQ[i] = Math.min(em, Math.round(residuo * (em / maxUnc) * 100) / 100);
-                    });
-                }
+                const { perQ, maxDi } = _agentPuntiPerDomanda(sQs, dr);
+                if (typeof _obvDomandeRisposta === 'function')
+                    domande = _obvDomandeRisposta(task.activityId, _resolvedVerScore, sQs, perQ, maxDi);
 
                 // Aggrega per tag (una domanda conta solo nel proprio tag; il listening
                 // senza tag rientra in LISTENING).
@@ -26805,7 +26818,7 @@ ${sectionInstr}`;
             }
 
             return { ...s, pct, votoLabel: votoLabelEff, votoValue: votoValueEff,
-                     tags, avgTimeByType, totalTimeSec, nome: s.displayName,
+                     tags, domande, avgTimeByType, totalTimeSec, nome: s.displayName,
                      recoveryNote, recoveryDetailLines,
                      _studentQs: sQs };  // conserva le domande della versione per detailBlocks
         });
@@ -27226,6 +27239,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                         // Dati JSON strutturati per lo storico
                         pct:          r.pct          ?? null,
                         tags:         r.tags          || {},
+                        ...(r.domande ? { domande: r.domande } : {}),
                         analisi:      task.studentAnalysis?.[r.nome] || '',
                         avgTimeByType:r.avgTimeByType || {},
                         totalTimeSec: r.totalTimeSec  ?? null,
@@ -27254,6 +27268,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
             }
         }
         if (classeObj) saveData();
+        // Obiettivi della unit: abbina le domande di questo test (in background)
+        if (classeObj && typeof obvDopoVerificaScritta === 'function') obvDopoVerificaScritta(classeObj, task);
         // Statistiche StudentApp (voti, competenze) aggiornate subito per gli alunni
         // importati: l'auto-sync di saveData copre solo la classe aperta a schermo.
         if (classeObj) for (const st of _syncDopo) { try { await _autoSyncStudentMyClass(st, classeObj.nome); } catch(e) {} }
@@ -34269,7 +34285,30 @@ Rispondi SOLO con JSON valido, niente altro:
             if (f.scritto[area] == null || pct > f.scritto[area].pct) f.scritto[area] = { pct, fonte };
         };
         const scritti = (studente.scritto || []).filter(g => g && g.recupero !== 'escludi' && _matchUnit(g.unit, nomeU));
-        const conTag = scritti.filter(g => g.tags && typeof g.tags === 'object' && Object.keys(g.tags).length);
+        // Verifiche con le domande abbinate agli obiettivi: contano per obiettivo,
+        // non per area (un obiettivo senza domande in quel test non prende niente).
+        const mappe = classe?.pianificazione?.obiettiviDomande || {};
+        const mappati = new Set();
+        f.obiettivi = {};
+        scritti.forEach(g => {
+            const d = g.domande, mv = d && mappe[d.act]?.v?.[d.ver];
+            if (!mv) return;
+            const acc = {};
+            (d.oi || []).forEach((oi, j) => {
+                const id = mv[oi];
+                if (!id || !(d.m[j] > 0)) return;
+                const a = acc[id] || (acc[id] = { e: 0, t: 0, n: 0 });
+                a.e += Number(d.p[j]) || 0; a.t += d.m[j]; a.n++;
+            });
+            if (!Object.keys(acc).length) return;
+            mappati.add(g);
+            Object.entries(acc).forEach(([id, a]) => {
+                const pct = Math.min(100, a.e / a.t * 100);
+                if (!f.obiettivi[id] || pct > f.obiettivi[id].pct)
+                    f.obiettivi[id] = { pct, fonte: `Scritto ${_obvDataBreve(g.data)}: ${a.n} domand${a.n === 1 ? 'a' : 'e'} abbinat${a.n === 1 ? 'a' : 'e'}, ${Math.round(pct)}%` };
+            });
+        });
+        const conTag = scritti.filter(g => !mappati.has(g) && g.tags && typeof g.tags === 'object' && Object.keys(g.tags).length);
         conTag.forEach(g => Object.entries(g.tags).forEach(([k, v]) => {
             const n = Number(v);
             if (v === '' || v == null || isNaN(n)) return;
@@ -34277,7 +34316,7 @@ Rispondi SOLO con JSON valido, niente altro:
         }));
         // Voto scritto senza parziali (inserito a mano o recupero): vale per tutte le
         // aree scritte. Se la unit ha già una verifica con i parziali conta solo un recupero.
-        scritti.filter(g => !conTag.includes(g) && Number(g.voto) > 0 && (!conTag.length || g.recupero === 'media'))
+        scritti.filter(g => !conTag.includes(g) && !mappati.has(g) && Number(g.voto) > 0 && ((!conTag.length && !mappati.size) || g.recupero === 'media'))
             .forEach(g => OBV_AREE_SCRITTE.forEach(k => metti(k, Number(g.voto) * 10,
                 `Scritto ${_obvDataBreve(g.data)}: voto complessivo ${g.voto}${g.recupero ? ' (recupero)' : ''}`)));
 
@@ -34303,12 +34342,13 @@ Rispondi SOLO con JSON valido, niente altro:
         return f;
     }
 
-    function _obvValori(area, f) {
-        const v = [];
-        if (area === 'SPEAKING') { if (f.orale) v.push(f.orale); return v; }
-        if (f.scritto[area]) v.push(f.scritto[area]);
-        // Le funzioni comunicative si verificano anche all'orale
-        if (area === 'FUNCTIONS' && f.orale) v.push(f.orale);
+    function _obvValori(o, f) {
+        const v = [], area = o.area;
+        // Scritto: domande abbinate all'obiettivo, altrimenti il parziale dell'area
+        const scr = f.obiettivi?.[o.id] || (area !== 'SPEAKING' && f.scritto[area]);
+        if (scr) v.push(scr);
+        // Speaking e funzioni comunicative si verificano all'orale
+        if ((area === 'SPEAKING' || area === 'FUNCTIONS') && f.orale) v.push(f.orale);
         const re = _OBV_RE_GRIGLIA[area];
         if (re) f.griglia.filter(p => re.test(p.nome) && p.max > 0)
             .forEach(p => v.push({ pct: p.voto / p.max * 100, fonte: p.fonte, provvisorio: p.provvisorio }));
@@ -34322,7 +34362,7 @@ Rispondi SOLO con JSON valido, niente altro:
 
     function obvStato(studente, classe, u, nomeU, o, fonti) {
         const man = studente.obiettiviEsiti?.[nomeU]?.[o.id] || null;
-        const vals = _obvValori(o.area, fonti || _obvFonti(studente, classe, nomeU));
+        const vals = _obvValori(o, fonti || _obvFonti(studente, classe, nomeU));
         const pct = vals.length ? vals.reduce((s, x) => s + x.pct, 0) / vals.length : null;
         let auto = pct == null ? 'np' : pct >= OBV_SOGLIA_OK ? 'raggiunto' : pct >= OBV_SOGLIA_PARZ ? 'parziale' : 'non_raggiunto';
         if (_obvSoloMinimi(studente, u) && !o.minimo) auto = 'escluso';
@@ -34357,6 +34397,343 @@ Rispondi SOLO con JSON valido, niente altro:
         return out.length ? out : null;
     }
 
+    // ── Domande delle verifiche ↔ obiettivi ─────────────────────────────
+    // Ogni domanda di una verifica scritta può verificare un obiettivo della unit.
+    // L'abbinamento sta in MyClass, per classe e per versione del test (Fila A, B,
+    // C, DSA, PEI…), con le chiavi delle versioni come le salva LiveLearn:
+    //   classe.pianificazione.obiettiviDomande[activityId] =
+    //     { unit, titolo, nomi: {chiave: nome versione}, n: {ver: n domande},
+    //       v: {ver: {indice domanda: id obiettivo | ''}}, fonte: {ver: 'campo'|'copia'|'ai'|'docente'} }
+    // Sul voto scritto restano i punti presi domanda per domanda:
+    //   voto.domande = { act, ver, oi: [indice nell'attività], p: [punti], m: [massimo] }
+    // così cambiare un abbinamento aggiorna subito gli esiti, senza rileggere Firebase.
+    const _OBV_VER_LABELS = { originale: 'Fila A', fila_b: 'Fila B', fila_c: 'Fila C', dsa: 'DSA', pei: 'PEI', pei_2: 'PEI 2',
+        training_dsa: 'Training DSA', training_pei: 'Training PEI', recupero: 'Recupero', recupero_1: 'Recupero Fast 1', recupero_2: 'Recupero Fast 2' };
+    const _OBV_FONTI_ABB = { campo: '📄 dal test', copia: '📋 come la Fila A', ai: '🤖 AI', docente: '✋ docente' };
+    const _obvAttCache = {};   // activityId → attività letta da Firebase (sessione corrente)
+
+    function _obvDomandeRisposta(act, ver, sQs, perQ, maxDi) {
+        return {
+            act: act || null,
+            ver: ver || 'originale',
+            oi: sQs.map((q, i) => (q && q._oi != null) ? q._oi : i),
+            p: perQ.map(x => Math.round((Number(x) || 0) * 100) / 100),
+            m: sQs.map((q, i) => q ? maxDi(q, i) : 0)
+        };
+    }
+
+    function _obvMappe(classe) {
+        if (!classe.pianificazione) classe.pianificazione = {};
+        return classe.pianificazione.obiettiviDomande || (classe.pianificazione.obiettiviDomande = {});
+    }
+    function _obvVerLabel(m, ver) {
+        const nome = m?.nomi?.[ver] || ver;
+        return _OBV_VER_LABELS[nome] || String(nome || '').toUpperCase();
+    }
+
+    function _obvTestoDomanda(q) {
+        if (!q || typeof q !== 'object') return '';
+        const txt = String(q.text || q.question?.text || q.title || q.instruction || '')
+            .replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
+        const piatto = v => Array.isArray(v)
+            ? v.flat().map(x => x && typeof x === 'object' ? Object.values(x).filter(y => typeof y !== 'object').join('-') : x).filter(x => x !== '' && x != null).join(', ')
+            : '';
+        const extra = [q.options, q.question?.options, q.words, q.items, q.pairs, q.blanks, q.correctAnswers, q.question?.answers, q.sentences]
+            .map(piatto).filter(Boolean).join(' | ');
+        return (txt.slice(0, 160) + (extra ? ' [' + extra.slice(0, 120) + ']' : '')).trim();
+    }
+
+    // Valore del campo "obiettivo" di una domanda (o della risposta dell'AI) →
+    // id dell'obiettivo: testo uguale, codice "O2", id, oppure testo molto simile.
+    function _obvRisolviCampo(val, ob) {
+        if (val == null) return null;
+        const s = String(val).trim();
+        if (!s || s === '-') return null;
+        const norm = t => String(t).toLowerCase().replace(/[^a-zà-ÿ0-9]+/g, ' ').trim();
+        const ns = norm(s);
+        const esatto = ob.find(o => o.id === s || norm(o.testo) === ns);
+        if (esatto) return esatto.id;
+        const m = s.match(/^O\s*(\d+)\b/i);
+        if (m && ob[Number(m[1]) - 1]) return ob[Number(m[1]) - 1].id;
+        const parole = t => norm(t).split(' ').filter(w => w.length > 2);
+        const ws = new Set(parole(s));
+        let best = null, bs = 0;
+        ob.forEach(o => {
+            const ow = parole(o.testo);
+            const sc = ow.filter(w => ws.has(w)).length / Math.max(ow.length, ws.size, 1);
+            if (sc > bs) { bs = sc; best = o; }
+        });
+        return bs >= 0.5 ? best.id : null;
+    }
+
+    // Attività LiveLearn con tutte le versioni (chiavi come su Firebase) e i nomi delle versioni
+    async function _obvCaricaAttivita(act, db) {
+        if (_obvAttCache[act]) return _obvAttCache[act];
+        const a = (await db.ref('livelearn/activities/' + act).get()).val();
+        if (!a) throw new Error('attività ' + act + ' non trovata');
+        let keys = {};
+        try { keys = (await db.ref('livelearn/versionKeys/' + act).get()).val() || {}; } catch (e) {}
+        const vers = { originale: agentFbArr(a.questions) };
+        if (a.versions && typeof a.versions === 'object')
+            Object.entries(a.versions).forEach(([k, v]) => { const qs = agentFbArr(v); if (qs.length) vers[k] = qs; });
+        const nomi = {};
+        Object.keys(vers).forEach(k => { nomi[k] = keys[k] || k; });
+        return (_obvAttCache[act] = { act, titolo: a.title || a.titolo || a.name || '', vers, nomi });
+    }
+
+    function _obvPromptAbbina(u, nomeU, ob, qs, indici) {
+        return `Sei un docente di inglese. Abbina ogni domanda della verifica all'OBIETTIVO DI APPRENDIMENTO della unit che verifica.
+
+UNIT: ${nomeU}
+OBIETTIVI:
+${ob.map((o, k) => `O${k + 1} [${o.area}] ${o.testo}`).join('\n')}
+
+REGOLE
+- Ogni domanda verifica UN solo obiettivo: scegli quello più specifico.
+- Il tag dell'area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING, READING, WRITING) è un indizio: una domanda VOCABULARY va di solito all'obiettivo di lessico con lo stesso argomento, una LISTENING all'obiettivo di ascolto, ma conta il contenuto.
+- Se nessun obiettivo c'entra, rispondi "-".
+
+DOMANDE (#indice [tipo/area] testo [opzioni o parole]):
+${indici.map(i => `#${i} [${qs[i]?.type || '?'}${qs[i]?.tag ? '/' + qs[i].tag : ''}] ${_obvTestoDomanda(qs[i]) || '(senza testo)'}`).join('\n')}
+
+Rispondi SOLO con JSON valido, una voce per ogni domanda:
+{"abbinamenti":{"${indici[0]}":"O1"${indici[1] != null ? `,"${indici[1]}":"O3"` : ''}}}`;
+    }
+    function _obvParseAbbina(r, ob, indici) {
+        const txt = String(r || '').replace(/```json|```/g, '');
+        const a = txt.indexOf('{'), b = txt.lastIndexOf('}');
+        if (a < 0 || b < a) throw new Error('risposta AI senza JSON');
+        const j = JSON.parse(txt.slice(a, b + 1));
+        const ab = j.abbinamenti || j;
+        const out = {};
+        indici.forEach(i => {
+            const v = ab[i] ?? ab['#' + i] ?? ab[String(i)];
+            out[i] = _obvRisolviCampo(v, ob) || '';
+        });
+        return out;
+    }
+
+    // Abbina le domande di tutte le versioni di un'attività agli obiettivi della unit.
+    // Ordine: abbinamento di una classe parallela con gli stessi obiettivi → campo
+    // "obiettivo" scritto nel test → per le file con la stessa struttura della Fila A
+    // lo stesso abbinamento per posizione → il resto con l'AI (una chiamata per versione).
+    // forza: rifà anche le versioni già abbinate (non quelle corrette dal docente).
+    // soloVer: abbina solo queste versioni (quelle usate dagli alunni); la Fila A sempre.
+    async function _obvAbbinaAttivita(classe, u, nomeU, att, forza, soloVer) {
+        const ob = u.obiettivi || [];
+        if (!ob.length) throw new Error('la unit non ha obiettivi');
+        const mappe = _obvMappe(classe);
+        const m = mappe[att.act] || (mappe[att.act] = { v: {}, fonte: {} });
+        Object.assign(m, { unit: nomeU, titolo: att.titolo, nomi: att.nomi, at: new Date().toISOString() });
+        m.n = {};
+        Object.entries(att.vers).forEach(([k, qs]) => { m.n[k] = qs.length; });
+        const ids = new Set(ob.map(o => o.id));
+        const firma = qs => qs.map(q => `${q?.type || ''}:${q?.tag || ''}`).join('|');
+        const ordine = ['originale', ...Object.keys(att.vers).filter(k => k !== 'originale')];
+        const daFare = ver => att.vers[ver]?.length && (!soloVer || ver === 'originale' || soloVer.has(ver))
+            && (!m.v[ver] || (forza && m.fonte[ver] !== 'docente'));
+
+        // Classe parallela con gli stessi obiettivi (copiati): stesso abbinamento
+        for (const cl of (data.classi || [])) {
+            const altra = cl !== classe && cl.pianificazione?.obiettiviDomande?.[att.act];
+            if (!altra?.v) continue;
+            const usati = Object.values(altra.v).flatMap(x => Object.values(x || {})).filter(Boolean);
+            if (!usati.length || !usati.every(id => ids.has(id))) continue;
+            ordine.forEach(ver => { if (daFare(ver) && altra.v[ver]) { m.v[ver] = { ...altra.v[ver] }; m.fonte[ver] = altra.fonte?.[ver] || 'copia'; } });
+        }
+
+        let chiamate = 0;
+        for (const ver of ordine) {
+            if (!daFare(ver)) continue;
+            const qs = att.vers[ver];
+            const mv = {};
+            let fonte = null;
+            qs.forEach((q, i) => { const id = _obvRisolviCampo(q?.obiettivo, ob); if (id) { mv[i] = id; fonte = 'campo'; } });
+            const mo = m.v.originale;
+            if (ver !== 'originale' && mo && firma(qs) === firma(att.vers.originale)) {
+                qs.forEach((q, i) => { if (mv[i] == null && mo[i] != null) mv[i] = mo[i]; });
+                fonte = fonte || 'copia';
+            }
+            const restanti = qs.map((q, i) => i).filter(i => mv[i] == null && qs[i]);
+            if (restanti.length) {
+                // Gemini gratuito: 15 richieste al minuto
+                if (chiamate && AI_PROVIDER === 'gemini') await new Promise(r => setTimeout(r, 4500));
+                const r = await callGemini(_obvPromptAbbina(u, nomeU, ob, qs, restanti));
+                chiamate++;
+                Object.assign(mv, _obvParseAbbina(r, ob, restanti));
+                fonte = 'ai';
+            }
+            m.v[ver] = mv;
+            m.fonte[ver] = fonte || 'ai';
+        }
+        return chiamate;
+    }
+
+    function _obvVerAlunno(sv, nomi) {
+        const norm = k => String(k || '').toLowerCase().replace(/[.#$[\]\/\s]/g, '_');
+        for (const n of nomi) {
+            if (sv[n]) return sv[n];
+            const nn = norm(n);
+            const hit = Object.entries(sv).find(([k]) => norm(k) === nn);
+            if (hit) return hit[1];
+        }
+        return 'originale';
+    }
+
+    // Verifiche scritte della unit già fatte: rilegge da Firebase le risposte
+    // (punti per domanda e fila di ogni alunno) e abbina le domande agli obiettivi.
+    async function obvCollegaVerifiche(forza) {
+        const ctx = _obvCtx(); if (!ctx) return;
+        const { classe, u, nomeU } = ctx;
+        if (!u.obiettivi?.length) { alert('Prima crea gli obiettivi della unit.'); return; }
+        let db;
+        try { db = firebase.database(); } catch (e) { alert('Firebase non disponibile: ' + e.message); return; }
+        const st = document.getElementById('obvDomStatus');
+        const say = t => { if (st) st.textContent = t; };
+        const sessioni = new Map();   // codice sessione → [{s, g}]
+        (classe.studenti || []).forEach(s => (s.scritto || []).forEach(g => {
+            if (!g?.sessionCode || g.recupero === 'escludi' || !_matchUnit(g.unit, nomeU)) return;
+            if (!sessioni.has(g.sessionCode)) sessioni.set(g.sessionCode, []);
+            sessioni.get(g.sessionCode).push({ s, g });
+        }));
+        const mappe = _obvMappe(classe);
+        const attivita = new Set(Object.keys(mappe).filter(a => _matchUnit(mappe[a].unit, nomeU)));
+        if (!sessioni.size && !attivita.size) {
+            alert('Nessuna verifica scritta di LiveLearn trovata per questa unit (i voti devono essere stati importati dall\'agente).');
+            return;
+        }
+        let alunni = 0, chiamate = 0;
+        const errori = [];
+        const usate = {};   // activityId → versioni usate dagli alunni con un voto
+        const usa = (act, ver) => (usate[act] || (usate[act] = new Set())).add(ver);
+        let n = 0;
+        for (const [code, voti] of sessioni) {
+            n++;
+            say(`⏳ Verifica ${n}/${sessioni.size}: lettura risposte…`);
+            try {
+                const detail = await agentFetchSessionDetail(code, db);
+                if (!detail?.activityId) throw new Error('sessione non trovata');
+                attivita.add(detail.activityId);
+                for (const { s, g } of voti) {
+                    if (g.domande?.act && !forza) { usa(g.domande.act, g.domande.ver); continue; }
+                    const nomi = [_toSafe(`${s.cognome} ${s.nome}`), _toSafe(`${s.nome} ${s.cognome}`)];
+                    const dr = agentMatchResponse(detail, nomi[0]) || agentMatchResponse(detail, nomi[1]);
+                    if (!dr) continue;
+                    const ver = _obvVerAlunno(detail.studentVersions || {}, nomi);
+                    const qs = (ver !== 'originale' && detail.actVersions?.[ver]?.length) ? detail.actVersions[ver] : detail.questions;
+                    if (!qs?.length) continue;
+                    const { perQ, maxDi } = _agentPuntiPerDomanda(qs, dr);
+                    g.domande = _obvDomandeRisposta(detail.activityId, ver, qs, perQ, maxDi);
+                    usa(detail.activityId, ver);
+                    alunni++;
+                }
+            } catch (e) { errori.push(`${code}: ${e.message}`); }
+        }
+        n = 0;
+        for (const act of attivita) {
+            n++;
+            say(`⏳ Abbinamento ${n}/${attivita.size}…`);
+            try {
+                const att = await _obvCaricaAttivita(act, db);
+                chiamate += await _obvAbbinaAttivita(classe, u, nomeU, att, forza, usate[act] || null);
+            } catch (e) { errori.push(`${mappe[act]?.titolo || act}: ${e.message}`); }
+        }
+        saveData();
+        say('');
+        _obvRender();
+        alert(`🔗 ${attivita.size} verific${attivita.size === 1 ? 'a collegata' : 'he collegate'}`
+            + (alunni ? `, risposte di ${alunni} prove lette` : '')
+            + (chiamate ? `, ${chiamate} abbinament${chiamate === 1 ? 'o' : 'i'} fatti con l'AI` : '') + '.'
+            + (errori.length ? `\n\nProblemi:\n${errori.join('\n')}` : '')
+            + '\n\nControlla gli abbinamenti con "✏️ Rivedi" e correggi dove serve.');
+    }
+
+    // Dopo l'approvazione di una verifica scritta: abbina le domande del test agli
+    // obiettivi della unit, se non è già stato fatto (in background).
+    async function obvDopoVerificaScritta(classe, task) {
+        try {
+            if (!classe || !task?.activityId || task.isRecupero || task.isConsolidamento) return;
+            const unita = classe.pianificazione?.programmazione?.unita || [];
+            const i = unita.findIndex((x, k) => _matchUnit(task.unit, _obvNomeU(x, k)));
+            const u = unita[i];
+            if (!u?.obiettivi?.length || classe.pianificazione?.obiettiviDomande?.[task.activityId]) return;
+            const att = await _obvCaricaAttivita(task.activityId, firebase.database());
+            const usate = new Set(Object.values(task.studentVersions || {}));
+            await _obvAbbinaAttivita(classe, u, _obvNomeU(u, i), att, false, usate);
+            saveData();
+            console.log(`[Obiettivi] domande di "${att.titolo}" abbinate agli obiettivi di ${_obvNomeU(u, i)} (${classe.nome})`);
+        } catch (e) { console.warn('[Obiettivi] abbinamento dopo la verifica:', e.message); }
+    }
+
+    // Istruzioni da dare a Claude quando genera un nuovo test della unit
+    function obvIstruzioniTest() {
+        const ctx = _obvCtx(); if (!ctx?.u.obiettivi?.length) return;
+        const testo = `OBIETTIVI DI APPRENDIMENTO della unit "${ctx.nomeU}":\n`
+            + ctx.u.obiettivi.map((o, k) => `O${k + 1}. ${o.testo}  [area: ${o.area}]`).join('\n')
+            + `\n\nIn ogni domanda del JSON del test (Fila A e tutte le versioni: Fila B, Fila C, DSA, PEI…) aggiungi il campo "obiettivo" con il TESTO ESATTO dell'obiettivo che la domanda verifica, per esempio:\n`
+            + `"obiettivo": "${ctx.u.obiettivi[0].testo}"\n`
+            + `Ogni domanda verifica un solo obiettivo. Se una domanda non ne verifica nessuno, non mettere il campo.`;
+        const fatto = () => alert('📋 Istruzioni copiate: incollale nella richiesta a Claude quando generi il test.\n\nMyClass legge il campo "obiettivo" di ogni domanda e abbina il test da solo, senza AI.');
+        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(testo).then(fatto, () => prompt('Copia queste istruzioni:', testo));
+        else prompt('Copia queste istruzioni:', testo);
+    }
+
+    // ── Revisione manuale degli abbinamenti ─────────────────────────────
+    async function obvRivedi(act, ver) {
+        _obvUI.edit = { act, ver: ver || 'originale', loading: true };
+        _obvRender();
+        try {
+            await _obvCaricaAttivita(act, firebase.database());
+        } catch (e) { _obvUI.edit.errore = e.message; }
+        _obvUI.edit.loading = false;
+        _obvRender();
+    }
+    function obvRivediVer(ver) { if (_obvUI.edit) { _obvUI.edit.ver = ver; _obvRender(); } }
+    function obvChiudiRevisione() { _obvUI.edit = null; _obvRender(); }
+    function obvSetAbbinamento(act, ver, i, id) {
+        const ctx = _obvCtx(); if (!ctx) return;
+        const m = _obvMappe(ctx.classe)[act]; if (!m) return;
+        (m.v[ver] || (m.v[ver] = {}))[i] = id;
+        m.fonte[ver] = 'docente';
+        saveData(); _obvRender();
+    }
+    // Riporta l'abbinamento della Fila A sulle versioni con la stessa struttura
+    function obvCopiaDaFilaA(act) {
+        const ctx = _obvCtx(); const m = ctx && _obvMappe(ctx.classe)[act]; const att = _obvAttCache[act];
+        if (!m?.v?.originale || !att) return;
+        const firma = qs => qs.map(q => `${q?.type || ''}:${q?.tag || ''}`).join('|');
+        const uguali = Object.keys(att.vers).filter(k => k !== 'originale' && firma(att.vers[k]) === firma(att.vers.originale));
+        if (!uguali.length) { alert('Nessuna altra versione ha la stessa struttura della Fila A (stessi tipi di domanda nello stesso ordine).'); return; }
+        if (!confirm(`Copio l'abbinamento della Fila A su: ${uguali.map(k => _obvVerLabel(m, k)).join(', ')}?`)) return;
+        uguali.forEach(k => { m.v[k] = { ...m.v.originale }; m.fonte[k] = 'docente'; });
+        saveData(); _obvRender();
+    }
+    // Abbina con l'automatico una versione rimasta senza abbinamento
+    async function obvAbbinaVer(act, ver) {
+        const ctx = _obvCtx(); if (!ctx) return;
+        const st = document.getElementById('obvDomStatus');
+        if (st) st.textContent = '⏳ Abbinamento in corso…';
+        try {
+            const att = await _obvCaricaAttivita(act, firebase.database());
+            await _obvAbbinaAttivita(ctx.classe, ctx.u, ctx.nomeU, att, false, new Set([ver]));
+            saveData();
+        } catch (e) { alert('Abbinamento non riuscito: ' + e.message); }
+        _obvRender();
+    }
+    async function obvRiabbina(act) {
+        const ctx = _obvCtx(); if (!ctx) return;
+        if (!confirm('Rifaccio l\'abbinamento automatico di questa verifica?\nLe versioni che hai corretto a mano restano come sono.')) return;
+        const st = document.getElementById('obvDomStatus');
+        if (st) st.textContent = '⏳ Abbinamento in corso…';
+        try {
+            const att = await _obvCaricaAttivita(act, firebase.database());
+            const m = _obvMappe(ctx.classe)[act];
+            await _obvAbbinaAttivita(ctx.classe, ctx.u, ctx.nomeU, att, true, new Set(Object.keys(m?.v || {})));
+            saveData();
+        } catch (e) { alert('Abbinamento non riuscito: ' + e.message); }
+        _obvRender();
+    }
+
     // ── Finestra "🎯 Obiettivi" ─────────────────────────────────────────
     let _obvUI = { ci: null, ui: null, tab: 'obiettivi' };
 
@@ -34371,8 +34748,8 @@ Rispondi SOLO con JSON valido, niente altro:
         _obvUI = { ci: currentClass, ui: i != null ? i : null, tab: 'obiettivi' };
         _obvRender();
     }
-    function obvApriUnita(i) { _obvUI.ui = i; _obvUI.tab = 'obiettivi'; _obvRender(); }
-    function obvTab(t) { _obvUI.tab = t; _obvRender(); }
+    function obvApriUnita(i) { _obvUI.ui = i; _obvUI.tab = 'obiettivi'; _obvUI.edit = null; _obvRender(); }
+    function obvTab(t) { _obvUI.tab = t; _obvUI.edit = null; _obvRender(); }
     function obvChiudi() { document.getElementById('obvOverlay')?.remove(); }
 
     const _OBV_BTN = 'padding:6px 14px;border-radius:12px;border:1.5px solid #667eea;background:white;color:#4f46e5;cursor:pointer;font-size:13px;font-weight:700;font-family:inherit;';
@@ -34435,9 +34812,9 @@ Rispondi SOLO con JSON valido, niente altro:
     function _obvHtmlUnita(ctx) {
         const tab = (id, txt) => `<button onclick="obvTab('${id}')" style="padding:7px 16px;border:none;border-bottom:3px solid ${_obvUI.tab === id ? '#4f46e5' : 'transparent'};background:none;font-weight:700;font-size:13px;color:${_obvUI.tab === id ? '#4f46e5' : '#888'};cursor:pointer;font-family:inherit;">${txt}</button>`;
         return `<div style="display:flex;gap:4px;border-bottom:1px solid #e8eaf6;margin-bottom:14px;">
-                ${tab('obiettivi', '📝 Obiettivi')}${tab('esiti', '✅ Esiti alunni')}
+                ${tab('obiettivi', '📝 Obiettivi')}${tab('domande', '🔗 Domande delle verifiche')}${tab('esiti', '✅ Esiti alunni')}
             </div>
-            ${_obvUI.tab === 'esiti' ? _obvHtmlEsiti(ctx) : _obvHtmlObiettivi(ctx)}`;
+            ${_obvUI.tab === 'esiti' ? _obvHtmlEsiti(ctx) : _obvUI.tab === 'domande' ? _obvHtmlDomande(ctx) : _obvHtmlObiettivi(ctx)}`;
     }
 
     function _obvHtmlObiettivi({ classe, u, nomeU }) {
@@ -34503,7 +34880,7 @@ Rispondi SOLO con JSON valido, niente altro:
         const legenda = ob.map((o, k) => `<div style="font-size:12px;margin-bottom:3px;"><b>O${k + 1}</b> <span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;background:${OBV_AREE[o.area]?.bg};color:${OBV_AREE[o.area]?.color};">${OBV_AREE[o.area]?.label || o.area}</span> ${_obvEsc(o.testo)}${o.minimo ? ' <span style="color:#92400e;font-size:10px;">(minimo)</span>' : ''}</div>`).join('');
         return `<div style="background:#f7f8fc;border:1px solid #e8eaf6;border-radius:10px;padding:10px 12px;margin-bottom:12px;">${legenda}</div>
             <div style="font-size:12px;color:#666;margin-bottom:10px;line-height:1.5;">
-                Calcolato dalle prove della unit: parziali delle verifiche scritte per area, voto e griglia dell'orale (le funzioni contano scritto e orale).
+                Calcolato dalle prove della unit: domande abbinate a ciascun obiettivo (scheda 🔗) o, se il test non è abbinato, parziali per area; voto e griglia dell'orale (le funzioni contano scritto e orale).
                 ✅ da ${OBV_SOGLIA_OK}% · 🟡 da ${OBV_SOGLIA_PARZ}% · 🔴 sotto · ⚪ nessuna prova · ➖ non previsto (PEI: solo i minimi). Senza l'orale dettagliato vale la prima impressione della griglia LIVE (cella sbiadita).
                 Clic su una cella per correggere: il bordo blu indica una tua decisione. Passa sopra una cella per vedere da quali dati viene.
             </div>
@@ -34522,6 +34899,97 @@ Rispondi SOLO con JSON valido, niente altro:
                     : 'Gli alunni vedono gli obiettivi ma non ancora la spunta. Quando hai controllato gli esiti (di solito dopo le verifiche), mostrali.'}</span>
                 <button onclick="obvMostraEsiti(${!u.obiettiviEsitiVisibili})" style="${u.obiettiviEsitiVisibili ? _OBV_BTN : _OBV_BTN_PIENO}">${u.obiettiviEsitiVisibili ? 'Nascondi gli esiti' : '✅ Conferma e mostra gli esiti'}</button>
             </div>`;
+    }
+
+    function _obvHtmlDomande({ classe, u, nomeU }) {
+        const ob = u.obiettivi || [];
+        if (!ob.length) return `<p style="color:#999;font-size:13px;">Prima crea gli obiettivi della unit.</p>`;
+        if (_obvUI.edit) return _obvHtmlRevisione(classe, u, nomeU);
+        const mappe = classe.pianificazione?.obiettiviDomande || {};
+        const acts = Object.entries(mappe).filter(([, m]) => _matchUnit(m.unit, nomeU));
+        // Prove della unit e quante hanno già i punti per domanda
+        const prove = {}; let senzaPunti = 0;
+        (classe.studenti || []).forEach(s => (s.scritto || []).forEach(g => {
+            if (!g?.sessionCode || g.recupero === 'escludi' || !_matchUnit(g.unit, nomeU)) return;
+            if (g.domande?.act) prove[g.domande.act] = (prove[g.domande.act] || 0) + 1; else senzaPunti++;
+        }));
+        const chip = (txt, bg, col, tit) => `<span title="${_obvEsc(tit || '')}" style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:${bg};color:${col};white-space:nowrap;">${txt}</span>`;
+        const ids = new Set(ob.map(o => o.id));
+        const righe = acts.map(([act, m]) => {
+            const vers = Object.keys(m.n || m.v || {}).sort((a, b) => a === 'originale' ? -1 : b === 'originale' ? 1 : _obvVerLabel(m, a).localeCompare(_obvVerLabel(m, b)));
+            const chips = vers.map(ver => {
+                const mv = m.v?.[ver];
+                if (!mv) return chip(`${_obvVerLabel(m, ver)}: da abbinare`, '#f3f4f6', '#6b7280', 'Versione non ancora abbinata (nessun alunno con un voto l\'ha svolta)');
+                const ok = Object.values(mv).filter(id => id && ids.has(id)).length;
+                const tot = m.n?.[ver] || Object.keys(mv).length;
+                return chip(`${_obvVerLabel(m, ver)}: ${ok}/${tot} ${_OBV_FONTI_ABB[m.fonte?.[ver]] || ''}`,
+                    ok >= tot ? '#d1fae5' : '#fef3c7', ok >= tot ? '#065f46' : '#92400e',
+                    `${ok} domande su ${tot} abbinate a un obiettivo`);
+            }).join(' ');
+            return `<div style="padding:10px 12px;border:1px solid #e8eaf6;border-radius:10px;margin-bottom:8px;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:0;font-weight:700;">${_obvEsc(m.titolo || act)}
+                        <span style="font-weight:400;font-size:12px;color:#888;">· ${prove[act] || 0} prove con i punti per domanda</span></div>
+                    <button onclick="obvRivedi('${_obvEsc(act)}')" style="${_OBV_BTN}">✏️ Rivedi</button>
+                    <button onclick="obvRiabbina('${_obvEsc(act)}')" style="${_OBV_BTN}" title="Rifà l'abbinamento automatico; le versioni corrette a mano restano">🔄 Riabbina</button>
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;">${chips}</div>
+            </div>`;
+        }).join('');
+        return `<div style="font-size:12px;color:#666;margin-bottom:12px;line-height:1.5;">
+                Ogni domanda delle verifiche scritte LiveLearn viene abbinata all'obiettivo che verifica, per ogni fila (A, B, C, DSA, PEI…).
+                Così l'esito di ciascun obiettivo viene dai punti presi in quelle domande, non dal parziale dell'intera area.
+                L'abbinamento è automatico: prima il campo <b>"obiettivo"</b> scritto nel test, poi la Fila A copiata sulle file con la stessa struttura, poi l'AI per il resto. Lo correggi con "✏️ Rivedi".
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+                <button onclick="obvCollegaVerifiche(false)" style="${_OBV_BTN_PIENO}" title="Rilegge da LiveLearn le risposte delle verifiche già fatte e abbina le domande agli obiettivi">🔗 Collega le verifiche già fatte${senzaPunti ? ` (${senzaPunti} prove da leggere)` : ''}</button>
+                <button onclick="obvIstruzioniTest()" style="${_OBV_BTN}" title="Testo da incollare nella richiesta a Claude quando genera un nuovo test di questa unit">📋 Istruzioni per i nuovi test</button>
+                <span id="obvDomStatus" style="font-size:12px;color:#667eea;"></span>
+            </div>
+            ${righe || `<p style="color:#999;font-size:13px;">Nessuna verifica collegata a questa unit. Le verifiche approvate d'ora in poi si collegano da sole; per quelle già fatte usa "🔗 Collega le verifiche già fatte".</p>`}`;
+    }
+
+    function _obvHtmlRevisione(classe, u, nomeU) {
+        const e = _obvUI.edit;
+        const m = (classe.pianificazione?.obiettiviDomande || {})[e.act];
+        const att = _obvAttCache[e.act];
+        const testa = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                <button onclick="obvChiudiRevisione()" style="${_OBV_BTN}padding:4px 10px;">← Verifiche</button>
+                <b style="flex:1;">${_obvEsc(m?.titolo || att?.titolo || e.act)}</b>
+                <span id="obvDomStatus" style="font-size:12px;color:#667eea;"></span>
+            </div>`;
+        if (e.loading) return testa + `<p style="color:#667eea;">⏳ Caricamento delle domande da LiveLearn…</p>`;
+        if (e.errore || !att || !m) return testa + `<p style="color:#c62828;">Domande non disponibili: ${_obvEsc(e.errore || 'attività non trovata')}</p>`;
+        const ob = u.obiettivi || [];
+        const vers = Object.keys(att.vers).sort((a, b) => a === 'originale' ? -1 : b === 'originale' ? 1 : _obvVerLabel(m, a).localeCompare(_obvVerLabel(m, b)));
+        const ver = att.vers[e.ver] ? e.ver : 'originale';
+        const tabs = vers.map(k => `<button onclick="obvRivediVer('${_obvEsc(k)}')" style="padding:4px 12px;border-radius:12px;border:1.5px solid ${k === ver ? '#4f46e5' : '#e0e4ff'};background:${k === ver ? '#4f46e5' : 'white'};color:${k === ver ? 'white' : '#4f46e5'};cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;">${_obvEsc(_obvVerLabel(m, k))}${m.v?.[k] ? '' : ' ·'}</button>`).join('');
+        const qs = att.vers[ver] || [];
+        const mv = m.v?.[ver];
+        const corpo = !mv
+            ? `<div style="padding:14px;background:#f7f8fc;border-radius:10px;font-size:13px;">Questa versione non è ancora abbinata.
+                <button onclick="obvAbbinaVer('${_obvEsc(e.act)}','${_obvEsc(ver)}')" style="${_OBV_BTN_PIENO}margin-left:8px;">✨ Abbina</button></div>`
+            : `<table style="border-collapse:collapse;width:100%;">${qs.map((q, i) => {
+                const id = mv[i] && ob.some(o => o.id === mv[i]) ? mv[i] : '';
+                const area = q?.tag || (q?.type === 'listening' ? 'LISTENING' : '');
+                return `<tr style="border-top:1px solid #f0f0f5;">
+                    <td style="padding:6px 6px 6px 0;vertical-align:top;font-weight:700;color:#999;font-size:12px;">${i + 1}.</td>
+                    <td style="padding:6px;vertical-align:top;font-size:13px;">
+                        <span style="font-size:10px;font-weight:700;color:#666;background:#f3f4f6;border-radius:6px;padding:1px 6px;">${_obvEsc(q?.type || '?')}${area ? ' · ' + _obvEsc(area) : ''}</span>
+                        ${_obvEsc(_obvTestoDomanda(q) || '(senza testo)')}
+                    </td>
+                    <td style="padding:6px 0;vertical-align:top;width:300px;">
+                        <select onchange="obvSetAbbinamento('${_obvEsc(e.act)}','${_obvEsc(ver)}',${i},this.value)" style="width:300px;padding:5px 7px;border:1.5px solid ${id ? '#c7d2fe' : '#fde68a'};border-radius:8px;font-size:12px;font-family:inherit;background:${id ? 'white' : '#fffbeb'};">
+                            <option value="">— nessun obiettivo —</option>
+                            ${ob.map((o, k) => `<option value="${o.id}" ${o.id === id ? 'selected' : ''}>O${k + 1} · ${_obvEsc(o.testo.length > 55 ? o.testo.slice(0, 54) + '…' : o.testo)}</option>`).join('')}
+                        </select>
+                    </td>
+                </tr>`;
+            }).join('')}</table>`;
+        return testa + `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">${tabs}</div>
+            <div style="font-size:12px;color:#666;margin-bottom:10px;">${mv ? `Abbinamento: ${_OBV_FONTI_ABB[m.fonte?.[ver]] || '—'}. Ogni modifica aggiorna subito gli esiti.` : ''}
+                ${ver === 'originale' && mv && vers.length > 1 ? `<button onclick="obvCopiaDaFilaA('${_obvEsc(e.act)}')" style="${_OBV_BTN}padding:3px 10px;font-size:12px;margin-left:6px;">📋 Copia sulle file con la stessa struttura</button>` : ''}
+            </div>${corpo}`;
     }
 
     // ── Azioni della finestra ───────────────────────────────────────────
