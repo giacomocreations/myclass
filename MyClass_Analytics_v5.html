@@ -34606,9 +34606,13 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         try { db = firebase.database(); } catch (e) { alert('Firebase non disponibile: ' + e.message); return; }
         const st = document.getElementById('obvDomStatus');
         const say = t => { if (st) st.textContent = t; };
+        // Solo le verifiche che danno il voto: i voti scritti li crea l'agente dai
+        // test (le esercitazioni non diventano voti). Esclusi anche i piani
+        // personalizzati (REC/CON/APP: domande diverse, contano col loro voto).
         const sessioni = new Map();   // codice sessione → [{s, g}]
         (classe.studenti || []).forEach(s => (s.scritto || []).forEach(g => {
             if (!g?.sessionCode || g.recupero === 'escludi' || !_matchUnit(g.unit, nomeU)) return;
+            if (/^(REC|CON|APP)/i.test(g.sessionCode)) return;
             if (!sessioni.has(g.sessionCode)) sessioni.set(g.sessionCode, []);
             sessioni.get(g.sessionCode).push({ s, g });
         }));
@@ -34618,7 +34622,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
             alert('Nessuna verifica scritta di LiveLearn trovata per questa unit (i voti devono essere stati importati dall\'agente).');
             return;
         }
-        let alunni = 0, chiamate = 0;
+        let alunni = 0, chiamate = 0, esercitazioni = 0;
         const errori = [];
         const usate = {};   // activityId → versioni usate dagli alunni con un voto
         const usa = (act, ver) => (usate[act] || (usate[act] = new Set())).add(ver);
@@ -34627,6 +34631,9 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
             n++;
             say(`⏳ Verifica ${n}/${sessioni.size}: lettura risposte…`);
             try {
+                // Test trasformato in esercitazione dopo il voto: non conta
+                const modo = (await db.ref('livelearn/sessions/' + code + '/mode').get()).val();
+                if (modo === 'practice') { esercitazioni++; continue; }
                 const detail = await agentFetchSessionDetail(code, db);
                 if (!detail?.activityId) throw new Error('sessione non trovata');
                 attivita.add(detail.activityId);
@@ -34660,6 +34667,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         alert(`🔗 ${attivita.size} verific${attivita.size === 1 ? 'a collegata' : 'he collegate'}`
             + (alunni ? `, risposte di ${alunni} prove lette` : '')
             + (chiamate ? `, ${chiamate} abbinament${chiamate === 1 ? 'o' : 'i'} fatti con l'AI` : '') + '.'
+            + (esercitazioni ? `\n${esercitazioni} sessioni ignorate perché ora sono esercitazioni.` : '')
             + (errori.length ? `\n\nProblemi:\n${errori.join('\n')}` : '')
             + '\n\nControlla gli abbinamenti con "✏️ Rivedi" e correggi dove serve.');
     }
@@ -34669,6 +34677,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
     async function obvDopoVerificaScritta(classe, task) {
         try {
             if (!classe || !task?.activityId || task.isRecupero || task.isConsolidamento) return;
+            if (/^(REC|CON|APP)/i.test(task.sessionCode || '')) return;
             const unita = classe.pianificazione?.programmazione?.unita || [];
             const i = unita.findIndex((x, k) => _matchUnit(task.unit, _obvNomeU(x, k)));
             const u = unita[i];
