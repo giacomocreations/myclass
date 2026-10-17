@@ -20243,6 +20243,7 @@ ${blocco.regole}`;
         for (const s of classe.studenti) {
           try { await _autoSyncStudentMyClass(s, classe.nome); } catch(e) {}
         }
+        try { await _syncOrarioTester(classe); } catch(e) {}
         console.log('[AutoSync] ✅ Statistiche sincronizzate per', classe.nome);
       }, 4000); // aspetta 4 secondi dopo l'ultimo saveData prima di scrivere su Firebase
     }
@@ -20334,6 +20335,8 @@ ${blocco.regole}`;
         }
       }
 
+      try { await _syncOrarioTester(classe); } catch(e) { console.warn('[Sync] orario tester:', e.message); }
+
       if (btn) {
         btn.textContent = ok>0 ? `✅ ${ok} studenti sincronizzati` : '❌ Errore';
         btn.style.background = ok>0?'#d1fae5':'#fee2e2';
@@ -20361,6 +20364,30 @@ ${blocco.regole}`;
       COMP_KEYS.forEach(k => { if (c[k] != null) out[k] = c[k]; });
       if (c._stimate.length) out.stimate = c._stimate.join(',');
       return Object.keys(out).length ? out : null;
+    }
+
+    // Gli alunni tester (creati in LiveLearn) non sono tra gli studenti di
+    // MyClass, quindi non ricevevano il ramo myclass: senza orario la
+    // StudentApp non sapeva quando scadono i compiti e non li mostrava in
+    // calendario. Ricevono solo orario e giorni saltati/sospesi della classe.
+    async function _syncOrarioTester(classe) {
+      const db = firebase.database();
+      const classId = classe.nome.replace(/\s+/g,'_').toLowerCase();
+      const studs = (await db.ref('livelearn/students').get()).val() || {};
+      const codes = Object.entries(studs)
+        .filter(([, v]) => v && v.tester && v.classId === classId)
+        .map(([code]) => code);
+      if (!codes.length) return;
+      const orarioSettimana = (classe.pianificazione?.orario||[])
+        .map(sl=>({giornoNum:sl.giornoNum, giornoNome:sl.giornoNome||'', ora:sl.ora}));
+      const giorniSaltati = classe.pianificazione?.giorniSaltati || {};
+      const upd = {
+        orarioSettimana: orarioSettimana.length ? orarioSettimana : null,
+        giorniSaltati:   Object.keys(giorniSaltati).length ? giorniSaltati : null,
+        giorniSospesi:   [...GIORNI_SOSPESI],
+        syncedAt:        Date.now()
+      };
+      await Promise.all(codes.map(code => db.ref('livelearn/history_priv/'+code+'/myclass').update(upd)));
     }
 
     async function _autoSyncStudentMyClass(studente, classeNome) {
