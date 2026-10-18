@@ -3872,64 +3872,105 @@ ${recoveryHtml}
 })();
 
 // ── PWA INSTALL BANNER ────────────────────────────────────────────────────
+// Stessa procedura di QuestTown (english-town/index.html, ET_PWA):
+//  • il banner si offre su QUALSIASI dispositivo dove il browser permette
+//    l'installazione (prima solo se lo user agent diceva "Mobile/Android":
+//    Chrome sui tablet Android si presenta come "sito desktop" e il banner
+//    non compariva mai — restava solo il menu del browser, che crea un
+//    semplice collegamento in Home invece di installare l'app);
+//  • ✕ lo nasconde solo per questa apertura, non per sempre (prima un tocco
+//    su ✕, o su «Annulla» nella finestra del browser, lo spegneva per
+//    sempre su quel dispositivo);
+//  • mentre si apre la finestra del browser, un richiamo dice quale tasto
+//    toccare (su alcuni tablet il tasto colorato è «Annulla»);
+//  • iPad con iPadOS 13+ (che si presenta come Mac) riceve le istruzioni a mano.
 let _deferredPrompt = null;
-const _INSTALL_KEY = 'll_install_dismissed';
+let _installClosed = false;     // ✕: solo per questa sessione
+try{ localStorage.removeItem('ll_install_dismissed'); }catch(e){}   // vecchio "mai più"
 
 function _isStandalone(){
   return window.matchMedia('(display-mode: standalone)').matches
+      || window.matchMedia('(display-mode: fullscreen)').matches
       || window.navigator.standalone === true;
 }
 function _isIOS(){
-  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  return (/iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream)
+      || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
 }
-function _isMobile(){
-  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+function _setInstallBanner(title, sub, showBtn){
+  const banner = document.getElementById('install-banner');
+  if(!banner) return null;
+  document.getElementById('install-title').textContent = title;
+  document.getElementById('install-sub').innerHTML = sub;
+  document.getElementById('install-action-btn').style.display = showBtn ? '' : 'none';
+  return banner;
 }
 
 function maybeShowInstallBanner(){
-  if(_isStandalone()) return;
-  if(localStorage.getItem(_INSTALL_KEY)) return;
-  if(!_isMobile()) return;
-  const banner = document.getElementById('install-banner');
-  if(!banner) return;
-  if(_isIOS()){
-    document.getElementById('install-title').textContent = 'Aggiungi alla Home';
-    document.getElementById('install-sub').innerHTML =
-      'Tocca <strong>Condividi</strong> &#x2B06; poi <strong>"Aggiungi a Home"</strong>';
-    document.getElementById('install-action-btn').style.display = 'none';
-    setTimeout(()=>banner.classList.add('show'), 2500);
-  } else if(_deferredPrompt){
-    setTimeout(()=>banner.classList.add('show'), 2500);
+  if(_isStandalone() || _installClosed || !S.code) return;
+  if(_deferredPrompt){
+    const banner = _setInstallBanner('Installa LiveLearn',
+      'Così la trovi fra le tue app', true);
+    if(banner && !banner.classList.contains('show')) setTimeout(()=>banner.classList.add('show'), 1000);
+  } else if(_isIOS()){
+    const banner = _setInstallBanner('Aggiungi alla Home',
+      'Tocca <strong>Condividi</strong> &#x2B06; poi <strong>"Aggiungi alla schermata Home"</strong>', false);
+    if(banner && !banner.classList.contains('show')) setTimeout(()=>banner.classList.add('show'), 2500);
   }
 }
 
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   _deferredPrompt = e;
-  if(S.code && !_isStandalone() && !localStorage.getItem(_INSTALL_KEY)){
-    const banner = document.getElementById('install-banner');
-    if(banner && !banner.classList.contains('show'))
-      setTimeout(()=>banner.classList.add('show'), 1000);
-  }
+  console.info('[LL] il browser permette l\'installazione: compare il banner Installa');
+  maybeShowInstallBanner();
 });
 
 window.addEventListener('appinstalled', () => {
-  document.getElementById('install-banner')?.classList.remove('show');
   _deferredPrompt = null;
+  _hideInstallHint();
+  const banner = _setInstallBanner('✅ Installata!',
+    'Da ora trovi <strong>LiveLearn</strong> fra le tue app', false);
+  if(banner){
+    banner.classList.add('show');
+    setTimeout(()=>banner.classList.remove('show'), 6000);
+  }
 });
 
+function _showInstallHint(){
+  _hideInstallHint();
+  const r = document.createElement('div');
+  r.id = 'll-inst-hint';
+  r.style.cssText = 'position:fixed;z-index:400;left:50%;top:12px;transform:translateX(-50%);max-width:92vw;'
+    + 'background:#3C3489;color:#fff;font:600 15px system-ui,sans-serif;padding:11px 16px;border-radius:12px;'
+    + 'box-shadow:0 4px 16px rgba(0,0,0,.3);text-align:center;pointer-events:none';
+  r.innerHTML = '👉 Nella finestra che si apre tocca <b style="color:#FAEEDA">Installa</b>';
+  document.body.appendChild(r);
+  setTimeout(_hideInstallHint, 15000);
+}
+function _hideInstallHint(){
+  document.getElementById('ll-inst-hint')?.remove();
+}
+
 async function triggerInstall(){
-  if(!_deferredPrompt) return;
-  _deferredPrompt.prompt();
-  const { outcome } = await _deferredPrompt.userChoice;
-  _deferredPrompt = null;
+  const ev = _deferredPrompt;
+  if(!ev) return;
+  _deferredPrompt = null;               // l'evento vale UNA volta
   document.getElementById('install-banner')?.classList.remove('show');
-  if(outcome === 'dismissed') localStorage.setItem(_INSTALL_KEY, '1');
+  _showInstallHint();
+  try{
+    ev.prompt();
+    await ev.userChoice;
+  }catch(e){}
+  _hideInstallHint();
+  // se ha toccato «Annulla», il browser rimanda beforeinstallprompt e il
+  // banner torna alla prossima occasione: niente blocco permanente.
 }
 
 function dismissInstall(){
   document.getElementById('install-banner')?.classList.remove('show');
-  localStorage.setItem(_INSTALL_KEY, '1');
+  _installClosed = true;
 }
 
 // ── SERVICE WORKER + AGGIORNAMENTO AUTOMATICO ─────────────────────────────
