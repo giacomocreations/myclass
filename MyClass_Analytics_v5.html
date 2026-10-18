@@ -1118,14 +1118,6 @@
 
         /* ── Repository pagine ── */
         .pagine-repo { background:#f0f7ff; border:1px solid #c5cae9; border-radius:8px; padding:10px 12px; margin-top:4px; font-size:12px; }
-        .pagine-repo-unit { margin-bottom:6px; }
-        .pagine-repo-unit strong { color:#5c6bc0; font-size:12px; }
-        .pagina-chip { display:inline-block; background:white; border:1px solid #c5cae9; color:#3949ab; border-radius:6px; padding:1px 7px; margin:2px; cursor:pointer; font-size:12px; transition:background 0.1s; }
-        .pagina-chip:hover { background:#667eea; color:white; border-color:#667eea; }
-        .ac-pagine-drop { position:absolute; left:0; right:0; top:100%; background:white; border:1.5px solid #667eea; border-radius:0 0 8px 8px; z-index:200; max-height:160px; overflow-y:auto; box-shadow:0 4px 12px rgba(102,126,234,0.15); }
-        .ac-pagine-item { padding:6px 12px; cursor:pointer; font-size:12px; color:#333; display:flex; justify-content:space-between; }
-        .ac-pagine-item:hover { background:#f0f2ff; }
-        .ac-pagine-item .pg-unit { color:#888; font-size:11px; }
 
 
 
@@ -11819,7 +11811,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                 lz = {
                     titolo:      document.getElementById('editTitolo')?.value || '',
                     descrizione: document.getElementById('editDesc')?.value || '',
-                    pagine:      document.getElementById('editPagine')?.value || '',
+                    pagine:      (data.classi[currentClass]?.pianificazione?.piano||[]).find(p => lzId(p)===slotId)?.pagine || '',
                     compiti:     document.getElementById('editCompiti')?.value || '',
                     unit:        document.getElementById('editUnit')?.value || '',
                     tipo:        tipi,
@@ -12080,21 +12072,13 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                 </label>
                     <textarea id="editDescStu" style="min-height:70px" autocomplete="off">${(activity.descrizioneStudent||'').replace(/</g,'&lt;')}</textarea>
                 </div>
-                <div class="form-group"><label>📖 Pagine libro
-                    <small style="color:#888;font-weight:400;margin-left:6px;">clicca su una pagina sotto per inserirla</small>
-                </label>
-                    <div class="ac-wrapper" style="position:relative;">
-                        <input id="editPagine" value="${(activity.pagine||'').replace(/"/g,'&quot;')}" placeholder="es: p.48 ex.3-4, p.50 tutta" autocomplete="off" oninput="acPagineInput(this)" onfocus="acPagineShow()" onblur="setTimeout(()=>acPagineHide(),200)">
-                        <div class="ac-pagine-drop" id="acPagineDrop" style="display:none;"></div>
-                    </div>
-                    <div id="pagineRepoBox" class="pagine-repo" style="margin-top:6px;"></div>
-                </div>
                 <div class="form-group"><label>📚 Compiti assegnati</label>
                     <div class="ac-wrapper">
                         <textarea id="editCompiti" style="min-height:60px" autocomplete="off">${activity.compiti||''}</textarea>
                         <div class="ac-dropdown" id="acDropCompiti"></div>
                     </div>
                     ${activity?.pianoDettagliato ? `<button type="button" onclick="compilaCompitiDalPiano('${data_iso}')" style="margin-top:6px;padding:5px 14px;border-radius:14px;border:1.5px solid #388e3c;background:white;color:#388e3c;cursor:pointer;font-size:12px;font-weight:700;">📚 Compila compiti dal piano</button>` : ''}
+                    <div id="compitiRecentiBox" class="pagine-repo" style="margin-top:6px;"></div>
                 </div>
                 <div class="form-group" style="margin-top:12px;">
                     <label style="display:flex;align-items:center;gap:8px;">📎 Risorse allegate
@@ -12117,7 +12101,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             _lessonEditBegin(data_iso, ov);
             // Init autocomplete, load resources and pagine repo after DOM insertion
             _loadModalRisorse(data_iso);
-            _loadPagineRepo(data_iso);
+            _loadCompitiRecenti(data_iso);
             acInit();
             // Se la descrizione è già compilata e il tipo è vuoto, deduci i tag subito
             const descVal = document.getElementById('editDesc')?.value || '';
@@ -12506,7 +12490,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                 if (!ctxRef.timer && _lessonEditSig() !== ctxRef.lastSig) _lessonEditSoon();
             }, 1500);
             const onChange = () => _lessonEditSoon();
-            ov.querySelectorAll('#editTitolo, #editDesc, #editDescStu, #editPagine, #editCompiti').forEach(el => el.addEventListener('input', onChange));
+            ov.querySelectorAll('#editTitolo, #editDesc, #editDescStu, #editCompiti').forEach(el => el.addEventListener('input', onChange));
             ov.querySelectorAll('#editUnit').forEach(el => el.addEventListener('change', onChange));
             ov.querySelector('#editTipoWrap')?.addEventListener('change', onChange);
         }
@@ -12514,7 +12498,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
         function _lessonEditSig() {
             const v = id => document.getElementById(id)?.value ?? '';
             const tipi = [...document.querySelectorAll('#editTipoWrap input[name="editTipo"]:checked')].map(c => c.value).join(',');
-            return JSON.stringify([v('editTitolo'), v('editDesc'), v('editDescStu'), v('editPagine'), v('editCompiti'), v('editUnit'), tipi]);
+            return JSON.stringify([v('editTitolo'), v('editDesc'), v('editDescStu'), v('editCompiti'), v('editUnit'), tipi]);
         }
 
         function _lessonEditSoon() {
@@ -12614,7 +12598,6 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             const newData = {
                 data:saveDate, ora:saveOra, titolo:document.getElementById('editTitolo').value,
                 descrizione:document.getElementById('editDesc').value,
-                pagine:document.getElementById('editPagine').value,
                 compiti:document.getElementById('editCompiti').value,
                 unit:document.getElementById('editUnit').value,
                 tipo:(()=>{ const chks=[...document.querySelectorAll('#editTipoWrap input[name="editTipo"]:checked')].map(c=>c.value); return chks.length?chks:[]; })(),
@@ -12855,7 +12838,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                 const g = await _aiDescrizioniLezione({
                     unit: document.getElementById('editUnit')?.value || lz.unit || '',
                     obiettivi: _sc.obiettivi, materiali: _sc.materiali, fasi,
-                    pagine: document.getElementById('editPagine')?.value || lz.pagine || '',
+                    pagine: lz.pagine || '',
                     compiti: (document.getElementById('editCompiti')?.value || pd.compiti || '').trim()
                 });
                 // Descrizione breve (registro Argo): se ce n'è già una, scegli se sostituirla
@@ -12987,7 +12970,6 @@ Rispondi SOLO con JSON valido (un oggetto singolo, non array):
                 if (el('editTitolo'))  el('editTitolo').value  = lz.titolo      || '';
                 if (el('editDesc'))    { el('editDesc').value    = lz.descrizione || ''; if (lz.descrizione) deduceTipoFromDesc(lz.descrizione); }
                 if (el('editCompiti')) el('editCompiti').value = lz.compiti     || '';
-                if (el('editPagine'))  el('editPagine').value  = lz.pagine      || '';
                 if (el('editTipo') && lz.tipo) el('editTipo').value = lz.tipo;
 
                 if (btn) { btn.textContent = '✓ Generata'; btn.disabled = false; }
@@ -14177,53 +14159,16 @@ Rispondi SOLO con JSON valido:
 
 
         // ================================================================
-        // REPOSITORY PAGINE — mostra pagine già usate per unità
+        // COMPITI RECENTI — nel modal lezione, clic per inserirli
         // ================================================================
-        function _buildPagineByUnit(classe) {
-            // Returns: { "Unit 3": [{pagina:"p.36", titolo:"...", data:"..."},...], ... }
-            const byUnit = {};
-            const piano = classe?.pianificazione?.piano || [];
-            piano.forEach(lz => {
-                if (!lz.pagine) return;
-                const unit = lz.unit || '(senza unità)';
-                if (!byUnit[unit]) byUnit[unit] = [];
-                // Parse individual page references: "p.36 ex.3-4, p.38" → ["p.36","p.38"]
-                const matches = lz.pagine.match(/p\.\s*\d+[^,;]*/gi) || [lz.pagine];
-                matches.forEach(pg => {
-                    const pgClean = pg.trim();
-                    if (pgClean && !byUnit[unit].find(x=>x.pagina===pgClean))
-                        byUnit[unit].push({ pagina: pgClean, titolo: lz.titolo||'', data: lz.data });
-                });
-            });
-            return byUnit;
-        }
-
-        function _loadPagineRepo(data_iso) {
-            const box = document.getElementById('pagineRepoBox');
+        function _loadCompitiRecenti(data_iso) {
+            const box = document.getElementById('compitiRecentiBox');
             if (!box) return;
             const classe = data.classi[currentClass];
             const _today = new Date().toISOString().split('T')[0];
             const piano = classe?.pianificazione?.piano || [];
 
-            // ── Pagine: ultime 6 lezioni con pagine ──────────────────
-            const cronoRows = piano
-                .filter(lz => lz.pagine && (lz.stato === 'svolta' || lz.data <= _today))
-                .sort((a,b) => b.data.localeCompare(a.data))
-                .slice(0, 6)
-                .map(lz => {
-                    const d = new Date(lz.data + 'T12:00:00');
-                    const dd = String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
-                    const chips = (lz.pagine.match(/p\.\s*\d+[^,;]*/gi) || [lz.pagine])
-                        .map(pg => `<span class="pagina-chip" onclick="insertPagina('${pg.trim().replace(/'/g,"\\'")}')">
-                            ${pg.trim()}</span>`).join('');
-                    return `<div style="display:flex;align-items:baseline;gap:6px;padding:3px 0;border-bottom:1px solid #e8eaf6;flex-wrap:wrap;">
-                        <span style="color:#888;font-size:11px;white-space:nowrap;min-width:32px;">${dd}</span>
-                        <span style="color:#5c6bc0;font-size:11px;flex:1;min-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${lz.titolo||''}">${lz.titolo||'—'}</span>
-                        <span style="display:flex;flex-wrap:wrap;">${chips}</span>
-                    </div>`;
-                }).join('');
-
-            // ── Compiti: ultimi 6 ─────────────────────────────────────
+            // ── Compiti: ultimi 10 ────────────────────────────────────
             // Regex per evidenziare riferimenti a pagine/esercizi nei compiti
             const _highlightPages = txt => txt.replace(
                 /(p(?:ag)?[.\s]*\d[\d\s\-–,]*(?:ex?[.\s]*[\d\s\-–,]+)?|e(?:x|s)[.\s]*[\d\s\-–,]+|wb\s*p[.\s]*\d[\d\s\-–,]*|sb\s*p[.\s]*\d[\d\s\-–,]*)/gi,
@@ -14245,28 +14190,14 @@ Rispondi SOLO con JSON valido:
                     </div>`;
                 }).join('');
 
-            if (!cronoRows && !compitiRows) {
-                box.innerHTML = '<span style="color:#aaa;font-size:12px;">Nessuna pagina o compito registrato nelle lezioni precedenti.</span>';
+            if (!compitiRows) {
+                box.innerHTML = '<span style="color:#aaa;font-size:12px;">Nessun compito registrato nelle lezioni precedenti.</span>';
                 return;
             }
 
             box.innerHTML = `
-                ${cronoRows ? `<div style="margin-bottom:8px;">
-                    <div style="font-size:11px;font-weight:700;color:#3949ab;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">🕔 Ultime 6 lezioni con pagine</div>
-                    ${cronoRows}
-                </div>` : ''}
-                ${compitiRows ? `<div>
-                    <div style="font-size:11px;font-weight:700;color:#b45309;text-transform:uppercase;letter-spacing:.5px;margin:${cronoRows?'8px':'0'} 0 4px;">📋 Ultimi 10 compiti assegnati</div>
-                    ${compitiRows}
-                </div>` : ''}`;
-        }
-
-        function insertPagina(pg) {
-            const inp = document.getElementById('editPagine');
-            if (!inp) return;
-            const cur = inp.value.trim();
-            inp.value = cur ? cur + ', ' + pg : pg;
-            inp.focus();
+                <div style="font-size:11px;font-weight:700;color:#b45309;text-transform:uppercase;letter-spacing:.5px;margin:0 0 4px;">📋 Ultimi 10 compiti assegnati</div>
+                ${compitiRows}`;
         }
 
         function insertCompiti(testo) {
@@ -14276,65 +14207,6 @@ Rispondi SOLO con JSON valido:
             inp.value = cur ? cur + '\n' + testo : testo;
             inp.focus();
         }
-
-        // Autocomplete nel campo pagine (filtra mentre scrivi)
-        function acPagineShow() {
-            const classe = data.classi[currentClass];
-            const byUnit = _buildPagineByUnit(classe);
-            // Flatten all pages with unit label
-            window._allPagine = [];
-            Object.entries(byUnit).forEach(([unit, pages]) => {
-                pages.forEach(p => window._allPagine.push({pagina: p.pagina, unit}));
-            });
-            _renderAcPagine(document.getElementById('editPagine')?.value || '');
-        }
-
-        function acPagineInput(inp) {
-            _renderAcPagine(inp.value);
-        }
-
-        function acPagineHide() {
-            const drop = document.getElementById('acPagineDrop');
-            if (drop) drop.style.display = 'none';
-        }
-
-        function _renderAcPagine(query) {
-            const drop = document.getElementById('acPagineDrop');
-            if (!drop || !window._allPagine) return;
-            // Get the last token after comma
-            const last = query.split(',').pop().trim().toLowerCase();
-            const matches = last.length < 1
-                ? window._allPagine.slice(0, 12)
-                : window._allPagine.filter(p => p.pagina.toLowerCase().includes(last)).slice(0, 10);
-            if (!matches.length) { drop.style.display='none'; return; }
-            drop.innerHTML = matches.map(p =>
-                `<div class="ac-pagine-item" onmousedown="insertPaginaAc('${p.pagina.replace(/'/g,"\\'")}')">
-                    <span>${p.pagina}</span>
-                    <span class="pg-unit">${p.unit}</span>
-                </div>`
-            ).join('');
-            drop.style.display = 'block';
-        }
-
-        function insertPaginaAc(pg) {
-            const inp = document.getElementById('editPagine');
-            if (!inp) return;
-            const parts = inp.value.split(',');
-            parts[parts.length-1] = ' ' + pg;
-            inp.value = parts.join(',').replace(/^,\s*/,'').trim();
-            acPagineHide();
-            inp.focus();
-        }
-
-        // Reload repo when unit changes
-        document.addEventListener('change', e => {
-            if (e.target?.id === 'editUnit') {
-                const slotId = document.querySelector('[onclick^="saveLessonEdit"]')
-                    ?.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
-                if (slotId) _loadPagineRepo(slotId);
-            }
-        });
-
 
         // ================================================================
         // VERIFICHE REMINDER BAR
@@ -15130,30 +15002,46 @@ Rispondi SOLO con JSON valido:
         function lvItemNome(it){
             return String(it||'').split('\n')[0].replace(/^\s*(?:[-•*>»→]|\d+[.)])\s*/,'').replace(/\s*[\(\[]\s*\d+\s*min[uti]*\s*[\)\]]/gi,'').trim().slice(0,160);
         }
-        // Suggerimenti per "Aggiungi attività": storico anni precedenti (date vicine
-        // per prime) + attività degli altri piani della classe (escluso lzEscl)
+        // Suggerimenti per "Aggiungi attività": storico degli anni precedenti e
+        // lezioni di quest'anno (attività dei piani, titoli e descrizioni, anche
+        // delle lezioni future), escluso lzEscl. Ordine rispetto al periodo
+        // dell'anno scolastico di isoDate: prima le date vicine (±30 giorni), poi
+        // quelle successive (unit che vengono dopo), infine quelle già passate.
+        // k = testo normalizzato (minuscolo, senza accenti) per la ricerca.
+        const _attNorm=t=>String(t||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
         function attSuggerimenti(classe,isoDate,lzEscl){
-            const seen=new Set(), out=[];
-            const add=(txt,src,near)=>{
-                const t=String(txt||'').replace(/\s+/g,' ').trim(); if(t.length<4)return;
+            const tgt=isoDate?_schoolDayIndex(isoDate):null;
+            const ddmm=d=>d?d.slice(8,10)+'/'+d.slice(5,7):'';
+            const all=[];
+            const add=(txt,l,src)=>{
+                const t=String(txt||'').replace(/^\s*(?:[-•*>»→]|\d+[.)])\s*/,'').replace(/\s+/g,' ').trim(); if(t.length<4)return;
                 if(/\b(BES|DSA|PEI|PDP)\b/i.test(t))return;
-                const k=t.toLowerCase(); if(seen.has(k))return; seen.add(k); out.push({t,src,near});
+                let rank=3, dist=0;
+                if(tgt!=null&&l.data){
+                    const d=_schoolDayIndex(l.data)-tgt;
+                    if(Math.abs(d)<=30){rank=0;dist=Math.abs(d);}else if(d>0){rank=1;dist=d;}else{rank=2;dist=-d;}
+                }
+                all.push({t,k:_attNorm(t),rank,dist,src:[src,ddmm(l.data),l.unit].filter(Boolean).join(' · ').replace(/^📋 · /,'📋 ')});
             };
-            const storico=classe.pianificazione?.storicoAnni||[];
-            const flat=storico.flatMap(s=>(s.lezioni||[]).map(l=>({...l,_anno:s.anno})));
-            let vicine=new Set();
-            try{ if(typeof _storicoDataSimile==='function')vicine=new Set(_storicoDataSimile(flat,isoDate,30,60)); }catch(e){}
-            flat.forEach(l=>{
-                const near=vicine.has(l), src='📚 '+(l._anno||'storico');
-                String(l.descrizione||'').split(/;|\n/).forEach(seg=>add(seg,src,near));
-                if(l.titolo)add(l.titolo,src,near);
-            });
+            (classe.pianificazione?.storicoAnni||[]).forEach(st=>(st.lezioni||[]).forEach(l=>{
+                const src='📚 '+(st.anno||'storico');
+                String(l.descrizione||'').split(/;|\n/).forEach(seg=>add(seg,l,src));
+                if(l.titolo)add(l.titolo,l,src);
+            }));
             (classe.pianificazione?.piano||[]).forEach(pz=>{
-                if(pz===lzEscl||!pz.pianoDettagliato)return;
-                ['fase1','fase2','fase3'].forEach(k=>lvItems(pz.pianoDettagliato[k]).forEach(it=>add(lvItemNome(it),'📋 '+(pz.data||''),false)));
+                if(pz===lzEscl)return;
+                if(pz.pianoDettagliato)['fase1','fase2','fase3'].forEach(k=>lvItems(pz.pianoDettagliato[k]).forEach(it=>add(lvItemNome(it),pz,'📋')));
+                String(pz.descrizione||'').split(/;|\n/).forEach(seg=>add(seg,pz,'📋'));
+                if(pz.titolo)add(pz.titolo,pz,'📋');
             });
-            out.sort((a,b)=>(b.near?1:0)-(a.near?1:0));
-            return out;
+            all.sort((x,y)=>x.rank-y.rank||x.dist-y.dist);
+            const seen=new Set();
+            return all.filter(x=>!seen.has(x.k)&&seen.add(x.k));
+        }
+        // Filtra i suggerimenti con le parole scritte (tutte, in qualsiasi ordine)
+        function attSuggFiltra(pool,query,max){
+            const words=_attNorm(query).split(/\s+/).filter(Boolean);
+            return pool.filter(x=>words.every(w=>x.k.includes(w))).slice(0,max||10);
         }
 
         // ── Piano dettagliato: attività modificabili nella vista lettura ──
@@ -15310,8 +15198,7 @@ Rispondi SOLO con JSON valido:
         function _pdAttSug() {
             const inp = document.getElementById('pdAttIn'), box = document.getElementById('pdAttSug');
             if (!inp || !box) return;
-            const words = (inp.value || '').toLowerCase().split(/\s+/).filter(Boolean);
-            const list = _pdAttPool().filter(x => words.every(w => x.t.toLowerCase().includes(w))).slice(0, 8);
+            const list = attSuggFiltra(_pdAttPool(), inp.value);
             box.innerHTML = '';
             list.forEach(x => {
                 const d = document.createElement('div');
@@ -17950,8 +17837,7 @@ ${blocco.regole}`;
             function lvAttPool(){ return _attPool||(_attPool=attSuggerimenti(classe,isoDate,lz)); }
             function lvAttSug(){
                 const inp=q('lv-att-in'), box=q('lv-att-sug'); if(!inp||!box)return;
-                const words=(inp.value||'').toLowerCase().split(/\s+/).filter(Boolean);
-                const list=lvAttPool().filter(x=>words.every(w=>x.t.toLowerCase().includes(w))).slice(0,8);
+                const list=attSuggFiltra(lvAttPool(),inp.value);
                 box.innerHTML='';
                 list.forEach(x=>{
                     const d=document.createElement('div'); d.className='lv-att-sug-i';
