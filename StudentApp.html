@@ -164,6 +164,26 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
 
 .chart-wrap{position:relative;height:160px;margin:8px 0}
 .chart-wrap-sm{position:relative;height:130px;margin:8px 0}
+
+/* ── TABLET: pagina più larga e testo un po' più grande ── */
+@media (min-width:700px){
+  #app,#install-banner{max-width:min(100%,960px)}
+  html,body{font-size:16px}
+  .scroll-body{padding:20px 28px}
+  .hdr{padding-left:28px;padding-right:28px}
+  .hdr-title{font-size:21px}
+  .hdr-sub{font-size:13px}
+  .card{padding:16px 20px}
+  .tab-btn{font-size:12px;padding:12px 0 10px}
+  .chart-wrap{height:220px}
+  .chart-wrap-sm{height:180px}
+}
+
+/* ── OBIETTIVI A TUTTO SCHERMO ── */
+.obv-units{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.obv-unit-btn{border:1px solid var(--purple-mid);background:#fff;color:var(--purple-dark);border-radius:16px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+.obv-unit-btn.active{background:var(--purple);border-color:var(--purple);color:#fff}
+.obv-open{background:none;border:1px solid var(--purple-mid);color:var(--purple);border-radius:8px;padding:2px 8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0}
 </style>
 </head>
 <body>
@@ -271,6 +291,17 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
         </div>
       </div>
       <div class="scroll-body" id="lesson-detail-body"></div>
+    </div>
+
+    <!-- ════ OBIETTIVI (tutto schermo) ════ -->
+    <div id="scr-obiettivi" class="screen">
+      <div class="hdr">
+        <div class="hdr-row">
+          <button class="back-btn" onclick="closeObiettiviFull()">←</button>
+          <div style="min-width:0"><div class="hdr-title" id="obv-title">🎯 I miei obiettivi</div><div class="hdr-sub" id="obv-sub">—</div></div>
+        </div>
+      </div>
+      <div class="scroll-body" id="obv-body"></div>
     </div>
 
     <!-- ════ COMPITI ════ -->
@@ -2206,6 +2237,7 @@ function _obvAutoOf(u, id){
 }
 function _obvRerender(){
   renderObiettiviCard();
+  if(_obvFull){ _obvFull.changed = true; renderObiettiviFull(); return; }
   if(document.getElementById('scr-stats')?.classList.contains('active') && S.myclass){
     ['radar-chart','grades-chart','spark-chart','ll-trend-chart'].forEach(id=>destroyChart(id));
     renderStats();
@@ -2227,38 +2259,40 @@ async function setAutoval(ord, id, v){
     alert('Non è stato possibile salvare la tua autovalutazione. Avvisa il prof.');
   }
 }
-function _obvRigheHtml(u){
+// big: caratteri più grandi (schermata a tutto schermo)
+function _obvRigheHtml(u, big){
+  const z = big ? { ico:24, txt:19, sub:13, btn:15, pad:'8px 14px', row:'14px 0', gap:14 } : { ico:14, txt:13, sub:10, btn:11, pad:'3px 9px', row:'6px 0', gap:9 };
   const puoi = !u.esiti && !S._autovalOff;
   return u.items.map(it=>{
     const st = u.esiti ? (_OBV_STATI[it.s] || _OBV_STATI.np) : null;
     const mio = it.id ? _obvAutoOf(u, it.id) : null;
     const bottoni = puoi && it.id ? `<div style="display:flex;gap:5px;margin-top:5px;flex-wrap:wrap;">${_OBV_AUTO.map(([v,e,l])=>{
         const sel = mio && mio[0]===v;
-        return `<button onclick="event.stopPropagation();setAutoval(${Number(u.ord)||0},'${esc(it.id)}',${v})" style="border:1px solid ${sel?'var(--purple)':'var(--border)'};background:${sel?'var(--purple-light)':'#fff'};color:${sel?'var(--purple-dark)':'var(--muted)'};border-radius:14px;padding:3px 9px;font-size:11px;font-weight:${sel?700:500};cursor:pointer;font-family:inherit;">${e} ${l}</button>`;
+        return `<button onclick="event.stopPropagation();setAutoval(${Number(u.ord)||0},'${esc(it.id)}',${v})" style="border:1px solid ${sel?'var(--purple)':'var(--border)'};background:${sel?'var(--purple-light)':'#fff'};color:${sel?'var(--purple-dark)':'var(--muted)'};border-radius:${big?20:14}px;padding:${z.pad};font-size:${z.btn}px;font-weight:${sel?700:500};cursor:pointer;font-family:inherit;">${e} ${l}</button>`;
       }).join('')}</div>` : '';
-    const tuo = u.esiti && mio ? `<span style="font-size:10px;color:var(--muted);margin-left:6px;">· tu: ${mio[1]} ${mio[2].toLowerCase()}</span>` : '';
-    return `<div style="display:flex;gap:9px;align-items:flex-start;padding:6px 0;border-top:0.5px solid var(--border);">
-      <span style="font-size:14px;line-height:1.35;flex-shrink:0;" title="${st?st.label:''}">${st?st.icon:'<span style="color:var(--purple);font-weight:800;">○</span>'}</span>
-      <div style="flex:1;font-size:13px;line-height:1.4;color:var(--text);">${esc(it.t)}${st?`<div style="font-size:10px;color:var(--muted);margin-top:1px;">${it.s!=='raggiunto'?st.label:''}${tuo}</div>`:''}${bottoni}</div>
+    const tuo = u.esiti && mio ? `<span style="font-size:${z.sub}px;color:var(--muted);margin-left:6px;">· tu: ${mio[1]} ${mio[2].toLowerCase()}</span>` : '';
+    return `<div style="display:flex;gap:${z.gap}px;align-items:flex-start;padding:${z.row};border-top:0.5px solid var(--border);">
+      <span style="font-size:${z.ico}px;line-height:1.35;flex-shrink:0;" title="${st?st.label:''}">${st?st.icon:'<span style="color:var(--purple);font-weight:800;">○</span>'}</span>
+      <div style="flex:1;font-size:${z.txt}px;line-height:1.45;color:var(--text);">${esc(it.t)}${st?`<div style="font-size:${z.sub}px;color:var(--muted);margin-top:2px;">${it.s!=='raggiunto'?st.label:''}${tuo}</div>`:''}${bottoni}</div>
     </div>`;
   }).join('');
 }
 // Invito all'autovalutazione sopra l'elenco (solo prima degli esiti)
-function _obvInvitoHtml(u){
+function _obvInvitoHtml(u, big){
   if(u.esiti || S._autovalOff || !u.items.some(it=>it.id)) return '';
   const fatti = u.items.filter(it=>it.id && _obvAutoOf(u, it.id)).length;
-  return `<div style="font-size:11px;color:var(--purple-dark);background:var(--purple-light);border-radius:8px;padding:6px 9px;margin:4px 0 6px;line-height:1.4;">
+  return `<div style="font-size:${big?15:11}px;color:var(--purple-dark);background:var(--purple-light);border-radius:8px;padding:6px 9px;margin:4px 0 6px;line-height:1.4;">
     Come ti senti su ogni obiettivo? Tocca una faccina: dopo la verifica la confronterai con il risultato.${fatti?` <b>${fatti}/${u.items.length}</b>`:''}
   </div>`;
 }
 // Raggiunti = pienamente (✅) + da consolidare (🟡): la barra li mostra in due colori
 function _obvRaggiunti(u){ return u.items.filter(it=>it.s==='raggiunto'||it.s==='parziale').length; }
-function _obvConteggio(u){
+function _obvConteggio(u, big){
   const pieno = u.items.filter(it=>it.s==='raggiunto').length;
   const ok = _obvRaggiunti(u), n = u.items.length;
   return `<div style="display:flex;align-items:center;gap:8px;margin:4px 0 8px;">
-    <div style="flex:1;height:6px;border-radius:3px;background:var(--purple-light);overflow:hidden;display:flex;"><div style="width:${Math.round(pieno/n*100)}%;height:100%;background:#1D9E75;"></div><div style="width:${Math.round((ok-pieno)/n*100)}%;height:100%;background:#EF9F27;"></div></div>
-    <span style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap;">${ok} di ${n} raggiunti${ok && pieno<ok?` (${pieno} pienamente)`:''}</span>
+    <div style="flex:1;height:${big?10:6}px;border-radius:${big?5:3}px;background:var(--purple-light);overflow:hidden;display:flex;"><div style="width:${Math.round(pieno/n*100)}%;height:100%;background:#1D9E75;"></div><div style="width:${Math.round((ok-pieno)/n*100)}%;height:100%;background:#EF9F27;"></div></div>
+    <span style="font-size:${big?14:11}px;font-weight:700;color:var(--muted);white-space:nowrap;">${ok} di ${n} raggiunti${ok && pieno<ok?` (${pieno} pienamente)`:''}</span>
   </div>`;
 }
 function _obvChiuso(){ try{ return localStorage.getItem('ll_obv_card_chiusa')==='1'; }catch(e){ return false; } }
@@ -2275,17 +2309,59 @@ function renderObiettiviCard(){
   if(!u){ el.innerHTML=''; return; }
   const chiuso=_obvChiuso();
   el.innerHTML=`<div class="card" style="border-color:var(--purple-mid);background:#f7f6ff;margin-bottom:12px;padding:12px 14px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;" onclick="toggleObiettiviCard()">
-      <div style="min-width:0;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;" onclick="openObiettiviFull(${Number(u.ord)||0})">
+      <div style="flex:1;min-width:0;">
         <div style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--purple-dark);">🎯 ${u.esiti?'I MIEI OBIETTIVI':'IN QUESTA UNIT IMPARERAI A…'}</div>
         <div style="font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(u.unit)}</div>
       </div>
-      <span style="font-size:13px;color:var(--purple);flex-shrink:0;">${chiuso?'▾':'▴'}</span>
+      <span class="obv-open" title="Apri a tutto schermo">⤢ Apri</span>
+      <button onclick="event.stopPropagation();toggleObiettiviCard()" title="${chiuso?'Mostra':'Nascondi'}" style="background:none;border:none;font-size:15px;color:var(--purple);flex-shrink:0;cursor:pointer;padding:2px 4px;">${chiuso?'▾':'▴'}</button>
     </div>
-    ${chiuso?'':`<div style="margin-top:8px;">${u.esiti?_obvConteggio(u):_obvInvitoHtml(u)}${_obvRigheHtml(u)}</div>
+    ${chiuso?'':`<div style="margin-top:8px;cursor:pointer;" onclick="openObiettiviFull(${Number(u.ord)||0})">${u.esiti?_obvConteggio(u):_obvInvitoHtml(u)}${_obvRigheHtml(u)}</div>
     ${unita.length>1?`<div style="text-align:right;margin-top:6px;"><button onclick="navTab(2,'scr-stats')" style="background:none;border:none;color:var(--purple);font-size:12px;font-weight:600;cursor:pointer;padding:0;font-family:inherit;">Tutte le unit →</button></div>`:''}`}
   </div>`;
 }
+// Obiettivi a tutto schermo (dalla card dell'Agenda o dalle Statistiche).
+// Si torna indietro con ←, col tasto «indietro» del telefono/tablet o con Esc.
+let _obvFull = null;   // { prev, tab, ord, changed }
+function openObiettiviFull(ord){
+  const tabBar = document.getElementById('main-tab-bar');
+  if(!_obvFull){
+    _obvFull = { prev: document.querySelector('.screen.active')?.id || 'scr-agenda', tab: tabBar.style.display };
+    try { history.pushState({ llObv:1 }, ''); } catch(e) {}
+  }
+  _obvFull.ord = ord;
+  renderObiettiviFull();
+  showScreen('scr-obiettivi');
+  document.getElementById('obv-body').scrollTop = 0;
+  tabBar.style.display = 'none';
+}
+function renderObiettiviFull(){
+  if(!_obvFull) return;
+  const unita = _obvUnita();
+  const u = unita.find(x=>x.ord===_obvFull.ord) || unita.find(x=>x.corrente) || unita[unita.length-1];
+  const body = document.getElementById('obv-body');
+  if(!u){ body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);">Nessun obiettivo pubblicato.</div>'; return; }
+  document.getElementById('obv-title').textContent = '🎯 ' + (u.esiti ? 'I miei obiettivi' : 'In questa unit imparerai a…');
+  document.getElementById('obv-sub').textContent = u.unit + (u.corrente ? ' · in corso' : '');
+  body.innerHTML = (unita.length>1 ? `<div class="obv-units">${unita.map(x=>`<button class="obv-unit-btn${x===u?' active':''}" onclick="openObiettiviFull(${Number(x.ord)||0})">${esc(x.unit)}</button>`).join('')}</div>` : '')
+    + `<div class="card" style="padding:18px 20px;">${u.esiti?_obvConteggio(u,true):_obvInvitoHtml(u,true)}${_obvRigheHtml(u,true)}</div>`
+    + (u.esiti ? `<div style="font-size:13px;color:var(--muted);margin-top:4px;line-height:1.6;">✅ raggiunto pienamente · 🟡 raggiunto, da consolidare · 🔴 da rinforzare · ⬜ ancora da verificare</div>` : '');
+}
+function closeObiettiviFull(fromHistory){
+  if(!_obvFull) return;
+  const st = _obvFull; _obvFull = null;
+  showScreen(st.prev);
+  document.getElementById('main-tab-bar').style.display = st.tab;
+  if(st.changed && st.prev==='scr-stats' && S.myclass){
+    ['radar-chart','grades-chart','spark-chart','ll-trend-chart'].forEach(id=>destroyChart(id));
+    renderStats();
+  }
+  if(!fromHistory && history.state?.llObv) history.back();
+}
+window.addEventListener('popstate', ()=>{ if(_obvFull) closeObiettiviFull(true); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && _obvFull) closeObiettiviFull(); });
+
 // Statistiche: obiettivi di tutte le unit pubblicate
 function _obvStatsHtml(mc){
   const unita=_obvUnita();
@@ -2297,6 +2373,7 @@ function _obvStatsHtml(mc){
       <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--purple-dark);padding:4px 0;">
         ${esc(u.unit)}${u.corrente?' <span style="font-size:10px;font-weight:700;color:#fff;background:var(--purple);border-radius:8px;padding:1px 6px;">in corso</span>':''}
         ${u.esiti?`<span style="font-size:11px;font-weight:600;color:var(--muted);"> · ${_obvRaggiunti(u)}/${u.items.length} raggiunti</span>`:''}
+        <button class="obv-open" style="margin-left:6px;" onclick="event.preventDefault();openObiettiviFull(${Number(u.ord)||0})" title="Apri a tutto schermo">⤢ Apri</button>
       </summary>
       ${u.esiti?_obvConteggio(u):_obvInvitoHtml(u)}${_obvRigheHtml(u)}
     </details>`).join('')}
@@ -4050,13 +4127,29 @@ async function setupPushNotifications(){
   }
 }
 
-function maybeRequestPushPermission(){
+// Stato reale del permesso: alcuni browser (es. app installata su Android)
+// lasciano Notification.permission a 'default' anche se le notifiche sono
+// attive; la Permissions API in quei casi dice 'granted'.
+async function _pushPermState(){
+  let st = Notification.permission;
+  if(st === 'default' && navigator.permissions?.query){
+    try { const q = await navigator.permissions.query({ name:'notifications' }); if(q.state === 'granted' || q.state === 'denied') st = q.state; } catch(e) {}
+  }
+  return st;
+}
+async function maybeRequestPushPermission(){
   if(!('Notification' in window)) return;
-  if(Notification.permission === 'granted'){ setupPushNotifications(); return; }
-  if(Notification.permission === 'denied') return;
+  const st = await _pushPermState();
+  if(st === 'granted'){ setupPushNotifications(); return; }
+  if(st === 'denied') return;
   // Non ri-chiedere se l'utente ha già chiuso il banner nelle ultime 7 gg
   const dismissedAt = localStorage.getItem('ll_push_dismissed_at');
   if(dismissedAt && Date.now() - Number(dismissedAt) < 7*24*60*60*1000) return;
+  // …né se ha già premuto «Attiva» negli ultimi 30 gg: se il browser non ha
+  // chiesto il permesso (richiesta silenziosa o chiusa) il banner tornerebbe
+  // a ogni apertura anche se l'alunno le ha già attivate.
+  const askedAt = localStorage.getItem('ll_push_asked_at');
+  if(askedAt && Date.now() - Number(askedAt) < 30*24*60*60*1000) return;
   setTimeout(_showPushPermissionBanner, 5000);
 }
 
@@ -4091,10 +4184,17 @@ function _showPushPermissionBanner(){
 
 async function _acceptPushBanner(){
   document.getElementById('push-banner')?.remove();
-  const perm = await Notification.requestPermission();
+  try { localStorage.setItem('ll_push_asked_at', Date.now()); } catch(e) {}
+  let perm;
+  try { perm = await Notification.requestPermission(); } catch(e) {}
+  if(perm !== 'granted') perm = await _pushPermState();
   if(perm === 'granted'){
     setupPushNotifications();
     _showInAppToast('✅ Notifiche attive', 'Ti avviseremo di valutazioni e messaggi.','ok');
+  } else {
+    _showInAppToast('🔔 Notifiche non attivate', perm === 'denied'
+      ? 'Le hai bloccate: puoi riattivarle dalle impostazioni del sito nel browser.'
+      : 'Il browser non le ha attivate: controlla l\'icona 🔔 nella barra degli indirizzi o le impostazioni del sito.');
   }
 }
 
