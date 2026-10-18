@@ -999,6 +999,36 @@
         .pd-card-fase3      .pd-bullet { background:#5c6bc0; }
         .pd-card-valutazione .pd-bullet { background:#e91e63; }
         .pd-card-note       .pd-bullet { background:#9c27b0; }
+        #pdR_pianoB_card    .pd-bullet { background:#ec407a; }
+        /* Attività modificabili nella vista lettura (come in LIVE) */
+        .pd-att-row { display:flex; align-items:flex-start; gap:8px; padding:3px 0; border-bottom:1px dashed rgba(0,0,0,0.08); }
+        .pd-att-row.editing { flex-direction:column; align-items:stretch; }
+        .pd-att-txt { flex:1; min-width:0; }
+        .pd-att-ctl { display:flex; gap:4px; flex-shrink:0; padding-top:2px; }
+        .pd-att-ctl button { width:28px; height:28px; padding:0; border-radius:7px; border:1px solid rgba(0,0,0,0.15); background:rgba(255,255,255,0.75); color:#455a64; cursor:pointer; font-size:12px; }
+        .pd-att-ctl button:hover:not(:disabled) { background:#fff; border-color:rgba(0,0,0,0.35); }
+        .pd-att-ctl button:disabled { opacity:0.3; cursor:default; }
+        .pd-att-ctl button.del { color:#c62828; border-color:#ef9a9a; }
+        @media (hover:hover) {
+            .pd-att-ctl { opacity:0.35; transition:opacity 0.15s; }
+            .pd-att-row:hover .pd-att-ctl, .pd-att-ctl:focus-within { opacity:1; }
+        }
+        .pd-att-bar { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+        .pd-att-add { flex:1; }
+        .pd-att-addbtn { padding:5px 12px; border-radius:8px; border:1.5px dashed #7e57c2; background:rgba(126,87,194,0.07); color:#5e35b1; cursor:pointer; font-size:12px; font-weight:700; font-family:inherit; }
+        .pd-att-addbtn.pd-att-undo { border-style:solid; border-color:rgba(0,0,0,0.18); background:rgba(255,255,255,0.6); color:#455a64; }
+        .pd-att-addbtn:disabled { opacity:0.35; cursor:default; }
+        .pd-att-row textarea, .pd-att-add input { width:100%; box-sizing:border-box; border:1.5px solid #7e57c2; border-radius:7px; padding:8px; font-size:13px; line-height:1.5; font-family:inherit; background:#fff; resize:vertical; }
+        .pd-att-edbar { display:flex; gap:8px; margin-top:6px; align-items:center; flex-wrap:wrap; }
+        .pd-att-edbar button { padding:5px 12px; border-radius:7px; border:1px solid #ccc; background:#fff; cursor:pointer; font-size:12px; font-weight:700; }
+        .pd-att-edbar button.pd-att-ok { background:#667eea; border-color:#667eea; color:#fff; }
+        .pd-att-edbar span { font-size:11px; color:#888; }
+        .pd-att-sug { max-height:220px; overflow-y:auto; border-radius:7px; margin-top:4px; }
+        .pd-att-sug-i { padding:6px 10px; border-bottom:1px solid #eee; background:#fff; cursor:pointer; font-size:13px; line-height:1.4; }
+        .pd-att-sug-i:hover { background:#ede7f6; }
+        .pd-att-sug-i small { opacity:0.55; margin-left:6px; }
+        #pdAttToast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:2100; background:#1e3a5f; color:#bfdbfe; padding:10px 16px; border-radius:12px; font-weight:700; font-size:13px; display:flex; gap:12px; align-items:center; box-shadow:0 4px 20px rgba(0,0,0,0.35); }
+        #pdAttToast button { background:#3b82f6; color:#fff; border:none; border-radius:8px; padding:4px 12px; cursor:pointer; font-weight:800; }
         /* keyword highlights */
         .pd-kw-tool   { font-weight:700; color:#1565c0; }        /* strumenti: LIM, Wordwall, libro pag. */
         .pd-kw-action { font-weight:700; color:#e65100; }        /* verbi azione: ascolta, correggi… */
@@ -14738,7 +14768,7 @@ Rispondi SOLO con JSON valido:
             ov.innerHTML = `<div class="piano-edit-modal" style="max-width:800px;width:90vw;max-height:88vh;overflow-y:auto;">
                 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px;">
                     <h3 style="margin:0;">📋 Piano dettagliato — ${lz.titolo||dateLabel}</h3>
-                    <button class="btn-pd-toggle${hasPiano?' read-active':''}" id="pdToggleBtn" data-piano-slotid="${slotId}" onclick="pdToggleReadMode(this)" title="Passa alla vista lettura">👁️ ${hasPiano?'Leggi':'Leggi'}</button>
+                    <button class="btn-pd-toggle${hasPiano?' read-active':''}" id="pdToggleBtn" data-piano-slotid="${slotId}" onclick="pdToggleReadMode(this)" title="Passa da lettura a modifica">${hasPiano?'✏️ Modifica':'👁️ Leggi'}</button>
                 </div>
                 <p style="color:#666;font-size:13px;margin-bottom:${_bloccoUI.totale > 1 ? '8px' : '16px'};">Struttura della lezione per la tua preparazione personale. Non appare nel registro.</p>
                 ${_bloccoBanner}
@@ -14881,6 +14911,7 @@ Rispondi SOLO con JSON valido:
                     <button onclick="_pdCloseSaving()" style="background:#e0e0e0;color:#555;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;">✕ Chiudi</button>
                 </div>
             </div>`;
+            _pdAttReset();
             document.body.appendChild(ov);
             ov.addEventListener('click', e => { if(e.target===ov) _pdCloseSaving(); });
             ov.querySelectorAll('textarea').forEach(pdAutoResize);
@@ -14946,7 +14977,7 @@ Rispondi SOLO con JSON valido:
 
         // ── Piano dettagliato: text parser ──────────────────────────────
         function pdParseText(text, containerId) {
-            const container = document.getElementById(containerId);
+            const container = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
             if (!container) return;
             container.innerHTML = '';
             if (!text || !text.trim()) {
@@ -15074,9 +15105,254 @@ Rispondi SOLO con JSON valido:
             }
         }
 
+        // ── Attività di una fase (usate dal piano dettagliato e dal LIVE) ──
+        // Ogni fase è un testo a righe; un'"attività" è una riga di primo livello
+        // con le sue righe rientrate.
+        // La riga "di testa" di ogni attività viene salvata senza rientro: se il
+        // testo della fase era tutto rientrato, una nuova attività a rientro 0
+        // non deve "inglobare" le altre come sotto-righe. Una riga a elenco con
+        // durata "(X min)" è sempre un'attività a sé, anche se rientrata.
+        function lvItems(testo){
+            const out=[];
+            const righe=String(testo||'').split('\n').filter(l=>l.trim());
+            const indOf=l=>l.length-l.trimStart().length;
+            const isSub=tr=>/^[>»→]\s/.test(tr);
+            const isAtt=tr=>/^(?:[-•*]|\d+[.)])\s.*[\(\[]\s*\d+\s*min/i.test(tr);
+            const tops=righe.filter(l=>!isSub(l.trimStart())).map(indOf);
+            const base=tops.length?Math.min(...tops):0;
+            righe.forEach(l=>{
+                const tr=l.trimStart(), ind=indOf(l)-base;
+                if(out.length&&!isAtt(tr)&&(ind>=2||isSub(tr)))out[out.length-1]+='\n'+l.trimEnd();
+                else out.push(tr.trimEnd());
+            });
+            return out;
+        }
+        function lvItemNome(it){
+            return String(it||'').split('\n')[0].replace(/^\s*(?:[-•*>»→]|\d+[.)])\s*/,'').replace(/\s*[\(\[]\s*\d+\s*min[uti]*\s*[\)\]]/gi,'').trim().slice(0,160);
+        }
+        // Suggerimenti per "Aggiungi attività": storico anni precedenti (date vicine
+        // per prime) + attività degli altri piani della classe (escluso lzEscl)
+        function attSuggerimenti(classe,isoDate,lzEscl){
+            const seen=new Set(), out=[];
+            const add=(txt,src,near)=>{
+                const t=String(txt||'').replace(/\s+/g,' ').trim(); if(t.length<4)return;
+                if(/\b(BES|DSA|PEI|PDP)\b/i.test(t))return;
+                const k=t.toLowerCase(); if(seen.has(k))return; seen.add(k); out.push({t,src,near});
+            };
+            const storico=classe.pianificazione?.storicoAnni||[];
+            const flat=storico.flatMap(s=>(s.lezioni||[]).map(l=>({...l,_anno:s.anno})));
+            let vicine=new Set();
+            try{ if(typeof _storicoDataSimile==='function')vicine=new Set(_storicoDataSimile(flat,isoDate,30,60)); }catch(e){}
+            flat.forEach(l=>{
+                const near=vicine.has(l), src='📚 '+(l._anno||'storico');
+                String(l.descrizione||'').split(/;|\n/).forEach(seg=>add(seg,src,near));
+                if(l.titolo)add(l.titolo,src,near);
+            });
+            (classe.pianificazione?.piano||[]).forEach(pz=>{
+                if(pz===lzEscl||!pz.pianoDettagliato)return;
+                ['fase1','fase2','fase3'].forEach(k=>lvItems(pz.pianoDettagliato[k]).forEach(it=>add(lvItemNome(it),'📋 '+(pz.data||''),false)));
+            });
+            out.sort((a,b)=>(b.near?1:0)-(a.near?1:0));
+            return out;
+        }
+
+        // ── Piano dettagliato: attività modificabili nella vista lettura ──
+        // Stessi comandi del LIVE (✏️ ▲ ▼ ✕ ➕ ↩) sulle fasi del Piano A e del
+        // Piano B. Ogni modifica riscrive il testo nella textarea della fase
+        // (vista Modifica) e fa partire il salvataggio automatico del modal.
+        const _PD_ATT_GRUPPI = [['pd_fase1','pd_fase2','pd_fase3'], ['pdb_fase1','pdb_fase2','pdb_fase3']];
+        let _pdAtt = { editing: null, adding: null, hist: [], pool: null };
+        function _pdAttReset() { _pdAtt = { editing: null, adding: null, hist: [], pool: null }; }
+        function _pdAttGruppo(tid) { return _PD_ATT_GRUPPI.find(g => g.includes(tid)) || [tid]; }
+        function _pdAttCid(tid) { return 'pdR_' + tid.replace(/^pd_/, ''); }
+        function _pdAttItems(tid) { return lvItems(document.getElementById(tid)?.value || ''); }
+        function _pdAttSet(tid, items) { const ta = document.getElementById(tid); if (ta) ta.value = items.join('\n'); }
+        // Cronologia per "Annulla": istantanea di tutte le fasi prima di ogni modifica
+        function _pdAttSnap() {
+            _pdAtt.hist.push(_PD_ATT_GRUPPI.flat().map(id => document.getElementById(id)?.value ?? ''));
+            if (_pdAtt.hist.length > 60) _pdAtt.hist.shift();
+        }
+        function _pdAttChanged() {
+            _pdAttRenderAll();
+            _pdAutoSaveSoon();
+        }
+        function _pdAttRenderAll() {
+            _PD_ATT_GRUPPI.flat().forEach(tid => { if (document.getElementById(_pdAttCid(tid))) _pdAttRender(tid); });
+        }
+        function _pdAttRender(tid) {
+            const box = document.getElementById(_pdAttCid(tid));
+            if (!box || !document.getElementById(tid)) return;
+            const items = _pdAttItems(tid);
+            const gr = _pdAttGruppo(tid), gi = gr.indexOf(tid);
+            // I campi di modifica non devono far scattare l'autosalvataggio del modal
+            const noAs = 'oninput="event.stopPropagation()" onchange="event.stopPropagation()"';
+            box.innerHTML = items.length ? '' : '<span class="pd-card-empty">Nessuna attività in questa fase</span>';
+            items.forEach((it, ii) => {
+                const row = document.createElement('div');
+                row.className = 'pd-att-row';
+                if (_pdAtt.editing && _pdAtt.editing.tid === tid && _pdAtt.editing.ii === ii) {
+                    const pre = (it.match(/^[-•*]\s+/) || [''])[0];
+                    const txt = pre ? it.slice(pre.length) : it;
+                    row.classList.add('editing');
+                    row.innerHTML = `<textarea id="pdAttEd" rows="${Math.max(2, txt.split('\n').length + 1)}" onkeydown="pdAttEdKey(event)" ${noAs}></textarea>
+                        <div class="pd-att-edbar"><button class="pd-att-ok" onclick="pdAttEdSave()">💾 Salva</button><button onclick="pdAttEdCancel()">✕ Annulla</button><span>Ctrl+Invio salva · Esc annulla</span></div>`;
+                    row.querySelector('textarea').value = txt;
+                } else {
+                    const primo = ii === 0 && gi <= 0, ultimo = ii === items.length - 1 && gi === gr.length - 1;
+                    row.innerHTML = `<div class="pd-att-txt pd-items"></div><div class="pd-att-ctl">
+                        <button onclick="pdAttEdit('${tid}',${ii})" title="Riscrivi / modifica il testo">✏️</button>
+                        <button onclick="pdAttMove('${tid}',${ii},-1)" title="Sposta su"${primo ? ' disabled' : ''}>▲</button>
+                        <button onclick="pdAttMove('${tid}',${ii},1)" title="Sposta giù"${ultimo ? ' disabled' : ''}>▼</button>
+                        <button class="del" onclick="pdAttDel('${tid}',${ii})" title="Togli l'attività">✕</button></div>`;
+                    pdParseText(it, row.firstElementChild);
+                }
+                box.appendChild(row);
+            });
+            const bar = document.createElement('div');
+            bar.className = 'pd-att-bar';
+            if (_pdAtt.adding === tid) {
+                bar.innerHTML = `<div class="pd-att-add"><input type="text" id="pdAttIn" placeholder="Scrivi una nuova attività o cerca nello storico…" autocomplete="off" ${noAs}>
+                    <div id="pdAttSug" class="pd-att-sug"></div>
+                    <div class="pd-att-edbar"><button class="pd-att-ok" onclick="pdAttConfirmAdd()">Aggiungi</button><button onclick="pdAttCloseAdd()">Annulla</button></div></div>`;
+            } else {
+                const nU = _pdAtt.hist.length;
+                bar.innerHTML = `<button class="pd-att-addbtn" onclick="pdAttOpenAdd('${tid}')">➕ Aggiungi attività</button>`
+                    + `<button class="pd-att-addbtn pd-att-undo" onclick="pdAttUndo()"${nU ? '' : ' disabled'} title="Annulla l'ultima modifica alle attività">↩ Annulla${nU ? ' (' + nU + ')' : ''}</button>`;
+            }
+            box.appendChild(bar);
+        }
+        function _pdAttToast(msg) {
+            document.getElementById('pdAttToast')?.remove();
+            const t = document.createElement('div');
+            t.id = 'pdAttToast';
+            t.innerHTML = '<span></span><button onclick="pdAttUndo()">↩ Annulla</button>';
+            t.firstChild.textContent = msg;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 7000);
+        }
+        function pdAttMove(tid, ii, d) {
+            _pdAtt.editing = null;
+            const items = _pdAttItems(tid), j = ii + d;
+            if (items[ii] == null) return;
+            const gr = _pdAttGruppo(tid), gi = gr.indexOf(tid);
+            if (j >= 0 && j < items.length) {
+                _pdAttSnap();
+                [items[ii], items[j]] = [items[j], items[ii]];
+                _pdAttSet(tid, items);
+            } else if (j < 0 && gi > 0) {
+                _pdAttSnap();
+                const it = items.splice(ii, 1)[0];
+                _pdAttSet(tid, items);
+                const pv = _pdAttItems(gr[gi - 1]); pv.push(it); _pdAttSet(gr[gi - 1], pv);
+                _pdAttToast('Attività spostata nella fase precedente');
+            } else if (j >= items.length && gi < gr.length - 1) {
+                _pdAttSnap();
+                const it = items.splice(ii, 1)[0];
+                _pdAttSet(tid, items);
+                const nx = _pdAttItems(gr[gi + 1]); nx.unshift(it); _pdAttSet(gr[gi + 1], nx);
+                _pdAttToast('Attività spostata nella fase successiva');
+            } else return;
+            _pdAttChanged();
+        }
+        function pdAttDel(tid, ii) {
+            _pdAtt.editing = null;
+            const items = _pdAttItems(tid);
+            if (items[ii] == null) return;
+            _pdAttSnap();
+            items.splice(ii, 1);
+            _pdAttSet(tid, items);
+            _pdAttChanged();
+            _pdAttToast('Attività tolta');
+        }
+        // Annulla l'ultima modifica (aggiunta, spostamento, modifica, eliminazione)
+        function pdAttUndo() {
+            const u = _pdAtt.hist.pop();
+            if (!u || !document.getElementById('pd_fase1')) return;
+            _pdAtt.editing = null; _pdAtt.adding = null;
+            _PD_ATT_GRUPPI.flat().forEach((id, k) => { const ta = document.getElementById(id); if (ta) ta.value = u[k]; });
+            document.getElementById('pdAttToast')?.remove();
+            _pdAttChanged();
+        }
+        function pdAttEdit(tid, ii) {
+            _pdAtt.editing = { tid, ii }; _pdAtt.adding = null;
+            _pdAttRenderAll();
+            const t = document.getElementById('pdAttEd');
+            if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
+        }
+        function pdAttEdCancel() { _pdAtt.editing = null; _pdAttRenderAll(); }
+        function pdAttEdSave() {
+            const e = _pdAtt.editing, t = document.getElementById('pdAttEd');
+            if (!e || !t) return;
+            const items = _pdAttItems(e.tid);
+            const old = items[e.ii];
+            if (old == null) { pdAttEdCancel(); return; }
+            let nuovo = t.value.replace(/\s+$/, '');
+            if (!nuovo.trim()) { alert('Il testo è vuoto: per toglierla usa ✕.'); return; }
+            const pre = (old.match(/^[-•*]\s+/) || [''])[0];
+            if (pre && !/^\s*[-•*]\s+/.test(nuovo)) nuovo = pre + nuovo.replace(/^\s+/, '');
+            _pdAtt.editing = null;
+            if (nuovo !== old) { _pdAttSnap(); items[e.ii] = nuovo; _pdAttSet(e.tid, items); _pdAttChanged(); }
+            else _pdAttRenderAll();
+        }
+        function pdAttEdKey(ev) {
+            if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); pdAttEdCancel(); }
+            else if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); pdAttEdSave(); }
+        }
+        function _pdAttPool() {
+            if (_pdAtt.pool) return _pdAtt.pool;
+            const ctx = _pdEditCtx;
+            if (!ctx) return [];
+            const classe = data.classi[ctx.ci];
+            const [isoDate] = ctx.slotId.split('_');
+            const lz = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===ctx.slotId || (!p.ora && p.data===isoDate));
+            return (_pdAtt.pool = classe ? attSuggerimenti(classe, isoDate, lz) : []);
+        }
+        function _pdAttSug() {
+            const inp = document.getElementById('pdAttIn'), box = document.getElementById('pdAttSug');
+            if (!inp || !box) return;
+            const words = (inp.value || '').toLowerCase().split(/\s+/).filter(Boolean);
+            const list = _pdAttPool().filter(x => words.every(w => x.t.toLowerCase().includes(w))).slice(0, 8);
+            box.innerHTML = '';
+            list.forEach(x => {
+                const d = document.createElement('div');
+                d.className = 'pd-att-sug-i';
+                d.textContent = x.t;
+                const sm = document.createElement('small'); sm.textContent = x.src; d.appendChild(sm);
+                d.addEventListener('mousedown', e => { e.preventDefault(); inp.value = x.t; box.innerHTML = ''; inp.focus(); });
+                box.appendChild(d);
+            });
+        }
+        function pdAttOpenAdd(tid) {
+            _pdAtt.adding = tid; _pdAtt.editing = null;
+            _pdAttRenderAll();
+            const inp = document.getElementById('pdAttIn');
+            if (!inp) return;
+            inp.addEventListener('input', _pdAttSug);
+            inp.addEventListener('keydown', e => {
+                if (e.key === 'Enter') { e.preventDefault(); pdAttConfirmAdd(); }
+                else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); pdAttCloseAdd(); }
+            });
+            _pdAttSug();
+            inp.focus();
+        }
+        function pdAttCloseAdd() { _pdAtt.adding = null; _pdAttRenderAll(); }
+        function pdAttConfirmAdd() {
+            const inp = document.getElementById('pdAttIn'), tid = _pdAtt.adding;
+            if (!inp || !tid) return;
+            const testo = inp.value.trim().replace(/^[-•*]\s+/, '');
+            if (!testo) return;
+            _pdAttSnap();
+            const items = _pdAttItems(tid);
+            items.unshift('- ' + testo); // in cima, come in LIVE: poi la si sposta giù con ▼
+            _pdAttSet(tid, items);
+            _pdAtt.adding = null;
+            _pdAttChanged();
+        }
+
         function pdRenderReadView(pdData) {
-            const fields = ['obiettivi','materiali','fase1','fase2','fase3','valutazione','note','compiti'];
+            const fields = ['obiettivi','materiali','valutazione','note','compiti'];
             fields.forEach(k => pdParseText(pdData[k] || '', 'pdR_' + k));
+            _pdAttReset();
             // Piano B
             const pb = pdData.pianoB;
             const pbCard = document.getElementById('pdR_pianoB_card');
@@ -15088,15 +15364,13 @@ Rispondi SOLO con JSON valido:
                     const durEl2 = document.getElementById('pdR_pianoB_durata');
                     if (titEl) titEl.textContent = pb.titolo || 'Piano alternativo';
                     if (durEl2) durEl2.textContent = pb.durata ? `⏱️ ${pb.durata} min stimati` : '';
-                    // Mostra fasi del piano B (con fallback a descrizione per compatibilità vecchio formato)
+                    // Fasi del piano B, modificabili come quelle del Piano A (la vecchia
+                    // "descrizione" è già nella textarea della Fase 1)
                     const fasesPB = document.getElementById('pdR_pianoB_fasi');
                     if (fasesPB) {
-                        let fasesHtml = '';
-                        if (pb.fase1) fasesHtml += `<div style="margin-bottom:6px;"><strong style="font-size:11px;color:#880e4f;">🔥 Fase 1</strong><div style="font-size:13px;margin-top:2px;">${pb.fase1.replace(/\n/g,'<br>')}</div></div>`;
-                        if (pb.fase2) fasesHtml += `<div style="margin-bottom:6px;"><strong style="font-size:11px;color:#880e4f;">📖 Fase 2</strong><div style="font-size:13px;margin-top:2px;">${pb.fase2.replace(/\n/g,'<br>')}</div></div>`;
-                        if (pb.fase3) fasesHtml += `<div style="margin-bottom:6px;"><strong style="font-size:11px;color:#880e4f;">✅ Fase 3</strong><div style="font-size:13px;margin-top:2px;">${pb.fase3.replace(/\n/g,'<br>')}</div></div>`;
-                        if (!fasesHtml && pb.descrizione) fasesHtml = `<div style="font-size:13px;">${pb.descrizione.replace(/\n/g,'<br>')}</div>`;
-                        fasesPB.innerHTML = fasesHtml || '<span style="opacity:.4">—</span>';
+                        fasesPB.innerHTML = [['pdb_fase1','🔥 Fase 1'],['pdb_fase2','📖 Fase 2'],['pdb_fase3','✅ Fase 3']]
+                            .map(([tid, lab]) => `<div style="margin-bottom:10px;"><strong style="font-size:11px;color:#880e4f;">${lab}</strong><div class="pd-items" id="${_pdAttCid(tid)}" style="margin-top:2px;"></div></div>`)
+                            .join('');
                     }
                 } else {
                     pbCard.style.display = 'none';
@@ -15109,6 +15383,7 @@ Rispondi SOLO con JSON valido:
                 durEl.textContent = `⏱️ Durata totale: ${min} min`;
                 durEl.style.display = min ? '' : 'none';
             }
+            _pdAttRenderAll();
         }
 
         function pdToggleReadMode(btn) {
@@ -15352,6 +15627,7 @@ Rispondi SOLO con JSON valido:
             const saved = _pdFlush();
             if (ctx) clearInterval(ctx.poll);
             (ctx?.ov || document.querySelector('.piano-edit-modal-overlay'))?.remove();
+            document.getElementById('pdAttToast')?.remove();
             _pdEditCtx = null;
             if (saved) {
                 if (typeof _autoPublishLesson === 'function' && ctx) _autoPublishLesson(ctx.slotId, ctx.ci);
@@ -17537,31 +17813,9 @@ ${blocco.regole}`;
             }
 
             // ── Attività: togli / riordina / aggiungi al volo ───────────────
-            // Ogni fase è un testo a righe; un'"attività" è una riga di primo livello
-            // con le sue righe rientrate. Le modifiche vengono scritte nel piano
-            // solo a "Segna lezione come svolta" (o "Applica alla lezione").
-            // La riga "di testa" di ogni attività viene salvata senza rientro: se il
-            // testo della fase era tutto rientrato, una nuova attività a rientro 0
-            // non deve "inglobare" le altre come sotto-righe. Una riga a elenco con
-            // durata "(X min)" è sempre un'attività a sé, anche se rientrata.
-            function lvItems(testo){
-                const out=[];
-                const righe=String(testo||'').split('\n').filter(l=>l.trim());
-                const indOf=l=>l.length-l.trimStart().length;
-                const isSub=tr=>/^[>»→]\s/.test(tr);
-                const isAtt=tr=>/^(?:[-•*]|\d+[.)])\s.*[\(\[]\s*\d+\s*min/i.test(tr);
-                const tops=righe.filter(l=>!isSub(l.trimStart())).map(indOf);
-                const base=tops.length?Math.min(...tops):0;
-                righe.forEach(l=>{
-                    const tr=l.trimStart(), ind=indOf(l)-base;
-                    if(out.length&&!isAtt(tr)&&(ind>=2||isSub(tr)))out[out.length-1]+='\n'+l.trimEnd();
-                    else out.push(tr.trimEnd());
-                });
-                return out;
-            }
-            function lvItemNome(it){
-                return String(it||'').split('\n')[0].replace(/^\s*(?:[-•*>»→]|\d+[.)])\s*/,'').replace(/\s*[\(\[]\s*\d+\s*min[uti]*\s*[\)\]]/gi,'').trim().slice(0,160);
-            }
+            // Le attività di una fase si leggono con lvItems (vedi Piano dettagliato).
+            // Le modifiche vengono scritte nel piano solo a "Segna lezione come
+            // svolta" (o "Applica alla lezione").
             const _escT=t=>String(t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
             function lvAttSet(fi,items){ LV.fasi[fi].testo=items.join('\n'); LV.attDirty=true; lvAutoSave(); }
             // Cronologia per "Annulla": istantanea di tutte le fasi prima di ogni modifica
@@ -17693,30 +17947,7 @@ ${blocco.regole}`;
             };
             // Suggerimenti: storico anni precedenti (date vicine per prime) + attività di altri piani
             let _attPool=null;
-            function lvAttPool(){
-                if(_attPool)return _attPool;
-                const seen=new Set(), out=[];
-                const add=(txt,src,near)=>{
-                    const t=String(txt||'').replace(/\s+/g,' ').trim(); if(t.length<4)return;
-                    if(/\b(BES|DSA|PEI|PDP)\b/i.test(t))return;
-                    const k=t.toLowerCase(); if(seen.has(k))return; seen.add(k); out.push({t,src,near});
-                };
-                const storico=classe.pianificazione?.storicoAnni||[];
-                const flat=storico.flatMap(s=>(s.lezioni||[]).map(l=>({...l,_anno:s.anno})));
-                let vicine=new Set();
-                try{ if(typeof _storicoDataSimile==='function')vicine=new Set(_storicoDataSimile(flat,isoDate,30,60)); }catch(e){}
-                flat.forEach(l=>{
-                    const near=vicine.has(l), src='📚 '+(l._anno||'storico');
-                    String(l.descrizione||'').split(/;|\n/).forEach(seg=>add(seg,src,near));
-                    if(l.titolo)add(l.titolo,src,near);
-                });
-                (classe.pianificazione?.piano||[]).forEach(pz=>{
-                    if(pz===lz||!pz.pianoDettagliato)return;
-                    ['fase1','fase2','fase3'].forEach(k=>lvItems(pz.pianoDettagliato[k]).forEach(it=>add(lvItemNome(it),'📋 '+(pz.data||''),false)));
-                });
-                out.sort((a,b)=>(b.near?1:0)-(a.near?1:0));
-                return (_attPool=out);
-            }
+            function lvAttPool(){ return _attPool||(_attPool=attSuggerimenti(classe,isoDate,lz)); }
             function lvAttSug(){
                 const inp=q('lv-att-in'), box=q('lv-att-sug'); if(!inp||!box)return;
                 const words=(inp.value||'').toLowerCase().split(/\s+/).filter(Boolean);
