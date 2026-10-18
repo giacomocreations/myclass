@@ -15836,21 +15836,28 @@ Rispondi SOLO con JSON valido:
             const classe  = data.classi[currentClass];
             const lz = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotId || (!p.ora && p.data===isoDate));
             if (!lz) return;
-            if (btn) { btn.textContent = '⏳ Generazione...'; btn.disabled = true; }
+            // Piano già scritto dal docente nel modal: l'AI lo rifinisce senza
+            // cambiarne l'impostazione (vedi _aiPromptRifinisci)
+            const _PD_AI_CAMPI = ['obiettivi','materiali','fase1','fase2','fase3','valutazione','note'];
+            const scritto = {};
+            _PD_AI_CAMPI.forEach(k => { scritto[k] = (document.getElementById('pd_'+k)?.value || '').trim(); });
+            const rifinisci = _PD_AI_CAMPI.some(k => scritto[k]);
+            if (btn) { btn.textContent = rifinisci ? '⏳ Rifinisco il tuo piano...' : '⏳ Generazione...'; btn.disabled = true; }
             try {
                 // Fonte ESCLUSIVA: la descrizione della lezione scritta in
                 // "Lezioni svolte" / "Prossime lezioni". Niente programmazione,
                 // storico o altre lezioni: il piano non deve inventare contenuti.
                 const descr = String(lz.descrizione||'').trim();
-                if (!descr && !String(lz.titolo||'').trim()) {
+                if (!rifinisci && !descr && !String(lz.titolo||'').trim()) {
                     alert('La lezione non ha una descrizione.\nScrivila prima in "Lezioni svolte" o "Prossime lezioni": il piano viene generato solo da lì.');
                     if (btn) { btn.textContent = '🤖 Genera con AI'; btn.disabled = false; }
                     return;
                 }
 
                 const blocco = bloccoOrePrompt(classe, lz);
+                const durataModal = parseInt(document.getElementById('pd_durata')?.value || '') || 0;
 
-                const prompt = `Sei un docente esperto di inglese per scuola secondaria di primo grado italiana.
+                const prompt = rifinisci ? _aiPromptRifinisci(classe, lz, scritto, blocco, durataModal || blocco.minuti || 50) : `Sei un docente esperto di inglese per scuola secondaria di primo grado italiana.
 Crea un piano dettagliato per questa lezione. Tutto in ITALIANO tranne i termini tecnici in inglese.
 
 FONTE UNICA: la DESCRIZIONE DELLA LEZIONE qui sotto, scritta dal docente. Il piano deve rifarsi ESCLUSIVAMENTE a essa.
@@ -15889,13 +15896,17 @@ Rispondi SOLO con JSON valido:
 ${blocco.regole}`;
                 const r = await callGemini(prompt);
                 const pd = JSON.parse(r.replace(/\`\`\`json|\`\`\`/g,'').trim());
-                pd.durata = blocco.minuti || 50;
+                pd.durata = (rifinisci && durataModal) || blocco.minuti || 50;
                 const _durEl = document.getElementById('pd_durata');
+                const prima = rifinisci ? { durata: _durEl?.value || '', ...scritto } : null;
                 if (_durEl) _durEl.value = pd.durata;
-                ['obiettivi','materiali','fase1','fase2','fase3','valutazione','note'].forEach(k => {
+                _PD_AI_CAMPI.forEach(k => {
                     const el = document.getElementById('pd_'+k);
-                    if (el && pd[k]) { el.value = pd[k]; pdAutoResize(el); }
+                    if (el && typeof pd[k] === 'string' && pd[k].trim()) { el.value = pd[k]; pdAutoResize(el); }
+                    else pd[k] = el?.value || '';
                 });
+                pd.compiti = document.getElementById('pd_compiti')?.value || '';
+                pd.pianoB = _pdBuildFromModal().pianoB;
                 _applyTipoToModal(_deduceTipoFromPiano(pd));
                 if (typeof _pdAutoSaveSoon === 'function') _pdAutoSaveSoon(slotId);
                 if (btn) { btn.textContent = '✓ Generato'; btn.disabled = false; }
@@ -15907,10 +15918,84 @@ ${blocco.regole}`;
                 } else if (readView && readView.classList.contains('active')) {
                     pdRenderReadView(pd);
                 }
+                if (prima) _pdAiToast(prima);
             } catch(err) {
                 if (btn) { btn.textContent = '🤖 Genera con AI'; btn.disabled = false; }
                 if (err.message !== 'QUOTA_EXCEEDED') alert('Errore AI: ' + err.message);
             }
+        }
+
+        // Prompt per "Genera con AI" quando il docente ha già scritto il piano:
+        // stesse attività, stesso ordine e stesse fasi; l'AI rende il testo più
+        // chiaro e operativo e aggiunge solo ciò che manca.
+        function _aiPromptRifinisci(classe, lz, scritto, blocco, minuti) {
+            const campo = k => scritto[k] || '(vuoto)';
+            return `Sei un docente esperto di inglese per scuola secondaria di primo grado italiana.
+Il docente ha GIÀ SCRITTO il piano di questa lezione (sotto). Il tuo compito è RIFINIRLO, non rifarlo. Tutto in ITALIANO tranne i termini tecnici in inglese.
+
+REGOLE VINCOLANTI:
+- Mantieni l'impostazione del docente: stesse attività, nello stesso ordine e nella stessa fase. Non togliere, non sostituire, non accorpare e non spostare attività tra le fasi.
+- Non cambiare pagine, esercizi, materiali, giochi o testi indicati dal docente; non tradurre le parti che ha scritto in inglese.
+- Rendi ogni attività più chiara e operativa: riscrivi la riga in modo pulito e aggiungi sotto, con "  > ", le indicazioni pratiche che mancano (consegna agli alunni, modalità di lavoro individuale/coppie/gruppi, correzione, cosa fa il docente). Le indicazioni che il docente ha già scritto restano.
+- Durate: mantieni quelle già indicate. Aggiungi "(X min)" alle attività che non ce l'hanno, in modo che il totale delle tre fasi sia circa ${minuti} minuti.
+- Campi vuoti (obiettivi, materiali, valutazione, note): completali ricavandoli dalle attività scritte. Campi già compilati: mantieni quanto scritto, migliorandone la forma e aggiungendo solo ciò che manca.
+- Una fase vuota puoi completarla solo con la cornice (saluto/appello, breve ripresa, correzione, assegnazione dei compiti) o con passaggi delle attività già scritte, senza contenuti nuovi: niente nuovi argomenti, lessico, strutture, pagine, esercizi, video o giochi.
+
+PIANO SCRITTO DAL DOCENTE:
+[obiettivi]
+${campo('obiettivi')}
+[materiali]
+${campo('materiali')}
+[fase1 — Warm up / Revisione]
+${campo('fase1')}
+[fase2 — Attività principale]
+${campo('fase2')}
+[fase3 — Consolidamento / Chiusura]
+${campo('fase3')}
+[valutazione]
+${campo('valutazione')}
+[note]
+${campo('note')}
+
+CONTESTO DELLA LEZIONE (solo per capire, non per aggiungere attività):
+- Descrizione: ${String(lz.descrizione||'').trim()||'—'}
+- Titolo: ${lz.titolo||'—'}
+- Unità: ${lz.unit||'—'}
+- Pagine: ${lz.pagine||'—'}
+- Compiti previsti: ${document.getElementById('pd_compiti')?.value.trim() || lz.compiti || '—'}
+- Classe: ${classe.nome}
+- Durata: ${minuti} minuti
+${blocco.contesto}
+
+FORMATO DEI CAMPI: testo semplice.
+- Ogni attività su una riga separata, inizia con "- " e finisce con la durata "(X min)"
+- Sotto-dettagli/note pratiche su righe che iniziano con doppio spazio "  > "
+
+Rispondi SOLO con JSON valido con le chiavi "obiettivi", "materiali", "fase1", "fase2", "fase3", "valutazione", "note" (valori stringa, righe separate da \n).
+${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi o completi: le attività scritte dal docente restano comunque.' : ''}`;
+        }
+        // Dopo la rifinitura: avviso con "↩ Torna al tuo piano"
+        function _pdAiToast(prima) {
+            document.getElementById('pdAttToast')?.remove();
+            const t = document.createElement('div');
+            t.id = 'pdAttToast';
+            t.innerHTML = '<span>✨ Piano rifinito dall\'AI</span><button>↩ Torna al tuo piano</button>';
+            t.querySelector('button').onclick = () => {
+                t.remove();
+                if (!document.getElementById('pd_fase1')) return;
+                const dEl = document.getElementById('pd_durata');
+                if (dEl && prima.durata) dEl.value = prima.durata;
+                Object.keys(prima).forEach(k => {
+                    if (k === 'durata') return;
+                    const el = document.getElementById('pd_' + k);
+                    if (el) { el.value = prima[k]; pdAutoResize(el); }
+                });
+                const rv = document.getElementById('pdReadView');
+                if (rv && rv.classList.contains('active')) pdRenderReadView(_pdBuildFromModal());
+                _pdAutoSaveSoon();
+            };
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 15000);
         }
 
         // ================================================================
