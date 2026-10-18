@@ -46,7 +46,7 @@ messaging.onBackgroundMessage(payload => {
 });
 
 // ── CAMBIA QUESTO NUMERO AD OGNI DEPLOY ────────────────────────
-const CACHE_VERSION = 'v20';
+const CACHE_VERSION = 'v21';
 // ───────────────────────────────────────────────────────────────
 
 const CACHE_NAME = 'studentapp-' + CACHE_VERSION;
@@ -110,6 +110,25 @@ self.addEventListener('fetch', event => {
         .then(response => {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Manifest: network-first. È l'identità dell'app installata (nome, icone,
+  // colori): se resta in cache-first, chi ha installato si porta dietro per
+  // sempre la versione vecchia (lo stesso guaio corretto in QuestTown v222).
+  // La copia in cache serve solo quando il dispositivo è offline.
+  if (url.origin === self.location.origin && url.pathname.endsWith('/student-manifest.json')) {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-cache' })
+        .then(response => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          }
           return response;
         })
         .catch(() => caches.match(event.request))
