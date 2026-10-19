@@ -7881,6 +7881,9 @@ function renderStudentResultsTeacher(name, response) {
       ? '<button class="btn btn-sm btn-warning" onclick="grantRecovery(\''+safeName+'\')">🔓 Concedi altro tentativo</button>' : '';
     const grantShuffledBtn = isWaitingKey
       ? '<button class="btn btn-sm btn-primary" onclick="grantShuffledOriginal(\''+safeName+'\')">🔀 Autorizza versione rimescolata</button>' : '';
+    // Recupero lasciato a metà (es. finito il tempo): si toglie solo il
+    // recupero, la prova principale resta e torna l'unica valutata.
+    const deleteRecBtn = '<button class="btn btn-sm btn-danger" onclick="deleteRecoveryOnly(S.liveCode,S.selectedStudent)" title="Elimina solo il recupero: resta e viene valutata solo la prova principale">🗑 Elimina solo recupero</button>';
     const bg     = isWaitingKey ? '#fee2e2' : (isLive ? '#f5f0ff' : '#fef3c7');
     const border = isWaitingKey ? '#dc2626' : (isLive ? '#8b5cf6' : '#f59e0b');
     const color  = isWaitingKey ? '#7f1d1d' : (isLive ? '#6d28d9' : '#92400e');
@@ -7892,7 +7895,7 @@ function renderStudentResultsTeacher(name, response) {
         '<h3 style="font-size:14px;font-weight:800;color:' + color + ';">' + title + '</h3>' +
         '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
           (scoreStr ? '<span style="font-size:12px;font-weight:700;color:#92400e;">' + scoreStr + '</span>' : '') +
-          grantRetryBtn + grantShuffledBtn +
+          grantRetryBtn + grantShuffledBtn + deleteRecBtn +
         '</div>' +
       '</div>' +
       (isWaitingKey ? '<p style="font-size:12px;color:#dc2626;margin-bottom:8px;">Azioni:<br>• <strong>Cambia la chiave API</strong> dal pulsante 🔑 in alto — lo studente riprenderà automaticamente<br>• <strong>Autorizza versione rimescolata</strong> se non hai una nuova chiave disponibile</p>' : '') +
@@ -12567,6 +12570,26 @@ function renderReviewList() {
 }
 
 
+// Il docente ha eliminato il recupero (deleteRecoveryOnly): azzera lo stato
+// locale e, se l'alunno era nel recupero o nei risultati combinati, lo riporta
+// ai risultati della sola prova principale.
+async function _onRecoveryRemovedByTeacher() {
+  const wasInRecovery = document.getElementById('view-student-recovery')?.classList.contains('active');
+  if (typeof _stopRecoveryKeyListener === 'function') _stopRecoveryKeyListener();
+  S.recoveryAttempt = 0;
+  S.recoveryTeacherGranted = false;
+  S.recoveryHistory = [];
+  S.recoveryQuestions = [];
+  S.recoveryAnswers = [];
+  S.recoveryIndex = 0;
+  S.recoveryScore = 0;
+  // A sessione chiusa niente nuova analisi AI (offrirebbe di nuovo il recupero)
+  if (!S.removed) S.aiAnalysisDone = false;
+  await showStudentDone();
+  if (S.removed) showSessionClosed();
+  if (wasInRecovery) alert('Il docente ha annullato il recupero: resta valida la tua prova principale.');
+}
+
 async function showStudentDone() {
   showView('student-done');
 
@@ -12578,6 +12601,19 @@ async function showStudentDone() {
       if (r.recoveryAttempt) S.recoveryAttempt = r.recoveryAttempt;
       if (r.recoveryTeacherGranted) S.recoveryTeacherGranted = r.recoveryTeacherGranted;
     } catch(e) {}
+    // Il docente ha eliminato il recupero: si torna alla sola prova principale
+    if (!S._recRemovedListen) {
+      S._recRemovedListen = true;
+      let _recRemovedSeen = null;
+      db.ref('livelearn/responses/' + S.sessionCode + '/' + S.safeName + '/recoveryRemovedAt')
+        .on('value', snap => {
+          const v = snap.val();
+          if (_recRemovedSeen === null) { _recRemovedSeen = v || 0; return; }
+          if (!v || v === _recRemovedSeen) return;
+          _recRemovedSeen = v;
+          _onRecoveryRemovedByTeacher();
+        });
+    }
     // Listen for teacher granting a retry
     db.ref('livelearn/responses/' + S.sessionCode + '/' + S.safeName + '/recoveryTeacherGranted')
       .on('value', snap => {
@@ -18800,6 +18836,47 @@ async function grantRecovery(safeName) {
     });
     alert('✅ Permesso concesso. Lo studente vedrà l\'opzione di recupero aggiuntivo.');
   } catch(e) { alert('Errore: ' + e.message); }
+}
+
+// Elimina solo il recupero di un alunno (es. iniziato subito dopo la prova e
+// non finito per mancanza di tempo). La prova principale resta intatta e torna
+// a essere l'unica considerata: via punteggi, risposte e tentativi del
+// recupero, stato di nuovo 'submitted'. recoveryRemovedAt avvisa l'alunno se
+// ha ancora la pagina del recupero aperta.
+async function deleteRecoveryOnly(sessionCode, studentKey) {
+  if (!db || !sessionCode || !studentKey) { alert('Errore: parametri mancanti.'); return; }
+  const displayName = studentKey.replace(/_/g, ' ');
+  if (!confirm('Eliminare SOLO il recupero di "' + displayName + '"?\n\nLa prova principale resta e sarà l\'unica considerata nella valutazione.\n\nQuesta azione non è reversibile.')) return;
+  try {
+    const ref = db.ref('livelearn/responses/' + sessionCode + '/' + studentKey);
+    const r = (await ref.get()).val();
+    if (!r) { alert('Nessun dato trovato per questo alunno.'); return; }
+    await ref.update({
+      status:                      r.submittedAt ? 'submitted' : (r.status || null),
+      recoveryAttempt:             null,
+      recoveryStartedAt:           null,
+      recoveryDoneAt:              null,
+      recoveryWaitingAt:           null,
+      recoveryTeacherGranted:      null,
+      recoveryPermitShuffled:      null,
+      recoveryType:                null,
+      recoveryHistory:             null,
+      recoveryQuestions:           null,
+      recoveryAnswers:             null,
+      recoveryCurrentQ:            null,
+      recoveryAiScores:            null,
+      recoveryManualScores:        null,
+      recScore1:                   null,
+      recScore2:                   null,
+      sessionClosedDuringRecovery: null,
+      recoveryRemovedAt:           Date.now()
+    });
+    if (S.liveCode === sessionCode && S.selectedStudent === studentKey) selectStudent(studentKey);
+    if (typeof _llToast === 'function') _llToast('🗑 Recupero di ' + displayName + ' eliminato: resta la prova principale', 'ok', 4000);
+  } catch(e) {
+    alert('Errore durante l\'eliminazione del recupero: ' + e.message);
+    console.error('[deleteRecoveryOnly]', e);
+  }
 }
 
 // Teacher authorizes shuffled-original fallback when API quota is exhausted
