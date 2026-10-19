@@ -34977,11 +34977,16 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
                     const { perQ, maxDi } = _agentPuntiPerDomanda(qs, dr);
                     const dom = _obvDomandeRisposta(detail.activityId, ver, qs, perQ, maxDi);
                     const tags = _agentTagsDaPunti(qs, perQ, maxDi);
+                    // Le aree si riscrivono sempre: se la versione svolta non ha
+                    // domande con l'area restano vuote (quelle vecchie venivano da
+                    // un'altra versione e davano esiti sbagliati agli obiettivi)
                     if (JSON.stringify(dom) !== JSON.stringify(g.domande || null) ||
-                        (Object.keys(tags).length && JSON.stringify(tags) !== JSON.stringify(g.tags || null))) {
+                        JSON.stringify(tags) !== JSON.stringify(g.tags || {})) {
                         g.domande = dom;
-                        if (Object.keys(tags).length) g.tags = tags;
+                        g.tags = tags;
                         cambiati++;
+                        const tot = dom.p.reduce((a, x) => a + x, 0), max = dom.m.reduce((a, x) => a + x, 0);
+                        console.log(`[Obiettivi] ${s.cognome} ${s.nome}: versione ${ver}${dr.studentVersion ? '' : ' (dalla sessione)'}, ${Math.round(tot * 100) / 100}/${max} pt`, tags);
                     }
                     usa(detail.activityId, ver);
                     alunni++;
@@ -35193,6 +35198,21 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         try { db = firebase.database(); } catch (e) { return; }
         try {
             const r = await _obvLeggiRisposte(classe, nomeU, db);
+            // Versioni svolte senza abbinamento domande → obiettivi (es. la PEI,
+            // prima attribuita per errore a un'altra versione): si abbinano ora
+            const u = ctx.u, mappe = _obvMappe(classe);
+            if (u.obiettivi?.length) {
+                for (const act of r.attivita) {
+                    const usate = r.usate[act];
+                    if (!usate || ![...usate].some(v => !mappe[act]?.v?.[v])) continue;
+                    try {
+                        const att = await _obvCaricaAttivita(act, db);
+                        await _obvAbbinaAttivita(classe, u, nomeU, att, false, usate);
+                        r.cambiati++;
+                        console.log(`[Obiettivi] ${nomeU}: abbinate agli obiettivi le versioni svolte ${[...usate].join(', ')}`);
+                    } catch (e) { r.errori.push(`${mappe[act]?.titolo || act}: ${e.message}`); }
+                }
+            }
             if (r.cambiati) {
                 console.log(`[Obiettivi] ${nomeU}: punti per domanda aggiornati da LiveLearn per ${r.cambiati} prov${r.cambiati === 1 ? 'a' : 'e'}`);
                 saveData();
