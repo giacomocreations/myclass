@@ -12691,6 +12691,30 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             return { fasi: b, obiettivi: titB || '', materiali: '', nome: 'B' };
         }
 
+        // Legge {titolo, argo, studente} dalla risposta AI. Se il JSON non è
+        // valido (tipico: virgolette non escapate nei testi, es. gioco "The
+        // Alphabet Chain") prende ogni campo fino all'inizio del successivo.
+        function _parseDescrizioniAI(res) {
+            const raw = String(res || '').replace(/```json|```/g, '').trim();
+            try { return JSON.parse(raw); } catch (e) {}
+            const m = raw.match(/\{[\s\S]*\}/);
+            if (m) { try { return JSON.parse(m[0]); } catch (e) {} }
+            const body = m ? m[0] : raw;
+            const re = /"(titolo|argo|studente|student|descrizione)"\s*:\s*"/g;
+            const keys = [];
+            let k;
+            while ((k = re.exec(body))) keys.push({ nome: k[1], da: re.lastIndex, inizio: k.index });
+            if (!keys.length) return null;
+            const out = {};
+            keys.forEach((c, i) => {
+                const fine = i + 1 < keys.length ? keys[i + 1].inizio : body.length;
+                const v = body.slice(c.da, fine).replace(/"\s*,?\s*\}?\s*$/, '');
+                try { out[c.nome] = JSON.parse('"' + v + '"'); }
+                catch (e) { out[c.nome] = v.replace(/\\n/g, '\n').replace(/\\"/g, '"'); }
+            });
+            return out;
+        }
+
         async function _aiDescrizioniLezione(o) {
             o = o || {};
             const pulisci = t => String(t || '').split('\n').filter(r => !/\b(BES|DSA|PEI|PDP)\b/i.test(r)).join('\n');
@@ -12714,11 +12738,23 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
               + 'In NESSUNO dei campi citare il saluto o l\'appello (sono scontati) né l\'assegnazione dei compiti (vanno già nel campo Compiti). La correzione dei compiti assegnati la volta prima, invece, è un\'attività e va citata.\n'
               + 'Non citare nomi di alunni, voti, note sul comportamento, BES/DSA/PEI/PDP né livelli CEFR.\n'
               + 'Rispondi SOLO con JSON valido senza markdown: {"titolo":"...","argo":"...","studente":"..."}';
-            const res = await callGemini(prompt);
-            const raw = String(res).replace(/```json|```/g, '').trim();
+            // Gemini a volte fallisce in modo occasionale (modello sovraccarico,
+            // JSON con virgolette non escapate): un secondo tentativo di solito
+            // va a buon fine, quindi si riprova da soli una volta.
             let gen;
-            try { gen = JSON.parse(raw); }
-            catch (e) { const m = raw.match(/\{[\s\S]*\}/); if (!m) throw new Error('Risposta AI non valida'); gen = JSON.parse(m[0]); }
+            for (let tentativo = 1; ; tentativo++) {
+                try {
+                    const res = await callGemini(prompt);
+                    gen = _parseDescrizioniAI(res);
+                    if (!gen) throw new Error('Risposta AI non valida');
+                    break;
+                } catch (e) {
+                    const definitivo = /non configurato|Limite gratuito|quota|Connessione internet/i.test(e.message || '');
+                    if (definitivo || tentativo >= 2) throw e;
+                    console.warn('[Descrizioni dal piano] tentativo ' + tentativo + ' fallito, riprovo:', e.message);
+                    await new Promise(r => setTimeout(r, 1500));
+                }
+            }
             return {
                 titolo:  String(gen.titolo || '').trim(),
                 argo:    String(gen.argo || gen.descrizione || '').trim(),
@@ -25700,6 +25736,28 @@ ${sectionInstr}`;
     // q.points oppure null se non valutabile senza AI (free-response, listening
     // di tipo libero). Prima l'agente valutava solo MC e cloze: matching, reorder,
     // drag-drop e categorization risultavano 0 e i tag uscivano sballati.
+    // Scelta multipla: indice da numero, stringa numerica ("1"), testo
+    // dell'opzione o lettera ("B"), come in LiveLearn. Le versioni importate
+    // (es. PEI) possono avere correct in formato testo: col confronto stretto
+    // le risposte giuste risultavano sbagliate.
+    function _agentMcIdx(q, v) {
+        if (typeof v === 'number') return Number.isInteger(v) ? v : null;
+        if (v == null) return null;
+        const s = String(v).trim();
+        if (!s) return null;
+        if (/^\d+$/.test(s)) return Number(s);
+        const opts = agentFbArr((q && q.options) || []);
+        const f = opts.findIndex(o => _normClozeAg(String(o)) === _normClozeAg(s));
+        if (f >= 0) return f;
+        if (/^[A-Ja-j]$/.test(s) && s.toUpperCase().charCodeAt(0) - 65 < opts.length) return s.toUpperCase().charCodeAt(0) - 65;
+        return null;
+    }
+    function _agentMcOk(q, a) {
+        const ci = _agentMcIdx(q, q.correct ?? q.correctIndex);
+        const ai = _agentMcIdx(q, a);
+        return ai != null && ai === ci;
+    }
+
     function _agentEvalPts(q, a, out) {
         const pts = q.points || 1;
         const arrOf = v => Array.isArray(v) ? v : (v && typeof v === 'object' ? agentFbArr(v) : null);
@@ -25762,7 +25820,7 @@ ${sectionInstr}`;
             return frac(n, corrects.length);
         };
         const evalBy = (sub, inner) => {
-            if (sub === 'multiple-choice') { const ok = a === (inner.correct ?? inner.correctIndex); if (out) { out.n = ok ? 1 : 0; out.tot = 1; } return ok ? pts : 0; }
+            if (sub === 'multiple-choice') { const ok = _agentMcOk(inner, a); if (out) { out.n = ok ? 1 : 0; out.tot = 1; } return ok ? pts : 0; }
             if (sub === 'cloze' || sub === 'fill-blanks') return evalCloze(agentFbArr(inner.answers || []), a);
             if (sub === 'drag-drop')      return evalDrag(inner, a);
             if (sub === 'reorder')        return evalReorder(inner, a);
@@ -25918,7 +25976,7 @@ ${sectionInstr}`;
                     : Array.isArray(inner.answers) && inner.answers.length ? 'cloze'
                     : '');
                 if (inferredSub === 'multiple-choice') {
-                    const idx = inner.correct ?? inner.correctIndex;
+                    const idx = _agentMcIdx(inner, inner.correct ?? inner.correctIndex);
                     return idx != null ? ((inner.options || [])[idx] ?? '') : '';
                 }
                 if (inferredSub === 'cloze' || inferredSub === 'fill-blanks') {
@@ -25935,7 +25993,7 @@ ${sectionInstr}`;
                 return arr.map(b => Array.isArray(b) ? b[0] : b).join(' / ');
             }
             if (q.type === 'multiple-choice') {
-                const idx = q.correctIndex ?? q.correct;
+                const idx = _agentMcIdx(q, q.correctIndex ?? q.correct);
                 if (idx == null) return '';
                 return (q.options || [])[idx] ?? '';
             }
@@ -26410,7 +26468,7 @@ ${sectionInstr}`;
                                         if (q.type === 'free-response') return;
                                         const a2 = _an2[qi];
                                         if (q.type === 'multiple-choice') {
-                                            if (a2 === (q.correct ?? q.correctIndex)) earned2 += pts2;
+                                            if (_agentMcOk(q, a2)) earned2 += pts2;
                                         } else {
                                             const arr2 = agentFbArr(a2);
                                             const corr2 = agentFbArr(q.answers || q.blanks || q.correctAnswers || []);
@@ -26989,7 +27047,7 @@ ${sectionInstr}`;
                     if (q.type === 'free-response') return;
                     const a   = _an[qi];
                     if (q.type === 'multiple-choice') {
-                        if (a === (q.correct ?? q.correctIndex)) earned += pts;
+                        if (_agentMcOk(q, a)) earned += pts;
                     } else {
                         const arr  = agentFbArr(a);
                         const corr = agentFbArr(q.answers || q.blanks || q.correctAnswers || []);
@@ -27411,7 +27469,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                                 if (q.type === 'free-response') return;
                                 const a = _an[qi];
                                 if (q.type === 'multiple-choice') {
-                                    if (a === (q.correct ?? q.correctIndex)) earned += pts;
+                                    if (_agentMcOk(q, a)) earned += pts;
                                 } else {
                                     const arr  = agentFbArr(a);
                                     const corr = agentFbArr(q.answers || q.blanks || q.correctAnswers || []);

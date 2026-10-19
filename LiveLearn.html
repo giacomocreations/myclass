@@ -2152,6 +2152,7 @@ function _mediaInline(payload) {
 // Le chiavi restano sulle domande: servono a rimettere l'audio nelle copie
 // leggere (recupero) salvate nelle risposte.
 function _actHydrate(act) {
+  if (act && typeof act === 'object') _mcNormalizeActivity(act);
   if (!act || !act.media) return act;
   const media = act.media;
   _mediaEachQ(act, q => {
@@ -7833,6 +7834,21 @@ function renderStudentResultsTeacher(name, response) {
   });
   // Arrotonda a 2 decimali per evitare artefatti floating-point (es. 9.000000001)
   effectiveScore = Math.round(effectiveScore * 100) / 100;
+  // Il punteggio salvato alla consegna lo calcola il dispositivo dell'alunno:
+  // se la correzione era sbagliata (es. versione PEI con risposte giuste in
+  // formato testo) MyClass leggerebbe un voto sbagliato. Si riallinea a quello
+  // ricalcolato qui, lo stesso del PDF.
+  if (submitted && !response.aiScoringPending && S.liveCode && S.selectedStudent === studentKey &&
+      Math.abs(effectiveScore - Number(response.score || 0)) >= 0.01) {
+    S._scoreFix = S._scoreFix || {};
+    const fixKey = S.liveCode + '/' + studentKey;
+    if (S._scoreFix[fixKey] !== effectiveScore) {
+      S._scoreFix[fixKey] = effectiveScore;
+      console.log('[LiveLearn] punteggio riallineato per ' + displayName + ': ' + response.score + ' → ' + effectiveScore);
+      db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey + '/score').set(effectiveScore)
+        .catch(e => console.warn('[LiveLearn] riallineamento punteggio:', e.message));
+    }
+  }
   // Denominatore effettivo (somma dei max per domanda, considerando gli override)
   const effectiveTotalPts = questions.reduce((s, qq, ii) =>
     s + (qMaxOverridesRST[ii] != null ? Number(qMaxOverridesRST[ii]) : (qq.points || 1)), 0);
@@ -8059,172 +8075,46 @@ function renderStudentResultsTeacher(name, response) {
     '<div id="teacher-answer-cards">' + cardsHtml + '</div>';
 }
 
+// Stile delle domande del PDF, riusato nelle schede del docente
+function _ensurePdfqCss() {
+  if (document.getElementById('pdfq-live-css')) return;
+  const st = document.createElement('style');
+  st.id = 'pdfq-live-css';
+  st.textContent = _PDFQ_CSS + ' .pq-live .pq-img img { max-height:260px; }';
+  document.head.appendChild(st);
+}
+
+// Etichetta punteggio della scheda docente, dal risultato di evaluateAnswer
+function _answerScoreTag(q, answer, r) {
+  const pill = (txt, color, bg) => '<span style="font-size:11px;font-weight:800;color:' + color + ';background:' + bg + ';padding:2px 8px;border-radius:10px;">' + txt + '</span>';
+  const hasAnswer = !_pdfqEmpty(answer) &&
+    (typeof answer !== 'object' || (_pdfqArr(answer) || []).some(v => !_pdfqEmpty(v)));
+  if (!hasAnswer) return '';
+  if (!r || !r.scorable) return pill('📝 da valutare', 'var(--muted)', '#f0ede8');
+  const qPts = q.points || 1;
+  if (r.correct) return pill('✓ ' + qPts + ' pt', 'var(--success)', 'var(--success-light)');
+  if ((r.correctCount || 0) > 0 && r.totalCount) {
+    const sub = q.type === 'listening' ? (q.subtype || q.question?.type) : q.type;
+    const unit = sub === 'matching' ? 'coppie' : sub === 'reorder' ? 'frasi' : sub === 'categorization' ? 'elementi' : 'spazi';
+    return pill('🔶 ' + r.correctCount + '/' + r.totalCount + ' ' + unit + ' — ' + _earnedFrom(r) + '/' + qPts + ' pt', '#92400e', 'var(--warning-light)');
+  }
+  return pill('✗ 0/' + qPts + ' pt', 'var(--danger)', 'var(--danger-light)');
+}
+
 function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedback, qMaxOverride, opts) {
   const excluded   = !!(opts && opts.excluded);
   const canExclude = !!(opts && opts.canExclude);
   const fmtSecs = s => s == null ? null : s >= 60 ? Math.floor(s/60)+'m '+(s%60)+'s' : s+'s';
   const timeTag = timeSec != null ? `<span style="font-size:10px;background:#f0ede8;color:#888;padding:2px 8px;border-radius:10px;margin-left:6px;">⏱ ${fmtSecs(timeSec)}</span>` : '';
-  let body = '';
-  let scoreTag = '';
-  if (q.type === 'multiple-choice') {
-    const given = answer !== null && answer !== undefined ? q.options[answer] : null;
-    const correct = q.options[q.correct];
-    const ok = answer === q.correct;
-    const hasAnswer = given !== null;
-    scoreTag = hasAnswer ? (ok
-      ? `<span style="font-size:11px;font-weight:800;color:var(--success);background:var(--success-light);padding:2px 8px;border-radius:10px;">✓ ${q.points||10} pt</span>`
-      : `<span style="font-size:11px;font-weight:800;color:var(--danger);background:var(--danger-light);padding:2px 8px;border-radius:10px;">✗ 0 pt</span>`) : '';
-    body = hasAnswer ? `${esc(given)} ${ok?'<span class="correct-mark">✓</span>':'<span class="wrong-mark">✗</span>'}${!ok?` <span class="text-muted" style="font-size:12px;">(corretta: <strong>${esc(correct)}</strong>)</span>`:''}` : '<em style="color:#aaa">—</em>';
-  } else if (q.type === 'cloze') {
-    const arr = Array.isArray(answer) ? answer : (answer && typeof answer === 'object' ? fbArr(answer) : []);
-    const qPts = q.points || 1;
-    const totalBl = (q.answers||[]).length || 1;
-    let nOk = 0;
-    (q.answers||[]).forEach((corr, bi) => { if (_clozeAnswerMatches(arr[bi], corr).ok) nOk++; });
-    const allOk = nOk === totalBl;
-    const earnedBl = Math.round((nOk/totalBl) * qPts * 100) / 100;
-    scoreTag = arr.some(v=>v) ? (allOk
-      ? `<span style="font-size:11px;font-weight:800;color:var(--success);background:var(--success-light);padding:2px 8px;border-radius:10px;">✓ ${qPts} pt</span>`
-      : (nOk > 0
-        ? `<span style="font-size:11px;font-weight:800;color:#92400e;background:var(--warning-light);padding:2px 8px;border-radius:10px;">🔶 ${nOk}/${totalBl} spazi — ${earnedBl}/${qPts} pt</span>`
-        : `<span style="font-size:11px;font-weight:800;color:var(--danger);background:var(--danger-light);padding:2px 8px;border-radius:10px;">✗ 0/${qPts} pt</span>`)) : '';
-    body = (q.answers || []).map((correct, bi) => {
-      const given = arr[bi] || '';
-      const ok = _clozeAnswerMatches(given, correct).ok;
-      const altsText = _clozeFormatAlternatives(correct);
-      return `<span style="display:inline-block;margin:3px 0;">Spazio ${bi+1}: <strong>${esc(given)||'<em style="color:#aaa">—</em>'}</strong> <span class="${ok?'correct-mark':'wrong-mark'}">${given?(ok?'✓':`✗ → <em>${esc(altsText)}</em>`):''}</span></span>`;
-    }).join('<br>');
-  } else if (q.type === 'matching') {
-    const arr = Array.isArray(answer) ? answer : (answer && typeof answer === 'object' ? fbArr(answer) : []);
-    const leftArr = q.left||[];
-    const rightArr = q.right||[];
-    const totalPairs = leftArr.length || 1;
-    const qPts = q.points || 1;
-    // Confronto per VALORE (gestisce parole duplicate come "SINCE" ripetuto)
-    const _nmV = s => (s||'').toString().trim().toLowerCase();
-    const correctPairs = leftArr.reduce((n,_,li) => {
-      const ci = arr[li];
-      if (ci == null) return n;
-      const cv = _nmV(rightArr[ci]);
-      const ev = _nmV(rightArr[li]);
-      return n + (cv === ev && cv !== '' ? 1 : 0);
-    }, 0);
-    const allOk = correctPairs === totalPairs;
-    const earned = Math.round((correctPairs/totalPairs) * qPts * 100) / 100;
-    scoreTag = arr.some(v=>v!=null) ? (allOk
-      ? `<span style="font-size:11px;font-weight:800;color:var(--success);background:var(--success-light);padding:2px 8px;border-radius:10px;">✓ ${qPts} pt</span>`
-      : (correctPairs > 0
-        ? `<span style="font-size:11px;font-weight:800;color:#92400e;background:var(--warning-light);padding:2px 8px;border-radius:10px;">🔶 ${correctPairs}/${totalPairs} coppie — ${earned}/${qPts} pt</span>`
-        : `<span style="font-size:11px;font-weight:800;color:var(--danger);background:var(--danger-light);padding:2px 8px;border-radius:10px;">✗ 0/${qPts} pt</span>`)) : '';
-    body = leftArr.map((l, li) => {
-      const ci = arr[li];
-      const studentRight = ci != null ? (rightArr[ci]||'—') : '—';
-      const ok = ci != null && _nmV(rightArr[ci]) === _nmV(rightArr[li]) && _nmV(rightArr[ci]) !== '';
-      return `${esc(l)} → <strong>${esc(studentRight)}</strong> <span class="${ok?'correct-mark':'wrong-mark'}">${ci!=null?(ok?'✓':`✗ → <em>${esc(rightArr[li])}</em>`):''}</span>`;
-    }).join('<br>');
-  } else if (q.type === 'free-response') {
-    scoreTag = answer ? `<span style="font-size:11px;font-weight:800;color:var(--muted);background:#f0ede8;padding:2px 8px;border-radius:10px;">📝 da valutare</span>` : '';
-    body = answer ? `<blockquote style="margin:6px 0 0;padding:8px 14px;border-left:3px solid var(--primary);background:var(--surface2);border-radius:0 8px 8px 0;font-size:13px;color:var(--text);">${esc(answer)}</blockquote>` : '<em style="color:#aaa">—</em>';
-  } else if (q.type === 'listening') {
-    const subQ = q.question || {};
-    const sub = q.subtype || subQ.type || 'free-response';
-    if (sub === 'multiple-choice' || sub === 'mc') {
-      const given = answer !== null && answer !== undefined ? (subQ.options||[])[answer] : null;
-      const correct = (subQ.options||[])[subQ.correct];
-      const ok = answer === subQ.correct;
-      scoreTag = given ? (ok
-        ? `<span style="font-size:11px;font-weight:800;color:var(--success);background:var(--success-light);padding:2px 8px;border-radius:10px;">✓ ${q.points||10} pt</span>`
-        : `<span style="font-size:11px;font-weight:800;color:var(--danger);background:var(--danger-light);padding:2px 8px;border-radius:10px;">✗ 0 pt</span>`) : '';
-      body = given ? `${esc(given)} ${ok?'<span class="correct-mark">✓</span>':'<span class="wrong-mark">✗</span>'}${!ok?` <span class="text-muted" style="font-size:12px;">(corretta: <strong>${esc(correct)}</strong>)</span>`:''}` : '<em style="color:#aaa">—</em>';
-    } else {
-      scoreTag = answer ? `<span style="font-size:11px;font-weight:800;color:var(--muted);background:#f0ede8;padding:2px 8px;border-radius:10px;">📝 da valutare</span>` : '';
-      body = answer ? `<blockquote style="margin:6px 0 0;padding:8px 14px;border-left:3px solid var(--primary);background:var(--surface2);border-radius:0 8px 8px 0;font-size:13px;">${esc(answer)}</blockquote>` : '<em style="color:#aaa">—</em>';
-    }
-  } else if (q.type === 'drag-drop') {
-    const arr = Array.isArray(answer) ? answer : (answer && typeof answer === 'object' ? fbArr(answer) : []);
-    const qPts = q.points || 1;
-    const totalDd = (q.answers||[]).length || 1;
-    let nOkDd = 0;
-    (q.answers||[]).forEach((ans, i2) => { if ((arr[i2]||'').toLowerCase() === String(ans||'').toLowerCase() && arr[i2]) nOkDd++; });
-    const allOk = nOkDd === totalDd;
-    const earnedDd = Math.round((nOkDd/totalDd) * qPts * 100) / 100;
-    scoreTag = arr.some(v=>v) ? (allOk
-      ? `<span style="font-size:11px;font-weight:800;color:var(--success);background:var(--success-light);padding:2px 8px;border-radius:10px;">✓ ${qPts} pt</span>`
-      : (nOkDd > 0
-        ? `<span style="font-size:11px;font-weight:800;color:#92400e;background:var(--warning-light);padding:2px 8px;border-radius:10px;">🔶 ${nOkDd}/${totalDd} spazi — ${earnedDd}/${qPts} pt</span>`
-        : `<span style="font-size:11px;font-weight:800;color:var(--danger);background:var(--danger-light);padding:2px 8px;border-radius:10px;">✗ 0/${qPts} pt</span>`)) : '';
-    body = arr.map((v,bi) => {
-      const corr = (q.answers||[])[bi]||'';
-      const ok = (v||'').toLowerCase()===corr.toLowerCase() && v;
-      return `Sp.${bi+1}: <strong>${esc(v||'—')}</strong> <span class="${ok?'correct-mark':'wrong-mark'}">${v?(ok?'✓':`✗ → <em>${esc(corr)}</em>`):''}</span>`;
-    }).join('<br>') || '<em style="color:#aaa">—</em>';
-  } else if (q.type === 'reorder') {
-    const arr = Array.isArray(answer) ? answer : (answer && typeof answer === 'object' ? fbArr(answer) : []);
-    const qPts = q.points || 1;
-    const totalRe = (q.sentences||[]).length || 1;
-    let nOkRe = 0;
-    (q.sentences||[]).forEach((s, i2) => { if (String(arr[i2]||'').trim().toLowerCase() === String(s||'').trim().toLowerCase() && arr[i2]) nOkRe++; });
-    const allOk = nOkRe === totalRe;
-    const earnedRe = Math.round((nOkRe/totalRe) * qPts * 100) / 100;
-    scoreTag = arr.some(v=>v) ? (allOk
-      ? `<span style="font-size:11px;font-weight:800;color:var(--success);background:var(--success-light);padding:2px 8px;border-radius:10px;">✓ ${qPts} pt</span>`
-      : (nOkRe > 0
-        ? `<span style="font-size:11px;font-weight:800;color:#92400e;background:var(--warning-light);padding:2px 8px;border-radius:10px;">🔶 ${nOkRe}/${totalRe} frasi — ${earnedRe}/${qPts} pt</span>`
-        : `<span style="font-size:11px;font-weight:800;color:var(--danger);background:var(--danger-light);padding:2px 8px;border-radius:10px;">✗ 0/${qPts} pt</span>`)) : '';
-    body = arr.map((v,si) => {
-      const corr = (q.sentences||[])[si]||'';
-      const ok = String(v||'').trim().toLowerCase()===corr.trim().toLowerCase() && v;
-      return `Fr.${si+1}: <strong>${esc(v||'—')}</strong> <span class="${ok?'correct-mark':'wrong-mark'}">${v?(ok?'✓':`✗`):''}</span>`;
-    }).join('<br>') || '<em style="color:#aaa">—</em>';
-  }
-  // Categorizzazione (anche dentro un listening): elemento → categoria
-  const _catQ = q.type === 'categorization' ? q
-    : (q.type === 'listening' && (q.subtype || q.question?.type) === 'categorization' ? (q.question || {}) : null);
-  if (_catQ) {
-    const hasCat = Array.isArray(answer) ? answer.some(v => v != null) : !!(answer && typeof answer === 'object');
-    body = hasCat ? _catAnswerText(_catQ, answer, true) : '<em style="color:#aaa">—</em>';
-    const rC = evaluateAnswer(q, answer);
-    const qPtsC = q.points || 1;
-    scoreTag = hasCat ? (rC.correct
-      ? `<span style="font-size:11px;font-weight:800;color:var(--success);background:var(--success-light);padding:2px 8px;border-radius:10px;">✓ ${qPtsC} pt</span>`
-      : ((rC.correctCount || 0) > 0
-        ? `<span style="font-size:11px;font-weight:800;color:#92400e;background:var(--warning-light);padding:2px 8px;border-radius:10px;">🔶 ${rC.correctCount}/${rC.totalCount} elementi — ${rC.earnedPoints}/${qPtsC} pt</span>`
-        : `<span style="font-size:11px;font-weight:800;color:var(--danger);background:var(--danger-light);padding:2px 8px;border-radius:10px;">✗ 0/${qPtsC} pt</span>`)) : '';
-  }
-  // fill-blanks case (stesso rendering di cloze, con alternative pipe)
-  if (q.type === 'fill-blanks') {
-    const arr = Array.isArray(answer) ? answer : [];
-    const qPts = q.points || 1;
-    const totalFb = (q.answers||[]).length || 1;
-    let nOkFb = 0;
-    (q.answers||[]).forEach((corr, bi) => { if (_clozeAnswerMatches(arr[bi], corr).ok) nOkFb++; });
-    const allOk = nOkFb === totalFb;
-    const earnedFb = Math.round((nOkFb/totalFb) * qPts * 100) / 100;
-    scoreTag = arr.some(v=>v) ? (allOk
-      ? `<span style="font-size:11px;font-weight:800;color:var(--success);background:var(--success-light);padding:2px 8px;border-radius:10px;">✓ ${qPts} pt</span>`
-      : (nOkFb > 0
-        ? `<span style="font-size:11px;font-weight:800;color:#92400e;background:var(--warning-light);padding:2px 8px;border-radius:10px;">🔶 ${nOkFb}/${totalFb} spazi — ${earnedFb}/${qPts} pt</span>`
-        : `<span style="font-size:11px;font-weight:800;color:var(--danger);background:var(--danger-light);padding:2px 8px;border-radius:10px;">✗ 0/${qPts} pt</span>`)) : '';
-    body = (q.answers || []).map((correct, bi) => {
-      const given = arr[bi] || '';
-      const ok = _clozeAnswerMatches(given, correct).ok;
-      const altsText = _clozeFormatAlternatives(correct);
-      const givenHtml = given ? esc(given) : '<em style="color:#aaa">—</em>';
-      const markHtml = given ? (ok ? '✓' : '✗ → <em>' + esc(altsText) + '</em>') : '';
-      return '<span style="display:inline-block;margin:3px 0;">Spazio ' + (bi+1) + ': <strong>' + givenHtml + '</strong> <span class="' + (ok?'correct-mark':'wrong-mark') + '">' + markHtml + '</span></span>';
-    }).join('<br>');
-  }
-
-  // Scelta dentro la frase: mostra la frase con le opzioni scelte (non il segnaposto [[...]])
-  const _icSrc = (q.type === 'cloze' || q.type === 'fill-blanks') ? q.text
-    : (q.type === 'listening' && ['cloze','fill-blanks'].includes(q.subtype || q.question?.type) ? (q.question?.text || '') : '');
-  if (_icSrc && _hasInlineChoice(_icSrc) && answer != null) {
-    body = '<div style="font-size:13px;line-height:1.7;margin-bottom:6px;padding:6px 10px;background:var(--surface2);border-radius:8px;">' +
-      richText(_icText(_icSrc, q, answer, v => '**' + v + '**')) + '</div>' + body;
-  }
+  // Corpo come nel PDF (immagini, frase compilata, colori per ogni spazio,
+  // risposta giusta accanto): docente, PDF e punteggio leggono la risposta
+  // allo stesso modo, per tutte le versioni (FILA, DSA, PEI…).
+  _ensurePdfqCss();
+  const body = '<div class="pq-live">' + _pdfQuestionBlock(q, answer) + '</div>';
+  const baseR = evaluateAnswer(q, answer);
+  let scoreTag = _answerScoreTag(q, answer, baseR);
 
   // Score override row — sempre visibile al docente
-  const baseR = evaluateAnswer(q, answer);
   const qPointsEff = q.points || 1;
   // Max corrente (originale o override docente)
   const currentMax = qMaxOverride != null ? qMaxOverride : qPointsEff;
@@ -10053,6 +9943,9 @@ function _clozeFormatAlternatives(correctRaw) {
 // ═══════════════════════════════════════════════════════════════
 function _evalCloze(corrects, a, pts) {
   const total = corrects.length || 1;
+  // Firebase restituisce l'array con uno spazio vuoto come oggetto {1:"x"}
+  if (a && typeof a === 'object' && !Array.isArray(a)) a = fbArr(a);
+  else if (typeof a === 'string' && a.trim() !== '') a = [a];
   if (!Array.isArray(a)) return {scorable:true,correct:false,points:pts,earnedPoints:0,correctCount:0,totalCount:total,detail:'Nessuna risposta.'};
   let n = 0;
   corrects.forEach((corr, bi) => { if (_clozeAnswerMatches(a[bi], corr).ok) n++; });
@@ -10123,8 +10016,10 @@ function _evalMatching(leftArr, rightArr, a, pts) {
   let correctPairs = 0;
   for (let li = 0; li < totalPairs; li++) {
     const chosenIdx = normA[li];
-    if (chosenIdx == null) continue;
-    const chosenVal   = _norm(rightArr[chosenIdx] || '');
+    if (chosenIdx == null || chosenIdx === '') continue;
+    // Indice nella colonna B oppure (versioni importate) il testo scelto
+    const chosenVal   = _norm(typeof chosenIdx === 'number' || /^\d+$/.test(String(chosenIdx).trim())
+      ? (rightArr[Number(chosenIdx)] || '') : chosenIdx);
     const expectedVal = _norm(rightArr[li] || '');
     if (chosenVal && chosenVal === expectedVal) correctPairs++;
   }
@@ -10219,9 +10114,51 @@ function _readableAnswer(q, a, arrFn) {
   return null;
 }
 
+// Scelta multipla: indice della risposta giusta. Le versioni preparate fuori
+// dall'editor (es. PEI importate da JSON) possono avere correct come stringa
+// ("1"), come lettera ("B") o come testo dell'opzione: col confronto stretto
+// le risposte giuste risultavano sbagliate, mentre il PDF le convertiva.
+function _mcOpts(q) {
+  return Array.isArray(q && q.options) ? q.options : (fbArr(q && q.options) || []);
+}
+function _mcIndexOf(q, v) {
+  if (typeof v === 'number') return Number.isInteger(v) ? v : null;
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (/^\d+$/.test(s)) return Number(s);
+  const opts = _mcOpts(q);
+  const f = opts.findIndex(o => _normClozeAnswer(o) === _normClozeAnswer(s));
+  if (f >= 0) return f;
+  if (/^[A-Ja-j]$/.test(s) && s.toUpperCase().charCodeAt(0) - 65 < opts.length) return s.toUpperCase().charCodeAt(0) - 65;
+  return null;
+}
+function _mcCorrectIdx(q) { return _mcIndexOf(q, q && q.correct); }
+// Al caricamento dell'attività: correct delle scelte multiple sempre numerico
+// (serve anche al "mescola opzioni", che rimappa correct con indexOf).
+function _mcNormalizeActivity(act) {
+  _mediaEachQ(act, q => {
+    const fix = x => {
+      if (!x || x.correct == null || typeof x.correct === 'number') return;
+      const ci = _mcIndexOf(x, x.correct);
+      if (ci != null) x.correct = ci;
+    };
+    if (q.type === 'multiple-choice') fix(q);
+    else if (q.type === 'listening' && q.question && typeof q.question === 'object' &&
+             (q.question.options || (q.subtype || q.question.type) === 'multiple-choice')) fix(q.question);
+  });
+  return act;
+}
+function _evalMC(q, a, pts) {
+  const ci = _mcCorrectIdx(q);
+  const ai = _mcIndexOf(q, a);
+  const ok = ai != null && ai === ci;
+  return {scorable:true,correct:ok,points:pts,detail:ok?'':'Corretta: <strong>'+esc(_mcOpts(q)[ci])+'</strong>'};
+}
+
 function evaluateAnswer(q, a) {
   const pts = q.points || 1;
-  if (q.type === 'multiple-choice') { const ok=a===q.correct; return {scorable:true,correct:ok,points:pts,detail:ok?'':'Corretta: <strong>'+esc(q.options[q.correct])+'</strong>'}; }
+  if (q.type === 'multiple-choice') return _evalMC(q, a, pts);
   if (q.type === 'cloze')       return _evalCloze(q.answers||[], a, pts);
   if (q.type === 'fill-blanks') return _evalCloze(q.answers||[], a, pts);
   if (q.type === 'drag-drop')   return _evalDragDrop(q.answers||[], a, pts, q.sentences, q.unordered);
@@ -10238,7 +10175,7 @@ function evaluateAnswer(q, a) {
       else if (Array.isArray(inner.left) && inner.left.length > 0) sub = 'matching';
       else sub = 'free-response';
     }
-    if (sub === 'multiple-choice') { const ok=a===inner.correct; return {scorable:true,correct:ok,points:pts,detail:ok?'':'Corretta: <strong>'+esc((inner.options||[])[inner.correct])+'</strong>'}; }
+    if (sub === 'multiple-choice') return _evalMC(inner, a, pts);
     if (sub === 'cloze' || sub === 'fill-blanks') return _evalCloze(inner.answers||[], a, pts);
     if (sub === 'drag-drop')   return _evalDragDrop(inner.answers||[], a, pts, inner.sentences, inner.unordered);
     if (sub === 'reorder')     return _evalReorder(inner.sentences||[], a, pts);
@@ -13415,15 +13352,10 @@ function _pdfqBody(q, type, a) {
   const hint = q.hint ? '<div class="pq-hint">💡 ' + _pdfqEsc(q.hint) + '</div>' : '';
 
   if (type === 'multiple-choice') {
-    const opts = Array.isArray(q.options) ? q.options : (_pdfqArr(q.options) || []);
-    let sel = null;
-    if (typeof a === 'number') sel = a;
-    else if (typeof a === 'string' && a.trim() !== '' && /^\d+$/.test(a.trim())) sel = Number(a.trim());
-    else if (typeof a === 'string' && a.trim() !== '') {
-      const f = opts.findIndex(o => _pdfqNorm(o) === _pdfqNorm(a));
-      if (f >= 0) sel = f;
-    }
-    const corr = q.correct != null && q.correct !== '' ? Number(q.correct) : null;
+    const opts = _mcOpts(q);
+    // Stessa lettura di evaluateAnswer: punteggio e colori sempre d'accordo
+    const sel = typeof a === 'object' ? null : _mcIndexOf(q, a);
+    const corr = _mcCorrectIdx(q);
     const rows = opts.map((o, oi) => {
       const isSel = sel === oi, isCorr = corr === oi;
       const cls = isSel ? (isCorr ? 'pq-opt pq-opt-ok' : 'pq-opt pq-opt-ko') : (isCorr ? 'pq-opt pq-opt-right' : 'pq-opt');
