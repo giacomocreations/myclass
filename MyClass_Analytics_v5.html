@@ -25736,6 +25736,28 @@ ${sectionInstr}`;
     // q.points oppure null se non valutabile senza AI (free-response, listening
     // di tipo libero). Prima l'agente valutava solo MC e cloze: matching, reorder,
     // drag-drop e categorization risultavano 0 e i tag uscivano sballati.
+    // Scelta multipla: indice da numero, stringa numerica ("1"), testo
+    // dell'opzione o lettera ("B"), come in LiveLearn. Le versioni importate
+    // (es. PEI) possono avere correct in formato testo: col confronto stretto
+    // le risposte giuste risultavano sbagliate.
+    function _agentMcIdx(q, v) {
+        if (typeof v === 'number') return Number.isInteger(v) ? v : null;
+        if (v == null) return null;
+        const s = String(v).trim();
+        if (!s) return null;
+        if (/^\d+$/.test(s)) return Number(s);
+        const opts = agentFbArr((q && q.options) || []);
+        const f = opts.findIndex(o => _normClozeAg(String(o)) === _normClozeAg(s));
+        if (f >= 0) return f;
+        if (/^[A-Ja-j]$/.test(s) && s.toUpperCase().charCodeAt(0) - 65 < opts.length) return s.toUpperCase().charCodeAt(0) - 65;
+        return null;
+    }
+    function _agentMcOk(q, a) {
+        const ci = _agentMcIdx(q, q.correct ?? q.correctIndex);
+        const ai = _agentMcIdx(q, a);
+        return ai != null && ai === ci;
+    }
+
     function _agentEvalPts(q, a, out) {
         const pts = q.points || 1;
         const arrOf = v => Array.isArray(v) ? v : (v && typeof v === 'object' ? agentFbArr(v) : null);
@@ -25798,7 +25820,7 @@ ${sectionInstr}`;
             return frac(n, corrects.length);
         };
         const evalBy = (sub, inner) => {
-            if (sub === 'multiple-choice') { const ok = a === (inner.correct ?? inner.correctIndex); if (out) { out.n = ok ? 1 : 0; out.tot = 1; } return ok ? pts : 0; }
+            if (sub === 'multiple-choice') { const ok = _agentMcOk(inner, a); if (out) { out.n = ok ? 1 : 0; out.tot = 1; } return ok ? pts : 0; }
             if (sub === 'cloze' || sub === 'fill-blanks') return evalCloze(agentFbArr(inner.answers || []), a);
             if (sub === 'drag-drop')      return evalDrag(inner, a);
             if (sub === 'reorder')        return evalReorder(inner, a);
@@ -25954,7 +25976,7 @@ ${sectionInstr}`;
                     : Array.isArray(inner.answers) && inner.answers.length ? 'cloze'
                     : '');
                 if (inferredSub === 'multiple-choice') {
-                    const idx = inner.correct ?? inner.correctIndex;
+                    const idx = _agentMcIdx(inner, inner.correct ?? inner.correctIndex);
                     return idx != null ? ((inner.options || [])[idx] ?? '') : '';
                 }
                 if (inferredSub === 'cloze' || inferredSub === 'fill-blanks') {
@@ -25971,7 +25993,7 @@ ${sectionInstr}`;
                 return arr.map(b => Array.isArray(b) ? b[0] : b).join(' / ');
             }
             if (q.type === 'multiple-choice') {
-                const idx = q.correctIndex ?? q.correct;
+                const idx = _agentMcIdx(q, q.correctIndex ?? q.correct);
                 if (idx == null) return '';
                 return (q.options || [])[idx] ?? '';
             }
@@ -26446,7 +26468,7 @@ ${sectionInstr}`;
                                         if (q.type === 'free-response') return;
                                         const a2 = _an2[qi];
                                         if (q.type === 'multiple-choice') {
-                                            if (a2 === (q.correct ?? q.correctIndex)) earned2 += pts2;
+                                            if (_agentMcOk(q, a2)) earned2 += pts2;
                                         } else {
                                             const arr2 = agentFbArr(a2);
                                             const corr2 = agentFbArr(q.answers || q.blanks || q.correctAnswers || []);
@@ -27025,7 +27047,7 @@ ${sectionInstr}`;
                     if (q.type === 'free-response') return;
                     const a   = _an[qi];
                     if (q.type === 'multiple-choice') {
-                        if (a === (q.correct ?? q.correctIndex)) earned += pts;
+                        if (_agentMcOk(q, a)) earned += pts;
                     } else {
                         const arr  = agentFbArr(a);
                         const corr = agentFbArr(q.answers || q.blanks || q.correctAnswers || []);
@@ -27447,7 +27469,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                                 if (q.type === 'free-response') return;
                                 const a = _an[qi];
                                 if (q.type === 'multiple-choice') {
-                                    if (a === (q.correct ?? q.correctIndex)) earned += pts;
+                                    if (_agentMcOk(q, a)) earned += pts;
                                 } else {
                                     const arr  = agentFbArr(a);
                                     const corr = agentFbArr(q.answers || q.blanks || q.correctAnswers || []);
