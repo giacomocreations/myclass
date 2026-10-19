@@ -7814,7 +7814,22 @@ function renderStudentResultsTeacher(name, response) {
 
   // Calcola punteggio effettivo PRIMA del template literal (no nested backtick)
   const manualScoresRST = response.manualScores || {};
-  const aiScoresRST = response.aiScores || {};
+  // Punteggi AI finiti su esercizi a correzione automatica (es. una scelta
+  // multipla) per il bug del rientro con domande mescolate: sostituivano la
+  // correzione automatica (risposta verde ma 0 punti). Non valgono e si
+  // tolgono anche da Firebase, così MyClass e il PDF leggono dati puliti.
+  const aiScoresRST = Object.assign({}, response.aiScores || {});
+  const aiFeedbacksRST = Object.assign({}, response.aiFeedbacks || {});
+  const fixUpdates = {};
+  if (submitted && response.studentVersion && S.liveCode && S.selectedStudent === studentKey) {
+    Object.keys(aiScoresRST).forEach(k => {
+      const qq = questions[k];
+      if (!qq || !evaluateAnswer(qq, null).scorable) return;
+      delete aiScoresRST[k]; delete aiFeedbacksRST[k];
+      fixUpdates['aiScores/' + k] = null;
+      fixUpdates['aiFeedbacks/' + k] = null;
+    });
+  }
   const qMaxOverridesRST = response.questionMaxOverrides || {};
   let effectiveScore = 0;
   questions.forEach((qq, ii) => {
@@ -7840,12 +7855,16 @@ function renderStudentResultsTeacher(name, response) {
   // ricalcolato qui, lo stesso del PDF.
   if (submitted && !response.aiScoringPending && S.liveCode && S.selectedStudent === studentKey &&
       Math.abs(effectiveScore - Number(response.score || 0)) >= 0.01) {
+    fixUpdates.score = effectiveScore;
+  }
+  if (Object.keys(fixUpdates).length) {
     S._scoreFix = S._scoreFix || {};
     const fixKey = S.liveCode + '/' + studentKey;
-    if (S._scoreFix[fixKey] !== effectiveScore) {
-      S._scoreFix[fixKey] = effectiveScore;
-      console.log('[LiveLearn] punteggio riallineato per ' + displayName + ': ' + response.score + ' → ' + effectiveScore);
-      db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey + '/score').set(effectiveScore)
+    const fixSig = JSON.stringify(fixUpdates);
+    if (S._scoreFix[fixKey] !== fixSig) {
+      S._scoreFix[fixKey] = fixSig;
+      console.log('[LiveLearn] dati riallineati per ' + displayName + ':', fixUpdates, '(punteggio salvato prima: ' + response.score + ')');
+      db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey).update(fixUpdates)
         .catch(e => console.warn('[LiveLearn] riallineamento punteggio:', e.message));
     }
   }
@@ -7878,7 +7897,7 @@ function renderStudentResultsTeacher(name, response) {
   // finale dello studente cancellerebbe gli interventi del docente)
   const excludedRST = response.excludedQuestions || {};
   const canExcludeRST = !!submitted && !response.aiScoringPending;
-  const cardsHtml = questions.map((q, i) => renderAnswerCard(q, i, answers[i], questionTimes[i], manualScoresRST[i], aiScoresRST[i], (response.aiFeedbacks||{})[i], qMaxOverridesRST[i] != null ? Number(qMaxOverridesRST[i]) : null, { excluded: !!excludedRST[i], canExclude: canExcludeRST })).join('');
+  const cardsHtml = questions.map((q, i) => renderAnswerCard(q, i, answers[i], questionTimes[i], manualScoresRST[i], aiScoresRST[i], aiFeedbacksRST[i], qMaxOverridesRST[i] != null ? Number(qMaxOverridesRST[i]) : null, { excluded: !!excludedRST[i], canExclude: canExcludeRST })).join('');
 
   // Recovery panel
   const recStatus = response.status || '';
@@ -8810,6 +8829,8 @@ async function studentEnter() {
   // mappa, shuffleQ fa sì che la risposta di Pietro alla sua "domanda 11" sembri
   // al docente la risposta alla domanda 11 ORIGINALE (un'altra domanda!).
   let questions = [...S.activity.questions];
+  // Ordine originale (canonico): serve se l'alunno rientra dopo la consegna
+  const _canonQs = questions;
   let qOrigMap = questions.map((_, i) => i);
   if (session.shuffleQ) {
     const indexed = questions.map((q, i) => ({ q, origI: i }));
@@ -8887,7 +8908,14 @@ async function studentEnter() {
 
   // ── Controlla se lo studente ha già consegnato (o fatto recupero) ──────
   if (existingResp && existingResp.submittedAt) {
-    // Ripristina lo stato da Firebase e mostra solo i risultati
+    // Ripristina lo stato da Firebase e mostra solo i risultati.
+    // Risposte e punteggi AI su Firebase sono nell'ordine ORIGINALE (domande e
+    // opzioni): qui sopra le domande sono appena state rimescolate, quindi si
+    // torna all'ordine originale. Prima ogni risposta finiva su un'altra
+    // domanda: la schermata dell'alunno segnava errori su risposte giuste e la
+    // ri-valutazione AI riscriveva i punteggi sugli esercizi sbagliati.
+    S.activity = { ...S.activity, questions: _canonQs };
+    S.qOrigMap = _canonQs.map((_, i) => i);
     S.submitted       = true;
     S.answers         = fbArr(existingResp.answers) || new Array(questions.length).fill(null);
     S.studentScore    = existingResp.score || 0;
@@ -19267,7 +19295,8 @@ async function _relayRescorePendingAnswers() {
   }));
   let fs=0;questions.forEach((q,i)=>{if(ns[i]!=null)fs+=Number(ns[i]);else{const r=evaluateAnswer(q,S.answers[i]);fs+=_earnedFrom(r);}});
   fs=Math.round(fs*100)/100;
-  try{await db.ref('livelearn/responses/'+S.sessionCode+'/'+S.safeName).update({aiScores:ns,aiFeedbacks:nf,score:fs,aiScoringPending:false});}catch(e){}
+  // Indici come in submitAnswers: S.aiScores segue l'ordine mostrato all'alunno
+  try{await db.ref('livelearn/responses/'+S.sessionCode+'/'+S.safeName).update({aiScores:_canonicalIndexedForServer(ns),aiFeedbacks:_canonicalIndexedForServer(nf),score:fs,aiScoringPending:false});}catch(e){}
   S.aiScores=ns;S.aiFeedbacks=nf;S.studentScore=fs;S.aiAnalysisDone=false;
   if(badge)badge.textContent='🤖 AI Locale';
   if(document.getElementById('view-student-done')?.classList.contains('active')) {
