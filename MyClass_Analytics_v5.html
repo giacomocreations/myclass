@@ -25627,6 +25627,74 @@ ${sectionInstr}`;
         return (v !== 'originale' && actVersions?.[v]?.length) ? v : 'originale';
     }
 
+    // Record senza versione salvata: si sceglie la versione dell'attività con cui
+    // combaciano le risposte (stessa idea di LiveLearn _studentVersionKey). La
+    // mappa della sessione poteva indicare una fila che l'alunno non ha svolto:
+    // le risposte finivano su domande di un altro tipo e i punti crollavano.
+    function _agentQKind(q) {
+        if (!q || q.type !== 'listening') return { kind: q && q.type, inner: q };
+        const inner = q.question || {};
+        let sub = q.subtype || inner.type;
+        if (!sub) {
+            if (inner.correct !== undefined) sub = 'multiple-choice';
+            else if (Array.isArray(inner.answers) && inner.answers.length) sub = 'cloze';
+            else if (Array.isArray(inner.left) && inner.left.length) sub = 'matching';
+            else sub = 'free-response';
+        }
+        return { kind: sub, inner };
+    }
+    // La risposta ha la forma giusta per questa domanda? 1 sì, -1 no, 0 non si sa
+    function _agentAnswerFit(q, a) {
+        if (!q || a === null || a === undefined || a === '') return 0;
+        const { kind, inner } = _agentQKind(q);
+        const isObj = typeof a === 'object';
+        const arr = isObj ? agentFbArr(a) : null;
+        const lenOk = n => !n || arr.length <= n;
+        const allOf = t => arr.every(v => v === null || v === undefined || v === '' || typeof v === t ||
+            (t === 'number' && typeof v === 'string' && /^\d+$/.test(v.trim())));
+        switch (kind) {
+            case 'multiple-choice': return !isObj && _agentMcIdx(inner, a) != null ? 1 : -1;
+            case 'free-response': case 'free': return typeof a === 'string' ? 1 : -1;
+            case 'cloze': case 'fill-blanks':
+                if (!isObj) return typeof a === 'string' ? 1 : -1;
+                return allOf('string') && lenOk(agentFbArr(inner.answers || []).length) ? 1 : -1;
+            case 'matching':
+                if (!isObj) return -1;
+                return lenOk(agentFbArr(inner.left || []).length) && arr.every(v => v == null || typeof v === 'number' || typeof v === 'string') ? 1 : -1;
+            case 'reorder': return isObj && allOf('string') && lenOk(agentFbArr(inner.sentences || []).length) ? 1 : -1;
+            case 'drag-drop': return isObj && allOf('string') && lenOk(agentFbArr(inner.answers || []).length) ? 1 : -1;
+            case 'categorization': return isObj && allOf('number') && lenOk(agentFbArr(inner.items || []).length) ? 1 : -1;
+        }
+        return 0;
+    }
+    function _agentVerAdatta(dr, questions, actVersions, ver) {
+        ver = ver || 'originale';
+        const ans = agentFbArr(dr && dr.answers);
+        if (!ans.some(a => a !== null && a !== undefined && a !== '')) return ver;
+        const qsOf = k => (k !== 'originale' && actVersions?.[k]?.length) ? actVersions[k] : (questions || []);
+        const fit = k => {
+            const qs = qsOf(k), out = { good: 0, bad: 0, earned: 0 };
+            ans.forEach((a, i) => {
+                if (a === null || a === undefined || a === '') return;
+                const q = qs[i];
+                if (!q) { out.bad++; return; }
+                const f = _agentAnswerFit(q, a);
+                if (f > 0) { out.good++; try { out.earned += (_agentEvalPts(q, a) || 0) / (q.points || 1); } catch (e) {} }
+                else if (f < 0) out.bad++;
+            });
+            return out;
+        };
+        const base = fit(ver);
+        if (!base.bad) return ver;
+        let best = { key: ver, f: base };
+        ['originale', ...Object.keys(actVersions || {})].forEach(k => {
+            if (k === ver || (k !== 'originale' && !actVersions[k]?.length)) return;
+            const f = fit(k);
+            if (f.bad < best.f.bad || (f.bad === best.f.bad && (f.good > best.f.good || (f.good === best.f.good && f.earned > best.f.earned)))) best = { key: k, f };
+        });
+        return best.f.bad < base.bad ? best.key : ver;
+    }
+
     // Percentuale per area (tag) dai punti per domanda: una domanda conta solo
     // nel proprio tag, il listening senza tag rientra in LISTENING.
     function _agentTagsDaPunti(sQs, perQ, maxDi) {
@@ -26991,8 +27059,20 @@ ${sectionInstr}`;
         const _normSvKey = k => String(k || '').toLowerCase().replace(/[.#$[\]\/\s]/g, '_');
 
         const _getStudentQs = (s) => {
+            const k = _verSvoltaKey(s);
+            return (k !== 'originale' && task.actVersions?.[k]?.length) ? task.actVersions[k] : questions;
+        };
+        // Versione svolta: record dell'alunno > mappa della sessione, corretta
+        // con le risposte se non combaciano
+        const _verSvoltaKey = (s) => {
             const drv = _agentVerDaRisposta(s.detailedResponse, task.actVersions);
-            if (drv) return drv !== 'originale' ? task.actVersions[drv] : questions;
+            if (drv) return drv;
+            const k = _verSessioneKey(s);
+            const fit = s.detailedResponse ? _agentVerAdatta(s.detailedResponse, questions, task.actVersions, k) : k;
+            if (fit !== k) console.log(`[Agente] ${s.displayName || s.safe}: le risposte combaciano con la versione "${fit}", non con "${k}" della sessione — uso "${fit}"`);
+            return fit;
+        };
+        const _verSessioneKey = (s) => {
             const sv = task.studentVersions || {};
             // 1. Lookup diretto (caso fortunato: chiavi già allineate)
             let ver = sv[s.safe];
@@ -27011,10 +27091,7 @@ ${sectionInstr}`;
                     if (_normSvKey(k) === normDisp) { ver = v; break; }
                 }
             }
-            if (ver && ver !== 'originale' && task.actVersions?.[ver]?.length) {
-                return task.actVersions[ver];
-            }
-            return questions;
+            return (ver && ver !== 'originale' && task.actVersions?.[ver]?.length) ? ver : 'originale';
         };
 
         // Calcola voti — preferisce i dati FINALI da livelearn/responses (score
@@ -27050,7 +27127,7 @@ ${sectionInstr}`;
             //   getStudentAssignedQuestions() → dr.score viene aggiornato correttamente.
             // Il ricalcolo da manualScores/aiScores/answers è SOLO un fallback
             // per il caso in cui dr.score sia null (raro, es. submit parziale fallito).
-            const _resolvedVerScore = _agentVerDaRisposta(dr, task.actVersions) || ((task.studentVersions||{})[s.safe]) || Object.entries(task.studentVersions||{}).find(([k])=>_normSvKey(k)===_normSvKey(s.safe))?.[1] || 'originale';
+            const _resolvedVerScore = _verSvoltaKey(s);
             let pct;
             const _den = _agentPickDenom(dr, sMaxPts, _resolvedVerScore);
             if (dr && dr.score != null && _den.denom > 0) {
@@ -34975,7 +35052,10 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
                         if (g.domande?.act) usa(g.domande.act, g.domande.ver);
                         continue;
                     }
-                    const ver = _agentVerDaRisposta(dr, detail.actVersions) || _obvVerAlunno(detail.studentVersions || {}, nomi);
+                    const verRec = _agentVerDaRisposta(dr, detail.actVersions);
+                    const verSess = _obvVerAlunno(detail.studentVersions || {}, nomi);
+                    const ver = verRec || _agentVerAdatta(dr, detail.questions, detail.actVersions, verSess);
+                    const verFonte = verRec ? 'dal record dell\'alunno' : (ver !== verSess ? `dalle risposte (la sessione diceva ${verSess})` : 'dalla sessione');
                     const qs = (ver !== 'originale' && detail.actVersions?.[ver]?.length) ? detail.actVersions[ver] : detail.questions;
                     if (!qs?.length) continue;
                     const { perQ, maxDi } = _agentPuntiPerDomanda(qs, dr);
@@ -34993,7 +35073,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
                         aggiornato = true;
                     }
                     const tot = dom.p.reduce((a, x) => a + x, 0), max = dom.m.reduce((a, x) => a + x, 0);
-                    console.log(`[Obiettivi] ${s.cognome} ${s.nome} (${code}): versione ${ver} ${dr.studentVersion ? 'dal record dell\'alunno' : 'dalla sessione'}, ${Math.round(tot * 100) / 100}/${max} pt${aggiornato ? ' — AGGIORNATO' : ' — invariato'}`, tags);
+                    console.log(`[Obiettivi] ${s.cognome} ${s.nome} (${code}): versione ${ver} ${verFonte}, ${Math.round(tot * 100) / 100}/${max} pt${aggiornato ? ' — AGGIORNATO' : ' — invariato'}`, tags);
                     usa(detail.activityId, ver);
                     alunni++;
                 }
