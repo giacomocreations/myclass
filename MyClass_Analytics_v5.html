@@ -25617,6 +25617,34 @@ ${sectionInstr}`;
         return null;
     }
 
+    // Versione svolta: quella salvata nel record dell'alunno (LiveLearn la
+    // scrive alla consegna e la corregge quando il docente apre l'alunno) vale
+    // più della mappa della sessione, che poteva non corrispondere. Una lettera
+    // senza domande proprie è l'originale. null = record senza versione.
+    function _agentVerDaRisposta(dr, actVersions) {
+        const v = dr && dr.studentVersion;
+        if (!v) return null;
+        return (v !== 'originale' && actVersions?.[v]?.length) ? v : 'originale';
+    }
+
+    // Percentuale per area (tag) dai punti per domanda: una domanda conta solo
+    // nel proprio tag, il listening senza tag rientra in LISTENING.
+    function _agentTagsDaPunti(sQs, perQ, maxDi) {
+        const out = {};
+        ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'].forEach(tag => {
+            let earned = 0, total = 0, has = false;
+            sQs.forEach((q, i) => {
+                const qTag = q && (q.tag || (q.type === 'listening' ? 'LISTENING' : null));
+                if (qTag !== tag) return;
+                const em = maxDi(q, i);
+                if (em <= 0) return;
+                has = true; total += em; earned += perQ[i];
+            });
+            if (has && total > 0) out[tag] = Math.min(100, Math.round(earned / total * 100));
+        });
+        return out;
+    }
+
     // Punti presi per ogni domanda dalla risposta di un alunno (manuale > AI >
     // automatico; listening e risposte libere senza voto riconciliati col totale
     // dr.score). Serve ai parziali per area e agli obiettivi della unit.
@@ -26963,6 +26991,8 @@ ${sectionInstr}`;
         const _normSvKey = k => String(k || '').toLowerCase().replace(/[.#$[\]\/\s]/g, '_');
 
         const _getStudentQs = (s) => {
+            const drv = _agentVerDaRisposta(s.detailedResponse, task.actVersions);
+            if (drv) return drv !== 'originale' ? task.actVersions[drv] : questions;
             const sv = task.studentVersions || {};
             // 1. Lookup diretto (caso fortunato: chiavi già allineate)
             let ver = sv[s.safe];
@@ -27020,7 +27050,7 @@ ${sectionInstr}`;
             //   getStudentAssignedQuestions() → dr.score viene aggiornato correttamente.
             // Il ricalcolo da manualScores/aiScores/answers è SOLO un fallback
             // per il caso in cui dr.score sia null (raro, es. submit parziale fallito).
-            const _resolvedVerScore = ((task.studentVersions||{})[s.safe]) || Object.entries(task.studentVersions||{}).find(([k])=>_normSvKey(k)===_normSvKey(s.safe))?.[1] || 'originale';
+            const _resolvedVerScore = _agentVerDaRisposta(dr, task.actVersions) || ((task.studentVersions||{})[s.safe]) || Object.entries(task.studentVersions||{}).find(([k])=>_normSvKey(k)===_normSvKey(s.safe))?.[1] || 'originale';
             let pct;
             const _den = _agentPickDenom(dr, sMaxPts, _resolvedVerScore);
             if (dr && dr.score != null && _den.denom > 0) {
@@ -34902,16 +34932,14 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         return 'originale';
     }
 
-    // Verifiche scritte della unit già fatte: rilegge da Firebase le risposte
-    // (punti per domanda e fila di ogni alunno) e abbina le domande agli obiettivi.
-    async function obvCollegaVerifiche(forza) {
-        const ctx = _obvCtx(); if (!ctx) return;
-        const { classe, u, nomeU } = ctx;
-        if (!u.obiettivi?.length) { alert('Prima crea gli obiettivi della unit.'); return; }
-        let db;
-        try { db = firebase.database(); } catch (e) { alert('Firebase non disponibile: ' + e.message); return; }
-        const st = document.getElementById('obvDomStatus');
-        const say = t => { if (st) st.textContent = t; };
+    // Rilegge da LiveLearn le risposte delle verifiche scritte della unit e
+    // ricalcola sul voto i punti per domanda (g.domande) e le aree (g.tags),
+    // con la versione svolta salvata nel record dell'alunno. Prima i punti
+    // letti una volta restavano per sempre: se erano stati calcolati sulla
+    // versione sbagliata (o prima di una correzione in LiveLearn) gli
+    // obiettivi restavano sbagliati anche dopo aver sistemato il punteggio.
+    async function _obvLeggiRisposte(classe, nomeU, db, say) {
+        say = say || (() => {});
         // Solo le verifiche che danno il voto: i voti scritti li crea l'agente dai
         // test (le esercitazioni non diventano voti). Esclusi anche i piani
         // personalizzati (REC/CON/APP: domande diverse, contano col loro voto).
@@ -34924,11 +34952,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         }));
         const mappe = _obvMappe(classe);
         const attivita = new Set(Object.keys(mappe).filter(a => _matchUnit(mappe[a].unit, nomeU)));
-        if (!sessioni.size && !attivita.size) {
-            alert('Nessuna verifica scritta di LiveLearn trovata per questa unit (i voti devono essere stati importati dall\'agente).');
-            return;
-        }
-        let alunni = 0, chiamate = 0, esercitazioni = 0;
+        let alunni = 0, esercitazioni = 0, cambiati = 0;
         const errori = [];
         const usate = {};   // activityId → versioni usate dagli alunni con un voto
         const usa = (act, ver) => (usate[act] || (usate[act] = new Set())).add(ver);
@@ -34944,21 +34968,49 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
                 if (!detail?.activityId) throw new Error('sessione non trovata');
                 attivita.add(detail.activityId);
                 for (const { s, g } of voti) {
-                    if (g.domande?.act && !forza) { usa(g.domande.act, g.domande.ver); continue; }
                     const nomi = [_toSafe(`${s.cognome} ${s.nome}`), _toSafe(`${s.nome} ${s.cognome}`)];
                     const dr = agentMatchResponse(detail, nomi[0]) || agentMatchResponse(detail, nomi[1]);
-                    if (!dr) continue;
-                    const ver = _obvVerAlunno(detail.studentVersions || {}, nomi);
+                    if (!dr) { if (g.domande?.act) usa(g.domande.act, g.domande.ver); continue; }
+                    const ver = _agentVerDaRisposta(dr, detail.actVersions) || _obvVerAlunno(detail.studentVersions || {}, nomi);
                     const qs = (ver !== 'originale' && detail.actVersions?.[ver]?.length) ? detail.actVersions[ver] : detail.questions;
                     if (!qs?.length) continue;
                     const { perQ, maxDi } = _agentPuntiPerDomanda(qs, dr);
-                    g.domande = _obvDomandeRisposta(detail.activityId, ver, qs, perQ, maxDi);
+                    const dom = _obvDomandeRisposta(detail.activityId, ver, qs, perQ, maxDi);
+                    const tags = _agentTagsDaPunti(qs, perQ, maxDi);
+                    if (JSON.stringify(dom) !== JSON.stringify(g.domande || null) ||
+                        (Object.keys(tags).length && JSON.stringify(tags) !== JSON.stringify(g.tags || null))) {
+                        g.domande = dom;
+                        if (Object.keys(tags).length) g.tags = tags;
+                        cambiati++;
+                    }
                     usa(detail.activityId, ver);
                     alunni++;
                 }
             } catch (e) { errori.push(`${code}: ${e.message}`); }
         }
-        n = 0;
+        return { sessioni: sessioni.size, attivita, usate, alunni, esercitazioni, cambiati, errori };
+    }
+
+    // Verifiche scritte della unit già fatte: rilegge da Firebase le risposte
+    // (punti per domanda e fila di ogni alunno) e abbina le domande agli obiettivi.
+    async function obvCollegaVerifiche(forza) {
+        const ctx = _obvCtx(); if (!ctx) return;
+        const { classe, u, nomeU } = ctx;
+        if (!u.obiettivi?.length) { alert('Prima crea gli obiettivi della unit.'); return; }
+        let db;
+        try { db = firebase.database(); } catch (e) { alert('Firebase non disponibile: ' + e.message); return; }
+        const st = document.getElementById('obvDomStatus');
+        const say = t => { if (st) st.textContent = t; };
+        const r = await _obvLeggiRisposte(classe, nomeU, db, say);
+        const { attivita, usate, alunni, esercitazioni } = r;
+        const errori = r.errori;
+        if (!r.sessioni && !attivita.size) {
+            say('');
+            alert('Nessuna verifica scritta di LiveLearn trovata per questa unit (i voti devono essere stati importati dall\'agente).');
+            return;
+        }
+        const mappe = _obvMappe(classe);
+        let chiamate = 0, n = 0;
         for (const act of attivita) {
             n++;
             say(`⏳ Abbinamento ${n}/${attivita.size}…`);
@@ -35126,6 +35178,29 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         _obvRender();
     }
     function obvApriUnita(i) { _obvUI.ui = i; _obvUI.tab = 'obiettivi'; _obvUI.edit = null; _obvRender(); }
+
+    // All'apertura degli obiettivi di una unit (una volta per sessione di
+    // lavoro): rilegge in silenzio le risposte delle verifiche, così una
+    // correzione fatta in LiveLearn (punteggio, versione) arriva anche qui.
+    const _obvAggiornati = new Set();
+    async function _obvAggiornaInSilenzio() {
+        const ctx = _obvCtx(); if (!ctx) return;
+        const { classe, nomeU } = ctx;
+        const chiave = (classe.nome || _obvUI.ci) + '|' + nomeU;
+        if (_obvAggiornati.has(chiave)) return;
+        _obvAggiornati.add(chiave);
+        let db;
+        try { db = firebase.database(); } catch (e) { return; }
+        try {
+            const r = await _obvLeggiRisposte(classe, nomeU, db);
+            if (r.cambiati) {
+                console.log(`[Obiettivi] ${nomeU}: punti per domanda aggiornati da LiveLearn per ${r.cambiati} prov${r.cambiati === 1 ? 'a' : 'e'}`);
+                saveData();
+                if (_obvCtx()?.nomeU === nomeU) _obvRender();
+            }
+            if (r.errori.length) console.warn('[Obiettivi] aggiornamento da LiveLearn:', r.errori);
+        } catch (e) { console.warn('[Obiettivi] aggiornamento da LiveLearn:', e.message); }
+    }
     function obvTab(t) {
         _obvUI.tab = t; _obvUI.edit = null; _obvRender();
         const classe = data.classi?.[_obvUI.ci];
@@ -35158,6 +35233,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
             <p style="margin:0 0 14px;color:#888;font-size:12px;">Classe ${_obvEsc(classe.nome)} · cosa l'alunno deve saper fare alla fine della unit</p>
             ${ctx ? _obvHtmlUnita(ctx) : _obvHtmlElenco(classe)}
         </div>`;
+        if (ctx) _obvAggiornaInSilenzio();
         ov.firstElementChild.scrollTop = scroll;
     }
 
