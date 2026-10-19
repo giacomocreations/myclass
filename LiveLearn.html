@@ -6750,7 +6750,7 @@ function renderLiveSidebar(responses) {
 
       // Calcola % solo per studenti che hanno consegnato (done o recDone)
       if ((done || recDone) && !aiPending) {
-        const qsForPct = getStudentAssignedQuestions(key, displayName, r.aliasOf, r.studentVersion);
+        const qsForPct = getStudentAssignedQuestions(key, displayName, r.aliasOf, r.studentVersion, null, r.answers);
         const answersForPct = fbArr(r.answers);
         const manualScoresPct = r.manualScores || {};
         const aiScoresPct = r.aiScores || {};
@@ -6786,7 +6786,7 @@ function renderLiveSidebar(responses) {
       // Badge "📝 N" — risposte libere consegnate senza punteggio AI né manuale
       let pendingFRBadge = '';
       if ((done || recDone) && !aiPending) {
-        const _qsP = getStudentAssignedQuestions(key, displayName, r.aliasOf, r.studentVersion);
+        const _qsP = getStudentAssignedQuestions(key, displayName, r.aliasOf, r.studentVersion, null, r.answers);
         const _ansP = fbArr(r.answers);
         const _msP = r.manualScores || {};
         const _asP = r.aiScores || {};
@@ -7296,7 +7296,7 @@ async function toggleExcludeQuestion(qi) {
       updates['manualScores/' + qi]         = prev.prevManual != null ? prev.prevManual : null;
       updates['excludedQuestions/' + qi]    = null;
     } else {
-      const qs0 = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion);
+      const qs0 = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion, null, resp.answers);
       const restanti = qs0.filter((q, i) => i !== qi && !exc[i] && (qmo[i] != null ? Number(qmo[i]) : (q.points || 1)) > 0).length;
       if (!restanti) { alert('Non puoi escludere tutti gli esercizi: almeno uno deve restare nella valutazione.'); return; }
       if (!confirm('Togliere l\'esercizio ' + (qi + 1) + ' dalla valutazione di questo alunno?\n\nNon conterà né nel punteggio né nel totale. Puoi reinserirlo in qualunque momento.')) return;
@@ -7311,7 +7311,7 @@ async function toggleExcludeQuestion(qi) {
     await ref.update(updates);
 
     const r2 = (await ref.get()).val() || {};
-    const qs = getStudentAssignedQuestions(studentKey, r2.name || studentKey, r2.aliasOf, r2.studentVersion);
+    const qs = getStudentAssignedQuestions(studentKey, r2.name || studentKey, r2.aliasOf, r2.studentVersion, null, r2.answers);
     const eff = _llEffectiveScore(qs, r2);
     await ref.child('score').set(eff.score);
     r2.score = eff.score;
@@ -7589,7 +7589,7 @@ async function _llSyncStudentHistory(code, key, prevAlias, opts) {
   if (!sess.classId) return { ok: false, reason: 'no_class' };
 
   const owner = r.aliasOf || r.name || key;
-  const qs = getStudentAssignedQuestions(key, r.name || key, r.aliasOf, r.studentVersion, ctx);
+  const qs = getStudentAssignedQuestions(key, r.name || key, r.aliasOf, r.studentVersion, ctx, r.answers);
   const eff = _llEffectiveScore(qs, r);
   const entry = _buildHistoryEntry({
     questions:            qs,
@@ -7680,44 +7680,131 @@ function _llAgentPing() {
 // vedrebbe testi/opzioni diversi da quelli che ha visto lo studente.
 // ctx (opzionale): { activity, studentVersions } di una sessione che non e'
 // quella aperta nella vista live (allineamento cronologie dalla dashboard).
-function getStudentAssignedQuestions(studentKey, studentDisplayName, aliasOf, responseVersion, ctx) {
+// Versione svolta dall'alunno: chiave in activity.versions oppure 'originale'.
+// answers (facoltativo): se le risposte non combaciano con le domande della
+// versione trovata (es. un abbinamento registrato su una scelta multipla) si
+// cerca tra le versioni dell'attività quella che combacia. Succedeva quando la
+// versione salvata andava persa o era cambiata dopo la prova: il docente
+// vedeva le risposte sulle domande di un'altra versione, segnate sbagliate.
+function _studentVersionKey(studentKey, studentDisplayName, aliasOf, responseVersion, ctx, answers) {
   const _act = ctx ? ctx.activity : S.liveActivity;
-  const origQs = _act?.questions || [];
   const versions = _act?.versions || {};
+  const hasVer = k => k && k !== 'originale' && Array.isArray(versions[k]) && versions[k].length;
+  const qsOf = k => hasVer(k) ? versions[k] : (_act?.questions || []);
 
+  let ver = null;
   // 1) Se la risposta dello studente contiene la versione usata, usala direttamente
-  if (responseVersion && responseVersion !== 'originale') {
-    const verQs = versions[responseVersion];
-    if (Array.isArray(verQs) && verQs.length) return verQs;
-  }
+  if (hasVer(responseVersion)) ver = responseVersion;
 
   const svMap = (ctx ? ctx.studentVersions : S.liveStudentVersions) || {};
-  if (!Object.keys(svMap).length || !Object.keys(versions).length) return origQs;
+  if (!ver && Object.keys(svMap).length && Object.keys(versions).length) {
+    // Normalizza per confronto robusto
+    const _normName = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+    // Match chiave safe diretta, poi case-insensitive, poi tramite displayName,
+    // poi tramite aliasOf (per studenti regolarizzati)
+    let found = svMap[studentKey];
+    const tryLookup = (nameStr) => {
+      if (found || !nameStr) return;
+      const safe = nameStr.replace(/[.#$\[\]\/]/g, '_');
+      if (svMap[safe]) { found = svMap[safe]; return; }
+      const lower = safe.toLowerCase();
+      const mk = Object.keys(svMap).find(k => k.toLowerCase() === lower);
+      if (mk) { found = svMap[mk]; return; }
+      // Match normalizzato
+      const norm = _normName(nameStr);
+      const mk2 = Object.keys(svMap).find(k => _normName(k) === norm);
+      if (mk2) found = svMap[mk2];
+    };
+    tryLookup(studentDisplayName);
+    tryLookup(aliasOf);
+    if (hasVer(found)) ver = found;
+  }
+  ver = ver || 'originale';
 
-  // Normalizza per confronto robusto
-  const _normName = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (answers == null) return ver;
+  const ans = fbArr(answers);
+  if (!ans.some(a => a !== null && a !== undefined && a !== '')) return ver;
+  const base = _answersFit(qsOf(ver), ans);
+  if (!base.bad) return ver;
+  let best = { key: ver, fit: base };
+  ['originale'].concat(Object.keys(versions).filter(hasVer)).forEach(k => {
+    if (k === ver) return;
+    const f = _answersFit(qsOf(k), ans);
+    if (f.bad < best.fit.bad || (f.bad === best.fit.bad && f.good > best.fit.good) ||
+        (f.bad === best.fit.bad && f.good === best.fit.good && f.earned > best.fit.earned)) best = { key: k, fit: f };
+  });
+  if (best.key !== ver && best.fit.bad < base.bad) {
+    S._verFitLog = S._verFitLog || {};
+    if (!S._verFitLog[studentKey + '/' + best.key]) {
+      S._verFitLog[studentKey + '/' + best.key] = true;
+      console.log('[LiveLearn] ' + (studentDisplayName || studentKey) + ': le risposte combaciano con la versione "' + best.key +
+        '", non con "' + ver + '" (' + base.bad + ' risposte fuori posto) — uso "' + best.key + '"');
+    }
+    return best.key;
+  }
+  return ver;
+}
 
-  // Match chiave safe diretta, poi case-insensitive, poi tramite displayName,
-  // poi tramite aliasOf (per studenti regolarizzati)
-  let ver = svMap[studentKey];
-  const tryLookup = (nameStr) => {
-    if (ver || !nameStr) return;
-    const safe = nameStr.replace(/[.#$\[\]\/]/g, '_');
-    if (svMap[safe]) { ver = svMap[safe]; return; }
-    const lower = safe.toLowerCase();
-    const mk = Object.keys(svMap).find(k => k.toLowerCase() === lower);
-    if (mk) { ver = svMap[mk]; return; }
-    // Match normalizzato
-    const norm = _normName(nameStr);
-    const mk2 = Object.keys(svMap).find(k => _normName(k) === norm);
-    if (mk2) ver = svMap[mk2];
-  };
-  tryLookup(studentDisplayName);
-  tryLookup(aliasOf);
+function getStudentAssignedQuestions(studentKey, studentDisplayName, aliasOf, responseVersion, ctx, answers) {
+  const _act = ctx ? ctx.activity : S.liveActivity;
+  const k = _studentVersionKey(studentKey, studentDisplayName, aliasOf, responseVersion, ctx, answers);
+  const verQs = k !== 'originale' ? (_act?.versions || {})[k] : null;
+  return (Array.isArray(verQs) && verQs.length) ? verQs : (_act?.questions || []);
+}
 
-  if (!ver || ver === 'originale') return origQs;
-  const verQs = versions[ver];
-  return (Array.isArray(verQs) && verQs.length) ? verQs : origQs;
+// Tipo "effettivo" di una domanda (per il listening: quello della domanda interna)
+function _qKind(q) {
+  if (!q || q.type !== 'listening') return { kind: q && q.type, inner: q };
+  const inner = q.question || {};
+  let sub = q.subtype || inner.type;
+  if (!sub) {
+    if (inner.correct !== undefined) sub = 'multiple-choice';
+    else if (Array.isArray(inner.answers) && inner.answers.length) sub = 'cloze';
+    else if (Array.isArray(inner.left) && inner.left.length) sub = 'matching';
+    else sub = 'free-response';
+  }
+  return { kind: sub, inner };
+}
+// La risposta ha la forma giusta per questa domanda? 1 sì, -1 no, 0 non si sa
+function _answerFit(q, a) {
+  if (!q || a === null || a === undefined || a === '') return 0;
+  const { kind, inner } = _qKind(q);
+  const isObj = typeof a === 'object';
+  const arr = isObj ? fbArr(a) : null;
+  const lenOk = n => !n || arr.length <= n;
+  const allOf = (t) => arr.every(v => v === null || v === undefined || v === '' || typeof v === t ||
+    (t === 'number' && typeof v === 'string' && /^\d+$/.test(v.trim())));
+  switch (kind) {
+    case 'multiple-choice':
+      return !isObj && _mcIndexOf(inner, a) != null ? 1 : -1;
+    case 'free-response': case 'free':
+      return typeof a === 'string' ? 1 : -1;
+    case 'cloze': case 'fill-blanks':
+      if (!isObj) return typeof a === 'string' ? 1 : -1;
+      return allOf('string') && lenOk((inner.answers || []).length) ? 1 : -1;
+    case 'matching':
+      if (!isObj) return -1;
+      return lenOk((fbArr(inner.left) || []).length) && arr.every(v => v === null || v === undefined || typeof v === 'number' || typeof v === 'string') ? 1 : -1;
+    case 'reorder':
+      return isObj && allOf('string') && lenOk((fbArr(inner.sentences) || []).length) ? 1 : -1;
+    case 'drag-drop':
+      return isObj && allOf('string') && lenOk((fbArr(inner.answers) || []).length) ? 1 : -1;
+    case 'categorization':
+      return isObj && allOf('number') && lenOk((fbArr(inner.items) || []).length) ? 1 : -1;
+  }
+  return 0;
+}
+function _answersFit(qs, ans) {
+  const out = { good: 0, bad: 0, earned: 0 };
+  ans.forEach((a, i) => {
+    if (a === null || a === undefined || a === '') return;
+    const q = qs[i];
+    if (!q) { out.bad++; return; }        // risposta oltre l'ultima domanda
+    const f = _answerFit(q, a);
+    if (f > 0) out.good++; else if (f < 0) out.bad++;
+    if (f > 0) { try { out.earned += _earnedFrom(evaluateAnswer(q, a)) / (q.points || 1); } catch(e) {} }
+  });
+  return out;
 }
 
 // Assegnate ripetibili: tentativi precedenti (quello mostrato è l'ultimo)
@@ -7753,7 +7840,9 @@ function renderStudentResultsTeacher(name, response) {
   const displayName = String(response.name || name);
   // Usa le domande della versione effettivamente somministrata allo studente
   const studentKey = S.selectedStudent || (displayName || '').replace(/[.#$\[\]\/]/g, '_');
-  const questions = getStudentAssignedQuestions(studentKey, displayName, response.aliasOf, response.studentVersion);
+  const verKeyRST = _studentVersionKey(studentKey, displayName, response.aliasOf, response.studentVersion, null, response.answers);
+  const _verQsRST = verKeyRST !== 'originale' ? (S.liveActivity.versions || {})[verKeyRST] : null;
+  const questions = (Array.isArray(_verQsRST) && _verQsRST.length) ? _verQsRST : (S.liveActivity.questions || []);
   const submitted = response.submittedAt;
   const score = response.score || 0;
   const questionTimes = response.questionTimes || [];
@@ -7821,7 +7910,12 @@ function renderStudentResultsTeacher(name, response) {
   const aiScoresRST = Object.assign({}, response.aiScores || {});
   const aiFeedbacksRST = Object.assign({}, response.aiFeedbacks || {});
   const fixUpdates = {};
-  if (submitted && response.studentVersion && S.liveCode && S.selectedStudent === studentKey) {
+  const canFixRST = submitted && S.liveCode && S.selectedStudent === studentKey;
+  // Versione svolta salvata nel record (alla consegna andava persa): così
+  // PDF, cronologia e MyClass usano le domande giuste anche in futuro
+  if (canFixRST && (response.studentVersion || 'originale') !== verKeyRST) fixUpdates.studentVersion = verKeyRST;
+  // Solo se le risposte combaciano con le domande: altrimenti non si tocca nulla
+  if (canFixRST && !_answersFit(questions, answers).bad) {
     Object.keys(aiScoresRST).forEach(k => {
       const qq = questions[k];
       if (!qq || !evaluateAnswer(qq, null).scorable) return;
@@ -9472,6 +9566,8 @@ function _listenForStudentStart(code, safeName) {
         }
         if (newVer && newVer !== S.studentVersion) {
           S.studentVersion = newVer;
+          // Il docente legge la versione dal record: va aggiornata anche lì
+          db.ref('livelearn/responses/' + code + '/' + safeName + '/studentVersion').set(newVer).catch(() => {});
           // Aggiorna le domande con la nuova versione
           const act = S.activity;
           if (act && act.versions && act.versions[newVer] && act.versions[newVer].length) {
@@ -10434,7 +10530,9 @@ async function submitAnswers(auto) {
     joinedAt: S.joinedAt,
     submittedAt,
     aiScoringPending: false,
-    status: 'submitted'
+    status: 'submitted',
+    // Versione svolta: il set() riscrive il record, senza questa riga andava persa
+    studentVersion: S.studentVersion || 'originale'
   };
   if (S._aliasOf) payload.aliasOf = S._aliasOf;
   // Assegnate ripetibili: il set() riscrive il record, i tentativi precedenti vanno riportati
@@ -13634,7 +13732,7 @@ async function exportStudentPDF(studentName) {
     || (studentName || '').replace(/[.#$\[\]\/]/g, '_');
   // Versione registrata nella risposta (FILA B/C, DSA, PEI, Training…): senza,
   // le risposte venivano lette sulle domande di un'altra versione.
-  const questions  = getStudentAssignedQuestions(studentKeyPDF, studentName, entry.aliasOf, entry.studentVersion);
+  const questions  = getStudentAssignedQuestions(studentKeyPDF, studentName, entry.aliasOf, entry.studentVersion, null, entry.answers);
   const _fbToArr=v=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'){const ks=Object.keys(v).map(Number).filter(k=>!isNaN(k));return ks.length?Array.from({length:Math.max(...ks)+1},(_,i)=>v[i]!==undefined?v[i]:null):[]}return[];};
   const answers    = _fbToArr(entry.answers);
   const qTimes     = _fbToArr(entry.questionTimes);
@@ -14089,7 +14187,7 @@ async function saveScoreFromDetailModal(qi, maxPts) {
     const snap = await db.ref('livelearn/responses/' + S.liveCode + '/' + S.selectedStudent).get();
     const resp = snap.val() || {};
     // FIX: usa le domande della versione assegnata (fila_b/c/ecc.) non sempre l'originale
-    const qs = getStudentAssignedQuestions(S.selectedStudent, resp.name || S.selectedStudent, resp.aliasOf, resp.studentVersion);
+    const qs = getStudentAssignedQuestions(S.selectedStudent, resp.name || S.selectedStudent, resp.aliasOf, resp.studentVersion, null, resp.answers);
     const ans = fbArr(resp.answers || []);
     const ms = resp.manualScores || {};
     const as2 = resp.aiScores || {};
@@ -14238,7 +14336,7 @@ async function saveScoreOverride(qi, origPts) {
     // Ricalcola punteggio totale con questionMaxOverrides aggiornati
     const snap = await db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey).get();
     const resp = snap.val() || {};
-    const qs   = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion);
+    const qs   = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion, null, resp.answers);
     const ans  = fbArr(resp.answers || []);
     const ms   = resp.manualScores        || {};
     const as2  = resp.aiScores            || {};
@@ -14287,7 +14385,7 @@ async function teacherAIScoreQuestion(qi, maxPts) {
     const snap = await db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey).get();
     const resp = snap.val() || {};
     // FIX: usa le domande della versione assegnata (fila_b/c/ecc.) non sempre l'originale
-    const questions = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion);
+    const questions = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion, null, resp.answers);
     const answers = fbArr(resp.answers);
     const q = questions[qi];
     const ans = answers[qi];
@@ -14334,7 +14432,7 @@ async function teacherAIScoreAll() {
     const snap = await db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey).get();
     const resp = snap.val() || {};
     // FIX: usa le domande della versione assegnata (fila_b/c/ecc.) non sempre l'originale
-    const questions = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion);
+    const questions = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion, null, resp.answers);
     const answers = fbArr(resp.answers);
     const msExist = resp.manualScores || {};
     const asExist = resp.aiScores || {};
@@ -14412,7 +14510,7 @@ function jumpToNextPending() {
 function _refreshPendingForStudent(studentKey, responseData) {
   if (!window._pendingFRKeys) return;
   const displayName = responseData.name || studentKey;
-  const qsP = getStudentAssignedQuestions(studentKey, displayName, responseData.aliasOf, responseData.studentVersion);
+  const qsP = getStudentAssignedQuestions(studentKey, displayName, responseData.aliasOf, responseData.studentVersion, null, responseData.answers);
   const ansP = fbArr(responseData.answers);
   const msP = responseData.manualScores || {};
   const asP = responseData.aiScores || {};
@@ -14479,7 +14577,7 @@ async function exportAllPDFCorretto() {
   for (const [studentKey, entry] of entries) {
     const displayName  = entry.name || studentKey;
     // ── Versione corretta per questo studente ────────────────────────────
-    const questions    = getStudentAssignedQuestions(studentKey, displayName, entry.aliasOf, entry.studentVersion);
+    const questions    = getStudentAssignedQuestions(studentKey, displayName, entry.aliasOf, entry.studentVersion, null, entry.answers);
     const answers      = fbArr(entry.answers || []);
     const manualScores = entry.manualScores || {};
     const aiScores     = entry.aiScores     || {};
@@ -20274,7 +20372,7 @@ function openQuestionDetailTeacher(i) {
   db.ref('livelearn/responses/' + S.liveCode + '/' + S.selectedStudent).get().then(snap => {
     const r = snap.val() || {};
     const displayName = String(r.name || S.selectedStudent);
-    const questions = getStudentAssignedQuestions(S.selectedStudent, displayName, r.aliasOf, r.studentVersion);
+    const questions = getStudentAssignedQuestions(S.selectedStudent, displayName, r.aliasOf, r.studentVersion, null, r.answers);
     openQuestionDetail(i, {
       mode: 'teacher',
       questions: questions,
