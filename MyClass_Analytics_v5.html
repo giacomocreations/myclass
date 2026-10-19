@@ -34963,20 +34963,25 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
             try {
                 // Test trasformato in esercitazione dopo il voto: non conta
                 const modo = (await db.ref('livelearn/sessions/' + code + '/mode').get()).val();
-                if (modo === 'practice') { esercitazioni++; continue; }
+                if (modo === 'practice') { esercitazioni++; console.log(`[Obiettivi] ${code}: ora è un'esercitazione, non conta`); continue; }
                 const detail = await agentFetchSessionDetail(code, db);
                 if (!detail?.activityId) throw new Error('sessione non trovata');
                 attivita.add(detail.activityId);
                 for (const { s, g } of voti) {
                     const nomi = [_toSafe(`${s.cognome} ${s.nome}`), _toSafe(`${s.nome} ${s.cognome}`)];
                     const dr = agentMatchResponse(detail, nomi[0]) || agentMatchResponse(detail, nomi[1]);
-                    if (!dr) { if (g.domande?.act) usa(g.domande.act, g.domande.ver); continue; }
+                    if (!dr) {
+                        console.log(`[Obiettivi] ${s.cognome} ${s.nome} (${code}): risposta non trovata in LiveLearn`);
+                        if (g.domande?.act) usa(g.domande.act, g.domande.ver);
+                        continue;
+                    }
                     const ver = _agentVerDaRisposta(dr, detail.actVersions) || _obvVerAlunno(detail.studentVersions || {}, nomi);
                     const qs = (ver !== 'originale' && detail.actVersions?.[ver]?.length) ? detail.actVersions[ver] : detail.questions;
                     if (!qs?.length) continue;
                     const { perQ, maxDi } = _agentPuntiPerDomanda(qs, dr);
                     const dom = _obvDomandeRisposta(detail.activityId, ver, qs, perQ, maxDi);
                     const tags = _agentTagsDaPunti(qs, perQ, maxDi);
+                    let aggiornato = false;
                     // Le aree si riscrivono sempre: se la versione svolta non ha
                     // domande con l'area restano vuote (quelle vecchie venivano da
                     // un'altra versione e davano esiti sbagliati agli obiettivi)
@@ -34985,9 +34990,10 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
                         g.domande = dom;
                         g.tags = tags;
                         cambiati++;
-                        const tot = dom.p.reduce((a, x) => a + x, 0), max = dom.m.reduce((a, x) => a + x, 0);
-                        console.log(`[Obiettivi] ${s.cognome} ${s.nome}: versione ${ver}${dr.studentVersion ? '' : ' (dalla sessione)'}, ${Math.round(tot * 100) / 100}/${max} pt`, tags);
+                        aggiornato = true;
                     }
+                    const tot = dom.p.reduce((a, x) => a + x, 0), max = dom.m.reduce((a, x) => a + x, 0);
+                    console.log(`[Obiettivi] ${s.cognome} ${s.nome} (${code}): versione ${ver} ${dr.studentVersion ? 'dal record dell\'alunno' : 'dalla sessione'}, ${Math.round(tot * 100) / 100}/${max} pt${aggiornato ? ' — AGGIORNATO' : ' — invariato'}`, tags);
                     usa(detail.activityId, ver);
                     alunni++;
                 }
@@ -35196,6 +35202,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         _obvAggiornati.add(chiave);
         let db;
         try { db = firebase.database(); } catch (e) { return; }
+        console.log(`[Obiettivi] ${nomeU}: rilettura delle risposte da LiveLearn…`);
         try {
             const r = await _obvLeggiRisposte(classe, nomeU, db);
             // Versioni svolte senza abbinamento domande → obiettivi (es. la PEI,
@@ -35219,7 +35226,14 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
                 if (_obvCtx()?.nomeU === nomeU) _obvRender();
             }
             if (r.errori.length) console.warn('[Obiettivi] aggiornamento da LiveLearn:', r.errori);
-        } catch (e) { console.warn('[Obiettivi] aggiornamento da LiveLearn:', e.message); }
+            const msg = `🎯 Obiettivi ${nomeU}: ${r.alunni} prove rilette da LiveLearn` + (r.cambiati ? `, ${r.cambiati} aggiornamenti` : ', nessuna differenza') +
+                (r.errori.length ? ` — ${r.errori.length} problemi (vedi console)` : '');
+            console.log('[Obiettivi] ' + msg);
+            if (typeof _mcToast === 'function') _mcToast(msg, 6000);
+        } catch (e) {
+            console.warn('[Obiettivi] aggiornamento da LiveLearn:', e.message);
+            if (typeof _mcToast === 'function') _mcToast('⚠️ Obiettivi: rilettura da LiveLearn non riuscita (' + e.message + ')', 6000);
+        }
     }
     function obvTab(t) {
         _obvUI.tab = t; _obvUI.edit = null; _obvRender();
