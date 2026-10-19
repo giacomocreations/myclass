@@ -12691,6 +12691,30 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             return { fasi: b, obiettivi: titB || '', materiali: '', nome: 'B' };
         }
 
+        // Legge {titolo, argo, studente} dalla risposta AI. Se il JSON non è
+        // valido (tipico: virgolette non escapate nei testi, es. gioco "The
+        // Alphabet Chain") prende ogni campo fino all'inizio del successivo.
+        function _parseDescrizioniAI(res) {
+            const raw = String(res || '').replace(/```json|```/g, '').trim();
+            try { return JSON.parse(raw); } catch (e) {}
+            const m = raw.match(/\{[\s\S]*\}/);
+            if (m) { try { return JSON.parse(m[0]); } catch (e) {} }
+            const body = m ? m[0] : raw;
+            const re = /"(titolo|argo|studente|student|descrizione)"\s*:\s*"/g;
+            const keys = [];
+            let k;
+            while ((k = re.exec(body))) keys.push({ nome: k[1], da: re.lastIndex, inizio: k.index });
+            if (!keys.length) return null;
+            const out = {};
+            keys.forEach((c, i) => {
+                const fine = i + 1 < keys.length ? keys[i + 1].inizio : body.length;
+                const v = body.slice(c.da, fine).replace(/"\s*,?\s*\}?\s*$/, '');
+                try { out[c.nome] = JSON.parse('"' + v + '"'); }
+                catch (e) { out[c.nome] = v.replace(/\\n/g, '\n').replace(/\\"/g, '"'); }
+            });
+            return out;
+        }
+
         async function _aiDescrizioniLezione(o) {
             o = o || {};
             const pulisci = t => String(t || '').split('\n').filter(r => !/\b(BES|DSA|PEI|PDP)\b/i.test(r)).join('\n');
@@ -12714,11 +12738,23 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
               + 'In NESSUNO dei campi citare il saluto o l\'appello (sono scontati) né l\'assegnazione dei compiti (vanno già nel campo Compiti). La correzione dei compiti assegnati la volta prima, invece, è un\'attività e va citata.\n'
               + 'Non citare nomi di alunni, voti, note sul comportamento, BES/DSA/PEI/PDP né livelli CEFR.\n'
               + 'Rispondi SOLO con JSON valido senza markdown: {"titolo":"...","argo":"...","studente":"..."}';
-            const res = await callGemini(prompt);
-            const raw = String(res).replace(/```json|```/g, '').trim();
+            // Gemini a volte fallisce in modo occasionale (modello sovraccarico,
+            // JSON con virgolette non escapate): un secondo tentativo di solito
+            // va a buon fine, quindi si riprova da soli una volta.
             let gen;
-            try { gen = JSON.parse(raw); }
-            catch (e) { const m = raw.match(/\{[\s\S]*\}/); if (!m) throw new Error('Risposta AI non valida'); gen = JSON.parse(m[0]); }
+            for (let tentativo = 1; ; tentativo++) {
+                try {
+                    const res = await callGemini(prompt);
+                    gen = _parseDescrizioniAI(res);
+                    if (!gen) throw new Error('Risposta AI non valida');
+                    break;
+                } catch (e) {
+                    const definitivo = /non configurato|Limite gratuito|quota|Connessione internet/i.test(e.message || '');
+                    if (definitivo || tentativo >= 2) throw e;
+                    console.warn('[Descrizioni dal piano] tentativo ' + tentativo + ' fallito, riprovo:', e.message);
+                    await new Promise(r => setTimeout(r, 1500));
+                }
+            }
             return {
                 titolo:  String(gen.titolo || '').trim(),
                 argo:    String(gen.argo || gen.descrizione || '').trim(),
