@@ -8573,6 +8573,9 @@ async function _retroForcedSubmit(code) {
   const sessSnap = await db.ref('livelearn/sessions/' + code).get();
   const sessData = sessSnap.val() || {};
   if (sessData.status === 'active') return; // sessione ancora attiva, nessun intervento
+  // Compito a casa (ASSEGNA): resta aperto finché c'è, chi non ha consegnato
+  // può ancora farlo. Aprirlo nella vista live non deve consegnare per loro.
+  if (sessData.status === 'assigned') return;
 
   const actVal = sessData.activityId ? await _actGet(sessData.activityId) : null;
   const questions = _sessFilterActivity(actVal, sessData)?.questions || S.liveActivity?.questions || [];
@@ -8627,7 +8630,7 @@ async function _retroForcedSubmit(code) {
           finalScore:    score,
           submittedAt:   forcedAt,
           sessionCode:   code,
-          activityTitle: (actSnap && actSnap.val() && actSnap.val().title) || sessData.title || '',
+          activityTitle: (actVal && actVal.title) || sessData.title || '',
           mode:          sessData.mode || 'test'
         });
         writes.push(

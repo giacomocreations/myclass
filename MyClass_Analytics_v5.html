@@ -25567,6 +25567,36 @@ ${sectionInstr}`;
         return cands.some(c => have.some(h => h === c || norm(h) === norm(c) || (words(h) && words(h) === words(c))));
     }
 
+    // Tutti gli alunni della sessione hanno gia' il voto nello storico MyClass?
+    // Un voto che porta un sessionCode vale solo per QUELLA sessione: due test
+    // con lo stesso titolo nello stesso giorno (es. la classe al mattino e
+    // un recupero qualche ora dopo) non si coprono a vicenda. Data (±1 giorno)
+    // e titolo simile contano solo per i voti senza codice (inseriti a mano).
+    function _agentGiaInStorico(classeObj, group, code) {
+        if (!classeObj || !group.students.length) return false;
+        const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+        const titN = norm(group.activityTitle || '');
+        const sessD = new Date(group.date);
+        return group.students.every(st => {
+            const stu = classeObj.studenti?.find(s => {
+                const s1 = `${s.cognome} ${s.nome}`.replace(/[.#$[\]/ ]/g, '_').toLowerCase();
+                const s2 = `${s.nome} ${s.cognome}`.replace(/[.#$[\]/ ]/g, '_').toLowerCase();
+                return s1 === st.safe || s2 === st.safe;
+            });
+            if (!stu) return false;
+            return (stu.scritto || []).some(v => {
+                if (v.sessionCode) return v.sessionCode === code;
+                if (!v.data) return false;
+                if (Math.abs(new Date(v.data) - sessD) > 86400000) return false;
+                if (titN && v.titolo) {
+                    const vt = norm(v.titolo);
+                    if (!vt.includes(titN) && !titN.includes(vt)) return false;
+                }
+                return true;
+            });
+        });
+    }
+
     // Ogni alunno una volta sola nel task. Due voci che puntano alla STESSA
     // consegna (stesso nome digitato, stesso istante di consegna) sono lo stesso
     // alunno: succede quando in LiveLearn il docente associa un nome scritto male
@@ -26343,6 +26373,20 @@ ${sectionInstr}`;
                     const doneSnap = await db.ref(`livelearn/agentDone/${classId}/${code}`).get();
                     if (doneSnap.exists()) {
                         const doneVal = doneSnap.val();
+                        // Segnata "gia' nello storico" dal vecchio controllo per data e
+                        // titolo, che scambiava un test dello stesso giorno per questo:
+                        // se lo storico in realta' non ha i voti di QUESTA sessione, la
+                        // si riprende.
+                        if (doneVal.status === 'approved' && doneVal.reason === 'already_in_myclass_storico') {
+                            const _mcRip = data.classi?.find(c => c.nome === classe.nome);
+                            if (_mcRip && !_agentGiaInStorico(_mcRip, group, code)) {
+                                console.log(`[Agente] ${tid}: segnata "già nello storico" per errore (voti di un'altra sessione) — la riprendo`);
+                                await db.ref(`livelearn/agentDone/${classId}/${code}`).remove().catch(()=>{});
+                                agentTasks = agentTasks.filter(t => t.id !== tid);
+                                agentSaveTasks(agentTasks);
+                                doneVal.status = null;
+                            }
+                        }
                         if (doneVal.status === 'approved') {
                             if (!agentTasks.find(t => t.id === tid)) {
                                 agentTasks.push({ id: tid, type: 'valscritta', classe: classe.nome, classId,
@@ -26490,27 +26534,7 @@ ${sectionInstr}`;
                             }
                         }
                         if (_mcClAR && group.students.length > 0) {
-                            const _normARS = s => (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
-                            const _titNAR  = _normARS(group.activityTitle || '');
-                            const _sessDAR = new Date(group.date);
-                            const _tuttiAR = group.students.every(_stAR => {
-                                const _mcSt = _mcClAR.studenti?.find(s => {
-                                    const _s1 = `${s.cognome} ${s.nome}`.replace(/[.#$[\]/ ]/g,'_').toLowerCase();
-                                    const _s2 = `${s.nome} ${s.cognome}`.replace(/[.#$[\]/ ]/g,'_').toLowerCase();
-                                    return _s1 === _stAR.safe || _s2 === _stAR.safe;
-                                });
-                                if (!_mcSt) return false;
-                                return (_mcSt.scritto||[]).some(v => {
-                                    if (!v.data) return false;
-                                    if (Math.abs(new Date(v.data) - _sessDAR) > 86400000) return false;
-                                    if (_titNAR && v.titolo) {
-                                        const _vt = _normARS(v.titolo);
-                                        if (!_vt.includes(_titNAR) && !_titNAR.includes(_vt)) return false;
-                                    }
-                                    return true;
-                                });
-                            });
-                            if (_tuttiAR) {
+                            if (_agentGiaInStorico(_mcClAR, group, code)) {
                                 console.log(`[Agente] ${tid}: ready ma voti già in storico MyClass — segno approvata, skip rigenera`);
                                 existing.status    = 'approved';
                                 existing.approvedAt = new Date().toISOString();
@@ -26638,30 +26662,7 @@ ${sectionInstr}`;
                 {
                     const _mcClasse = data.classi?.find(c => c.nome === classe.nome);
                     if (_mcClasse) {
-                        const _norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-                        const _titNorm = _norm(group.activityTitle || '');
-                        const _sessionDateObj = new Date(group.date);
-                        const _msDay = 86400000;
-                        let _tuttiGiàValutati = group.students.length > 0;
-                        for (const _st of group.students) {
-                            const _studente = _mcClasse.studenti?.find(s => {
-                                const _s1 = `${s.cognome} ${s.nome}`.replace(/[.#$[\]/ ]/g, '_').toLowerCase();
-                                const _s2 = `${s.nome} ${s.cognome}`.replace(/[.#$[\]/ ]/g, '_').toLowerCase();
-                                return _s1 === _st.safe || _s2 === _st.safe;
-                            });
-                            if (!_studente) { _tuttiGiàValutati = false; break; }
-                            const _haVoto = (_studente.scritto || []).some(v => {
-                                if (!v.data) return false;
-                                if (Math.abs(new Date(v.data) - _sessionDateObj) > _msDay) return false;
-                                if (_titNorm && v.titolo) {
-                                    const _vtNorm = _norm(v.titolo);
-                                    if (!_vtNorm.includes(_titNorm) && !_titNorm.includes(_vtNorm)) return false;
-                                }
-                                return true;
-                            });
-                            if (!_haVoto) { _tuttiGiàValutati = false; break; }
-                        }
-                        if (_tuttiGiàValutati) {
+                        if (_agentGiaInStorico(_mcClasse, group, code)) {
                             console.log(`[Agente] ${classe.nome}: skip ${code} — tutti gli studenti hanno già un voto in storico MyClass (valutazione manuale già inserita)`);
                             try {
                                 await db.ref(`livelearn/agentDone/${classId}/${code}`).set({
