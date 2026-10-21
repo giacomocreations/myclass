@@ -23976,6 +23976,54 @@ ${sectionInstr}`;
         document.body.appendChild(overlay);
     }
 
+    // ── Escludi / reinserisci un alunno in una verifica scritta in coda ──
+    // Serve a non importare un secondo voto (es. l'alunno ha già il voto da
+    // un'altra valutazione o da "👤 Riscopri un alunno"). L'esclusione resta
+    // nel task (task.esclusi): né il controllo periodico né la rigenerazione
+    // lo rimettono dentro.
+    function _agentEscluso(task, respKey, respEntry) {
+        const ex = (task && task.esclusi) || [];
+        if (!ex.length) return false;
+        return _agentRespAlreadyIn(new Set(ex.map(e => e.safe)), respKey, respEntry || {}) ||
+               ex.some(e => e.nome && respEntry && (respEntry.aliasOf === e.nome || respEntry.name === e.nome));
+    }
+    function _agentTogliEsclusi(task) {
+        if (!(task.esclusi || []).length) return;
+        const fuori = st => {
+            if (!st) return false;
+            const n = st.nome || st.displayName;
+            return task.esclusi.some(e => (e.safe && st.safe === e.safe) || (e.nome && n === e.nome));
+        };
+        task.students = (task.students || []).filter(st => !fuori(st));
+        if (Array.isArray(task.importData)) task.importData = task.importData.filter(r => !fuori(r));
+    }
+    function agentEscludiAlunnoVS(taskId, nome) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        const row = (task.importData || []).find(r => r.nome === nome) ||
+                    (task.students || []).find(st => (st.nome || st.displayName) === nome);
+        if (!row) { alert('Alunno non trovato in questa valutazione.'); return; }
+        if (!confirm(`Escludere ${nome} da questa valutazione?\n\nAll'approvazione non riceverà né voto né feedback da questo task. Puoi reinserirlo finché non approvi.`)) return;
+        task.esclusi = (task.esclusi || []).filter(e => e.safe !== row.safe);
+        task.esclusi.push({ safe: row.safe, nome, at: new Date().toISOString() });
+        _agentTogliEsclusi(task);
+        for (const m of [task.studentAnalysis, task.studentArgo, task.studentClassroom]) { if (m) delete m[nome]; }
+        if (!(task.importData || []).length && !(task.students || []).length)
+            alert('Non restano alunni in questa valutazione: puoi rimuovere il task (🗑 Rimuovi).');
+        agentSaveTasks(agentTasks);
+        agentRenderPanel(); agentBadgeUpdate();
+    }
+    async function agentReinserisciAlunnoVS(taskId, safe) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        const e = (task.esclusi || []).find(x => x.safe === safe);
+        if (!e) return;
+        if (!confirm(`Reinserire ${e.nome || safe}?\n\nLa valutazione viene rigenerata per includerlo.`)) return;
+        task.esclusi = task.esclusi.filter(x => x.safe !== safe);
+        agentSaveTasks(agentTasks);
+        await agentRegenerate(taskId);
+    }
+
     // ── Riscopri UN alunno ───────────────────────────────────────────────
     // Crea in coda un task di verifica scritta con un solo alunno, anche se la
     // sessione è già approvata, scartata o è un'esercitazione: serve quando in
@@ -24547,13 +24595,22 @@ ${sectionInstr}`;
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                         </div>`;
                 } else if (task.type === 'valscritta') {
+                    // ── Alunni esclusi dal docente da questa valutazione ───────
+                    const _vsJs = x => String(x == null ? '' : x).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+                    const _vsEsclusiHtml = (task.esclusi||[]).length
+                        ? `<div style="margin-top:8px;padding:6px 10px;background:#fff5f5;border:1px solid #ffcdd2;border-radius:8px;font-size:12px;color:#b71c1c;">🚫 <strong>Esclusi</strong> (nessun voto all'approvazione): ` +
+                          task.esclusi.map(e => String(e.nome||e.safe).replace(/</g,'&lt;') +
+                            (task.status !== 'approved' ? ` <button onclick="agentReinserisciAlunnoVS('${task.id}','${_vsJs(e.safe)}')" style="font-size:10px;padding:0 6px;border-radius:8px;border:1px solid #a5d6a7;background:#f0faf5;color:#1b5e20;cursor:pointer;line-height:1.6;">↩ reinserisci</button>` : '')).join(' · ') +
+                          `</div>`
+                        : '';
                     // ── Riepilogo voti ─────────────────────────────────────────
                     const vsTable = task.importData?.length ? (() => {
                         const rows = task.importData.map(r => {
                             const tagStr = Object.entries(r.tags||{}).map(([k,v])=>`${k}:${v}%`).join(' · ');
                             const vColor = (r.votoValue||0) >= 6 ? '#1b5e20' : (r.votoValue||0) >= 5 ? '#e65100' : '#b71c1c';
                             return `<tr>
-                                <td style="padding:3px 8px;font-weight:600;">${(r.nome||'').replace(/</g,'&lt;')}</td>
+                                <td style="padding:3px 8px;font-weight:600;">${(r.nome||'').replace(/</g,'&lt;')}
+                                    ${task.status !== 'approved' ? `<button onclick="agentEscludiAlunnoVS('${task.id}','${_vsJs(r.nome)}')" title="Togli questo alunno dalla valutazione: nessun voto né feedback all'approvazione (es. ha già il voto da un'altra valutazione)" style="font-size:10px;padding:0 6px;margin-left:4px;border-radius:8px;border:1px solid #ef9a9a;background:#fff5f5;color:#c62828;cursor:pointer;line-height:1.6;">🚫 escludi</button>` : ''}</td>
                                 <td style="text-align:center;padding:3px 8px;">${r.pct ?? '—'}%</td>
                                 <td style="text-align:center;padding:3px 8px;font-weight:700;color:${vColor};">${r.votoLabel||'—'}</td>
                                 <td style="padding:3px 8px;font-size:10px;color:#666;">${tagStr||'—'}</td>
@@ -24571,9 +24628,10 @@ ${sectionInstr}`;
                                 </tr></thead>
                                 <tbody>${rows}</tbody>
                             </table>
+                            ${_vsEsclusiHtml}
                             </div>
                         </details>`;
-                    })() : '';
+                    })() : _vsEsclusiHtml;
                     // ── Card per-alunno ────────────────────────────────────────
                     const mkVSSection = (label, tid, nome, field, minH) => {
                         const safeKey = nome.replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_]/g,'');
@@ -24630,6 +24688,7 @@ ${sectionInstr}`;
                             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
                                 <span style="font-size:14px;font-weight:700;color:#4527a0;">👤 ${r.nome.replace(/</g,'&lt;')}</span>
                                 <button onclick="agentRenameStudentVS('${task.id}','${safeNomeJs}')" title="Rinomina alunno (se ha inserito il nome sbagliato)" style="font-size:10px;padding:1px 7px;border-radius:10px;background:transparent;border:1px solid #9575cd;color:#7b1fa2;cursor:pointer;line-height:1.6;">✏️ rinomina</button>
+                                ${task.status !== 'approved' ? `<button onclick="agentEscludiAlunnoVS('${task.id}','${safeNomeJs}')" title="Togli questo alunno dalla valutazione: nessun voto né feedback all'approvazione" style="font-size:10px;padding:1px 7px;border-radius:10px;background:#fff5f5;border:1px solid #ef9a9a;color:#c62828;cursor:pointer;line-height:1.6;">🚫 escludi</button>` : ''}
                                 <span style="font-size:13px;font-weight:700;color:#2e7d32;">🏆</span>
                                 <input type="number" step="0.5" min="1" max="10" value="${r.votoValue||''}"
                                     style="width:56px;font-size:13px;font-weight:700;padding:2px 5px;border:1.5px solid #a5d6a7;border-radius:6px;text-align:center;"
@@ -27079,6 +27138,7 @@ ${sectionInstr}`;
                 for (const [respKey, respEntry] of Object.entries(detail.responses)) {
                     if (!respEntry || !respEntry.submittedAt || respEntry.removed) continue;
                     if (_agentModoRisposta(detail, respKey, respEntry) === 'practice') continue; // esercitazione: non si valuta
+                    if (_agentEscluso(task, respKey, respEntry)) continue; // escluso dal docente in coda
                     if (_agentRespAlreadyIn(existingSafes, respKey, respEntry)) continue;
                     const _normName = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
                     const respName = respEntry.aliasOf || respEntry.name || respKey.replace(/_/g,' ');
@@ -27111,6 +27171,7 @@ ${sectionInstr}`;
                 const _tolti = _agentTogliEsercitazioni(task, detail);
                 if (_tolti.length) console.log(`[Agente] refresh ${task.sessionCode}: tolti (ora in esercitazione): ${_tolti.join(', ')}`);
             }
+            _agentTogliEsclusi(task);
             if (detail?.questions?.length) task.questions = detail.questions;
             if (detail?.studentVersions)   task.studentVersions = detail.studentVersions;
             if (detail?.actVersions)        task.actVersions     = detail.actVersions;
@@ -27309,6 +27370,12 @@ ${sectionInstr}`;
         }
 
         task.students = _agentDedupeStudents(task.students, (data.classi||[]).find(c => c.nome === task.classe));
+        _agentTogliEsclusi(task);   // alunni esclusi dal docente in coda
+        if (!task.students.length) {
+            task.status = 'error';
+            task.error  = 'Tutti gli alunni sono esclusi da questa valutazione';
+            return;
+        }
         const { students, unit, sessionDate, classe } = task;
         const questions = task.questions || [];
         const maxPts = questions.reduce((s, q) => s + (q.points || 1), 0);
