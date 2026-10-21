@@ -23976,6 +23976,16 @@ ${sectionInstr}`;
         document.body.appendChild(overlay);
     }
 
+    // 🔄 Rigenera tutti: rifà da capo la valutazione dell'intera verifica
+    // (dati aggiornati da LiveLearn, esclusi e alunni in esercitazione esclusi)
+    async function agentRegenerateAllVS(taskId) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        const n = (task.importData || []).length || (task.students || []).length;
+        if (!confirm(`Rigenerare da capo la valutazione di tutti gli alunni (${n})?\n\nI testi attuali (anche quelli modificati a mano) vengono sostituiti.`)) return;
+        await agentRegenerate(taskId);
+    }
+
     // ── Escludi / reinserisci un alunno in una verifica scritta in coda ──
     // Serve a non importare un secondo voto (es. l'alunno ha già il voto da
     // un'altra valutazione o da "👤 Riscopri un alunno"). L'esclusione resta
@@ -24737,11 +24747,17 @@ ${sectionInstr}`;
                         }<br>
                         <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
                             <button class="agent-btn-edit" style="font-size:11px;padding:4px 12px;background:#e65100;color:white;border-color:#e65100;" ${isMissingProcessing?'disabled':''} onclick="agentRegenerateMissing('${task.id}')">&#x26A1; Rigenera mancanti (${missingStudents.length})</button>
-                            <span style="color:#888;font-size:11px;align-self:center;">oppure usa &#x1F504; Rigenera per rigenerare tutto</span>
+                            <button class="agent-btn-edit" style="font-size:11px;padding:4px 12px;" ${isMissingProcessing?'disabled':''} onclick="agentRegenerateAllVS('${task.id}')">&#x1F504; Rigenera tutti (${(task.importData||[]).length})</button>
                         </div>
                     </div>` : '';
+                    // Barra in cima: le azioni sull'intera verifica senza scorrere tutte le card
+                    const vsTopBar = task.status !== 'approved' && task.status !== 'processing' ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+                            <button class="agent-btn-edit" onclick="agentRegenerateAllVS('${task.id}')" title="Rigenera da capo la valutazione di tutti gli alunni di questa verifica">🔄 Rigenera tutti (${(task.importData||[]).length || (task.students||[]).length})</button>
+                            ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')">📥 Importa voti &amp; feedback</button>` : ''}
+                        </div>` : '';
                     body = `
-                        ${task._autoRegenBlocked && !task.valDocente && !task.classroomBlock ? `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:6px 10px;font-size:12px;color:#92400e;margin-bottom:8px;">⚠️ La valutazione generata non ha le sezioni attese (o è andata persa). L'agente non la rigenera da solo per non consumare token: premi 🔄 Rigenera o 🟣 Rifai con Claude Code.</div>` : ''}
+                        ${task._autoRegenBlocked && !task.valDocente && !task.classroomBlock ? `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:6px 10px;font-size:12px;color:#92400e;margin-bottom:8px;">⚠️ La valutazione generata non ha le sezioni attese (o è andata persa). L'agente non la rigenera da solo per non consumare token: premi 🔄 Rigenera tutti o 🟣 Rifai con Claude Code.</div>` : ''}
+                        ${vsTopBar}
                         ${missingBlocksBanner}
                         ${vsTable}
                         ${vsCards}
@@ -24751,7 +24767,7 @@ ${sectionInstr}`;
                             <button class="agent-btn-edit" onclick="agentRecalcAndRegenerate('${task.id}')">📊 Riprendi con dati aggiornati</button>
                             <button class="agent-btn-edit" onclick="agentValToClaude('${task.id}')" title="Prepara la consegna per Claude Code (📤 esporta, 📥 importa): la valutazione attuale viene sostituita quando importi il file" style="background:#f5f3ff;color:#6d28d9;border-color:#c4b5fd;">🟣 Rifai con Claude Code</button>
                             <button class="agent-btn-edit" onclick="agentRegenerateMissing('${task.id}', true)" ${task.status==='processing'?'disabled':''} title="Argo non viene più generato in automatico: lo genera ora per gli alunni che non ce l'hanno">📝 Genera Argo (tutti)</button>
-                            <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
+                            <button class="agent-btn-edit" onclick="agentRegenerateAllVS('${task.id}')">🔄 Rigenera tutti</button>
                             ${!task.soloAlunno && task.sessionCode ? `<button class="agent-btn-edit" onclick="agentRiscopriAlunno('${task.sessionCode}')" style="background:#e8f5e9;color:#1b5e20;border-color:#81c784;" title="Rimette in coda la verifica di UN alunno di questa sessione (es. passato da esercitazione a test)">👤 Riscopri un alunno</button>` : ''}
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                         </div>`;
