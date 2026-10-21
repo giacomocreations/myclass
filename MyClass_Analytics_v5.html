@@ -25578,6 +25578,35 @@ ${sectionInstr}`;
         return base;
     }
 
+    // Alunni passati a esercitazione dopo che il task è stato creato (in
+    // LiveLearn la modalità si può cambiare anche dopo la consegna): si tolgono
+    // dal task e dai voti da importare. Ritorna i nomi tolti.
+    function _agentTogliEsercitazioni(task, detail) {
+        if (!task || !detail?.responses) return [];
+        const inEserc = st => {
+            if (!st || !st.safe) return false;
+            const dr = agentMatchResponse(detail, st.safe) || st.detailedResponse || null;
+            return _agentModoRisposta(detail, st.safe, dr) === 'practice';
+        };
+        const tolti = (task.students || []).filter(inEserc);
+        const toltiSafe = new Set(tolti.map(st => st.safe));
+        (task.importData || []).forEach(r => { if (inEserc(r)) toltiSafe.add(r.safe); });
+        if (!toltiSafe.size) return [];
+        const nomi = [];
+        const via = st => {
+            if (!toltiSafe.has(st.safe)) return true;
+            const n = st.nome || st.displayName || st.safe;
+            if (!nomi.includes(n)) nomi.push(n);
+            return false;
+        };
+        task.students = (task.students || []).filter(via);
+        if (Array.isArray(task.importData)) task.importData = task.importData.filter(via);
+        for (const m of [task.studentAnalysis, task.studentArgo, task.studentClassroom]) {
+            if (m) nomi.forEach(n => { delete m[n]; });
+        }
+        return nomi;
+    }
+
     function _agentRespAlreadyIn(safes, respKey, respEntry) {
         const norm  = s => String(s||'').toLowerCase().replace(/[.#$[\]\/ ]/g,'_');
         const words = s => norm(s).split('_').filter(w=>w.length>1).sort().join('_');
@@ -26383,6 +26412,32 @@ ${sectionInstr}`;
                         group.mode = 'practice';
                     }
                 }
+                // Task già creato e alunni passati a esercitazione dopo (dal
+                // pannello dell'alunno in LiveLearn): vanno tolti anche da lì.
+                // Se non resta nessuno, il task sparisce (non si scrive agentDone:
+                // se un alunno torna a test, il task si ricrea).
+                {
+                    const _exT = agentTasks.find(t => t.id === `valscritta_${classId}_${code}`);
+                    if (_exT && !_exT.approvedAt && _exT.status !== 'approved' && _exT.status !== 'dismissed') {
+                        try {
+                            const _sx = await _getSess(code);
+                            if (_sx && (_sx.mode === 'practice' || (_sx.studentModes && Object.keys(_sx.studentModes).length))) {
+                                const _detX = await agentFetchSessionDetail(code, db);
+                                const _tolti = _agentTogliEsercitazioni(_exT, _detX);
+                                if (_tolti.length) {
+                                    console.log(`[Agente] ${classe.nome} ${code}: tolti dal task perché ora in esercitazione: ${_tolti.join(', ')}`);
+                                    if (!(_exT.students || []).length) {
+                                        agentTasks = agentTasks.filter(t => t !== _exT);
+                                        console.log(`[Agente] ${classe.nome} ${code}: nessun alunno in test — task rimosso`);
+                                    }
+                                    agentSaveTasks(agentTasks);
+                                }
+                            }
+                        } catch(e) { console.warn('[Agente] controllo esercitazioni:', e.message); }
+                    } else if (_exT && (_exT.approvedAt || _exT.status === 'approved') && group.mode === 'practice') {
+                        console.warn(`[Agente] ${classe.nome} ${code}: task già approvato, ma ora è un'esercitazione — i voti importati vanno tolti a mano`);
+                    }
+                }
                 if (group.mode === 'practice') {
                     console.log(`[Agente] ${classe.nome}: skip ${code} — practice mode`);
                     continue;
@@ -26880,6 +26935,8 @@ ${sectionInstr}`;
                     console.log(`[Agente] refresh: ➕ aggiunto da responses (non in history): ${displayName} (key: ${respKey})`);
                 }
                 task.students = _agentDedupeStudents(task.students, classeObj);
+                const _tolti = _agentTogliEsercitazioni(task, detail);
+                if (_tolti.length) console.log(`[Agente] refresh ${task.sessionCode}: tolti (ora in esercitazione): ${_tolti.join(', ')}`);
             }
             if (detail?.questions?.length) task.questions = detail.questions;
             if (detail?.studentVersions)   task.studentVersions = detail.studentVersions;
