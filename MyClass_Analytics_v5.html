@@ -23982,7 +23982,7 @@ ${sectionInstr}`;
     // LiveLearn un alunno è passato a test dopo (o il suo voto va rifatto).
     // Il task "solo" non tocca quello della classe: niente agentDone di sessione,
     // niente aggiunta degli altri alunni alla rigenerazione.
-    async function agentRiscopriAlunno() {
+    async function agentRiscopriAlunno(presetCode) {
         let db = null; try { db = firebase.database(); } catch(e) {}
         if (!db) { alert('Firebase non disponibile: accedi prima a LiveLearn/Firebase.'); return; }
         const old = document.getElementById('riscopriAlunnoModal');
@@ -24018,6 +24018,11 @@ ${sectionInstr}`;
             sessions = Object.entries(snap.val() || {})
                 .filter(([, v]) => v && v.classId && classiById[v.classId] && v.status !== 'active')
                 .sort(([, a], [, b]) => (b.createdAt || 0) - (a.createdAt || 0));
+            // Dalla scheda di una verifica: la sua sessione, anche se più vecchia di 90 giorni
+            if (presetCode && !sessions.some(([c]) => c === presetCode)) {
+                const v = (await db.ref('livelearn/sessions/' + presetCode).get()).val();
+                if (v && v.classId && classiById[v.classId]) sessions.unshift([presetCode, v]);
+            }
         } catch(e) { $('raSess').innerHTML = '<option value="">Errore: ' + esc(e.message) + '</option>'; return; }
         const modoLbl = m => m === 'practice' ? 'Esercitazione' : m === 'assigned' ? 'Assegnato' : m === 'teacher' ? 'Controllo docente' : 'Test';
         $('raSess').innerHTML = '<option value="">— Scegli la sessione —</option>' + sessions.map(([code, v]) =>
@@ -24062,6 +24067,10 @@ ${sectionInstr}`;
                 '<div style="font-size:11px;color:#888;margin-top:8px;">Se ha già un voto per questa verifica, all\'approvazione ti verrà chiesto se sostituirlo.</div>';
             $('raStud').querySelectorAll('input[name=raStu]').forEach(rb => rb.onchange = () => setOk(true));
         };
+        if (presetCode && sessions.some(([c]) => c === presetCode)) {
+            $('raSess').value = presetCode;
+            $('raSess').onchange();
+        }
 
         $('raOk').onclick = async () => {
             const sel = $('raStud').querySelector('input[name=raStu]:checked');
@@ -24684,6 +24693,7 @@ ${sectionInstr}`;
                             <button class="agent-btn-edit" onclick="agentValToClaude('${task.id}')" title="Prepara la consegna per Claude Code (📤 esporta, 📥 importa): la valutazione attuale viene sostituita quando importi il file" style="background:#f5f3ff;color:#6d28d9;border-color:#c4b5fd;">🟣 Rifai con Claude Code</button>
                             <button class="agent-btn-edit" onclick="agentRegenerateMissing('${task.id}', true)" ${task.status==='processing'?'disabled':''} title="Argo non viene più generato in automatico: lo genera ora per gli alunni che non ce l'hanno">📝 Genera Argo (tutti)</button>
                             <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
+                            ${!task.soloAlunno && task.sessionCode ? `<button class="agent-btn-edit" onclick="agentRiscopriAlunno('${task.sessionCode}')" style="background:#e8f5e9;color:#1b5e20;border-color:#81c784;" title="Rimette in coda la verifica di UN alunno di questa sessione (es. passato da esercitazione a test)">👤 Riscopri un alunno</button>` : ''}
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                         </div>`;
                 } else {
