@@ -2667,7 +2667,8 @@
                         </div>
                         <div class="form-group">
                             <label>Voto (1-10)</label>
-                            <input type="number" id="newGradeVote" min="1" max="10" step="0.5" placeholder="7.5">
+                            <input type="text" id="newGradeVote" list="votoScaleList" autocomplete="off" inputmode="decimal" placeholder="7.5 / 8- / 7+" oninput="_votoHint('newGradeVote','newGradeVoteHint')">
+                            <small id="newGradeVoteHint" style="color:#666;"></small>
                         </div>
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                             <div class="form-group">
@@ -2909,6 +2910,14 @@
             
             <!-- DATALIST UNITÀ per autocomplete -->
             <datalist id="unitAutocompleteList"></datalist>
+            <!-- Scala voti con +/- (stessa dell'agente) -->
+            <datalist id="votoScaleList">
+                <option value="10"><option value="10-"><option value="9.5"><option value="9+"><option value="9"><option value="9-">
+                <option value="8.5"><option value="8+"><option value="8"><option value="8-"><option value="7.5"><option value="7+">
+                <option value="7"><option value="7-"><option value="6.5"><option value="6+"><option value="6"><option value="6-">
+                <option value="5.5"><option value="5+"><option value="5"><option value="5-"><option value="4.5"><option value="4+">
+                <option value="4"><option value="4-"><option value="3.5"><option value="3"><option value="2"><option value="1">
+            </datalist>
 
             <!-- MODAL MODIFICA VOTO -->
             <div id="editGradeModal" class="hidden" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px;">
@@ -2916,8 +2925,19 @@
                     <h2 style="margin-bottom: 20px; color: #2c3e50;">✏️ Modifica Valutazione</h2>
                     
                     <div class="info-box" style="margin-bottom: 20px;">
-                        <strong>Voto:</strong> <span id="editGradeValue"></span> &nbsp;|&nbsp;
+                        <strong>Voto attuale:</strong> <span id="editGradeValue"></span> &nbsp;|&nbsp;
                         <strong>Tipo:</strong> <span id="editGradeType"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Voto</label>
+                        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                            <input type="text" id="editGradeVote" list="votoScaleList" autocomplete="off" inputmode="decimal"
+                                   placeholder="es. 8-  oppure 7.75" style="width:160px;font-size:16px;font-weight:700;"
+                                   oninput="_votoHint('editGradeVote','editGradeVoteHint')">
+                            <span id="editGradeVoteHint" style="font-size:13px;color:#666;"></span>
+                        </div>
+                        <small style="color:#888;">Puoi scrivere 8-, 7+, 7½, 7/8 oppure il numero (7.75).</small>
                     </div>
                     
                     <div class="form-group">
@@ -5964,7 +5984,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 <li class="history-item">
                     <div style="display: flex; justify-content: space-between; align-items: start; gap: 15px;">
                         <div style="flex: 1;">
-                            <div class="vote">${g.voto} <small style="font-size: 14px; color: #666;">(${tipo})</small>${g.recupero ? `<span class="badge-recupero ${g.recupero}">${g.recupero==='escludi'?'🔴 Recupero (escluso)':g.recupero==='media'?'🟡 Recupero (media)':'🟢 Recupero'}</span>` : ''}</div>
+                            <div class="vote">${_votoLabelIt(g.voto)} <small style="font-size: 14px; color: #666;">(${tipo})</small>${g.recupero ? `<span class="badge-recupero ${g.recupero}">${g.recupero==='escludi'?'🔴 Recupero (escluso)':g.recupero==='media'?'🟡 Recupero (media)':'🟢 Recupero'}</span>` : ''}</div>
                             <div style="font-size: 13px; color: #666; margin-top: 4px;">
                                 ${formatDate(g.data)} ${g.titolo ? '- ' + g.titolo : ''}${g.unit ? ` <span style="background:#e0e7ff;color:#3730a3;border-radius:8px;padding:1px 7px;font-size:11px;font-weight:600;margin-left:4px;">${g.unit}</span>` : ''}
                             </div>
@@ -8193,7 +8213,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
         
         function addGradeWithNote() {
             const competence = document.getElementById('newGradeCompetence').value;
-            const vote = parseFloat(document.getElementById('newGradeVote').value);
+            const vote = _parseVotoIt(document.getElementById('newGradeVote').value);
             const dateVal = document.getElementById('newGradeDate').value;
             const title = document.getElementById('newGradeTitle').value.trim();
             const unit  = document.getElementById('newGradeUnit').value.trim();
@@ -8224,6 +8244,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             
             // Reset form
             document.getElementById('newGradeVote').value = '';
+            _votoHint('newGradeVote','newGradeVoteHint');
             document.getElementById('newGradeDate').value = '';
             document.getElementById('newGradeTitle').value = '';
             document.getElementById('newGradeUnit').value = '';
@@ -8277,6 +8298,51 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             renderStudentDetail();
         }
         
+        // ── Voti con +/- ─────────────────────────────────────────────────
+        // "8-" = 7.75, "7+" = 7.25, "7½"/"7/8" = 7.5, "7,75" = 7.75. null se non valido.
+        function _parseVotoIt(txt) {
+            let t = String(txt == null ? '' : txt).trim().toLowerCase()
+                .replace(/\s+/g, '').replace(',', '.').replace('½', '.5').replace(/mezzo$/, '.5');
+            if (!t) return null;
+            let m;
+            if ((m = t.match(/^(\d{1,2})\/(\d{1,2})$/))) {          // 7/8 → 7.5
+                const a = +m[1], b = +m[2];
+                return b === a + 1 ? a + 0.5 : null;
+            }
+            if ((m = t.match(/^(\d{1,2})([+-]{1,2})$/))) {           // 8- → 7.75, 7+ → 7.25
+                const n = +m[1];
+                if (m[2] === '+') return n + 0.25;
+                if (m[2] === '-') return n - 0.25;
+                if (m[2] === '--') return n - 0.5;
+                if (m[2] === '++') return n + 0.5;
+                if (m[2] === '+-' || m[2] === '-+') return n;
+                return null;
+            }
+            if ((m = t.match(/^(\d{1,2}(?:\.\d{1,2})?)$/))) return Math.round(+m[1] * 100) / 100;
+            return null;
+        }
+        // 7.75 → "8-", 7.25 → "7+", 7.5 → "7.5". full: per i quarti "8- (7.75)"
+        function _votoLabelIt(v, soloEtichetta) {
+            const n = Number(v);
+            if (!isFinite(n)) return String(v == null ? '' : v);
+            const r = Math.round(n * 100) / 100, fl = Math.floor(r), fr = Math.round((r - fl) * 100) / 100;
+            let lab = null;
+            if (fr === 0.25) lab = fl + '+';
+            else if (fr === 0.75) lab = (fl + 1) + '-';
+            if (!lab) return String(r);
+            return soloEtichetta ? lab : `${lab} (${r})`;
+        }
+        function _votoHint(inputId, hintId) {
+            const inp = document.getElementById(inputId), h = document.getElementById(hintId);
+            if (!inp || !h) return;
+            const t = inp.value.trim();
+            if (!t) { h.textContent = ''; return; }
+            const v = _parseVotoIt(t);
+            if (v == null || v < 1 || v > 10) { h.textContent = '⚠️ voto non valido'; h.style.color = '#c62828'; return; }
+            h.textContent = `= ${v}` + (_votoLabelIt(v, true) !== String(v) ? ` (${_votoLabelIt(v, true)})` : '');
+            h.style.color = '#2e7d32';
+        }
+
         function editGrade(index, tipo) {
             editingGradeIndex = index;
             editingGradeType = tipo;
@@ -8290,8 +8356,10 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             }
             
             // Popola il modale
-            document.getElementById('editGradeValue').textContent = grade.voto;
+            document.getElementById('editGradeValue').textContent = _votoLabelIt(grade.voto);
             document.getElementById('editGradeType').textContent = tipo === 'orale' ? 'Orale' : 'Scritto';
+            document.getElementById('editGradeVote').value = _votoLabelIt(grade.voto, true);
+            _votoHint('editGradeVote','editGradeVoteHint');
             // Popola campo data in formato YYYY-MM-DD per input type="date"
             const gradeDate = grade.data ? new Date(grade.data).toISOString().substring(0, 10) : '';
             document.getElementById('editGradeDataField').value = gradeDate;
@@ -8325,6 +8393,15 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 return;
             }
             
+            // Voto: accetta 8-, 7+, 7½, 7/8 o il numero
+            const _votoTxt = document.getElementById('editGradeVote').value.trim();
+            const _votoNew = _votoTxt ? _parseVotoIt(_votoTxt) : Number(grade.voto);
+            if (_votoNew == null || !(_votoNew >= 1 && _votoNew <= 10)) {
+                alert('Voto non valido: scrivi un voto tra 1 e 10 (es. 8-, 7+, 7.5, 7.75).');
+                return;
+            }
+            grade.voto = _votoNew;
+
             // Aggiorna titolo e nota
             const dateVal = document.getElementById('editGradeDataField').value;
             if (dateVal) grade.data = new Date(dateVal + 'T12:00:00').toISOString();
