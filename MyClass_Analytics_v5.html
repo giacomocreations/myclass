@@ -26344,7 +26344,12 @@ ${sectionInstr}`;
         // l'AI non deve stimare "quante giuste su quante" (prima le inventava).
         const calcDetPts = (q, a, pts, out) => _agentEvalPts(q, a, out);
 
+        // Esercizi tolti dal docente in LiveLearn (🚫 Escludi): non valutabili, l'AI
+        // non li deve vedere né commentare. La nota per lo storico la aggiunge
+        // l'approvazione (_agentNotaEsclusi), non l'AI.
+        const excl = detailedResponse.excludedQuestions || {};
         return questions.map((q, i) => {
+            if (excl[i]) return '';
             const a   = answers[i];
             const pts = q.points || 1;
             const ms  = (detailedResponse.manualScores || {})[i];
@@ -26377,7 +26382,23 @@ ${sectionInstr}`;
             const expPart  = expText ? ` | atteso: "${expText}"` : '';
             const timePart = timeStr ? ` | ${timeStr}` : '';
             return `Q${i+1}[${q.type}${tag}] ${qtext} | risposta: "${ansText}"${expPart} | ${ptsStr}${timePart}`;
-        }).join('\n');
+        }).filter(Boolean).join('\n');
+    }
+
+    // Nota per lo storico sugli esercizi esclusi dal docente in LiveLearn.
+    // Va solo nello storico di MyClass: il feedback per StudentApp non li nomina.
+    function _agentNotaEsclusi(questions, detailedResponse) {
+        const excl = (detailedResponse && detailedResponse.excludedQuestions) || {};
+        const idx = Object.keys(excl).filter(k => excl[k]).map(Number).filter(n => Number.isFinite(n)).sort((a, b) => a - b);
+        if (!idx.length) return '';
+        const desc = i => {
+            const q = (questions || [])[i] || {};
+            const t = String(q.text || q.question?.text || '').replace(/\*\*/g, '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+            return `${i + 1}` + (t ? ` ("${t.length > 60 ? t.slice(0, 60) + '…' : t}")` : '');
+        };
+        return idx.length === 1
+            ? `Il docente ha escluso l'esercizio ${desc(idx[0])} perché non valutabile.`
+            : `Il docente ha escluso gli esercizi ${idx.map(desc).join(', ')} perché non valutabili.`;
     }
 
     async function agentCheckLiveSessions() {
@@ -27918,16 +27939,20 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                             studente.scritto = studente.scritto.filter(g => g.sessionCode !== task.sessionCode);
                         }
                     }
+                    // Esercizi esclusi dal docente: solo qui, nella nota dello storico
+                    const _stuEx = task.students?.find(st => (r.safe && st.safe === r.safe) || st.displayName === r.nome || st.nome === r.nome);
+                    const _notaEscl = _agentNotaEsclusi(r._studentQs || task.questions || [], _stuEx?.detailedResponse || r.detailedResponse);
+                    const _conEscl = t => [t, _notaEscl].filter(Boolean).join('\n\n');
                     studente.scritto.push({
                         data: task.sessionDate, voto: r.votoValue,
                         titolo: `Verifica ${task.unit||''}`.trim(),
                         unit:         task.unit || '',
-                        nota: notaAlunno, source: 'agent',
+                        nota: _conEscl(notaAlunno), source: 'agent',
                         // Dati JSON strutturati per lo storico
                         pct:          r.pct          ?? null,
                         tags:         r.tags          || {},
                         ...(r.domande ? { domande: r.domande } : {}),
-                        analisi:      task.studentAnalysis?.[r.nome] || '',
+                        analisi:      _conEscl(task.studentAnalysis?.[r.nome] || ''),
                         avgTimeByType:r.avgTimeByType || {},
                         totalTimeSec: r.totalTimeSec  ?? null,
                         sessionCode:  task.sessionCode || ''
