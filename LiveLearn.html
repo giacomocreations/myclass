@@ -8847,7 +8847,7 @@ async function studentEnter() {
   S.studentName = studentName; S.sessionCode = code; S.activity = _sessFilterActivity(_actHydrate(aSnap.val()), session);
   S.sessionMode = session.mode || 'test';
   S.sessionRepeatable = session.status === 'assigned' && !!session.repeatable;
-  S._attempts = null; S._retryLocal = false;
+  S._attempts = null; S._retryLocal = false; S._retryNext = null;
   _syncPassageBtn(); // mostra/nascondi il pulsante 📄 Testo
   // Legge il provider AI scelto dal docente per questa sessione
   _SESSION_AI_PROVIDER = session.aiProvider || 'gemma';
@@ -8898,6 +8898,9 @@ async function studentEnter() {
   }
 
   S.studentVersion = assignedVersion || 'originale';
+  // Domande originali e versioni: servono se l'alunno ha consegnato una
+  // versione diversa da quella assegnata adesso (vedi "Rifai" qui sotto)
+  const _origQs = S.activity.questions, _allVers = S.activity.versions || {};
 
   // R1: rimosso il log diagnostico che stampava in console l'intera mappa
   // nome → versione della classe.
@@ -9011,7 +9014,20 @@ async function studentEnter() {
     // domanda: la schermata dell'alunno segnava errori su risposte giuste e la
     // ri-valutazione AI riscriveva i punteggi sugli esercizi sbagliati.
     S.activity = { ...S.activity, questions: _canonQs };
-    S.qOrigMap = _canonQs.map((_, i) => i);
+    S._retryNext = null;
+    // Versione cambiata dal docente dopo la consegna (es. assegnata la fila A
+    // per errore): i risultati restano quelli della versione svolta, il
+    // prossimo "Rifai" parte con la versione assegnata adesso.
+    const _doneVer = existingResp.studentVersion || 'originale';
+    if (_doneVer !== S.studentVersion) {
+      const _doneQs = _doneVer === 'originale' ? _origQs : _allVers[_doneVer];
+      if (Array.isArray(_doneQs) && _doneQs.length) {
+        S._retryNext = { version: S.studentVersion, questions: _canonQs };
+        S.studentVersion = _doneVer;
+        S.activity = { ...S.activity, questions: _doneQs };
+      }
+    }
+    S.qOrigMap = S.activity.questions.map((_, i) => i);
     S.submitted       = true;
     S.answers         = fbArr(existingResp.answers) || new Array(questions.length).fill(null);
     S.studentScore    = existingResp.score || 0;
@@ -12905,7 +12921,8 @@ async function restartAssignedActivity() {
   if (S.removed) return;
   if (!confirm('Vuoi rifare l\'esercitazione da capo?\nIl risultato di adesso resta salvato tra i tentativi.')) return;
   document.getElementById('assigned-retry-box')?.remove();
-  const qs = (S.activity && S.activity.questions) || [];
+  let qs = (S.activity && S.activity.questions) || [];
+  const _next = S._retryNext;
   if (db && S.sessionCode && S.safeName && !S._retryLocal) {
     const ref = db.ref('livelearn/responses/' + S.sessionCode + '/' + S.safeName);
     try {
@@ -12917,20 +12934,30 @@ async function restartAssignedActivity() {
         prev.push({
           score: sc, maxScore: maxPts, pct: maxPts > 0 ? Math.round(sc / maxPts * 100) : null,
           submittedAt: r.submittedAt, answers: r.answers || null,
-          aiScores: r.aiScores || null, manualScores: r.manualScores || null
+          aiScores: r.aiScores || null, manualScores: r.manualScores || null,
+          studentVersion: r.studentVersion || 'originale'
         });
       }
       await ref.update({
         attempts: prev.length ? prev : null,
         submittedAt: null, status: null, answers: null, score: 0,
         aiScores: null, aiFeedbacks: null, manualScores: null, aiScoringPending: null,
-        questionTimes: null, joinedAt: Date.now(), retryStartedAt: Date.now()
+        questionTimes: null, joinedAt: Date.now(), retryStartedAt: Date.now(),
+        ...(_next ? { studentVersion: _next.version } : {})
       });
       S._attempts = prev;
     } catch (e) {
       console.warn('[ripeti] il record non si può riaprire, tentativo solo locale:', e.message);
       S._retryLocal = true;
     }
+  }
+  // Il nuovo tentativo parte con la versione assegnata adesso dal docente
+  if (_next) {
+    S.studentVersion = _next.version;
+    S.activity = { ...S.activity, questions: _next.questions };
+    S.qOrigMap = _next.questions.map((_, i) => i);
+    qs = _next.questions;
+    S._retryNext = null;
   }
   // Stato pulito (anche le cache di drag-drop, matching, riordino, categorie)
   Object.keys(S).forEach(k => { if (/^(ddState_|matchShuffle_|matchColors_|roState_|reorderState_|catState_)/.test(k)) delete S[k]; });
