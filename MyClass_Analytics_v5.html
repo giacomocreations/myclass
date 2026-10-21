@@ -1912,6 +1912,7 @@
                         </select>
                     </label>
                     <button class="agent-btn-clear" onclick="agentForceRediscoverScritta()" style="background:#fff3e0;color:#e65100;border-color:#ffb74d;" title="Rimuove i task valscritta dismissed dal localStorage e rilancia la scansione">🔁 Riscopri scritto</button>
+                    <button class="agent-btn-clear" onclick="agentRiscopriAlunno()" style="background:#e8f5e9;color:#1b5e20;border-color:#81c784;" title="Rimette in coda la verifica di UN alunno (es. passato da esercitazione a test in LiveLearn) per generarne la valutazione e importarne il voto">👤 Riscopri un alunno</button>
                     <span style="font-size:12px;color:#aaa;" id="agentNextRunLabel"></span>
                 </div>
 
@@ -23750,6 +23751,9 @@ ${sectionInstr}`;
                     .set('dismissed');
             } catch(e) { console.warn('[Agente] Firebase dismiss skip:', e.message); }
             agentTasks = agentTasks.filter(t => t.id !== taskId);
+        } else if (task.type === 'valscritta' && task.soloAlunno) {
+            // Task di un solo alunno: non c'è un evento da cui si ricrei, si elimina
+            agentTasks = agentTasks.filter(t => t.id !== taskId);
         } else if (['cdc','glo','piano','valscritta'].includes(task.type)) {
             // Per i task legati al Calendar/piano: NON eliminare, solo nascondere.
             // Se eliminati, il prossimo agentRun troverebbe l'evento Calendar ancora
@@ -23970,6 +23974,139 @@ ${sectionInstr}`;
         box.appendChild(actions);
         overlay.appendChild(box);
         document.body.appendChild(overlay);
+    }
+
+    // ── Riscopri UN alunno ───────────────────────────────────────────────
+    // Crea in coda un task di verifica scritta con un solo alunno, anche se la
+    // sessione è già approvata, scartata o è un'esercitazione: serve quando in
+    // LiveLearn un alunno è passato a test dopo (o il suo voto va rifatto).
+    // Il task "solo" non tocca quello della classe: niente agentDone di sessione,
+    // niente aggiunta degli altri alunni alla rigenerazione.
+    async function agentRiscopriAlunno() {
+        let db = null; try { db = firebase.database(); } catch(e) {}
+        if (!db) { alert('Firebase non disponibile: accedi prima a LiveLearn/Firebase.'); return; }
+        const old = document.getElementById('riscopriAlunnoModal');
+        if (old) old.remove();
+        const esc = x => String(x == null ? '' : x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const classiById = {};
+        (data.classi || []).forEach(c => { classiById[c.nome.replace(/\s+/g,'_').toLowerCase()] = c; });
+
+        const overlay = document.createElement('div');
+        overlay.id = 'riscopriAlunnoModal';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:inherit;';
+        overlay.innerHTML = `<div style="background:#fff;border-radius:14px;padding:24px 28px;max-width:620px;width:92%;max-height:86vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25);">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+                <span style="font-size:22px;">👤</span>
+                <div><div style="font-weight:700;font-size:16px;color:#333;">Riscopri la verifica di un alunno</div>
+                <div style="font-size:12px;color:#888;margin-top:2px;">L'agente crea un task solo per lui: generi la valutazione e approvi il voto.</div></div>
+            </div>
+            <label style="display:block;font-size:12px;font-weight:700;color:#555;margin-bottom:6px;">SESSIONE LIVELEARN (ultimi 90 giorni)</label>
+            <select id="raSess" style="width:100%;padding:9px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;margin-bottom:14px;"><option value="">⏳ Carico le sessioni…</option></select>
+            <div id="raStud" style="margin-bottom:16px;"></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button id="raCancel" style="padding:9px 18px;border:1px solid #ccc;border-radius:8px;cursor:pointer;font-size:14px;background:#f5f5f5;color:#555;">Annulla</button>
+                <button id="raOk" disabled style="padding:9px 18px;border:none;border-radius:8px;cursor:not-allowed;opacity:.5;font-size:14px;font-weight:600;background:#2e7d32;color:#fff;">▶ Metti in coda</button>
+            </div></div>`;
+        document.body.appendChild(overlay);
+        const $ = id => overlay.querySelector('#' + id);
+        $('raCancel').onclick = () => overlay.remove();
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+        let sessions = [];
+        try {
+            const snap = await db.ref('livelearn/sessions').orderByChild('createdAt').startAt(Date.now() - 90 * 86400000).get();
+            sessions = Object.entries(snap.val() || {})
+                .filter(([, v]) => v && v.classId && classiById[v.classId] && v.status !== 'active')
+                .sort(([, a], [, b]) => (b.createdAt || 0) - (a.createdAt || 0));
+        } catch(e) { $('raSess').innerHTML = '<option value="">Errore: ' + esc(e.message) + '</option>'; return; }
+        const modoLbl = m => m === 'practice' ? 'Esercitazione' : m === 'assigned' ? 'Assegnato' : m === 'teacher' ? 'Controllo docente' : 'Test';
+        $('raSess').innerHTML = '<option value="">— Scegli la sessione —</option>' + sessions.map(([code, v]) =>
+            `<option value="${esc(code)}">${new Date(v.createdAt).toLocaleDateString('it-IT')} · ${esc(classiById[v.classId].nome)} · ${esc(v.title || code)} (${modoLbl(v.mode)}) · ${esc(code)}</option>`).join('');
+
+        let detail = null, curCode = '';
+        const setOk = on => { $('raOk').disabled = !on; $('raOk').style.opacity = on ? '1' : '.5'; $('raOk').style.cursor = on ? 'pointer' : 'not-allowed'; };
+        const normN = x => String(x || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+        const stuMyClass = (classe, respName) => {
+            const toks = normN(respName).split(/[\s_]+/).filter(w => w.length > 1);
+            return (classe.studenti || []).find(st => {
+                const full = normN(`${st.cognome} ${st.nome}`);
+                return toks.length >= 2 && toks.every(t => full.includes(t));
+            }) || null;
+        };
+        $('raSess').onchange = async () => {
+            curCode = $('raSess').value; detail = null; setOk(false);
+            if (!curCode) { $('raStud').innerHTML = ''; return; }
+            $('raStud').innerHTML = '<div style="font-size:13px;color:#888;">⏳ Carico le consegne…</div>';
+            try { detail = await agentFetchSessionDetail(curCode, db); } catch(e) {}
+            if (!detail?.responses) { $('raStud').innerHTML = '<div style="color:#b71c1c;font-size:13px;">Sessione o attività non trovata.</div>'; return; }
+            const sess = sessions.find(([c]) => c === curCode)[1];
+            const classe = classiById[sess.classId];
+            const rows = Object.entries(detail.responses)
+                .filter(([, r]) => r && r.submittedAt && !r.removed)
+                .map(([k, r]) => {
+                    const respName = r.aliasOf || r.name || k.replace(/_/g, ' ');
+                    const st = stuMyClass(classe, respName);
+                    const voto = st && (st.scritto || []).find(g => g.sessionCode === curCode);
+                    return { k, r, nome: st ? `${st.cognome} ${st.nome}` : respName, voto, modo: _agentModoRisposta(detail, k, r) };
+                })
+                .sort((a, b) => a.nome.localeCompare(b.nome));
+            if (!rows.length) { $('raStud').innerHTML = '<div style="font-size:13px;color:#888;">Nessuna consegna in questa sessione.</div>'; return; }
+            $('raStud').innerHTML = '<label style="display:block;font-size:12px;font-weight:700;color:#555;margin-bottom:6px;">ALUNNO</label>' +
+                '<div style="border:1px solid #eee;border-radius:8px;overflow:hidden;">' + rows.map((x, i) =>
+                `<label style="display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;${i ? 'border-top:1px solid #f0f0f0;' : ''}">
+                    <input type="radio" name="raStu" value="${esc(x.k)}" style="width:16px;height:16px;accent-color:#2e7d32;">
+                    <span style="flex:1;font-weight:600;font-size:13px;color:#333;">${esc(x.nome)}</span>
+                    ${x.modo === 'practice' ? '<span style="font-size:11px;background:#ede7f6;color:#5e35b1;border-radius:10px;padding:1px 8px;font-weight:700;">esercitazione</span>' : ''}
+                    <span style="font-size:11px;color:${x.voto ? '#1b5e20' : '#999'};">${x.voto ? 'voto in storico: ' + esc(x.voto.voto) : 'nessun voto'}</span>
+                </label>`).join('') + '</div>' +
+                '<div style="font-size:11px;color:#888;margin-top:8px;">Se ha già un voto per questa verifica, all\'approvazione ti verrà chiesto se sostituirlo.</div>';
+            $('raStud').querySelectorAll('input[name=raStu]').forEach(rb => rb.onchange = () => setOk(true));
+        };
+
+        $('raOk').onclick = async () => {
+            const sel = $('raStud').querySelector('input[name=raStu]:checked');
+            if (!sel || !detail) return;
+            const respKey = sel.value;
+            const sess = sessions.find(([c]) => c === curCode)[1];
+            const classe = classiById[sess.classId];
+            const r = detail.responses[respKey];
+            const respName = r.aliasOf || r.name || respKey.replace(/_/g, ' ');
+            const st = stuMyClass(classe, respName);
+            const displayName = st ? `${st.cognome} ${st.nome}` : respName;
+            const id = `valscritta_${sess.classId}_${curCode}__solo_${respKey}`;
+            const prev = agentTasks.find(t => t.id === id);
+            if (prev && !['approved', 'dismissed', 'failed'].includes(prev.status)) {
+                alert(`${displayName} è già in coda per questa verifica.`);
+                overlay.remove(); agentRenderPanel(); return;
+            }
+            agentTasks = agentTasks.filter(t => t.id !== id);
+            const now = new Date().toISOString();
+            const task = {
+                id, type: 'valscritta', classe: classe.nome, classId: sess.classId, sessionCode: curCode,
+                sessionDate: new Date(sess.createdAt).toISOString().split('T')[0], unit: sess.title || '',
+                soloAlunno: respKey, soloNome: displayName,
+                students: [{
+                    safe: respKey, displayName, detailedResponse: r,
+                    session: {
+                        ts: r.submittedAt || 0, score: r.score ?? null, maxPts: r.maxPts ?? null,
+                        pct: (r.maxPts > 0) ? Math.round((r.score || 0) / r.maxPts * 100) : null,
+                        activityTitle: sess.title || '', mode: 'test', tagBreakdown: {}
+                    }
+                }],
+                questions: detail.questions || [], studentVersions: detail.studentVersions || {},
+                actVersions: detail.actVersions || {}, activityId: detail.activityId || null,
+                status: 'pending', pendingAt: now, createdAt: now
+            };
+            agentTasks.push(task);
+            agentSaveTasks(agentTasks);
+            overlay.remove();
+            agentRenderPanel(); agentBadgeUpdate();
+            console.log(`[Agente] 👤 riscoperta ${displayName} (${curCode}) → genero`);
+            try { await agentTaskValScritta(task); }
+            catch(e) { task.status = 'error'; task.error = e.message; }
+            agentSaveTasks(agentTasks);
+            agentRenderPanel(); agentBadgeUpdate();
+        };
     }
 
     // Badge header
@@ -24226,7 +24363,8 @@ ${sectionInstr}`;
             if (task.type === 'valscritta') {
                 if (task.unit)     subtitleParts.push(task.unit);
                 const nStu = task.importData?.length || task.students?.length || 0;
-                if (nStu)          subtitleParts.push(`${nStu} alunni`);
+                if (task.soloAlunno) subtitleParts.push(`👤 solo ${task.soloNome || task.soloAlunno}`);
+                else if (nStu)     subtitleParts.push(`${nStu} alunni`);
             } else if (task.type === 'valorale') {
                 if (task.studentName) subtitleParts.push(task.studentName);
                 if (task.unit)        subtitleParts.push(task.unit);
@@ -26899,6 +27037,10 @@ ${sectionInstr}`;
                 for (const s of task.students) {
                     s.detailedResponse = agentMatchResponse(detail, s.safe);
                 }
+            }
+            // Task di un solo alunno (👤 Riscopri un alunno): resta solo lui,
+            // anche se in LiveLearn è in esercitazione (l'ha scelto il docente)
+            if (detail?.responses && !task.soloAlunno) {
                 // ── Merge: aggiunge studenti in responses ma non nel task (non in history) ──
                 const classeObj = (data.classi||[]).find(c => c.nome === task.classe);
                 const existingSafes = new Set(task.students.map(s => s.safe));
@@ -27754,6 +27896,18 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                     });
                 if (studente) {
                     if (!studente.scritto) studente.scritto = [];
+                    // Riscoperta di un solo alunno: un voto già presente per questa
+                    // verifica si sostituisce (o si lascia, e allora non si approva)
+                    if (task.soloAlunno && task.sessionCode) {
+                        const _gia = studente.scritto.filter(g => g.sessionCode === task.sessionCode);
+                        if (_gia.length) {
+                            if (!confirm(`${studente.cognome} ${studente.nome} ha già ${_gia.length > 1 ? _gia.length + ' voti' : 'il voto ' + _gia[0].voto} per questa verifica.\n\nSostituirlo con ${r.votoValue}?`)) {
+                                alert('Approvazione annullata: il voto in storico non è stato toccato.');
+                                return;
+                            }
+                            studente.scritto = studente.scritto.filter(g => g.sessionCode !== task.sessionCode);
+                        }
+                    }
                     studente.scritto.push({
                         data: task.sessionDate, voto: r.votoValue,
                         titolo: `Verifica ${task.unit||''}`.trim(),
@@ -27882,7 +28036,9 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
         // ── Persiste l'approvazione su Firebase ──────────────────────────────
         // Sopravvive al clear del localStorage: al prossimo agentRun questa
         // sessione verrà riconosciuta come già gestita anche senza il task locale.
-        if (db && task.sessionCode && task.classId) {
+        // Il task di un solo alunno non chiude la sessione: quello della classe
+        // (se c'è ancora) deve poter proseguire
+        if (db && task.sessionCode && task.classId && !task.soloAlunno) {
             try {
                 await db.ref(`livelearn/agentDone/${task.classId}/${task.sessionCode}`).set({
                     status: 'approved',
