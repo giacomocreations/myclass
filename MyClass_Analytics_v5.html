@@ -25547,7 +25547,8 @@ ${sectionInstr}`;
                 fuzzyLookup[_agWords(entry.aliasOf)] = entry;
             }
             return { questions, responses, fuzzyLookup, _agNorm, _agWords, studentVersions, actVersions,
-                     activityId: sess.activityId, versionLayout: act.versionLayout || {} };
+                     activityId: sess.activityId, versionLayout: act.versionLayout || {},
+                     mode: sess.mode || 'test', studentModes: sess.studentModes || {} };
         } catch(e) {
             console.warn('[Agente] fetchSessionDetail', sessionCode, e.message);
             return null;
@@ -25558,6 +25559,25 @@ ${sectionInstr}`;
     // normalizzata, anche a parole invertite) conta l'associazione fatta in LiveLearn:
     // se il docente ha collegato il nome digitato a un nome del registro (aliasOf),
     // lo studente e' quello del registro e non va aggiunto una seconda volta.
+    // Modalità svolta da un alunno: in LiveLearn il docente può far fare a un
+    // singolo alunno l'esercitazione in una sessione di test, o il test in
+    // un'esercitazione (sessions/<codice>/studentModes, per nome).
+    // sess: { mode, studentModes } (la sessione o il dettaglio dell'agente).
+    function _agentModoRisposta(sess, respKey, respEntry) {
+        const base = (sess && sess.mode) || 'test';
+        if (base !== 'test' && base !== 'practice') return base;
+        const sm = (sess && sess.studentModes) || {};
+        const keys = Object.keys(sm);
+        if (!keys.length) return base;
+        const norm = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[.#$[\]\/_\s]+/g, ' ').trim();
+        for (const n of [respEntry && respEntry.aliasOf, respKey, respEntry && respEntry.name]) {
+            if (!n) continue;
+            const k = keys.find(k2 => norm(k2) === norm(n));
+            if (k && (sm[k] === 'test' || sm[k] === 'practice')) return sm[k];
+        }
+        return base;
+    }
+
     function _agentRespAlreadyIn(safes, respKey, respEntry) {
         const norm  = s => String(s||'').toLowerCase().replace(/[.#$[\]\/ ]/g,'_');
         const words = s => norm(s).split('_').filter(w=>w.length>1).sort().join('_');
@@ -26330,7 +26350,7 @@ ${sectionInstr}`;
                             safe,
                             session: { ts: r.submittedAt, score: r.score, maxPts: r.maxPts,
                                        pct: r.maxPts > 0 ? Math.round((r.score||0)/r.maxPts*100) : 0,
-                                       activityTitle: s.title || '', mode: s.mode || 'test' },
+                                       activityTitle: s.title || '', mode: _agentModoRisposta(s, safe, r) },
                             displayName: (r.aliasOf || r.name || safe).replace(/_/g,' ')
                         })),
                         activityTitle: s.title || '',
@@ -26349,6 +26369,20 @@ ${sectionInstr}`;
                 agentCheckAbort(); // ← interrompi se l'utente ha premuto Stop
                 group.students = group.students.filter(st => !_agentEUnTester(st));
                 if (group.students.length < 1) continue;
+                // Test ↔ esercitazione per il singolo alunno: si valutano solo
+                // le prove svolte come test (la voce di ognuno porta la sua modalità).
+                {
+                    const _mAl = st => (st.session && st.session.mode) || group.mode;
+                    const _nonPr = group.students.filter(st => _mAl(st) !== 'practice');
+                    if (_nonPr.length && (_nonPr.length < group.students.length || group.mode === 'practice')) {
+                        if (_nonPr.length < group.students.length)
+                            console.log(`[Agente] ${classe.nome} ${code}: ${group.students.length - _nonPr.length} alunni in esercitazione — non valutati`);
+                        group.students = _nonPr;
+                        group.mode = _mAl(_nonPr[0]);
+                    } else if (!_nonPr.length) {
+                        group.mode = 'practice';
+                    }
+                }
                 if (group.mode === 'practice') {
                     console.log(`[Agente] ${classe.nome}: skip ${code} — practice mode`);
                     continue;
@@ -26689,6 +26723,7 @@ ${sectionInstr}`;
                     const _norm = s => String(s||'').toLowerCase().replace(/[.#$[\]/ ]/g,'_');
                     for (const [respKey, respEntry] of Object.entries(detail.responses)) {
                         if (!respEntry || !respEntry.submittedAt || respEntry.removed) continue; // non consegnato / rimosso
+                        if (_agentModoRisposta(detail, respKey, respEntry) === 'practice') continue; // esercitazione: non si valuta
                         // Controlla se questo studente è già incluso (esatto, fuzzy o via aliasOf)
                         if (_agentRespAlreadyIn(existingSafes, respKey, respEntry)) continue;
                         // Cerca il displayName dalla lista MyClass
@@ -26815,6 +26850,7 @@ ${sectionInstr}`;
                 const _norm = s => String(s||'').toLowerCase().replace(/[.#$[\]/ ]/g,'_');
                 for (const [respKey, respEntry] of Object.entries(detail.responses)) {
                     if (!respEntry || !respEntry.submittedAt || respEntry.removed) continue;
+                    if (_agentModoRisposta(detail, respKey, respEntry) === 'practice') continue; // esercitazione: non si valuta
                     if (_agentRespAlreadyIn(existingSafes, respKey, respEntry)) continue;
                     const _normName = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
                     const respName = respEntry.aliasOf || respEntry.name || respKey.replace(/_/g,' ');

@@ -222,14 +222,25 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--primary); 
 .version-mode-btns { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 
 /* STUDENT ASSIGNMENT */
-.student-assign-grid { max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
-.student-assign-row { display: grid; grid-template-columns: 1fr 80px 80px 80px 80px; align-items: center; padding: 6px 12px; font-size: 12px; border-bottom: 1px solid #f0f0f0; }
+/* Tabella intera, senza barre di scorrimento interne: scorre (se serve) solo
+   il riquadro, con l'intestazione sempre visibile. Righe alternate, riga sotto
+   il mouse evidenziata e casella scelta colorata: meno clic sulla riga sbagliata. */
+#modal-start-session .modal-box { max-width: 580px; transition: max-width .15s; }
+#modal-start-session.wide .modal-box { max-width: min(1200px, 96vw); max-height: 96vh; padding: 24px 28px; }
+#modal-start-session.wide { padding: 12px; }
+.student-assign-grid { border: 1px solid var(--border); border-radius: 8px; }
+.student-assign-row { display: grid; grid-template-columns: 1fr 80px 80px 80px 80px; align-items: stretch; padding: 0 8px; font-size: 13px; border-bottom: 1px solid #eceaf5; }
+.student-assign-row:nth-child(even):not(.header) { background: #faf9ff; }
+.student-assign-row:not(.header):hover { background: #ede9ff; }
 .student-assign-row:last-child { border-bottom: none; }
-.student-assign-row.header { background: var(--surface2); font-weight: 800; color: var(--muted); position: sticky; top: 0; z-index: 1; }
-.student-assign-row label { display: flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; font-size: 11px; }
-.student-assign-name { font-weight: 700; font-size: 13px; }
-.student-assign-grid { overflow-x: auto; }
-.student-assign-row.header .sa-col { cursor: pointer; border-radius: 6px; padding: 2px 0; }
+.student-assign-row.header { background: var(--surface2); font-weight: 800; color: var(--muted); position: sticky; top: -24px; z-index: 1; box-shadow: 0 1px 0 var(--border); }
+.student-assign-row > span, .student-assign-row > label { padding: 5px 4px; }
+.student-assign-row label { display: flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; font-size: 12px; border-radius: 6px; margin: 2px; }
+.student-assign-row label:has(input:checked) { background: var(--primary-light); outline: 2px solid var(--primary); outline-offset: -2px; }
+.student-assign-row label.sa-mode:has(input:checked) { background: #fef3c7; outline-color: #f59e0b; }
+.student-assign-row input[type=radio], .student-assign-row input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; }
+.student-assign-name { font-weight: 700; font-size: 14px; display: flex; align-items: center; }
+.student-assign-row.header .sa-col { cursor: pointer; border-radius: 6px; text-align: center; font-size: 12px; line-height: 1.2; display: flex; align-items: center; justify-content: center; }
 .student-assign-row.header .sa-col:hover { background: var(--primary-light); color: var(--primary); }
 
 /* DSA LARGE TEXT */
@@ -1257,6 +1268,8 @@ const CONFIG = {
         </div>
       </div>
       <div style="margin-top:12px;" id="waiting-version-badge"></div>
+      <!-- Nome non trovato nel registro: si aspetta l'associazione del docente -->
+      <div id="waiting-unrecognized" style="display:none;margin-top:16px;background:#fffbeb;border:2px solid #f59e0b;border-radius:14px;padding:14px 18px;text-align:left;font-size:14px;line-height:1.5;color:#78350f;"></div>
     </div>
 
     <!-- Revision sheet -->
@@ -1516,7 +1529,7 @@ const CONFIG = {
      MODAL: AVVIA SESSIONE
      ════════════════════ -->
 <div id="modal-start-session" class="modal-overlay hidden">
-  <div class="modal-box" style="max-width:580px;">
+  <div class="modal-box">
     <h2>▶ Avvia sessione</h2>
     <p class="modal-sub" id="start-session-activity-name" style="font-size:14px;font-weight:600;color:#555;"></p>
 
@@ -1587,8 +1600,8 @@ const CONFIG = {
 
     <!-- Student version assignment -->
     <div id="student-assign-area" style="display:none;margin-bottom:18px;">
-      <label style="font-size:13px;font-weight:700;margin-bottom:8px;display:block;">🎯 Assegna versioni (opzionale)</label>
-      <p class="text-muted mb-8" style="font-size:11px;">Seleziona la versione per ogni studente (clic sull'intestazione di una colonna = a tutti). L'alunno non vedrà nessun riferimento alla versione.</p>
+      <label style="font-size:13px;font-weight:700;margin-bottom:8px;display:block;">🎯 Assegna versioni e modalità (opzionale)</label>
+      <p class="text-muted mb-8" style="font-size:12px;" id="student-assign-help">Seleziona la versione per ogni studente (clic sull'intestazione di una colonna = a tutti). L'alunno non vedrà nessun riferimento alla versione.</p>
       <div class="student-assign-grid" id="student-assign-grid"></div>
     </div>
 
@@ -5741,6 +5754,8 @@ async function startSession(activityId, title) {
   if (_aa) _aa.style.display = 'none';
   if (_ag) _ag.innerHTML = '';
   S.pendingVersionKeys = null; // R1
+  S._assignCtx = null;
+  document.getElementById('modal-start-session').classList.remove('wide');
   document.getElementById('modal-start-session').classList.remove('hidden');
 }
 
@@ -5752,6 +5767,7 @@ function selectLaunchMode(mode) {
   // Mostra/nascondi opzioni aggiuntive per ASSEGNA
   const assignedOpts = document.getElementById('assigned-options');
   if (assignedOpts) assignedOpts.style.display = mode === 'assigned' ? 'block' : 'none';
+  _renderAssignGrid();
 }
 
 function closeStartModal() {
@@ -5904,9 +5920,17 @@ async function confirmStartSession() {
   // Collect student version assignments — solo se il grid è visibile.
   // Vale anche per ASSEGNA: lo studente risolve la versione allo stesso modo.
   const studentVersions = {};
+  // Alunni che svolgono l'altra modalità (test ↔ esercitazione)
+  const studentModes = {};
   const _assignArea = document.getElementById('student-assign-area');
+  if (_assignArea && _assignArea.style.display !== 'none' && (mode === 'test' || mode === 'practice')) {
+    const _other = mode === 'test' ? 'practice' : 'test';
+    document.querySelectorAll('#student-assign-grid [data-student-mode]').forEach(cb => {
+      if (cb.checked) studentModes[cb.dataset.studentName.replace(/[.#$\[\]\/]/g, '_')] = _other;
+    });
+  }
   if (_assignArea && _assignArea.style.display !== 'none') {
-    document.querySelectorAll('[data-student-version]').forEach(radio => {
+    document.querySelectorAll('#student-assign-grid [data-student-version]').forEach(radio => {
       if (radio.checked) {
         const name = radio.dataset.studentName;
         const ver = radio.value;
@@ -5931,6 +5955,7 @@ async function confirmStartSession() {
     if (_isAssigned && document.getElementById('launch-repeatable')?.checked) sessionPayload.repeatable = true;
     if (noListening) sessionPayload.noListening = true;
     if (Object.keys(studentVersions).length) sessionPayload.studentVersions = studentVersions;
+    if (Object.keys(studentModes).length) sessionPayload.studentModes = studentModes;
     const _tchrKey = localStorage.getItem('gemini_api_key');
     if (_tchrKey) sessionPayload.sharedApiKey = _tchrKey;
     const _tchrAnthropicKey = localStorage.getItem('anthropic_api_key');
@@ -6127,6 +6152,7 @@ async function openLive(code, activityId, roster, silent) {
   S.liveActivity = null;
   S.liveMode = null;
   S.liveStudentVersions = {};
+  S.liveStudentModes = {};
   S.liveVersionKeys = null; // R1
   S.liveClassId = null;
   S.selectedStudent = _prevSelected;
@@ -6190,6 +6216,7 @@ async function openLive(code, activityId, roster, silent) {
   if (_nlBadge) _nlBadge.style.display = sess.noListening ? '' : 'none';
   S.liveMode = sess.mode || 'test';
   S.liveStudentVersions = sess.studentVersions || {};
+  S.liveStudentModes = sess.studentModes || {};
   S.liveOpened = !!sess.opened; // dopo il primo alunno accettato la sessione resta aperta
   S._llAutoStarted = {};
   S.liveVersionKeys = _vkNeedsKeys(S.liveActivity) ? await _vkLoad(aSnap.val() ? activityId : sess.activityId) : null; // R1
@@ -6678,7 +6705,9 @@ function renderLiveSidebar(responses) {
       const unlockBtn = (r && r.uid)
         ? '<button title="Sblocca postazione (l\'alunno può rientrare da un altro computer)" data-action="unlock" style="background:#0f766e;color:#fff;border:0;border-radius:4px;font-size:10px;font-weight:800;padding:1px 6px;margin-left:4px;cursor:pointer;flex-shrink:0;">🔓</button>'
         : '';
-      const outsideBadge = !inRoster
+      const outsideBadge = _llNeedsAlias(r) && inRoster
+        ? '<button title="Nome non riconosciuto: associa al nome giusto del registro (l\'alunno aspetta)" data-action="regularize" style="background:#2563eb;color:#fff;border:0;border-radius:4px;font-size:10px;font-weight:800;padding:1px 6px;margin-left:4px;cursor:pointer;flex-shrink:0;">👤→📋</button>'
+        : !inRoster
         ? '<span title="Non appartiene alla classe" style="font-size:10px;background:#f59e0b;color:#fff;border-radius:4px;padding:1px 5px;margin-left:4px;flex-shrink:0;">⚠ fuori classe</span>' +
           '<button title="Regolarizza (associa a un nome del registro)" data-action="regularize" style="background:#2563eb;color:#fff;border:0;border-radius:4px;font-size:10px;font-weight:800;padding:1px 6px;margin-left:4px;cursor:pointer;flex-shrink:0;">👤→📋</button>' +
           '<button title="Rimuovi dalla sessione" data-action="remove" style="background:#dc2626;color:#fff;border:0;border-radius:4px;font-size:10px;font-weight:800;padding:1px 6px;margin-left:4px;cursor:pointer;flex-shrink:0;">✕</button>'
@@ -6692,25 +6721,8 @@ function renderLiveSidebar(responses) {
 
       // Version badge (solo per il docente): mostra quale versione ha assegnato a questo studente
       let versionBadge = '';
-      const svMap = S.liveStudentVersions || {};
-      let assignedVer = svMap[key];
-      if (!assignedVer && displayName) {
-        // Fallback: match case-insensitive sul displayName safed
-        const safeDisp = displayName.replace(/[.#$\[\]\/]/g, '_');
-        assignedVer = svMap[safeDisp];
-        if (!assignedVer) {
-          const lowerTarget = safeDisp.toLowerCase();
-          const mk = Object.keys(svMap).find(k => k.toLowerCase() === lowerTarget);
-          if (mk) assignedVer = svMap[mk];
-          else {
-            // Match normalizzato (ignora accenti, spazi multipli)
-            const _normName = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
-            const norm = _normName(displayName);
-            const mk2 = Object.keys(svMap).find(k => _normName(k) === norm);
-            if (mk2) assignedVer = svMap[mk2];
-          }
-        }
-      }
+      // Prima il nome del registro associato, poi la chiave e il nome digitato
+      const assignedVer = _llMapLookup(S.liveStudentVersions, [aliasOf, key, displayName]);
       if (assignedVer && _vkNameOf(assignedVer, S.liveVersionKeys) !== 'originale') {
         const verLabels = {
           dsa:     { label: 'DSA',    bg: '#1e3a8a' },
@@ -6780,6 +6792,19 @@ function renderLiveSidebar(responses) {
       if (inLobby) {
         statusPill = '<span style="font-size:9px;background:#6c47ff;color:#fff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;">⏳ LOBBY</span>';
       }
+      // Nome non riconosciuto: l'alunno è fermo finché non lo si associa
+      const needsAlias = _llNeedsAlias(r);
+      if (needsAlias && !r.submittedAt) {
+        statusPill = '<span title="Nome non trovato nel registro: l\'alunno aspetta che tu lo associ al nome giusto" style="font-size:9px;background:#f59e0b;color:#fff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;">⏸ DA ASSOCIARE</span>';
+      }
+      // Modalità diversa da quella della sessione (test ↔ esercitazione)
+      let modeBadge = '';
+      const _stMode = _llModeFor({ mode: S.liveMode, studentModes: S.liveStudentModes }, [aliasOf, key, displayName]);
+      if (_stMode !== S.liveMode) {
+        modeBadge = _stMode === 'test'
+          ? '<span title="Questo alunno svolge l\'attività come TEST" style="font-size:9px;background:#b45309;color:#fff;border-radius:4px;padding:1px 5px;margin-left:4px;font-weight:800;flex-shrink:0;">📝 TEST</span>'
+          : '<span title="Questo alunno svolge l\'attività come ESERCITAZIONE" style="font-size:9px;background:#7c3aed;color:#fff;border-radius:4px;padding:1px 5px;margin-left:4px;font-weight:800;flex-shrink:0;">🎮 ESERC.</span>';
+      }
 
       // Badge "📝 N" — risposte libere consegnate senza punteggio AI né manuale
       let pendingFRBadge = '';
@@ -6823,7 +6848,7 @@ function renderLiveSidebar(responses) {
         '<div class="flex-center gap-8" style="flex:1;min-width:0;">' +
         '<span class="sdot ' + sdotClass + '"></span>' +
         '<span class="student-pill-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(displayName) + '</span>' +
-        versionBadge + pctPill + pendingFRBadge + statusPill + focusBadge + outsideBadge + lobbyLaunchBtn + unlockBtn +
+        versionBadge + modeBadge + pctPill + pendingFRBadge + statusPill + focusBadge + outsideBadge + lobbyLaunchBtn + unlockBtn +
         '</div><span class="student-pill-count">' + counter + '</span></div>';
     }).join('');
   }
@@ -6923,6 +6948,7 @@ function renderLiveSidebar(responses) {
 async function selectStudent(key) {
   S.selectedStudent = key;
   window._llInlineVer = null; // reset selezione versione pendente (cambio studente)
+  window._llInlineMode = null;
   // Reset throttle del pannello centrale: quando cambio studente voglio
   // vedere subito i dati del nuovo, senza aspettare il prossimo tick
   S._lastCentralRender = 0;
@@ -7034,6 +7060,8 @@ async function regularizeStudent(key, displayName) {
     '<p style="font-size:13px;color:var(--muted);margin-bottom:14px;">Associa l\'alunno <strong>' + esc(name) + '</strong> a un nome del registro di classe. ' +
       (isSubmitted
         ? 'Il test è già consegnato: il risultato verrà spostato nella cronologia dell\'alunno scelto.'
+        : _llNeedsAlias(current)
+        ? 'L\'alunno è <strong>in attesa</strong>: dopo l\'associazione parte con la versione e la modalità assegnate al nome scelto.'
         : 'L\'alunno non se ne accorge e può continuare la prova normalmente.') + '</p>' +
     '<label style="display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;letter-spacing:0.3px;">NOME NEL REGISTRO</label>' +
     '<select id="regularize-select" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:16px;">' + opts + '</select>' +
@@ -7048,23 +7076,93 @@ function closeRegularizeModal() {
   if (host) host.classList.add('hidden');
 }
 
+// ── Modalità del singolo alunno (test ↔ esercitazione) ────────────────────
+// Solo nelle sessioni Test o Esercitazione. La scelta va in
+// sessions/<codice>/studentModes/<nome>; la modalità della sessione non si scrive.
+function _llCanSwitchMode() {
+  return S.liveMode === 'test' || S.liveMode === 'practice';
+}
+function _llModeOptions(current) {
+  const lbl = { test: '📝 Test (valutato)', practice: '🎮 Esercitazione (non valutata)' };
+  return ['test', 'practice'].map(m =>
+    '<option value="' + m + '"' + (m === current ? ' selected' : '') + '>' + lbl[m] + (m === S.liveMode ? ' — come la sessione' : '') + '</option>'
+  ).join('');
+}
+function _llStudentModeOf(key, name, alias) {
+  return _llModeFor({ mode: S.liveMode, studentModes: S.liveStudentModes }, [alias, key, name]);
+}
+// names: il primo è quello sotto cui si salva (nome del registro se associato)
+async function _llSetStudentMode(names, mode) {
+  if (!db || !S.liveCode || !_llCanSwitchMode()) return;
+  const _safe = n => String(n).replace(/[.#$\[\]\/]/g, '_');
+  const list = (names || []).filter(Boolean);
+  if (!list.length) return;
+  const target = _safe(list[0]);
+  const upd = {};
+  // Via le voci sotto gli altri nomi dell'alunno, che altrimenti potrebbero prevalere
+  list.slice(1).map(_safe).forEach(k => { if (k !== target && S.liveStudentModes && S.liveStudentModes[k]) upd['studentModes/' + k] = null; });
+  upd['studentModes/' + target] = mode === S.liveMode ? null : mode;
+  await db.ref('livelearn/sessions/' + S.liveCode).update(upd);
+  if (!S.liveStudentModes) S.liveStudentModes = {};
+  Object.keys(upd).forEach(p => {
+    const k = p.slice('studentModes/'.length);
+    if (upd[p] == null) delete S.liveStudentModes[k]; else S.liveStudentModes[k] = upd[p];
+  });
+}
+// Pulsante nel pannello dell'alunno: inverte test ↔ esercitazione
+async function toggleStudentMode(key) {
+  if (!db || !S.liveCode || !key || !_llCanSwitchMode()) return;
+  const ref = db.ref('livelearn/responses/' + S.liveCode + '/' + key);
+  try {
+    const r = (await ref.get()).val() || {};
+    const name = r.name || key;
+    const cur = _llStudentModeOf(key, name, r.aliasOf);
+    const next = cur === 'test' ? 'practice' : 'test';
+    const who = r.aliasOf || name;
+    const msg = next === 'test'
+      ? 'Trasformare in TEST l\'attività di ' + who + '?\n\nSolo per questo alunno: sarà valutata come un test (niente feedback dopo ogni risposta, conta nelle valutazioni). Gli altri restano in esercitazione.'
+      : 'Trasformare in ESERCITAZIONE l\'attività di ' + who + '?\n\nSolo per questo alunno: non sarà valutata come test. Gli altri restano in test.';
+    if (!confirm(msg + (r.submittedAt ? '\n\nHa già consegnato: cambia come il risultato compare in StudentApp e in MyClass.' : r.status === 'lobby' ? '' : '\n\nSe sta svolgendo la prova, il cambio vale dalla domanda in cui si trova.'))) return;
+    await _llSetStudentMode([r.aliasOf, name, key], next);
+    // Già consegnato: la voce in cronologia va riscritta con la nuova modalità
+    if (r.submittedAt) {
+      try { await _llSyncStudentHistory(S.liveCode, key); }
+      catch(e2) { console.warn('[Modalità] cronologia:', e2.message); }
+    }
+    _llAgentPing();
+    renderLiveSidebar(S._llLastResponses || {});
+    if (S.selectedStudent === key) renderStudentResultsTeacher(name, r);
+  } catch(e) {
+    alert('Errore nel cambio di modalità: ' + e.message);
+  }
+}
+
 // FIX #2+3: avvio alunno dalla lobby con possibilità di cambiare versione/fila
 async function launchStudentFromLobby(key, displayName) {
   if (!db || !S.liveCode) return;
   const name = displayName || key;
-  // Versione attualmente assegnata a questo alunno
-  const svMap = S.liveStudentVersions || {};
-  const _safify = s => (s||'').replace(/[.#$\[\]\/]/g, '_');
-  let currentVer = svMap[key] || svMap[_safify(name)] || _vkDefaultVer();
+  const rec = (S._llLastResponses || {})[key] || {};
+  const needsAlias = _llNeedsAlias(rec);
+  // Nome non riconosciuto: si propone il nome del registro più somigliante
+  let suggested = rec.aliasOf || '';
+  if (!suggested && needsAlias) {
+    const _n = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+      .replace(/['’`´]/g, '').replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
+    suggested = (S.liveRoster || []).find(n => _nameMatchesAny(_n(name), [_n(n)])) || '';
+  }
+  // Versione attualmente assegnata a questo alunno (o al nome del registro proposto)
+  let currentVer = _llMapLookup(S.liveStudentVersions, [suggested, key, name]) || _vkDefaultVer();
   const verOpts = _vkLiveOptions(currentVer);
+  const currentMode = _llStudentModeOf(key, name, suggested);
 
   // Lista alunni del roster per eventuale assegnazione
-  const rosterOpts = (S.liveRoster || []).map(n => '<option value="' + esc(n).replace(/"/g,'&quot;') + '">' + esc(n) + '</option>').join('');
+  const rosterOpts = (S.liveRoster || []).map(n => '<option value="' + esc(n).replace(/"/g,'&quot;') + '"' + (n === suggested ? ' selected' : '') + '>' + esc(n) + '</option>').join('');
 
   // Salva la selezione corrente in una variabile JS: protegge la scelta del docente
   // da reset dovuti a mutazioni DOM (Firebase real-time, rebuild pannello centrale)
   // che su mobile/tablet possono chiudere il picker nativo e ripristinare il valore
   window._llLobbyVer = currentVer;
+  window._llLobbyMode = currentMode;
 
   let host = document.getElementById('modal-lobby-launch');
   if (!host) {
@@ -7081,21 +7179,39 @@ async function launchStudentFromLobby(key, displayName) {
   host.innerHTML = '<div class="modal-box" style="max-width:480px;">' +
     '<h2 style="margin-bottom:8px;font-size:18px;">▶ Avvia alunno</h2>' +
     '<p style="font-size:13px;color:var(--muted);margin-bottom:16px;">Alunno: <strong>' + esc(name) + '</strong></p>' +
+    (needsAlias ? '<div style="background:#fffbeb;border:1.5px solid #f59e0b;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#78350f;line-height:1.45;">' +
+      '<strong>⏸ Nome non riconosciuto.</strong> Scegli qui sotto il suo nome nel registro: riceverà la versione e la modalità assegnate a quel nome.</div>' : '') +
+    (rosterOpts ? '<div class="form-group" style="margin-bottom:12px;">' +
+      '<label style="font-size:13px;font-weight:700;">' + (needsAlias ? 'Nome nel registro' : 'Associa a studente del registro (opzionale)') + '</label>' +
+      '<select id="lobby-alias-select" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;" onchange="_llLobbyAliasChanged(this.value)">' +
+        '<option value="">' + (needsAlias ? '— Scegli il nome —' : '— Nessuna modifica —') + '</option>' + rosterOpts +
+      '</select>' +
+    '</div>' : '') +
     '<div class="form-group">' +
       '<label style="font-size:13px;font-weight:700;">Versione / Fila</label>' +
       '<select id="lobby-ver-select" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:4px;" onchange="window._llLobbyVer=this.value">' + verOpts + '</select>' +
       '<p style="font-size:11px;color:var(--muted);">Puoi cambiare la versione assegnata anche dopo l\'avvio (dal pannello dettaglio).</p>' +
     '</div>' +
-    (rosterOpts ? '<div class="form-group" style="margin-top:4px;">' +
-      '<label style="font-size:13px;font-weight:700;">Associa a studente del registro (opzionale)</label>' +
-      '<select id="lobby-alias-select" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;">' +
-        '<option value="">— Nessuna modifica —</option>' + rosterOpts +
-      '</select>' +
+    (_llCanSwitchMode() ? '<div class="form-group" style="margin-top:4px;">' +
+      '<label style="font-size:13px;font-weight:700;">Modalità per questo alunno</label>' +
+      '<select id="lobby-mode-select" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;" onchange="window._llLobbyMode=this.value">' + _llModeOptions(currentMode) + '</select>' +
     '</div>' : '') +
     '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">' +
       '<button class="btn btn-ghost btn-sm" onclick="closeLobbyModal()">Annulla</button>' +
       '<button class="btn btn-primary btn-sm" onclick="confirmLaunchStudent()">▶ Avvia sessione</button>' +
     '</div></div>';}
+
+// Nel modale di avvio, scegliendo il nome del registro si propongono la
+// versione e la modalità già assegnate a quel nome
+function _llLobbyAliasChanged(alias) {
+  const host = document.getElementById('modal-lobby-launch');
+  const key = host?.dataset.pendingKey || '', name = host?.dataset.pendingName || key;
+  const ver = _llMapLookup(S.liveStudentVersions, [alias, key, name]) || _vkDefaultVer();
+  const verSel = document.getElementById('lobby-ver-select');
+  if (verSel && verSel.querySelector('option[value="' + ver + '"]')) { verSel.value = ver; window._llLobbyVer = ver; }
+  const modeSel = document.getElementById('lobby-mode-select');
+  if (modeSel) { modeSel.value = _llStudentModeOf(key, name, alias); window._llLobbyMode = modeSel.value; }
+}
 
 function closeLobbyModal() {
   const h = document.getElementById('modal-lobby-launch');
@@ -7113,9 +7229,12 @@ async function confirmLaunchStudentInline() {
   // ai rebuild DOM del pannello centrale causati dagli update Firebase)
   const chosenVer = window._llInlineVer || (selEl ? selEl.value : 'originale');
   window._llInlineVer = null; // reset dopo uso
+  const modeEl = document.getElementById('inline-mode-' + key);
+  const chosenMode = window._llInlineMode || (modeEl ? modeEl.value : '');
+  window._llInlineMode = null;
   // displayName: prova dal record già in memoria o usa la chiave
   const displayName = S._inlinePendingName || key;
-  await _doLaunchStudent(key, displayName, chosenVer, '');
+  await _doLaunchStudent(key, displayName, chosenVer, '', chosenMode);
 }
 
 async function confirmLaunchStudent() {
@@ -7132,32 +7251,46 @@ async function confirmLaunchStudent() {
   const chosenVer = window._llLobbyVer || (verSel ? verSel.value : 'originale');
   const aliasSel = document.getElementById('lobby-alias-select');
   const chosenAlias = aliasSel ? aliasSel.value : '';
+  const modeSel = document.getElementById('lobby-mode-select');
+  const chosenMode = window._llLobbyMode || (modeSel ? modeSel.value : '');
   window._llLobbyVer = null; // reset dopo uso
-  await _doLaunchStudent(key, displayName, chosenVer, chosenAlias);
-  closeLobbyModal();
+  window._llLobbyMode = null;
+  if (await _doLaunchStudent(key, displayName, chosenVer, chosenAlias, chosenMode)) closeLobbyModal();
 }
 
-async function _doLaunchStudent(key, displayName, chosenVer, chosenAlias) {
-  if (!db || !S.liveCode) return;
+async function _doLaunchStudent(key, displayName, chosenVer, chosenAlias, chosenMode) {
+  if (!db || !S.liveCode) return false;
   try {
+    const rec = (await db.ref('livelearn/responses/' + S.liveCode + '/' + key).get()).val() || {};
+    const alias = chosenAlias || rec.aliasOf || '';
+    // Nome non riconosciuto e non associato: si avvia solo se il docente lo vuole davvero
+    if (_llNeedsAlias(rec) && !alias &&
+        !confirm('"' + (displayName || key) + '" non è associato a nessun nome del registro.\n\nAvviarlo comunque? Farà la versione scelta qui, senza risultato nella cronologia di un alunno della classe.\n\n(Annulla per associarlo prima con 👤→📋)')) return false;
     const _safify2 = s => (s||'').replace(/[.#$\[\]\/]/g, '_');
-    const safeKey = _safify2(displayName || key);
-    if (chosenVer && chosenVer !== 'originale') {
-      const svUpdate = {};
-      svUpdate['studentVersions/' + safeKey] = chosenVer;
-      await db.ref('livelearn/sessions/' + S.liveCode).update(svUpdate);
-      if (!S.liveStudentVersions) S.liveStudentVersions = {};
-      S.liveStudentVersions[safeKey] = chosenVer;
-    } else {
-      await db.ref('livelearn/sessions/' + S.liveCode + '/studentVersions/' + safeKey).remove();
-      if (S.liveStudentVersions) delete S.liveStudentVersions[safeKey];
+    // La versione va sotto il nome del registro, se c'è: è quello che l'alunno cerca per primo
+    const safeKey = _safify2(alias || displayName || key);
+    const svUpdate = {};
+    if (chosenVer && chosenVer !== 'originale') svUpdate['studentVersions/' + safeKey] = chosenVer;
+    else svUpdate['studentVersions/' + safeKey] = null;
+    if (alias) {
+      [displayName, key].map(_safify2).forEach(k => { if (k && k !== safeKey && S.liveStudentVersions && S.liveStudentVersions[k]) svUpdate['studentVersions/' + k] = null; });
     }
+    await db.ref('livelearn/sessions/' + S.liveCode).update(svUpdate);
+    if (!S.liveStudentVersions) S.liveStudentVersions = {};
+    Object.keys(svUpdate).forEach(p => {
+      const k = p.slice('studentVersions/'.length);
+      if (svUpdate[p] == null) delete S.liveStudentVersions[k]; else S.liveStudentVersions[k] = svUpdate[p];
+    });
+    if (chosenMode && _llCanSwitchMode()) await _llSetStudentMode([alias || displayName || key, displayName, key], chosenMode);
     const updateData = { status: 'started', startedAt: Date.now() };
-    if (chosenAlias) updateData.aliasOf = chosenAlias;
+    if (chosenAlias) { updateData.aliasOf = chosenAlias; updateData.regularizedAt = Date.now(); }
+    else if (_llNeedsAlias(rec)) updateData.guestOk = true; // fatto entrare senza associazione
     await db.ref('livelearn/responses/' + S.liveCode + '/' + key).update(updateData);
     await _llOpenSession();
+    return true;
   } catch(e) {
     alert('Errore nell\'avvio: ' + e.message);
+    return false;
   }
 }
 
@@ -7167,13 +7300,33 @@ async function launchAllLobby() {
   try {
     const snap = await db.ref('livelearn/responses/' + S.liveCode).get();
     const all = snap.val() || {};
-    const lobbyKeys = Object.keys(all).filter(k => all[k] && all[k].status === 'lobby');
-    if (!lobbyKeys.length) { alert('Nessun alunno in attesa.'); return; }
+    const inLobby = Object.keys(all).filter(k => all[k] && all[k].status === 'lobby');
+    // Chi ha un nome non riconosciuto resta in attesa finché non è associato
+    const lobbyKeys = inLobby.filter(k => !_llNeedsAlias(all[k]));
+    const waiting = inLobby.filter(k => _llNeedsAlias(all[k])).map(k => all[k].name || k);
+    if (!lobbyKeys.length && !waiting.length) { alert('Nessun alunno in attesa.'); return; }
     await Promise.all(lobbyKeys.map(k =>
       db.ref('livelearn/responses/' + S.liveCode + '/' + k).update({ status: 'started', startedAt: Date.now() })
     ));
-    await _llOpenSession();
+    if (lobbyKeys.length) await _llOpenSession();
+    if (waiting.length) alert('⏸ Restano in attesa (nome non riconosciuto): ' + waiting.join(', ') +
+      '.\n\nAssociali al nome giusto con 👤→📋: partono da soli con la versione e la modalità di quel nome.');
   } catch(e) { alert('Errore: ' + e.message); }
+}
+
+// Alunno entrato con un nome che non è nel registro e non ancora associato:
+// resta in sala d'attesa finché il docente non lo collega al nome giusto.
+function _llNeedsAlias(r) {
+  return !!(r && r.unrecognized && !r.aliasOf && !r.guestOk);
+}
+
+// Dopo l'associazione al registro: chi aspettava solo quella parte, se la
+// prova è già in corso per gli altri (sessione aperta, compito assegnato,
+// controllo docente). Altrimenti resta in lobby con gli altri.
+async function _llStartAfterAlias(key, before) {
+  if (!before || before.status !== 'lobby' || !before.unrecognized) return;
+  if (!(S.liveOpened || S.liveMode === 'assigned' || S.liveMode === 'teacher')) return;
+  await db.ref('livelearn/responses/' + S.liveCode + '/' + key).update({ status: 'started', startedAt: Date.now() });
 }
 
 // Sessione APERTA: appena il docente accetta il primo alunno, la sessione
@@ -7194,6 +7347,7 @@ function _llAutoStartLobby(responses) {
   Object.keys(responses || {}).forEach(k => {
     const r = responses[k];
     if (!r || r.status !== 'lobby') return;
+    if (_llNeedsAlias(r)) return; // nome non riconosciuto: aspetta l'associazione
     const tag = S.liveCode + '/' + k + '/' + (r.lobbyAt || 0);
     if (S._llAutoStarted[tag]) return;
     S._llAutoStarted[tag] = true;
@@ -7220,6 +7374,11 @@ async function confirmRegularize(key) {
       aliasOf: chosenName,
       regularizedAt: remove ? null : Date.now()
     });
+    // Era in attesa per il nome non riconosciuto: ora può partire
+    if (!remove) {
+      try { await _llStartAfterAlias(key, before); }
+      catch(e4) { console.warn('[Associa] avvio dopo associazione:', e4.message); }
+    }
     // A test consegnato il risultato e' gia' partito verso la cronologia con il
     // nome digitato: lo si sposta sul nome giusto (e lo si toglie dal vecchio).
     let esito = null;
@@ -7600,7 +7759,7 @@ async function _llSyncStudentHistory(code, key, prevAlias, opts) {
     submittedAt:          r.submittedAt,
     sessionCode:          code,
     activityTitle:        (ctx.activity && ctx.activity.title) || sess.title || '',
-    mode:                 sess.mode || 'test'
+    mode:                 _llModeFor(sess, [r.aliasOf, r.name, key])
   });
   // Chiave della response: StudentApp la usa per ritrovare il dettaglio
   // anche quando il nome digitato non somiglia al proprio.
@@ -7669,6 +7828,36 @@ async function _llSyncStudentHistory(code, key, prevAlias, opts) {
 function _llAgentPing() {
   if (!db) return;
   db.ref('livelearn/agentPing').set(Date.now()).catch(() => {});
+}
+
+// Valore di una mappa indicizzata per nome (studentVersions, studentModes):
+// chiave "safe" esatta, poi senza maiuscole, poi normalizzata (accenti, spazi).
+// I nomi si provano in ordine: il nome del registro associato dal docente va
+// passato prima del nome digitato dall'alunno.
+function _llMapLookup(map, names) {
+  if (!map) return null;
+  const keys = Object.keys(map);
+  if (!keys.length) return null;
+  const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  for (const n of names || []) {
+    if (!n) continue;
+    const safe = String(n).replace(/[.#$\[\]\/]/g, '_');
+    if (map[safe]) return map[safe];
+    const lk = keys.find(k => k.toLowerCase() === safe.toLowerCase());
+    if (lk && map[lk]) return map[lk];
+    const nk = keys.find(k => norm(k) === norm(n));
+    if (nk && map[nk]) return map[nk];
+  }
+  return null;
+}
+
+// Modalità svolta da un alunno: in una sessione Test o Esercitazione il
+// docente può far fare al singolo l'altra modalità (sessions/<codice>/studentModes).
+function _llModeFor(sess, names) {
+  const base = (sess && sess.mode) || 'test';
+  if (base !== 'test' && base !== 'practice') return base;
+  const m = _llMapLookup(sess && sess.studentModes, names);
+  return (m === 'test' || m === 'practice') ? m : base;
 }
 
 // Helper: ritorna le domande della versione assegnata a questo studente, oppure
@@ -7854,21 +8043,29 @@ function renderStudentResultsTeacher(name, response) {
   if (response.status === 'lobby') {
     // Salva displayName in S per confirmLaunchStudentInline() — evita parametri inline
     S._inlinePendingName = displayName;
-    const svMap = S.liveStudentVersions || {};
-    const _safify3 = s => (s||'').replace(/[.#$\[\]\/]/g,'_');
-    const _safeKey3 = _safify3(displayName || name);
-    const currentVer3 = svMap[_safeKey3] || svMap[S.selectedStudent] || _vkDefaultVer();
+    const currentVer3 = _llMapLookup(S.liveStudentVersions, [response.aliasOf, displayName || name, S.selectedStudent]) || _vkDefaultVer();
     const verOpts3 = _vkLiveOptions(currentVer3); // R1
+    const needsAlias3 = _llNeedsAlias(response);
+    const currentMode3 = _llStudentModeOf(S.selectedStudent, displayName, response.aliasOf);
     main.innerHTML =
       '<div style="max-width:520px;margin:60px auto;padding:0 24px;">' +
       '<div style="background:white;border-radius:20px;border:2px solid var(--primary);padding:32px;box-shadow:var(--shadow-md);text-align:center;">' +
         '<div style="font-size:52px;margin-bottom:12px;">✋</div>' +
         '<h2 style="font-size:20px;font-weight:800;color:var(--primary);margin-bottom:6px;">' + esc(displayName) + '</h2>' +
+        (response.aliasOf ? '<p style="margin-bottom:8px;"><span class="badge" style="background:#2563eb;color:#fff;font-weight:800;">≡ ' + esc(response.aliasOf) + '</span></p>' : '') +
         '<p style="font-size:13px;color:var(--muted);margin-bottom:20px;">L\'alunno è in sala d\'attesa — scegli la versione e avvia.</p>' +
+        (needsAlias3 ? '<div style="background:#fffbeb;border:1.5px solid #f59e0b;border-radius:12px;padding:12px 14px;margin-bottom:16px;text-align:left;font-size:13px;color:#78350f;line-height:1.45;">' +
+          '<strong>⏸ Nome non riconosciuto.</strong> L\'alunno resta fermo finché non lo associ al suo nome nel registro: poi parte con la versione e la modalità di quel nome.' +
+          '<div style="margin-top:10px;"><button class="btn btn-sm" style="background:#2563eb;color:#fff;border-color:#2563eb;font-weight:800;" onclick="regularizeStudent(S.selectedStudent, this.dataset.name)" data-name="' + esc(displayName) + '">👤→📋 Associa al registro</button></div>' +
+        '</div>' : '') +
         '<div style="margin-bottom:16px;text-align:left;">' +
           '<label style="font-size:12px;font-weight:700;color:var(--muted);display:block;margin-bottom:6px;">VERSIONE / FILA</label>' +
           '<select id="inline-ver-' + S.selectedStudent + '" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;" onchange="window._llInlineVer=this.value">' + verOpts3 + '</select>' +
         '</div>' +
+        (_llCanSwitchMode() ? '<div style="margin-bottom:16px;text-align:left;">' +
+          '<label style="font-size:12px;font-weight:700;color:var(--muted);display:block;margin-bottom:6px;">MODALITÀ PER QUESTO ALUNNO</label>' +
+          '<select id="inline-mode-' + S.selectedStudent + '" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;" onchange="window._llInlineMode=this.value">' + _llModeOptions(currentMode3) + '</select>' +
+        '</div>' : '') +
         '<button class="btn btn-primary btn-block" style="font-size:16px;padding:14px;" onclick="confirmLaunchStudentInline()">' +
           '▶ Avvia sessione per ' + esc(displayName) +
         '</button>' +
@@ -7880,6 +8077,10 @@ function renderStudentResultsTeacher(name, response) {
       if (inlineSel && inlineSel.querySelector('option[value="' + window._llInlineVer + '"]')) {
         inlineSel.value = window._llInlineVer;
       }
+    }
+    if (window._llInlineMode) {
+      const inlineMode = document.getElementById('inline-mode-' + S.selectedStudent);
+      if (inlineMode) inlineMode.value = window._llInlineMode;
     }
     return;
   }
@@ -8164,11 +8365,22 @@ function renderStudentResultsTeacher(name, response) {
     ? '<button class="btn btn-sm" style="background:#eff6ff;color:#1d4ed8;border-color:#93c5fd;font-weight:800;" onclick="regularizeStudent(S.selectedStudent, this.dataset.name)" data-name="' + esc(displayName) + '" title="Associa questo alunno a un nome del registro di classe (es. nome scritto male o attaccato)">👤→📋 ' + (response.aliasOf ? 'Cambia associazione' : 'Associa a registro') + '</button>'
     : '';
 
+  // Test ↔ esercitazione solo per questo alunno
+  let modeBadgeRST = '', modeBtnRST = '';
+  if (_llCanSwitchMode()) {
+    const _mRST = _llStudentModeOf(studentKey, displayName, response.aliasOf);
+    if (_mRST !== S.liveMode) modeBadgeRST = _mRST === 'test'
+      ? '<span class="badge" style="background:#b45309;color:#fff;font-weight:800;" title="Solo questo alunno svolge l\'attività come test">📝 Test individuale</span>'
+      : '<span class="badge" style="background:#7c3aed;color:#fff;font-weight:800;" title="Solo questo alunno svolge l\'attività come esercitazione">🎮 Esercitazione individuale</span>';
+    modeBtnRST = '<button class="btn btn-sm" style="background:#fffbeb;color:#92400e;border-color:#fcd34d;font-weight:800;" onclick="toggleStudentMode(S.selectedStudent)" title="Cambia la modalità solo per questo alunno">' +
+      (_mRST === 'test' ? '📝→🎮 Rendi esercitazione' : '🎮→📝 Rendi test') + '</button>';
+  }
+
   main.innerHTML =
     '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px;">' +
       '<div class="flex-center gap-12" style="flex-wrap:wrap;">' +
         '<h2 style="font-size:20px;font-weight:700;">' + esc(displayName) + '</h2>' +
-        aliasBadge +
+        aliasBadge + modeBadgeRST +
         statusBadge +
         '<span class="badge badge-blue">' + answeredCount + '/' + questions.length + ' risposte</span>' +
         scoreBadge + pctBadgeCenter + _attemptsBadge(response) + timeBadge + focusBadgeCenter +
@@ -8176,6 +8388,7 @@ function renderStudentResultsTeacher(name, response) {
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
         aiAllBtn +
         aliasBtn +
+        modeBtnRST +
         '<button class="btn btn-sm btn-ghost" onclick="selectStudent(S.selectedStudent)" title="Ricarica le risposte di questo studente da Firebase">🔄</button>' +
         '<button class="btn btn-sm btn-danger" onclick="deleteStudentFromSession(S.liveCode,S.selectedStudent)" title="Elimina tutti i dati di questo alunno dalla sessione corrente">🗑 Elimina</button>' +
         '<button class="btn btn-sm" onclick="exportAllPDFCorretto()" title="PDF tutti gli studenti (versione corretta per fila)">📥 PDF tutti</button>' +
@@ -8629,7 +8842,7 @@ async function _retroForcedSubmit(code) {
           submittedAt:   forcedAt,
           sessionCode:   code,
           activityTitle: (actVal && actVal.title) || sessData.title || '',
-          mode:          sessData.mode || 'test'
+          mode:          _llModeFor(sessData, [r.aliasOf, r.name, key])
         });
         writes.push(
           db.ref('livelearn/inbox/' + code + '/' + key).set({
@@ -8676,6 +8889,9 @@ async function convertSessionToExercise(code) {
   try {
     // 1. Aggiorna il nodo sessione principale
     await db.ref('livelearn/sessions/' + sessKey + '/mode').set('practice');
+    // Tutta la sessione diventa esercitazione, anche chi faceva il test da solo
+    await db.ref('livelearn/sessions/' + sessKey + '/studentModes').remove().catch(() => {});
+    if (sessKey === S.liveCode) S.liveStudentModes = {};
     _llAgentPing();
 
     // 2. Aggiorna il mode in history per ogni studente della classe
@@ -8811,6 +9027,9 @@ async function studentEnter() {
   if (!aSnap.val()) return showErr(errEl, 'Errore interno: attività non trovata.');
   // Fix 3: resolve partial name (e.g. "Marco" → "Marco Sanna") if unique in roster
   let studentName = name;
+  // Nome trovato nel registro della classe? Se no, l'alunno resta in attesa
+  // finché il docente non lo associa al nome giusto (vedi sotto).
+  let rosterLen = 0, recognized = true;
   try {
     let roster = [];
     if (session.classId) {
@@ -8819,7 +9038,9 @@ async function studentEnter() {
         try { const lc = localStorage.getItem('livelearn_classes'); if (lc) { const all = JSON.parse(lc); roster = all[session.classId]?.studenti || []; } } catch(e) {}
       }
     }
+    rosterLen = roster.length;
     if (roster.length) {
+      recognized = false;
       // Normalizza per match robusto. CRITICO: .sort() sui token rende il match
       // indipendente dall'ordine Nome/Cognome. Il roster da MyClass ha "Cognome Nome"
       // ma lo studente scrive "Nome Cognome" → senza .sort() solo 2-3 nomi su 20
@@ -8833,6 +9054,7 @@ async function studentEnter() {
       const exact = roster.find(n => normFn(n) === normFn(name));
       if (exact) {
         studentName = exact;
+        recognized = true;
       } else {
         // Fallback: match su singolo token (es. solo cognome inserito)
         const normTokens = normFn(name).split(' ');
@@ -8840,12 +9062,23 @@ async function studentEnter() {
           const rn = normFn(n).split(' ');
           return normTokens.every(t => rn.includes(t));
         });
-        if (matches.length === 1) studentName = matches[0];
+        if (matches.length === 1) { studentName = matches[0]; recognized = true; }
       }
     }
-  } catch(e) {}
+  } catch(e) { recognized = true; }
+  // Record dell'alunno (rientro, consegna, espulsione, associazione al registro).
+  // Si legge qui perché il nome associato dal docente decide versione e modalità.
+  const safeName = studentName.replace(/[.#$\[\]/]/g, '_');
+  let existingResp = null;
+  try {
+    const respSnap = await db.ref('livelearn/responses/' + code + '/' + safeName).get();
+    existingResp = respSnap.val();
+  } catch(e) { console.warn('Pre-check responses failed:', e.message); }
+  const _aliasNow = (existingResp && existingResp.aliasOf) || null;
+  // guestOk: il docente l'ha fatto entrare lo stesso, senza associarlo
+  S._needsAlias = rosterLen > 0 && !recognized && !_aliasNow && !(existingResp && existingResp.guestOk);
   S.studentName = studentName; S.sessionCode = code; S.activity = _sessFilterActivity(_actHydrate(aSnap.val()), session);
-  S.sessionMode = session.mode || 'test';
+  S.sessionMode = _llModeFor(session, [_aliasNow, studentName]);
   S.sessionRepeatable = session.status === 'assigned' && !!session.repeatable;
   S._attempts = null; S._retryLocal = false; S._retryNext = null;
   _syncPassageBtn(); // mostra/nascondi il pulsante 📄 Testo
@@ -8871,31 +9104,8 @@ async function studentEnter() {
   // che il server ha in 'questions', ma senza forzare il formato DSA se non assegnato.
 
   // ── Assegnazione versione per studente ──
-  // Normalizza per confronto robusto: lowercase, senza accenti, spazi singoli
-  const _normName = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
-  const _safify = s => s.replace(/[.#$\[\]\/]/g, '_');
-  const safeName2 = _safify(studentName);
-
-  let assignedVersion = null;
-  if (session.studentVersions) {
-    const keys = Object.keys(session.studentVersions);
-    // 1) Match esatto safeName
-    if (session.studentVersions[safeName2]) {
-      assignedVersion = session.studentVersions[safeName2];
-    } else {
-      // 2) Match case-insensitive
-      const lowerTarget = safeName2.toLowerCase();
-      const matchKey = keys.find(k => k.toLowerCase() === lowerTarget);
-      if (matchKey) {
-        assignedVersion = session.studentVersions[matchKey];
-      } else {
-        // 3) Match normalizzato (ignora accenti, spazi multipli)
-        const normTarget = _normName(studentName);
-        const normKey = keys.find(k => _normName(k) === normTarget);
-        if (normKey) assignedVersion = session.studentVersions[normKey];
-      }
-    }
-  }
+  // Prima il nome del registro associato dal docente, poi quello digitato
+  const assignedVersion = _llMapLookup(session.studentVersions, [_aliasNow, studentName]);
 
   S.studentVersion = assignedVersion || 'originale';
   // Domande originali e versioni: servono se l'alunno ha consegnato una
@@ -8975,7 +9185,6 @@ async function studentEnter() {
   _initOfflineMonitor();
 
   // Write presence immediately so teacher sees the student right away
-  const safeName = studentName.replace(/[.#$\[\]/]/g, '_');
   S.safeName = safeName;
   S.removed = false; // reset flag espulsione per nuovo ingresso
 
@@ -8987,14 +9196,8 @@ async function studentEnter() {
     return;
   }
 
-  // PERF FIX 2b: una sola GET a responses/CODE/safeName sostituisce le 3 chiamate
-  // sequenziali precedenti (check removed + check submittedAt + check rejoin).
-  // Tutti e tre i casi usavano lo stesso path → collassati in un'unica lettura.
-  let existingResp = null;
-  try {
-    const respSnap = await db.ref('livelearn/responses/' + code + '/' + safeName).get();
-    existingResp = respSnap.val();
-  } catch(e) { console.warn('Pre-check responses failed:', e.message); }
+  // PERF FIX 2b: una sola GET a responses/CODE/safeName (letta sopra) sostituisce
+  // le 3 chiamate sequenziali precedenti (check removed + check submittedAt + check rejoin).
   // Assegnate ripetibili: tentativi precedenti (riportati nel set() della consegna)
   if (existingResp && existingResp.attempts) S._attempts = (fbArr(existingResp.attempts) || []).filter(Boolean);
 
@@ -9082,15 +9285,17 @@ async function studentEnter() {
       if (typeof existingResp.score === 'number') S.studentScore = existingResp.score;
       if (existingResp.aiScores)    S.aiScores    = existingResp.aiScores;
       if (existingResp.aiFeedbacks) S.aiFeedbacks = existingResp.aiFeedbacks;
-      await db.ref('livelearn/responses/' + code + '/' + safeName).update({
+      const _rejoin = {
         name: studentName,
         studentVersion: S.studentVersion,
         uid: _myUid(),
         uidAt: Date.now(),
         rejoinedAt: Date.now()
-      });
+      };
+      if (S._needsAlias) _rejoin.unrecognized = true;
+      await db.ref('livelearn/responses/' + code + '/' + safeName).update(_rejoin);
     } else {
-      await db.ref('livelearn/responses/' + code + '/' + safeName).set({
+      const _first = {
         name: studentName,
         studentVersion: S.studentVersion,
         answers: [],
@@ -9098,7 +9303,9 @@ async function studentEnter() {
         uid: _myUid(),
         uidAt: Date.now(),
         joinedAt: Date.now()
-      });
+      };
+      if (S._needsAlias) _first.unrecognized = true;
+      await db.ref('livelearn/responses/' + code + '/' + safeName).set(_first);
     }
   } catch(e) {
     console.warn('Presence write failed:', e.message);
@@ -9141,6 +9348,10 @@ async function studentEnter() {
       }
     });
   } catch(e) { console.warn('Session status listener failed:', e.message); }
+
+  // Test ↔ esercitazione per il singolo alunno: il docente può cambiarla
+  // anche a prova iniziata, vale dalla domanda successiva.
+  _listenForModeChange(code, safeName, session.mode || 'test');
 
   // Check for local backup from a previous interrupted session
   // FIX v2: tre bug corretti:
@@ -9192,6 +9403,24 @@ async function studentEnter() {
       }
     }
   } catch(e) {}
+
+  // Nome non riconosciuto: niente prova (nemmeno in ASSEGNA o a sessione
+  // aperta) finché il docente non lo associa al nome giusto del registro.
+  // Così parte con la versione e la modalità assegnate a quel nome.
+  _setWaitingUnrecognized(S._needsAlias);
+  if (S._needsAlias) {
+    document.getElementById('waiting-code').textContent = code;
+    document.getElementById('waiting-name').textContent = studentName;
+    const _wvB = document.getElementById('waiting-version-badge');
+    if (_wvB) _wvB.innerHTML = '';
+    showView('student-waiting');
+    try {
+      await db.ref('livelearn/responses/' + code + '/' + safeName).update({ status: 'lobby', lobbyAt: Date.now(), unrecognized: true });
+    } catch(e) { console.warn('unrecognized lobby write failed:', e.message); }
+    _listenForAlias(code, safeName);
+    _listenForStudentStart(code, safeName);
+    return;
+  }
 
   // Modalità ASSEGNA: nessuna lobby, avvio diretto
   if (S.sessionMode === 'assigned') {
@@ -9546,6 +9775,54 @@ function _listenForSessionOpened(code, safeName) {
   });
 }
 
+// Modalità del singolo alunno (sessions/<codice>/studentModes) cambiata dal
+// docente mentre la prova è in corso: si aggiorna senza perdere le risposte.
+function _listenForModeChange(code, safeName, baseMode) {
+  if (!db) return;
+  if (S._modeListener) { try { db.ref(S._modeListenerPath).off('value', S._modeListener); } catch(e) {} }
+  S._modeListener = null;
+  if (baseMode !== 'test' && baseMode !== 'practice') return;
+  S._modeListenerPath = 'livelearn/sessions/' + code + '/studentModes';
+  S._modeListener = db.ref(S._modeListenerPath).on('value', async snap => {
+    if (S.removed || S.submitted || S.sessionCode !== code) return;
+    let alias = null;
+    try { alias = (await db.ref('livelearn/responses/' + code + '/' + safeName + '/aliasOf').get()).val() || null; } catch(e) {}
+    const m = _llModeFor({ mode: baseMode, studentModes: snap.val() || {} }, [alias, S.studentName]);
+    if (m === S.sessionMode || S.submitted) return;
+    S.sessionMode = m;
+    const actView = document.getElementById('view-student-activity');
+    if (actView && actView.classList.contains('active')) renderQuestion();
+  });
+}
+
+// Riquadro della sala d'attesa per chi ha scritto un nome che non è nel registro
+function _setWaitingUnrecognized(on, associated) {
+  const box = document.getElementById('waiting-unrecognized');
+  if (!box) return;
+  if (!on) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'block';
+  box.innerHTML = associated
+    ? '<strong>✅ Il prof ti ha riconosciuto.</strong><br>Aspetta l\'avvio: la prova parte da sola.'
+    : '<strong>⏸ Il tuo nome non è nella lista della classe.</strong><br>' +
+      'Non ricaricare la pagina e alza la mano: il prof ti collega al tuo nome e la prova parte da sola. ' +
+      'Così ricevi il compito giusto per te.';
+}
+
+// Alunno in attesa di associazione: quando il docente lo collega a un nome
+// del registro, il messaggio cambia (l'avvio arriva da _listenForStudentStart).
+function _listenForAlias(code, safeName) {
+  if (!db) return;
+  if (S._aliasListener) { try { db.ref(S._aliasListenerPath).off('value', S._aliasListener); } catch(e) {} }
+  S._aliasListenerPath = 'livelearn/responses/' + code + '/' + safeName + '/aliasOf';
+  S._aliasListener = db.ref(S._aliasListenerPath).on('value', snap => {
+    if (S._needsAlias) _setWaitingUnrecognized(true, !!snap.val());
+  });
+}
+function _stopAliasListener() {
+  if (S._aliasListener) { try { db.ref(S._aliasListenerPath).off('value', S._aliasListener); } catch(e) {} }
+  S._aliasListener = null;
+}
+
 // Listener studente in lobby: aspetta che il docente setti status='started'
 function _listenForStudentStart(code, safeName) {
   if (!db) { renderQuestion(); showView('student-activity'); return; }
@@ -9562,26 +9839,21 @@ function _listenForStudentStart(code, safeName) {
       // Stacca il listener e avvia
       try { db.ref(S._startListenerPath).off('value', S._startListener); } catch(e) {}
       S._startListener = null;
-      // Ricarica versione aggiornata dal docente (potrebbe averla cambiata in lobby)
-      db.ref('livelearn/sessions/' + code).get().then(sSnap => {
+      _stopAliasListener();
+      // Ricarica versione e modalità aggiornate dal docente (potrebbe averle
+      // cambiate in lobby, o aver appena associato l'alunno a un nome del registro)
+      Promise.all([
+        db.ref('livelearn/sessions/' + code).get(),
+        db.ref('livelearn/responses/' + code + '/' + safeName + '/aliasOf').get().catch(() => null)
+      ]).then(([sSnap, aSnap]) => {
         const updatedSess = sSnap.val() || {};
+        const _alias = (aSnap && aSnap.val()) || null;
+        const _names = [_alias, S.studentName];
+        S._needsAlias = false;
+        _setWaitingUnrecognized(false);
+        S.sessionMode = _llModeFor(updatedSess, _names);
         // Ricalcola versione assegnata con eventuali modifiche fatte in lobby
-        const _normName2 = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
-        const _safify2 = s => s.replace(/[.#$\[\]\/]/g, '_');
-        const safeName2b = _safify2(S.studentName);
-        let newVer = null;
-        if (updatedSess.studentVersions) {
-          const keys2 = Object.keys(updatedSess.studentVersions);
-          if (updatedSess.studentVersions[safeName2b]) newVer = updatedSess.studentVersions[safeName2b];
-          else {
-            const lk = keys2.find(k => k.toLowerCase() === safeName2b.toLowerCase());
-            if (lk) newVer = updatedSess.studentVersions[lk];
-            else {
-              const nk = keys2.find(k => _normName2(k) === _normName2(S.studentName));
-              if (nk) newVer = updatedSess.studentVersions[nk];
-            }
-          }
-        }
+        const newVer = _llMapLookup(updatedSess.studentVersions, _names);
         if (newVer && newVer !== S.studentVersion) {
           S.studentVersion = newVer;
           // Il docente legge la versione dal record: va aggiornata anche lì
@@ -17761,9 +18033,8 @@ function _assignAllVersion(ver) {
 }
 async function onClassSelectForSession() {
   const classId = document.getElementById('start-session-class').value;
-  const area = document.getElementById('student-assign-area');
-  const grid = document.getElementById('student-assign-grid');
-  if (!classId) { area.style.display = 'none'; return; }
+  S._assignCtx = null;
+  if (!classId) { _renderAssignGrid(); return; }
 
   // Check if activity has versions
   let activity = null;
@@ -17772,6 +18043,7 @@ async function onClassSelectForSession() {
   }
   // R1: il docente vede DSA/PEI nella griglia; su Firebase andranno solo lettere.
   S.pendingVersionKeys = null;
+  let versionsOk = true;
   if (activity && _vkHasVersions(activity)) {
     try {
       if (_vkNeedsKeys(activity)) {
@@ -17786,66 +18058,104 @@ async function onClassSelectForSession() {
       }
     } catch(e) { console.warn('[R1] legenda versioni:', e.message); }
     if (!S.pendingVersionKeys) {
-      area.style.display = 'none';
+      versionsOk = false;
       alert('⚠️ Non riesco a leggere la legenda delle versioni: per ora non puoi assegnare versioni differenziate. Riseleziona la classe tra poco.');
-      return;
+    } else {
+      activity = Object.assign({}, activity, _vkDecodeActivity(activity, S.pendingVersionKeys));
     }
-    activity = Object.assign({}, activity, _vkDecodeActivity(activity, S.pendingVersionKeys));
   }
-  const hasVersions = activity?.versions && (activity.versions.dsa || activity.versions.pei || activity.versions.pei_2 || activity.versions.recupero || activity.versions.training_dsa || activity.versions.training_pei || activity.versions.fila_b || activity.versions.fila_c); // recupero_1/2 are automatic, not shown here
-  if (!hasVersions) { area.style.display = 'none'; return; }
 
   // Get roster
   let roster = [];
   if (db) { try { const snap = await db.ref('livelearn/classes/' + classId).get(); if (snap.val()) roster = snap.val().studenti || []; } catch(e) {} }
   if (!roster.length) { const local = localStorage.getItem('livelearn_classes'); if (local) { const all = JSON.parse(local); roster = all[classId]?.studenti || []; } }
-  if (!roster.length) { area.style.display = 'none'; return; }
+  // La classe può essere cambiata mentre si leggeva: vale solo l'ultima scelta
+  if (document.getElementById('start-session-class').value !== classId) return;
+  if (!roster.length) { _renderAssignGrid(); return; }
 
-  const vDsa = activity.versions?.dsa?.length ? true : false;
-  const vPei = activity.versions?.pei?.length ? true : false;
-  const vPei2 = activity.versions?.pei_2?.length ? true : false;
-  const vRec = activity.versions?.recupero?.length ? true : false;
-  const vFilaB = activity.versions?.fila_b?.length ? true : false;
-  const vFilaC = activity.versions?.fila_c?.length ? true : false;
-  const vTrDsa = activity.versions?.training_dsa?.length ? true : false;
-  const vTrPei = activity.versions?.training_pei?.length ? true : false;
+  // recupero_1/2 sono automatici, non si assegnano qui
+  const has = k => versionsOk && !!(activity?.versions?.[k]?.length);
+  const verCols = [
+    ['dsa', 'DSA'], ['pei', 'PEI'], ['pei_2', 'PEI 2'], ['recupero', 'Rec.'],
+    ['training_dsa', 'Tr. DSA', 'Training DSA'], ['training_pei', 'Tr. PEI', 'Training PEI'],
+    ['fila_b', 'FILA B'], ['fila_c', 'FILA C']
+  ].filter(c => has(c[0]));
+  S._assignCtx = { roster, verCols };
+  _renderAssignGrid();
+}
 
-  let h = '<div class="student-assign-row header"><span>Studente</span><span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'originale\')" title="Clicca per assegnare a tutti">FILA A</span>';
-  if (vDsa) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'dsa\')" title="Clicca per assegnare a tutti">DSA</span>';
-  if (vPei) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'pei\')" title="Clicca per assegnare a tutti">PEI</span>';
-  if (vPei2) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'pei_2\')" title="Clicca per assegnare a tutti">PEI 2</span>';
-  if (vRec) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'recupero\')" title="Clicca per assegnare a tutti">Rec.</span>';
-  if (vTrDsa) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'training_dsa\')" title="Training DSA — clicca per assegnare a tutti">Tr. DSA</span>';
-  if (vTrPei) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'training_pei\')" title="Training PEI — clicca per assegnare a tutti">Tr. PEI</span>';
-  if (vFilaB) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'fila_b\')" title="Clicca per assegnare a tutti">FILA B</span>';
-  if (vFilaC) h += '<span class="sa-col" style="text-align:center;" onclick="_assignAllVersion(\'fila_c\')" title="Clicca per assegnare a tutti">FILA C</span>';
+// Disegna la tabella alunni del modale di avvio: una colonna per versione
+// (se l'attività ne ha) e, per Test ed Esercitazione, una colonna per far
+// svolgere a singoli alunni l'altra modalità. Le scelte già fatte restano
+// quando si cambia modalità.
+function _renderAssignGrid() {
+  const area = document.getElementById('student-assign-area');
+  const grid = document.getElementById('student-assign-grid');
+  const modal = document.getElementById('modal-start-session');
+  if (!area || !grid) return;
+  const ctx = S._assignCtx;
+  const mode = S.launchMode || 'test';
+  const otherMode = mode === 'test' ? 'practice' : mode === 'practice' ? 'test' : null;
+  const verCols = ctx ? ctx.verCols : [];
+  if (!ctx || (!verCols.length && !otherMode)) {
+    area.style.display = 'none';
+    grid.innerHTML = '';
+    if (modal) modal.classList.remove('wide');
+    return;
+  }
+  // Scelte correnti, per non perderle al ridisegno
+  const prevVer = {}, prevMode = {};
+  grid.querySelectorAll('input[data-student-version]:checked').forEach(r => { prevVer[r.dataset.studentName] = r.value; });
+  grid.querySelectorAll('input[data-student-mode]').forEach(c => { prevMode[c.dataset.studentName] = c.checked; });
+
+  const hasVer = verCols.length > 0;
+  const colW = 'minmax(64px,1fr)';
+  const cols = (hasVer ? 1 + verCols.length : 0) + (otherMode ? 1 : 0);
+  const colTemplate = 'minmax(240px,3fr) ' + Array(cols).fill(colW).join(' ');
+  const modeLabel = otherMode === 'test' ? '📝 Test' : '🎮 Esercit.';
+  const modeTitle = otherMode === 'test'
+    ? 'Questo alunno svolge l\'attività come TEST (valutato), anche se la sessione è un\'esercitazione — clicca per tutti / nessuno'
+    : 'Questo alunno svolge l\'attività come ESERCITAZIONE (non valutata), anche se la sessione è un test — clicca per tutti / nessuno';
+
+  let h = '<div class="student-assign-row header" style="grid-template-columns:' + colTemplate + ';"><span>Studente</span>';
+  if (hasVer) {
+    h += '<span class="sa-col" onclick="_assignAllVersion(\'originale\')" title="Clicca per assegnare a tutti">FILA A</span>';
+    verCols.forEach(c => {
+      h += '<span class="sa-col" onclick="_assignAllVersion(\'' + c[0] + '\')" title="' + esc(c[2] || c[1]) + ' — clicca per assegnare a tutti">' + esc(c[1]) + '</span>';
+    });
+  }
+  if (otherMode) h += '<span class="sa-col" onclick="_assignAllMode()" title="' + esc(modeTitle) + '" style="color:#b45309;">' + modeLabel + '</span>';
   h += '</div>';
-  // Adjust grid columns
-  const cols = 2 + (vDsa?1:0) + (vPei?1:0) + (vPei2?1:0) + (vRec?1:0) + (vTrDsa?1:0) + (vTrPei?1:0) + (vFilaB?1:0) + (vFilaC?1:0);
-  // Con tante versioni (simulazione: Rec. + Tr. DSA + Tr. PEI) le colonne si stringono per restare nel riquadro
-  const colW = cols <= 5 ? '80px' : cols <= 7 ? '62px' : '52px';
-  const colTemplate = 'minmax(110px,1fr) ' + Array(cols-1).fill(colW).join(' ');
 
-  roster.forEach(name => {
+  ctx.roster.forEach(name => {
     const safe = name.replace(/[.#$\[\]\/'"]/g, '_');
+    const nm = esc(name);
+    const chosen = prevVer[name] || 'originale';
+    const radio = v => '<label title="' + nm + '"><input type="radio" name="ver_' + safe + '" value="' + v + '" data-student-version data-student-name="' + nm + '"' + (chosen === v ? ' checked' : '') + '></label>';
     h += '<div class="student-assign-row" style="grid-template-columns:' + colTemplate + ';">';
-    h += '<span class="student-assign-name">' + esc(name) + '</span>';
-    h += '<label><input type="radio" name="ver_' + safe + '" value="originale" data-student-version data-student-name="' + esc(name) + '" checked></label>';
-    if (vDsa) h += '<label><input type="radio" name="ver_' + safe + '" value="dsa" data-student-version data-student-name="' + esc(name) + '"></label>';
-    if (vPei) h += '<label><input type="radio" name="ver_' + safe + '" value="pei" data-student-version data-student-name="' + esc(name) + '"></label>';
-    if (vPei2) h += '<label><input type="radio" name="ver_' + safe + '" value="pei_2" data-student-version data-student-name="' + esc(name) + '"></label>';
-    if (vRec) h += '<label><input type="radio" name="ver_' + safe + '" value="recupero" data-student-version data-student-name="' + esc(name) + '"></label>';
-    if (vTrDsa) h += '<label><input type="radio" name="ver_' + safe + '" value="training_dsa" data-student-version data-student-name="' + esc(name) + '"></label>';
-    if (vTrPei) h += '<label><input type="radio" name="ver_' + safe + '" value="training_pei" data-student-version data-student-name="' + esc(name) + '"></label>';
-    if (vFilaB) h += '<label><input type="radio" name="ver_' + safe + '" value="fila_b" data-student-version data-student-name="' + esc(name) + '"></label>';
-    if (vFilaC) h += '<label><input type="radio" name="ver_' + safe + '" value="fila_c" data-student-version data-student-name="' + esc(name) + '"></label>';
+    h += '<span class="student-assign-name">' + nm + '</span>';
+    if (hasVer) {
+      h += radio('originale');
+      verCols.forEach(c => { h += radio(c[0]); });
+    }
+    if (otherMode) h += '<label class="sa-mode" title="' + esc(modeTitle) + '"><input type="checkbox" data-student-mode data-student-name="' + nm + '"' + (prevMode[name] ? ' checked' : '') + '></label>';
     h += '</div>';
   });
   grid.innerHTML = h;
-  // Update header grid too
-  const headerRow = grid.querySelector('.header');
-  if (headerRow) headerRow.style.gridTemplateColumns = colTemplate;
+  const help = document.getElementById('student-assign-help');
+  if (help) {
+    help.innerHTML = (hasVer ? 'Seleziona la versione per ogni studente (clic sull\'intestazione di una colonna = a tutti). L\'alunno non vedrà nessun riferimento alla versione. ' : '') +
+      (otherMode ? 'Colonna <strong>' + modeLabel + '</strong>: spunta gli alunni che devono fare ' +
+        (otherMode === 'test' ? 'un <strong>test</strong> mentre gli altri fanno l\'esercitazione.' : 'un\'<strong>esercitazione</strong> mentre gli altri fanno il test.') : '');
+  }
   area.style.display = 'block';
+  if (modal) modal.classList.add('wide');
+}
+// Intestazione della colonna modalità: spunta tutti, o toglie a tutti se erano già tutti spuntati
+function _assignAllMode() {
+  const boxes = [...document.querySelectorAll('#student-assign-grid input[data-student-mode]')];
+  const all = boxes.length && boxes.every(b => b.checked);
+  boxes.forEach(b => { b.checked = !all; });
 }
 
 // ═══════════════════════════════════════════════════════════════
