@@ -1781,6 +1781,27 @@ function _pianiSvolti(){
   return out;
 }
 
+// PDF completo di un tentativo del piano (l'ultimo se n manca). Domande e
+// risposte stanno gia' in recovery_sessions: l'attivita' e' copiata nel piano
+// e ogni tentativo salva risposte (in ordine originale), punteggi AI e tempi.
+function openPianoPdf(code, n){
+  const rs = S.recoverySessions[code] || {};
+  const attempts = _pianoAttempts(rs);
+  const att = n ? attempts.find(a=>Number(a.n)===n) : attempts[attempts.length-1];
+  if(!att || !att.answers || !rs.activity){ alert('Dettaglio non disponibile per questo tentativo.'); return; }
+  const sess = _pianiSvolti().find(s=>s.sessionCode===code) || {};
+  // Copia: le immagini idratate non devono finire nei dati in memoria
+  const questions = JSON.parse(JSON.stringify(_llFbArr(rs.activity.questions))).filter(Boolean);
+  const imgIdx = _pdfImageIndex(rs.activity);
+  _pdfHydrateImages(questions, imgIdx);
+  const entry = {
+    answers: _llFbArr(att.answers), aiScores: att.aiScores || {}, aiFeedbacks: att.aiFeedbacks || {},
+    questionTimes: _llFbArr(att.questionTimes), joinedAt: att.startedAt || null, submittedAt: att.submittedAt || null
+  };
+  const title = (sess.activityTitle || _pianoLabel(sess._pianoType)) + (attempts.length>1 ? ' — tentativo ' + (att.n||'') : '');
+  _buildStudentPdfWindow(code, questions, entry, { activityTitle: title }, imgIdx);
+}
+
 // Dettaglio di un piano svolto: stessa schermata dei test, dati dall'ultimo tentativo
 function openPianoResult(code){
   const sess = _pianiSvolti().find(s=>s.sessionCode===code);
@@ -1842,15 +1863,18 @@ function openPianoResult(code){
     html += `<div class="card" style="margin-bottom:12px"><div class="sec-lbl" style="margin-bottom:8px">TENTATIVI</div>`;
     attempts.forEach(a=>{
       const d = a.submittedAt ? fmtDate(new Date(a.submittedAt).toISOString().substring(0,10)) : '';
-      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:0.5px solid #f0eeff">
-        <span style="font-size:12px;color:var(--text)">Tentativo ${a.n||''}${d?' · '+d:''}</span>
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px solid #f0eeff">
+        <span style="font-size:12px;color:var(--text);flex:1">Tentativo ${a.n||''}${d?' · '+d:''}</span>
         <span style="font-size:12px;font-weight:700;color:${pctColor(a.pct||0)}">${a.pct!=null?a.pct+'%':'—'}</span>
+        ${a.answers?`<button onclick="openPianoPdf('${esc(code).replace(/'/g,'')}',${Number(a.n)||0})" style="background:#f5f4ff;color:var(--purple);border:none;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">📄 PDF</button>`:''}
       </div>`;
     });
     html += `</div>`;
   }
 
-  html += `<button onclick="openRecoveryActivity('${esc(code).replace(/'/g,'')}')" style="display:block;width:100%;padding:13px;background:var(--purple);color:#fff;border:none;border-radius:12px;text-align:center;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:8px">🔁 Rifai l'attività</button>`;
+  if(last.answers) html += `<button onclick="openPianoPdf('${esc(code).replace(/'/g,'')}')" style="display:block;width:100%;padding:13px;background:var(--purple);color:#fff;border:none;border-radius:12px;text-align:center;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:8px">📄 Apri PDF completo</button>`;
+  else html += `<div style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:10px">Il dettaglio esercizio per esercizio non è disponibile per questo tentativo.</div>`;
+  html += `<button onclick="openRecoveryActivity('${esc(code).replace(/'/g,'')}')" style="display:block;width:100%;padding:13px;background:#fff;color:var(--purple);border:1.5px solid var(--purple);border-radius:12px;text-align:center;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:8px">🔁 Rifai l'attività</button>`;
   document.getElementById('pdf-body').innerHTML = html;
   showScreen('scr-pdf');
   document.getElementById('main-tab-bar').style.display='none';
