@@ -1030,6 +1030,7 @@ function setupRealtimeListeners(){
     const vbadge = document.getElementById('val-badge');
     if(vbadge) vbadge.style.display = (S.feedback.length>0||unseen.length>0)?'block':'none';
     if(document.getElementById('scr-valutazioni')?.classList.contains('active')) renderValutazioni();
+    renderCompiti();
   };
   ppRef.on('value', ppFn);
   S._listeners.push({ref:ppRef, fn:ppFn});
@@ -1046,6 +1047,7 @@ function setupRealtimeListeners(){
   const rsFn = snap => {
     S.recoverySessions = snap.val()||{};
     if(document.getElementById('scr-valutazioni')?.classList.contains('active')) renderValutazioni();
+    renderCompiti();
   };
   rsRef.on('value', rsFn);
   S._listeners.push({ref:rsRef, fn:rsFn});
@@ -1744,9 +1746,120 @@ async function _loadAssignInfo(code){
   renderCompiti();
 }
 
+// ── PIANI PERSONALIZZATI SVOLTI ───────────────────────────────────────────
+// LiveLearn scrive l'esito dei piani (REC-/CON-/APP-) solo in
+// recovery_sessions/<codice>: non passano dal nodo di raccolta, quindi in
+// history_priv non arrivano e nel tab Test non comparivano. Qui diventano
+// voci "Assegnato" tra i completati, con l'ultimo tentativo.
+function _pianoAttempts(rs){
+  const a = rs && rs.attempts;
+  return (Array.isArray(a) ? a : Object.values(a||{})).filter(Boolean)
+    .sort((x,y)=>(x.n||0)-(y.n||0));
+}
+function _pianiSvolti(){
+  const out = [];
+  const codes = new Set([...S.personalPlan.map(p=>p.code||p._key), ...Object.keys(S.recoverySessions||{})]);
+  codes.forEach(code=>{
+    if(!code) return;
+    const rs = S.recoverySessions[code] || {};
+    const item = S.personalPlan.find(p=>(p.code||p._key)===code) || {};
+    if(item.type==='recovery_orale') return;
+    const attempts = rs.attemptCount || item.attemptCount || 0;
+    const pct = rs.lastScore!=null ? rs.lastScore : item.lastScore;
+    if(!attempts || pct==null) return;
+    const last = _pianoAttempts(rs).pop() || {};
+    const type = item.type || (rs.prefix==='REC'?'recovery_scritto':rs.prefix==='CON'?'consolidamento':rs.prefix==='APP'?'approfondimento':'');
+    out.push({
+      sessionCode: code, _piano: true, _pianoType: type, mode: 'assigned',
+      activityTitle: item.unitName || rs.unit || rs.activity?.title || _pianoLabel(type),
+      pct, ts: rs.lastAttemptAt || item.lastAttemptAt || last.submittedAt || 0,
+      score: last.score ?? null, maxPts: last.maxPts ?? null,
+      numQuestions: (rs.activity?.questions||[]).length || null,
+      attemptCount: attempts
+    });
+  });
+  return out;
+}
+
+// Dettaglio di un piano svolto: stessa schermata dei test, dati dall'ultimo tentativo
+function openPianoResult(code){
+  const sess = _pianiSvolti().find(s=>s.sessionCode===code);
+  if(!sess){ alert('Risultato non disponibile.'); return; }
+  const rs = S.recoverySessions[code] || {};
+  const attempts = _pianoAttempts(rs);
+  const last = attempts[attempts.length-1] || {};
+  const p = sess.pct||0;
+  document.getElementById('pdf-title').textContent = sess.activityTitle||'Risultati';
+  document.getElementById('pdf-sub').textContent = _pianoLabel(sess._pianoType) + ' · ' + fmtDate(sess.ts?new Date(sess.ts).toISOString().substring(0,10):'');
+
+  const durSec = (last.submittedAt && last.startedAt) ? Math.round((last.submittedAt-last.startedAt)/1000) : 0;
+  let html = `<div style="text-align:center;padding:20px 0 16px">
+    <div style="font-size:48px;font-weight:700;color:${pctColor(p)}">${p}%</div>
+    <div style="font-size:13px;color:var(--muted);margin-top:4px">Ultimo tentativo${sess.attemptCount>1?' · '+sess.attemptCount+' tentativi':''}</div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+    <div style="background:#f5f4ff;border-radius:12px;padding:12px;text-align:center">
+      <div style="font-size:22px;font-weight:700;color:var(--purple)">${sess.score!=null?Math.round(sess.score*10)/10:'—'}/${sess.maxPts||'?'}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:2px">PUNTI</div>
+    </div>
+    <div style="background:#f5f4ff;border-radius:12px;padding:12px;text-align:center">
+      <div style="font-size:22px;font-weight:700;color:var(--amber)">${durSec?Math.max(1,Math.round(durSec/60))+'m':'—'}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:2px">DURATA</div>
+    </div>
+  </div>`;
+
+  // Risultati per area, ricalcolati dalle risposte dell'ultimo tentativo
+  const qs = rs.activity?.questions || [];
+  if(qs.length && last.answers){
+    const entry = { answers: _llFbArr(last.answers), aiScores: last.aiScores||{} };
+    const agg = {};
+    qs.forEach((q,i)=>{
+      if(!q || !q.tag || !TAG_META[q.tag]) return;
+      let r; try { r = _evalWithOverrides(q, i, entry); } catch(e){ return; }
+      if(!r || !r.maxPts) return;
+      agg[q.tag] = agg[q.tag] || {e:0,t:0};
+      agg[q.tag].t += r.maxPts;
+      agg[q.tag].e += typeof r.pts==='number' ? r.pts : 0;
+    });
+    const tags = Object.keys(agg);
+    if(tags.length){
+      html += `<div class="card" style="margin-bottom:12px"><div class="sec-lbl" style="margin-bottom:10px">RISULTATI PER AREA</div>`;
+      tags.forEach(t=>{
+        const m = TAG_META[t], v = Math.round(agg[t].e/agg[t].t*100);
+        html += `<div style="margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+            <span style="font-weight:600;color:${m.color}">${m.label}</span>
+            <span style="color:${m.color}">${v}%</span>
+          </div>
+          <div class="bar-wrap"><div class="bar-fill" style="width:${v}%;background:${m.color}"></div></div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+  }
+
+  if(attempts.length>1){
+    html += `<div class="card" style="margin-bottom:12px"><div class="sec-lbl" style="margin-bottom:8px">TENTATIVI</div>`;
+    attempts.forEach(a=>{
+      const d = a.submittedAt ? fmtDate(new Date(a.submittedAt).toISOString().substring(0,10)) : '';
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:0.5px solid #f0eeff">
+        <span style="font-size:12px;color:var(--text)">Tentativo ${a.n||''}${d?' · '+d:''}</span>
+        <span style="font-size:12px;font-weight:700;color:${pctColor(a.pct||0)}">${a.pct!=null?a.pct+'%':'—'}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `<button onclick="openRecoveryActivity('${esc(code).replace(/'/g,'')}')" style="display:block;width:100%;padding:13px;background:var(--purple);color:#fff;border:none;border-radius:12px;text-align:center;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:8px">🔁 Rifai l'attività</button>`;
+  document.getElementById('pdf-body').innerHTML = html;
+  showScreen('scr-pdf');
+  document.getElementById('main-tab-bar').style.display='none';
+}
+
 // ── COMPITI ───────────────────────────────────────────────────────────────
 function renderCompiti(){
-  const sessions = Object.values(S.sessions).sort((a,b)=>(b.ts||0)-(a.ts||0));
+  // Piani personalizzati svolti insieme ai test, tra gli "Assegnati"
+  const sessions = Object.values(S.sessions).concat(_pianiSvolti()).sort((a,b)=>(b.ts||0)-(a.ts||0));
   const filter = S.homeworkFilter;
   const filtered = filter==='all'?sessions:sessions.filter(s=>(s.mode||'test')===filter||s.status===filter);
   const pending = S.lessons.filter(l=>l.compiti && extractHwDate(l.compiti) && daysUntil(extractHwDate(l.compiti))>=0);
@@ -1800,14 +1913,17 @@ function renderCompiti(){
       const p = sess.pct||0;
       const modeLabel = sess.mode==='practice'?'Esercitazione':sess.mode==='teacher'?'Controllo':sess.mode==='assigned'?'Assegnato':'Test';
       const modePill = sess.mode==='practice'?'pill-purple':sess.mode==='teacher'?'pill-gray':sess.mode==='assigned'?'pill-indigo':'pill-amber';
-      html += `<div class="card card-tap" onclick="openPdf('${sess.sessionCode||''}')" style="margin-bottom:8px">
+      const _code = String(sess.sessionCode||'').replace(/['"<>&]/g,'');
+      html += `<div class="card card-tap" onclick="${sess._piano?'openPianoResult':'openPdf'}('${_code}')" style="margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
           <div style="flex:1">
             <div style="font-size:14px;font-weight:600;color:var(--text)">${esc(sess.activityTitle||'Sessione')}</div>
             <div style="display:flex;gap:5px;margin-top:4px;flex-wrap:wrap">
               <span class="pill ${modePill}">${modeLabel}</span>
+              ${sess._piano?`<span class="pill pill-teal">${_pianoIcon(sess._pianoType)} ${_pianoLabel(sess._pianoType)}</span>`:''}
               <span class="pill pill-gray">${fmtDate(sess.ts?new Date(sess.ts).toISOString().substring(0,10):'')}</span>
               ${sess.numQuestions?`<span class="pill pill-gray">${sess.numQuestions} dom.</span>`:''}
+              ${sess._piano&&sess.attemptCount>1?`<span class="pill pill-gray">${sess.attemptCount} tent.</span>`:''}
             </div>
           </div>
           <div style="text-align:right;white-space:nowrap">
@@ -1825,7 +1941,7 @@ function renderCompiti(){
         <div class="pdf-row">
           <button class="pdf-btn" style="background:${pctBg(p)};color:${pctColor(p)}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            Vedi PDF risultati
+            ${sess._piano?'Vedi risultati':'Vedi PDF risultati'}
           </button>
         </div>
       </div>`;
