@@ -12043,6 +12043,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                     </div>
                     <div class="lesson-actions">
                         ${isBozza?`<button onclick="validaBozza('${slot.id}')" title="Ho controllato la lezione: è attuabile. L'agente potrà prepararne il piano dettagliato." style="padding:4px 10px;border-radius:12px;border:1.5px solid #ca8a04;background:#fff7d6;color:#854d0e;cursor:pointer;font-size:12px;font-weight:800;">✓ Valida</button>`:''}
+                        ${isBozza?_htmlBtnVerificaStudent(activity, slot.id):''}
                         ${(!isBozza && !isConclusa)?`<button onclick="rendiDaValidare('${slot.id}')" title="Rimetti la lezione in bozza: l'agente non ne preparerà il piano dettagliato finché non la validi" style="padding:4px 10px;border-radius:12px;border:1.5px solid #d6b75c;background:white;color:#a16207;cursor:pointer;font-size:12px;font-weight:700;">↩️ Da validare</button>`:''}
                         <button class="btn-edit" onclick="editLessonCard('${slot.id}')">✏️ Modifica</button>
                         ${(()=>{
@@ -12485,7 +12486,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             const [iso] = slotIdStr.split('_');
             const lz = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotIdStr || (!p.ora && p.data===iso));
             if (!lz) return;
-            delete lz.bozza; delete lz.bozzaDal;
+            delete lz.bozza; delete lz.bozzaDal; delete lz.verificaVisibileStudent;
             lz.validataAt = new Date().toISOString();
             saveData();
             if (!document.getElementById('tabProssime')?.classList.contains('hidden')) renderLezFuture();
@@ -12504,12 +12505,43 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             lz.bozza = true;
             lz.bozzaDal = new Date().toISOString();
             delete lz.validataAt;
+            delete lz.verificaVisibileStudent;   // in bozza la verifica torna nascosta agli alunni
             saveData();
             if (!document.getElementById('tabProssime')?.classList.contains('hidden')) renderLezFuture();
             _aggiornaStatoValidazioneModal(lz, slotIdStr);
             if (typeof _mcToast === 'function') _mcToast('↩️ Lezione da validare — l\'agente non preparerà il piano finché non la validi');
         }
         window.rendiDaValidare = rendiDaValidare;
+
+        /** Verifica/interrogazione in una lezione del piano (tipo scritta o orale) */
+        function _lzIsVerifica(lz) {
+            const t = _tipoArr(lz?.tipo || []);
+            return t.includes('verifica_scritta') || t.includes('verifica_orale');
+        }
+        /** Bottone per mostrare/nascondere su StudentApp la verifica di una lezione in bozza */
+        function _htmlBtnVerificaStudent(lz, slotIdStr) {
+            if (!lz || lz.bozza !== true || !_lzIsVerifica(lz)) return '';
+            return lz.verificaVisibileStudent === true
+                ? `<button type="button" onclick="toggleVerificaStudentApp('${slotIdStr}')" title="La verifica è già negli impegni futuri di StudentApp anche se la lezione non è validata. Clicca per nasconderla finché non la validi." style="padding:4px 10px;border-radius:12px;border:1.5px solid #16a34a;background:#f0fdf4;color:#166534;cursor:pointer;font-size:12px;font-weight:700;">👁️ Visibile su StudentApp</button>`
+                : `<button type="button" onclick="toggleVerificaStudentApp('${slotIdStr}')" title="La lezione è in bozza: gli alunni non vedono la verifica finché non la validi. Clicca per mostrarla già negli impegni futuri di StudentApp." style="padding:4px 10px;border-radius:12px;border:1.5px solid #9ca3af;background:white;color:#4b5563;cursor:pointer;font-size:12px;font-weight:700;">🙈 Nascosta su StudentApp</button>`;
+        }
+        /** Lezione in bozza con verifica: decide il docente se gli alunni la vedono già */
+        function toggleVerificaStudentApp(slotIdStr) {
+            const classe = data.classi[currentClass];
+            const [iso] = slotIdStr.split('_');
+            const lz = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotIdStr || (!p.ora && p.data===iso));
+            if (!lz || lz.bozza !== true) return;
+            const mostra = lz.verificaVisibileStudent !== true;
+            if (mostra) lz.verificaVisibileStudent = true; else delete lz.verificaVisibileStudent;
+            saveData();
+            if (typeof _syncVerificheSoon === 'function') _syncVerificheSoon(300);
+            if (!document.getElementById('tabProssime')?.classList.contains('hidden')) renderLezFuture();
+            _aggiornaStatoValidazioneModal(lz, slotIdStr);
+            if (typeof _mcToast === 'function') _mcToast(mostra
+                ? '👁️ Verifica visibile negli impegni di StudentApp'
+                : '🙈 Verifica nascosta su StudentApp finché non validi la lezione');
+        }
+        window.toggleVerificaStudentApp = toggleVerificaStudentApp;
 
         /** Aggiorna il riquadro di validazione nel modal di modifica, se aperto */
         function _aggiornaStatoValidazioneModal(lz, slotIdStr) {
@@ -12520,8 +12552,9 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             if (!lz || lz.stato === 'svolta') return '';
             try { if (lezioneConclusa(data.classi[currentClass], lz)) return '<span style="font-size:12px;color:#6b7280;">✔️ Lezione già conclusa — la validazione non serve più</span>'; } catch(e) {}
             if (lz.bozza === true) {
-                return `<span style="font-size:12px;font-weight:700;color:#854d0e;">📝 In bozza — l'agente non prepara il piano dettagliato</span>
-                    <button type="button" onclick="validaBozza('${slotIdStr}')" style="padding:4px 12px;border-radius:12px;border:1.5px solid #ca8a04;background:#fff7d6;color:#854d0e;cursor:pointer;font-size:12px;font-weight:800;">✓ Valida</button>`;
+                return `<span style="font-size:12px;font-weight:700;color:#854d0e;">📝 In bozza — l'agente non prepara il piano dettagliato${_lzIsVerifica(lz) && lz.verificaVisibileStudent !== true ? ' e gli alunni non vedono la verifica' : ''}</span>
+                    <button type="button" onclick="validaBozza('${slotIdStr}')" style="padding:4px 12px;border-radius:12px;border:1.5px solid #ca8a04;background:#fff7d6;color:#854d0e;cursor:pointer;font-size:12px;font-weight:800;">✓ Valida</button>
+                    ${_htmlBtnVerificaStudent(lz, slotIdStr)}`;
             }
             return `<span style="font-size:12px;font-weight:700;color:#166534;">✅ Validata — l'agente può preparare il piano dettagliato</span>
                 <button type="button" onclick="rendiDaValidare('${slotIdStr}')" style="padding:4px 12px;border-radius:12px;border:1.5px solid #d6b75c;background:white;color:#a16207;cursor:pointer;font-size:12px;font-weight:700;">↩️ Da validare</button>`;
@@ -12533,7 +12566,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             const bozze = (classe?.pianificazione?.piano||[]).filter(p => p.bozza === true);
             if (!bozze.length) { alert('Nessuna lezione in bozza da validare.'); return; }
             if (!confirm(`Validare ${bozze.length} lezioni in bozza della ${classe.nome}?`)) return;
-            bozze.forEach(lz => { delete lz.bozza; delete lz.bozzaDal; lz.validataAt = new Date().toISOString(); });
+            bozze.forEach(lz => { delete lz.bozza; delete lz.bozzaDal; delete lz.verificaVisibileStudent; lz.validataAt = new Date().toISOString(); });
             saveData();
             renderLezFuture();
             if (typeof _mcToast === 'function') _mcToast(`✓ ${bozze.length} lezioni validate`);
@@ -12630,7 +12663,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                 if (cambiata || (!ctx.existed && i !== -1)) {
                     if (ctx.existed && ctx.snapshot) {
                         // lo stato di validazione scelto con i bottoni resta com'è ora
-                        const val = { bozza: piano[i].bozza, bozzaDal: piano[i].bozzaDal, validataAt: piano[i].validataAt };
+                        const val = { bozza: piano[i].bozza, bozzaDal: piano[i].bozzaDal, validataAt: piano[i].validataAt, verificaVisibileStudent: piano[i].verificaVisibileStudent };
                         Object.keys(piano[i]).forEach(k => delete piano[i][k]);
                         Object.assign(piano[i], ctx.snapshot);
                         Object.entries(val).forEach(([k, v]) => { if (v === undefined) delete piano[i][k]; else piano[i][k] = v; });
@@ -34553,7 +34586,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
 
     // ── Verifiche/interrogazioni → calendario StudentApp ───────────────────
     // Riconciliazione: per ogni classe, le lezioni FUTURE con tipo verifica
-    // (scritta/orale) vengono scritte in livelearn/lessons come 'pianificata'
+    // (scritta/orale), validate o rese visibili a mano, vengono scritte in livelearn/lessons come 'pianificata'
     // (senza notifiche: quelle restano al pulsante "📡 Pubblica"). Le voci
     // scritte da qui (auto:true) che non corrispondono più a una verifica del
     // piano (tipo tolto, lezione spostata o eliminata, già svolta) vengono rimosse.
@@ -34578,6 +34611,10 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
           const want = {};
           (classe.pianificazione?.piano || []).forEach(lz => {
             if (!lz?.data || lz.data < oggi || lz.stato === 'svolta') return;
+            // Lezione in bozza (non validata): la data della verifica non è
+            // confermata, quindi non compare agli alunni — salvo "👁️ Mostra
+            // su StudentApp" premuto dal docente.
+            if (lz.bozza === true && lz.verificaVisibileStudent !== true) return;
             const tipo = _tipoArr(lz.tipo || []);
             const scritta = tipo.includes('verifica_scritta'), orale = tipo.includes('verifica_orale');
             if (!scritta && !orale) return;
