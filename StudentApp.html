@@ -907,7 +907,7 @@ function setupRealtimeListeners(){
   const _boardMerge = () => {
     S.boardMsgs = S._boardPub.concat(S._boardPriv)
       .sort((a,b)=>{ if(a.pinned&&!b.pinned)return -1; if(!a.pinned&&b.pinned)return 1; return(b.ts||0)-(a.ts||0); });
-    const unread = S.boardMsgs.filter(m=>!m.readBy?.[S.code]).length;
+    const unread = _boardVisible(S.boardMsgs).filter(m=>!m.readBy?.[S.code]).length;
     document.getElementById('board-badge').style.display = unread>0?'block':'none';
     renderBoard();
     // Gli avvisi delle attivita' assegnate finiscono anche tra i test da fare:
@@ -2930,6 +2930,31 @@ function buildStatCharts(){
 }
 
 // ── BACHECA ───────────────────────────────────────────────────────────────
+// Materiale = ha url/link oppure type==='link' (escluso tipo piano che va in messaggi)
+function _boardIsMat(msg){ return msg.type !== 'piano' && (!!(msg.url || msg.link) || msg.type === 'link'); }
+
+// Messaggi da mostrare. Due cose restano fuori:
+// - i compiti assegnati con scadenza, dal giorno dopo la data: scaduti non si
+//   possono più svolgere e in Materiale restavano per sempre;
+// - i materiali ripetuti: MyClass pubblica le risorse di ogni lezione con una
+//   chiave per lezione, quindi una risorsa usata in più lezioni compariva
+//   una volta per lezione. Resta solo la più recente (l'elenco è già ordinato).
+function _boardVisible(msgs){
+  const d = new Date();
+  const today = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  const seenUrl = new Set();
+  return (msgs||[]).filter(m=>{
+    if(m.type!=='piano' && m.deadline && /^\d{4}-\d{2}-\d{2}/.test(m.deadline) && m.deadline.slice(0,10) < today) return false;
+    if(!_boardIsMat(m) || m.type==='avviso_quiz') return true;
+    const u = String(m.url||m.link||'').trim();
+    if(!u) return true;
+    const k = ensureUrl(u).replace(/^https?:\/\//i,'').replace(/\/+$/,'');
+    if(seenUrl.has(k)) return false;
+    seenUrl.add(k);
+    return true;
+  });
+}
+
 function setBoardTab(tab) {
   S.boardTab = tab;
   ['msgs','materiale'].forEach(t => {
@@ -2941,13 +2966,13 @@ function setBoardTab(tab) {
 
 function renderBoard(){
   const tab = S.boardTab || 'msgs';
-  // Divide: materiale = ha url/link oppure type==='link' (escluso tipo piano che va in messaggi)
-  const isMat = msg => msg.type !== 'piano' && (!!(msg.url || msg.link) || msg.type === 'link');
-  const visible = S.boardMsgs.filter(msg => tab === 'materiale' ? isMat(msg) : !isMat(msg));
+  const isMat = _boardIsMat;
+  const shown = _boardVisible(S.boardMsgs);
+  const visible = shown.filter(msg => tab === 'materiale' ? isMat(msg) : !isMat(msg));
 
   // Badge contatori non letti per ciascun tab
-  const unreadMsgs = S.boardMsgs.filter(m => !isMat(m) && !m.readBy?.[S.code]).length;
-  const unreadMat  = S.boardMsgs.filter(m =>  isMat(m) && !m.readBy?.[S.code]).length;
+  const unreadMsgs = shown.filter(m => !isMat(m) && !m.readBy?.[S.code]).length;
+  const unreadMat  = shown.filter(m =>  isMat(m) && !m.readBy?.[S.code]).length;
   const badgeMsgs = document.getElementById('board-badge-msgs');
   const badgeMat  = document.getElementById('board-badge-mat');
   if (badgeMsgs) { badgeMsgs.style.display = unreadMsgs ? 'inline' : 'none'; badgeMsgs.textContent = unreadMsgs || ''; }
