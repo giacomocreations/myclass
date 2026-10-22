@@ -643,6 +643,36 @@ textarea.qe-ce::placeholder, input.qe-ce::placeholder { color: var(--muted); opa
 .ro-drop-zone { min-height:52px; border:2.5px dashed var(--border); border-radius:12px; padding:10px 14px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; background:white; transition:all 0.15s; }
 .ro-drop-zone.dragover { border-color:var(--primary); background:var(--primary-light); }
 .ro-word-bank { display:flex; flex-wrap:wrap; gap:8px; padding:14px; background:var(--primary-light); border-radius:12px; margin-bottom:14px; border:2px dashed var(--primary); min-height:52px; }
+
+/* ── Modalità torneo: tabellone (docente, per la LIM) e banner (studente) ── */
+#tour-overlay { position:fixed; inset:0; z-index:3000; background:#1e1b4b; color:white; display:flex; flex-direction:column; padding:18px 22px; font-family:'Nunito',sans-serif; }
+.tour-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+.tour-head h2 { font-size:24px; font-weight:900; margin:0; }
+.tour-head .tour-sub { font-size:14px; opacity:.75; font-weight:700; }
+.tour-head .btn { font-size:15px; }
+.tour-grid { flex:1; min-height:0; display:flex; gap:14px; overflow:auto; }
+.tour-col { flex:1; min-width:150px; display:flex; flex-direction:column; }
+.tour-ch { text-align:center; font-size:13px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; opacity:.6; margin-bottom:8px; }
+.tour-col.cur .tour-ch { opacity:1; color:#fcd34d; }
+.tour-ms { flex:1; display:flex; flex-direction:column; justify-content:space-around; gap:6px; }
+.tour-m { background:rgba(255,255,255,.08); border:2px solid rgba(255,255,255,.12); border-radius:10px; overflow:hidden; }
+.tour-col.cur .tour-m { border-color:#fcd34d; }
+.tour-m.empty { opacity:.35; }
+.tour-p { display:flex; justify-content:space-between; gap:8px; padding:4px 10px; font-size:14px; font-weight:700; white-space:nowrap; }
+.tour-p + .tour-p { border-top:1px solid rgba(255,255,255,.12); }
+.tour-p span { overflow:hidden; text-overflow:ellipsis; }
+.tour-p.win { background:rgba(16,185,129,.35); }
+.tour-p.lose { opacity:.4; text-decoration:line-through; }
+.tour-p.bye { font-style:italic; opacity:.55; font-weight:600; }
+.tour-col.dense .tour-ms { gap:3px; }
+.tour-col.dense .tour-m { border-width:1px; border-radius:7px; }
+.tour-col.dense .tour-p { font-size:11.5px; padding:0 8px; line-height:1.35; }
+.tour-champ { min-width:170px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+.tour-champ .tc-cup { font-size:64px; }
+.tour-champ .tc-name { font-size:22px; font-weight:900; color:#fcd34d; margin-top:6px; }
+#tour-banner { position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:2500; max-width:92vw; background:#1e1b4b; color:white; border-radius:20px; padding:7px 18px; font-size:14px; font-weight:800; box-shadow:0 4px 16px rgba(0,0,0,.2); pointer-events:none; text-align:center; }
+#tour-banner.win { background:#047857; }
+#tour-banner.out { background:#6b7280; }
 </style>
 </head>
 <body class="notranslate" translate="no">
@@ -1030,6 +1060,7 @@ const CONFIG = {
       <div class="progress-bar" style="width:160px;margin-bottom:0;height:7px;"><div class="progress-fill" id="teacher-q-progress" style="width:0%"></div></div>
     </div>
     <div class="flex gap-8">
+      <button class="btn btn-sm" id="btn-tour-board" onclick="_tourOpenBoard()" style="display:none;">🏆 Tabellone</button>
       <button class="btn btn-sm" id="btn-prev-tq" onclick="teacherPrevQ()" style="display:none;">← Prec.</button>
       <button class="btn btn-primary btn-sm" id="btn-next-tq" onclick="teacherNextQ()">▶ Prima domanda</button>
     </div>
@@ -1568,6 +1599,12 @@ const CONFIG = {
         <span><strong>🔁 Ripetibile</strong> — dopo la consegna l'alunno può rifarla quante volte vuole. Vedi l'ultimo tentativo e lo storico dei precedenti.</span>
       </label>
     </div>
+
+    <!-- Opzione modalità CONTROLLO DOCENTE: torneo a eliminazione -->
+    <label id="tournament-options" style="display:none;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;padding:10px 14px;background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;margin-bottom:14px;">
+      <input type="checkbox" id="launch-tournament" style="margin-top:2px;">
+      <span><strong>🏆 Modalità torneo</strong><br><span class="text-muted" style="font-size:12px;">Tabellone a eliminazione tra gli alunni collegati. Le domande vengono divise in turni: in ogni turno tutte le coppie rispondono insieme, ognuno dal suo PC, e passa chi fa più punti (a parità, chi è stato più veloce). Il tabellone si apre col pulsante 🏆 da proiettare sulla LIM. Le domande non vengono mescolate e tutti svolgono la versione originale.</span></span>
+    </label>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px;background:#f9f8f6;border-radius:10px;margin-bottom:14px;">
       <div class="form-group" style="margin-bottom:0;">
@@ -5767,6 +5804,8 @@ function selectLaunchMode(mode) {
   // Mostra/nascondi opzioni aggiuntive per ASSEGNA
   const assignedOpts = document.getElementById('assigned-options');
   if (assignedOpts) assignedOpts.style.display = mode === 'assigned' ? 'block' : 'none';
+  const tourOpts = document.getElementById('tournament-options');
+  if (tourOpts) tourOpts.style.display = mode === 'teacher' ? 'flex' : 'none';
   _renderAssignGrid();
 }
 
@@ -5894,7 +5933,9 @@ async function confirmStartSession() {
   closeStartModal();
   const mode = S.launchMode || 'test';
   const timer = parseInt(document.getElementById('launch-timer').value) || 0;
-  const shuffleQ = document.getElementById('launch-shuffleQ').checked;
+  // Torneo: i turni sono blocchi di domande consecutive, quindi niente mescolamento
+  const tournament = mode === 'teacher' && !!document.getElementById('launch-tournament')?.checked;
+  const shuffleQ = document.getElementById('launch-shuffleQ').checked && !tournament;
   const shuffleOpts = document.getElementById('launch-shuffleOpts').checked;
   const noListening = !!document.getElementById('launch-noListening')?.checked;
   if (noListening) {
@@ -5954,7 +5995,9 @@ async function confirmStartSession() {
     if (_deadline) sessionPayload.deadline = _deadline;
     if (_isAssigned && document.getElementById('launch-repeatable')?.checked) sessionPayload.repeatable = true;
     if (noListening) sessionPayload.noListening = true;
-    if (Object.keys(studentVersions).length) sessionPayload.studentVersions = studentVersions;
+    if (tournament) sessionPayload.tournament = true;
+    // Torneo: tutti sulla versione originale, così i punteggi si confrontano domanda per domanda
+    if (Object.keys(studentVersions).length && !tournament) sessionPayload.studentVersions = studentVersions;
     if (Object.keys(studentModes).length) sessionPayload.studentModes = studentModes;
     const _tchrKey = localStorage.getItem('gemini_api_key');
     if (_tchrKey) sessionPayload.sharedApiKey = _tchrKey;
@@ -6158,6 +6201,7 @@ async function openLive(code, activityId, roster, silent) {
   S.selectedStudent = _prevSelected;
   S.liveRoster = roster || [];
   S.teacherCurrentQ = -1;
+  _tourCloseBoard(); S._tour = null; S._liveResp = null; S.liveTournament = false;
   S._rosterDebugLogged = {};
   window._pillKeyMap = new Map();
   document.getElementById('live-code-val').textContent = code;
@@ -6215,6 +6259,7 @@ async function openLive(code, activityId, roster, silent) {
   const _nlBadge = document.getElementById('live-nolistening-badge');
   if (_nlBadge) _nlBadge.style.display = sess.noListening ? '' : 'none';
   S.liveMode = sess.mode || 'test';
+  S.liveTournament = S.liveMode === 'teacher' && !!sess.tournament;
   S.liveStudentVersions = sess.studentVersions || {};
   S.liveStudentModes = sess.studentModes || {};
   S.liveOpened = !!sess.opened; // dopo il primo alunno accettato la sessione resta aperta
@@ -6251,14 +6296,16 @@ async function openLive(code, activityId, roster, silent) {
   S.liveClassId = sess.classId || null;
 
   // Mode badge
-  const badges = { test:'<span class="mode-test">📝 Test</span>', practice:'<span class="mode-practice">🎮 Esercitazione</span>', teacher:'<span class="mode-teacher">🎓 Controllo docente</span>', assigned:'<span class="mode-assigned">📋 Assegnato</span>' };
+  const badges = { test:'<span class="mode-test">📝 Test</span>', practice:'<span class="mode-practice">🎮 Esercitazione</span>', teacher: S.liveTournament ? '<span class="mode-teacher">🏆 Torneo</span>' : '<span class="mode-teacher">🎓 Controllo docente</span>', assigned:'<span class="mode-assigned">📋 Assegnato</span>' };
   document.getElementById('live-mode-badge').innerHTML = badges[S.liveMode] || '';
 
   // Teacher control bar — only for active teacher-mode sessions
   const ctrlBar = document.getElementById('teacher-control-bar');
   if (S.liveMode === 'teacher' && isActive) {
     ctrlBar.style.display = 'flex';
-    await db.ref('livelearn/control/' + code).set({ currentQ: -1 });
+    // Torneo già avviato (pagina ricaricata): si riprende da dove era, senza azzerare il tabellone
+    if (!(S.liveTournament && await _tourRestore(code)))
+      await db.ref('livelearn/control/' + code).set({ currentQ: -1 });
     updateTeacherControlBar();
   } else { ctrlBar.style.display = 'none'; }
 
@@ -6314,6 +6361,8 @@ async function openLive(code, activityId, roster, silent) {
     // Il watchdog usa questo per capire se il listener è morto silenziosamente.
     S._lastListenerCall = Date.now();
     const responses = snap.val() || {};
+    S._liveResp = responses;
+    if (S.liveTournament) _tourRenderBoardSoon();
     try {
       renderLiveSidebar(responses);
     } catch(sidebarErr) {
@@ -6458,8 +6507,10 @@ function updateTeacherControlBar() {
   const btnPrev = document.getElementById('btn-prev-tq');
   if (cur < 0) { pill.textContent = 'Sessione aperta — premi per iniziare'; prog.style.width='0%'; btnNext.textContent='▶ Prima domanda'; if(btnPrev) btnPrev.style.display='none'; }
   else { pill.textContent=`Domanda ${cur+1} di ${total}`; prog.style.width=((cur+1)/total*100)+'%'; btnNext.textContent=cur<total-1?'▶ Prossima domanda':'⏹ Termina'; if(btnPrev) btnPrev.style.display=cur>0?'inline-flex':'none'; }
+  _tourDecorateBar();
 }
 async function teacherNextQ() {
+  if (S.liveTournament && await _tourBeforeNext()) return;
   const total = S.liveActivity?.questions?.length || 0;
   if (S.teacherCurrentQ >= total-1) {
     await db.ref('livelearn/control/'+S.liveCode+'/currentQ').set(999);
@@ -6471,6 +6522,258 @@ async function teacherNextQ() {
 async function teacherPrevQ() {
   if (S.teacherCurrentQ <= 0) return;
   S.teacherCurrentQ--; await db.ref('livelearn/control/'+S.liveCode+'/currentQ').set(S.teacherCurrentQ); updateTeacherControlBar();
+}
+
+// ══════════════════════════════════════════════════════════════
+// MODALITÀ TORNEO (Controllo docente con session.tournament)
+// Tabellone a eliminazione diretta tra gli alunni collegati quando il
+// docente preme "inizia". Le domande sono divise in turni consecutivi:
+// in ogni turno tutte le coppie rispondono insieme, ognuno dal suo PC.
+// Passa chi fa più punti nelle domande del turno; a parità chi ha
+// risposto prima (tourMs, scritto dall'alunno nella propria risposta).
+// Il tabellone sta in livelearn/control/<codice>/tour: lo scrive il
+// docente, gli alunni lo leggono. Nessun percorso nuovo nel database.
+// tour = { names:{chiave:nome}, ranges:[[da,a]…], rounds:[[{a,b,w,sa,sb}]…],
+//          cur: turno in corso, closed: ultimo turno chiuso, champ }
+// ══════════════════════════════════════════════════════════════
+function _tourRoundName(r, nR) {
+  const left = nR - r;
+  return left === 1 ? 'Finale' : left === 2 ? 'Semifinali' : left === 3 ? 'Quarti' : left === 4 ? 'Ottavi' : 'Turno ' + (r + 1);
+}
+
+// Le domande in parti uguali; l'avanzo va ai turni finali
+function _tourRanges(nQ, nR) {
+  const base = Math.floor(nQ / nR), extra = nQ % nR, out = [];
+  let s = 0;
+  for (let r = 0; r < nR; r++) {
+    const len = base + (r >= nR - extra ? 1 : 0);
+    out.push([s, s + len - 1]); s += len;
+  }
+  return out;
+}
+
+function _tourBuild(keys, names, nQ) {
+  const nR = Math.max(1, Math.ceil(Math.log2(keys.length)));
+  const byes = Math.pow(2, nR) - keys.length;
+  const p = keys.slice();
+  for (let i = p.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [p[i], p[j]] = [p[j], p[i]]; }
+  // I primi `byes` passano il primo turno da soli, gli altri si sfidano a coppie;
+  // le partite vengono poi alternate per non far incontrare subito chi ha passato il turno
+  const solo = p.slice(0, byes).map(k => ({ a: k, b: '' }));
+  const duel = [];
+  for (let i = byes; i < p.length; i += 2) duel.push({ a: p[i], b: p[i + 1] });
+  const first = [];
+  while (solo.length || duel.length) { if (duel.length) first.push(duel.shift()); if (solo.length) first.push(solo.shift()); }
+  return { names, ranges: _tourRanges(nQ, nR), rounds: [first], cur: 0, closed: -1, champ: '' };
+}
+
+function _tourNormalize(t) {
+  if (!t) return null;
+  t.names = t.names || {};
+  t.ranges = fbArr(t.ranges).map(fbArr);
+  t.rounds = fbArr(t.rounds).map(ms => fbArr(ms).map(m => m || { a: '', b: '' }));
+  t.cur = t.cur || 0;
+  t.closed = t.closed == null ? -1 : t.closed;
+  t.champ = t.champ || '';
+  return t;
+}
+
+async function _tourRestore(code) {
+  try {
+    const c = (await _fbGet(db.ref('livelearn/control/' + code), 6000)).val();
+    if (!c || !c.tour || !(c.currentQ >= 0)) return false;
+    S._tour = _tourNormalize(c.tour);
+    S.teacherCurrentQ = c.currentQ;
+    return true;
+  } catch(e) { console.warn('[torneo] ripristino fallito:', e.message); return false; }
+}
+
+function _tourSave() {
+  return db.ref('livelearn/control/' + S.liveCode + '/tour').set(S._tour);
+}
+
+// Punti di un alunno nelle domande del turno r; ms = tempo speso sulle risposte giuste
+function _tourScore(resp, r, t) {
+  if (!resp || resp.removed) return { pts: -1, ms: 0 };
+  const qs = S.liveActivity?.questions || [], ans = fbArr(resp.answers), times = fbArr(resp.tourMs);
+  const [s, e] = t.ranges[r];
+  let pts = 0, ms = 0;
+  for (let i = s; i <= e; i++) {
+    if (!qs[i] || ans[i] == null) continue;
+    let got = 0;
+    try { got = _earnedFrom(evaluateAnswer(qs[i], ans[i])); } catch(err) {}
+    pts += got;
+    if (got > 0) ms += Number(times[i]) || 0;
+  }
+  return { pts: Math.round(pts * 100) / 100, ms };
+}
+
+function _tourDecide(m, r, t, resp) {
+  if (!m.b) return m.a;
+  if (!m.a) return m.b;
+  const A = _tourScore(resp[m.a], r, t), B = _tourScore(resp[m.b], r, t);
+  m.sa = Math.max(0, A.pts); m.sb = Math.max(0, B.pts);
+  if (A.pts !== B.pts) return A.pts > B.pts ? m.a : m.b;
+  m.tie = true;
+  if (A.ms !== B.ms) return A.ms < B.ms ? m.a : m.b;
+  return Math.random() < 0.5 ? m.a : m.b;
+}
+
+async function _tourCloseRound() {
+  const t = S._tour, r = t.cur;
+  // Risposte fresche: l'ultima scelta dell'alunno arriva con qualche centinaio di ms di ritardo
+  let resp = S._liveResp || {};
+  try { resp = (await _fbGet(db.ref('livelearn/responses/' + S.liveCode), 6000)).val() || resp; } catch(e) {}
+  const ms = t.rounds[r];
+  ms.forEach(m => { m.w = _tourDecide(m, r, t, resp); });
+  t.closed = r;
+  if (ms.length === 1) t.champ = ms[0].w;
+  else {
+    const next = [];
+    for (let i = 0; i < ms.length; i += 2) next.push({ a: ms[i].w, b: ms[i + 1].w });
+    t.rounds[r + 1] = next;
+  }
+  await _tourSave();
+  _tourOpenBoard();
+}
+
+// Chiamata da teacherNextQ: true = il clic è stato usato dal torneo
+async function _tourBeforeNext() {
+  const cur = S.teacherCurrentQ, nQ = S.liveActivity?.questions?.length || 0;
+  if (cur < 0) {
+    if (S._tour) return false;
+    const resp = S._liveResp || {};
+    const keys = Object.keys(resp).filter(k => resp[k] && !resp[k].removed);
+    if (keys.length < 2) { alert('🏆 Servono almeno 2 alunni collegati per iniziare il torneo.'); return true; }
+    const nR = Math.ceil(Math.log2(keys.length));
+    if (nQ < nR) { alert('🏆 Con ' + keys.length + ' alunni servono ' + nR + ' turni, cioè almeno ' + nR + ' domande: l\'attività ne ha ' + nQ + '.'); return true; }
+    const names = {};
+    keys.forEach(k => { names[k] = resp[k].name || k; });
+    const t = _tourBuild(keys, names, nQ);
+    const plan = t.ranges.map(([s, e], r) => '• ' + _tourRoundName(r, nR) + ': domande ' + (s + 1) + (e > s ? '–' + (e + 1) : '')).join('\n');
+    if (!confirm('🏆 Torneo con ' + keys.length + ' alunni, ' + nR + ' turni:\n\n' + plan + '\n\nChi entra da adesso gioca fuori tabellone. Iniziare?')) return true;
+    S._tour = t;
+    await _tourSave();
+    _tourOpenBoard();
+    return false;
+  }
+  const t = S._tour;
+  if (!t) return false;
+  if (t.champ) { _tourCloseBoard(); return false; }
+  if (t.closed < t.cur && cur >= t.ranges[t.cur][1]) {
+    await _tourCloseRound();
+    updateTeacherControlBar();
+    return true;
+  }
+  if (t.closed === t.cur) { t.cur++; await _tourSave(); }
+  return false;
+}
+
+function _tourDecorateBar() {
+  const boardBtn = document.getElementById('btn-tour-board');
+  if (boardBtn) boardBtn.style.display = S.liveTournament && S._tour ? 'inline-flex' : 'none';
+  if (!S.liveTournament) return;
+  const t = S._tour, cur = S.teacherCurrentQ;
+  const pill = document.getElementById('teacher-q-pill'), btnNext = document.getElementById('btn-next-tq');
+  if (cur < 0 || !t) { btnNext.textContent = '🏆 Crea il tabellone e inizia'; _tourRenderBoard(); return; }
+  const nR = t.ranges.length, [s, e] = t.ranges[t.cur];
+  pill.textContent = '🏆 ' + _tourRoundName(t.cur, nR) + ' · domanda ' + (Math.min(cur, e) - s + 1) + ' di ' + (e - s + 1);
+  if (t.champ) btnNext.textContent = '⏹ Termina';
+  else if (t.closed === t.cur) btnNext.textContent = '▶ Inizia: ' + _tourRoundName(t.cur + 1, nR);
+  else if (cur >= e) btnNext.textContent = '🏁 Chiudi il turno';
+  _tourRenderBoard();
+}
+
+function _tourOpenBoard() { S._tourBoardOpen = true; _tourRenderBoard(); }
+function _tourCloseBoard() {
+  S._tourBoardOpen = false;
+  const ov = document.getElementById('tour-overlay');
+  if (ov) ov.remove();
+}
+function _tourRenderBoardSoon() {
+  if (!S._tourBoardOpen || S._tourRenderTimer) return;
+  S._tourRenderTimer = setTimeout(() => { S._tourRenderTimer = null; _tourRenderBoard(); }, 500);
+}
+
+function _tourRenderBoard() {
+  if (!S._tourBoardOpen || !S._tour) return;
+  let ov = document.getElementById('tour-overlay');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'tour-overlay'; document.body.appendChild(ov); }
+  const t = S._tour, nR = t.ranges.length, resp = S._liveResp || {};
+  const nm = k => esc(t.names[k] || k);
+  const live = t.closed < t.cur; // punteggi in diretta del turno in corso
+  let cols = '';
+  for (let r = 0; r < nR; r++) {
+    const ms = t.rounds[r] || [];
+    let cards = '';
+    for (let i = 0; i < Math.pow(2, nR - r - 1); i++) {
+      const m = ms[i];
+      if (!m) { cards += '<div class="tour-m empty"><div class="tour-p">&nbsp;</div><div class="tour-p">&nbsp;</div></div>'; continue; }
+      let sa = m.sa, sb = m.sb;
+      if (live && r === t.cur && m.a && m.b) {
+        sa = Math.max(0, _tourScore(resp[m.a], r, t).pts);
+        sb = Math.max(0, _tourScore(resp[m.b], r, t).pts);
+      }
+      const row = (k, sc) => '<div class="tour-p' + (m.w ? (m.w === k ? ' win' : ' lose') : '') + '"><span>' + nm(k) +
+        (m.w === k && m.tie ? ' ⏱' : '') + '</span><b>' + (sc == null ? '' : sc) + '</b></div>';
+      cards += '<div class="tour-m">' + row(m.a, sa) + (m.b ? row(m.b, sb) : '<div class="tour-p bye">passa il turno</div>') + '</div>';
+    }
+    cols += '<div class="tour-col' + (r === t.cur && !t.champ ? ' cur' : '') + (nR - r > 4 ? ' dense' : '') + '"><div class="tour-ch">' + _tourRoundName(r, nR) + '</div><div class="tour-ms">' + cards + '</div></div>';
+  }
+  cols += '<div class="tour-champ"><div class="tc-cup">🏆</div><div class="tc-name">' + (t.champ ? nm(t.champ) : '') + '</div></div>';
+  const [s, e] = t.ranges[t.cur];
+  const sub = t.champ ? 'Torneo concluso!'
+    : _tourRoundName(t.cur, nR) + ' · domande ' + (s + 1) + (e > s ? '–' + (e + 1) : '') + (live ? ' · in corso' : ' · turno chiuso');
+  const btnNext = document.getElementById('btn-next-tq');
+  ov.innerHTML = '<div class="tour-head"><div><h2>🏆 ' + esc(S.liveActivity?.title || 'Torneo') + '</h2><div class="tour-sub">' + sub +
+    (t.closed >= 0 ? ' · ⏱ = passa per velocità a parità di punti' : '') + '</div></div>' +
+    '<div class="flex gap-8"><button class="btn btn-primary" onclick="teacherNextQ()">' + esc(btnNext ? btnNext.textContent : '▶') + '</button>' +
+    '<button class="btn" onclick="_tourCloseBoard()">✕ Nascondi</button></div></div>' +
+    '<div class="tour-grid">' + cols + '</div>';
+}
+
+// ── Lato studente: banner con l'avversario e l'esito del turno ──
+function _tourStudentListen() {
+  if (S._tourStuOff) return;
+  const ref = db.ref('livelearn/control/' + S.sessionCode + '/tour');
+  const h = ref.on('value', snap => _tourStudentRender(snap.val()));
+  S._tourStuOff = () => ref.off('value', h);
+}
+
+function _tourStudentRender(raw) {
+  let el = document.getElementById('tour-banner');
+  const t = _tourNormalize(raw);
+  if (!t || S.removed) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('div'); el.id = 'tour-banner'; document.body.appendChild(el); }
+  const me = S.safeName, nR = t.ranges.length, nm = k => esc(t.names[k] || k);
+  let txt = '', cls = '';
+  if (!(me in t.names)) txt = '🏆 Torneo in corso: sei entrato dopo il sorteggio, rispondi comunque per allenarti!';
+  else if (t.champ) { txt = t.champ === me ? '🏆 SEI IL CAMPIONE! 🎉' : '🏆 Campione: ' + nm(t.champ); cls = t.champ === me ? 'win' : ''; }
+  else {
+    // ultima partita fino al turno in corso
+    let r = -1, m = null;
+    t.rounds.slice(0, t.cur + 1).forEach((ms, ri) => ms.forEach(x => { if (x.a === me || x.b === me) { r = ri; m = x; } }));
+    const opp = m && (m.a === me ? m.b : m.a);
+    const score = m && m.b ? ' ' + (m.a === me ? m.sa + '–' + m.sb : m.sb + '–' + m.sa) : '';
+    if (!m) txt = '🏆 Torneo';
+    else if (m.w && m.w !== me) { txt = '❌ Eliminato da ' + nm(m.w) + score + ' · continua a rispondere per allenarti!'; cls = 'out'; }
+    else if (m.w === me) { txt = '✅ Hai passato il turno' + score + '! Aspetta il prossimo turno…'; cls = 'win'; }
+    else txt = '🏆 ' + _tourRoundName(r, nR) + ' · ' + (opp ? 'sfida contro ' + nm(opp) : 'passi il turno: rispondi comunque per allenarti');
+  }
+  el.className = cls;
+  el.innerHTML = txt;
+}
+
+// Tempo di risposta per lo spareggio: dalla comparsa della domanda all'ultima modifica della risposta
+function _tourNoteAnswer() {
+  const i = S.qIndex, a = S.answers?.[i];
+  if (i == null || a == null) return;
+  const sig = JSON.stringify(a);
+  S._tourAns = S._tourAns || {};
+  if (S._tourAns[i] === sig) return;
+  S._tourAns[i] = sig;
+  S._tourMs = S._tourMs || {};
+  S._tourMs[i] = Math.max(0, Date.now() - (S._tourShownAt || Date.now()));
 }
 
 // FIX: Firebase può restituire gli array come oggetti {0:…,1:…} — questo helper
@@ -9119,6 +9422,9 @@ async function studentEnter() {
   S._needsAlias = rosterLen > 0 && !recognized && !_aliasNow && !(existingResp && existingResp.guestOk);
   S.studentName = studentName; S.sessionCode = code; S.activity = _sessFilterActivity(_actHydrate(aSnap.val()), session);
   S.sessionMode = _llModeFor(session, [_aliasNow, studentName]);
+  S.sessionTournament = S.sessionMode === 'teacher' && !!session.tournament;
+  S._tourMs = null; S._tourAns = null; S._tourShownAt = 0;
+  if (S._tourStuOff) { S._tourStuOff(); S._tourStuOff = null; }
   S.sessionRepeatable = session.status === 'assigned' && !!session.repeatable;
   S._attempts = null; S._retryLocal = false; S._retryNext = null;
   _syncPassageBtn(); // mostra/nascondi il pulsante 📄 Testo
@@ -9325,6 +9631,7 @@ async function studentEnter() {
       if (typeof existingResp.score === 'number') S.studentScore = existingResp.score;
       if (existingResp.aiScores)    S.aiScores    = existingResp.aiScores;
       if (existingResp.aiFeedbacks) S.aiFeedbacks = existingResp.aiFeedbacks;
+      if (existingResp.tourMs) S._tourMs = Object.fromEntries(Object.entries(existingResp.tourMs).filter(([, v]) => typeof v === 'number'));
       const _rejoin = {
         name: studentName,
         studentVersion: S.studentVersion,
@@ -10064,6 +10371,7 @@ function showSessionClosed() {
 function listenForTeacherAdvance() {
   const ref = db.ref('livelearn/control/' + S.sessionCode + '/currentQ');
   let lastQ = -1;
+  if (S.sessionTournament) _tourStudentListen();
   ref.on('value', snap => {
     if (S.removed) { try { ref.off('value'); } catch(e) {} return; }
     const q = snap.val();
@@ -10072,7 +10380,7 @@ function listenForTeacherAdvance() {
       ref.off('value'); submitAnswers(true); return;
     }
     if (q === lastQ) return;
-    lastQ = q; S.qIndex = q;
+    lastQ = q; S.qIndex = q; S._tourShownAt = Date.now();
     const fbArea = document.getElementById('s-feedback-area');
     if (fbArea) fbArea.innerHTML = '';
     renderQuestion(); showView('student-activity');
@@ -11159,6 +11467,7 @@ function pushProgress() {
   if (!db || !S.sessionCode) return;
   if (S.submitted) return;
   if (S._retryLocal) return;   // ripetizione non salvabile (regole Firebase): solo in locale
+  if (S.sessionTournament) _tourNoteAnswer();
   // Costruisci la patch fresca (ogni chiamata sovrascrive la pendente)
   S._pushPending = {
     name: S.studentName,
@@ -11166,7 +11475,8 @@ function pushProgress() {
     score: S.studentScore,
     updatedAt: Date.now(),
     ...(S.aiScores && Object.keys(S.aiScores).length ? { aiScores: _canonicalIndexedForServer(S.aiScores) } : {}),
-    ...(S.aiFeedbacks && Object.keys(S.aiFeedbacks).length ? { aiFeedbacks: _canonicalIndexedForServer(S.aiFeedbacks) } : {})
+    ...(S.aiFeedbacks && Object.keys(S.aiFeedbacks).length ? { aiFeedbacks: _canonicalIndexedForServer(S.aiFeedbacks) } : {}),
+    ...(S._tourMs ? { tourMs: S._tourMs } : {})
   };
   // Debounce: se l'alunno salta tra pallini rapidamente, accorpa le
   // scritture in una sola ogni 400ms. Evita di floodare Firebase e il
