@@ -6744,7 +6744,7 @@ function renderLiveSidebar(responses) {
       if (waitingKey)   statusPill = '<span style="font-size:9px;background:#dc2626;color:#fff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;">⚠ ATTENDE KEY</span>';
       else if (recDone)      statusPill = '<span style="font-size:9px;background:#f59e0b;color:#fff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;">CONS.RECUPERO</span>';
       else if (inRecovery) statusPill = '<span style="font-size:9px;background:#8b5cf6;color:#fff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;">RECUPERO ('+(r.recoveryAttempt||1)+')</span>';
-      else if (aiPending) statusPill = '<span style="font-size:9px;background:#ede9ff;color:#6c47ff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;">AI…</span>';
+      else if (aiPending) statusPill = '<span title="Valutazione AI in corso. Se resta così, apri l\'alunno e usa 🔓 Sblocca valutazione AI" style="font-size:9px;background:#ede9ff;color:#6c47ff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;">AI…</span>';
       else if (done)    statusPill = r.forcedSubmit
         ? '<span style="font-size:9px;background:#0e7490;color:#fff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;" title="Valutato automaticamente alla chiusura della sessione">⏱ FORZATO</span>'
         : '<span style="font-size:9px;background:var(--success);color:#fff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;">CONSEGNATO</span>';
@@ -7014,12 +7014,14 @@ async function regularizeStudent(key, displayName) {
 
   let connectedNames = [];
   let current = null;
+  let others = [];
   try {
     const snap = await db.ref('livelearn/responses/' + S.liveCode).get();
     const all = snap.val() || {};
     current = all[key] || null;
     Object.entries(all).forEach(([k, r]) => {
       if (!r || r.removed || k === key) return;
+      others.push([k, r]);
       if (r.name) connectedNames.push(normFn(r.name));
       if (r.aliasOf) connectedNames.push(normFn(r.aliasOf));
     });
@@ -7028,7 +7030,16 @@ async function regularizeStudent(key, displayName) {
 
   const roster = S.liveRoster || [];
   const available = roster.filter(n => !connectedNames.includes(normFn(n)) || normFn(n) === normFn(currentAlias));
-  if (!available.length) {
+  // Nomi gia' occupati da un altro ingresso (es. l'alunno era entrato col nome
+  // giusto, si e' bloccato ed e' rientrato con un nome sbagliato): si possono
+  // scegliere lo stesso, l'ingresso precedente viene tolto dalla sessione.
+  const taken = {};
+  roster.forEach(n => {
+    if (available.includes(n)) return;
+    const keys = others.filter(([, r]) => normFn(r.aliasOf || r.name) === normFn(n)).map(([k]) => k);
+    if (keys.length) taken[n] = keys;
+  });
+  if (!available.length && !Object.keys(taken).length) {
     alert('Non ci sono nomi disponibili nel registro (tutti gli studenti della classe sono già collegati).');
     return;
   }
@@ -7043,8 +7054,14 @@ async function regularizeStudent(key, displayName) {
   }
 
   const optHtml = n => '<option value="' + esc(n) + '"' + (n === preselect ? ' selected' : '') + '>' + esc(n) + '</option>';
+  const takenNames = Object.keys(taken);
   const opts = (currentAlias ? '<option value="__none__">— Rimuovi associazione —</option>' : '') +
-    available.map(optHtml).join('');
+    available.map(optHtml).join('') +
+    (takenNames.length
+      ? '<optgroup label="Già presenti: l\'ingresso precedente verrà tolto">' +
+        takenNames.map(n => '<option value="' + esc(n) + '">' + esc(n) + ' (sostituisce l\'ingresso precedente)</option>').join('') +
+        '</optgroup>'
+      : '');
   const isSubmitted = !!(current && current.submittedAt);
   let host = document.getElementById('modal-regularize');
   if (!host) {
@@ -7054,6 +7071,8 @@ async function regularizeStudent(key, displayName) {
     document.body.appendChild(host);
   }
   host.dataset.pendingKey = key;
+  host.dataset.taken = JSON.stringify(taken);
+  host.dataset.name = name;
   host.classList.remove('hidden');
   host.innerHTML = '<div class="modal-box" style="max-width:460px;">' +
     '<h2 style="margin-bottom:10px;font-size:18px;">👤→📋 Associa al registro</h2>' +
@@ -7364,12 +7383,26 @@ async function confirmRegularize(key) {
   if (!key || !sel || !sel.value) return;
   const remove = sel.value === '__none__';
   const chosenName = remove ? null : sel.value;
+  let taken = {};
+  try { taken = JSON.parse((host && host.dataset.taken) || '{}'); } catch(e) {}
+  const replaced = (chosenName && taken[chosenName]) || [];
+  if (replaced.length && !confirm('"' + chosenName + '" è già presente nella sessione con un altro ingresso.\n\n' +
+      'L\'ingresso precedente verrà tolto dalla sessione (le sue risposte non contano più) e al suo posto vale quello di "' +
+      ((host && host.dataset.name) || key) + '".\n\nContinuare?')) return;
   const btn = document.getElementById('regularize-confirm-btn');
   if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
   const ref = db.ref('livelearn/responses/' + S.liveCode + '/' + key);
   try {
     const before = (await ref.get()).val() || {};
     const prevAlias = before.aliasOf || null;
+    // Ingresso precedente con lo stesso nome: rimozione "soft" come il ✕
+    // della lista (il record resta, la pagina eventualmente aperta si chiude)
+    for (const k of replaced) {
+      await db.ref('livelearn/responses/' + S.liveCode + '/' + k).update({
+        removed: true, removedAt: Date.now(), removedBy: 'teacher', status: 'removed', replacedBy: key
+      });
+      if (S.selectedStudent === k) S.selectedStudent = null;
+    }
     await ref.update({
       aliasOf: chosenName,
       regularizedAt: remove ? null : Date.now()
@@ -8099,6 +8132,12 @@ function renderStudentResultsTeacher(name, response) {
     if (submitted && response.aiScoringPending)  return '<span class="badge badge-blue">🤖 Valutazione AI…</span>';
     return '<span class="badge badge-amber">⏳ In corso…</span>';
   })();
+  // Valutazione AI rimasta a metà (l'alunno ha chiuso la pagina durante la
+  // correzione delle risposte libere): il record resta "AI…" per sempre e non
+  // arriva in cronologia. Dopo un minuto il docente può sbloccarlo.
+  const aiStuckBtn = (submitted && response.aiScoringPending && Date.now() - submitted > 60000)
+    ? '<button class="btn btn-sm btn-warning" onclick="unlockStuckAiScoring(S.liveCode,S.selectedStudent)" title="La valutazione AI non si è conclusa: sblocca il risultato e correggi a mano le risposte libere">🔓 Sblocca valutazione AI</button>'
+    : '';
 
   // Calcola punteggio effettivo PRIMA del template literal (no nested backtick)
   const manualScoresRST = response.manualScores || {};
@@ -8386,6 +8425,7 @@ function renderStudentResultsTeacher(name, response) {
         scoreBadge + pctBadgeCenter + _attemptsBadge(response) + timeBadge + focusBadgeCenter +
       '</div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+        aiStuckBtn +
         aiAllBtn +
         aliasBtn +
         modeBtnRST +
@@ -19219,6 +19259,22 @@ async function sbloccaPostazione(key, displayName) {
   try {
     await db.ref('livelearn/responses/' + S.liveCode + '/' + key).update({ uid: null, uidAt: null });
     if (typeof _llToast === 'function') _llToast('🔓 Postazione sbloccata: ' + nome, 'ok', 3500);
+  } catch(e) {
+    alert('Sblocco non riuscito: ' + e.message);
+  }
+}
+
+// Consegna con aiScoringPending rimasto true: si toglie il flag. Il punteggio
+// lo riallinea il pannello docente (stessa regola del PDF); le risposte libere
+// senza punteggio AI restano da correggere a mano (📝).
+async function unlockStuckAiScoring(sessionCode, studentKey) {
+  if (!db || !sessionCode || !studentKey) return;
+  if (!confirm('Sbloccare la valutazione AI rimasta in sospeso?\n\nIl risultato diventa "consegnato" con le risposte salvate; le risposte libere senza punteggio AI le correggi tu a mano.')) return;
+  try {
+    const ref = db.ref('livelearn/responses/' + sessionCode + '/' + studentKey);
+    await ref.update({ aiScoringPending: false });
+    const r = (await ref.get()).val() || {};
+    if (S.selectedStudent === studentKey) renderStudentResultsTeacher(r.name || studentKey, r);
   } catch(e) {
     alert('Sblocco non riuscito: ' + e.message);
   }
