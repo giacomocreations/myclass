@@ -1645,6 +1645,13 @@ const CONFIG = {
           <input type="checkbox" id="launch-shuffleOpts"> Mescola opzioni
         </label>
       </div>
+      <div class="form-group" style="margin-bottom:0;grid-column:1/-1;">
+        <label>🎲 Domande da pescare</label>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="number" id="launch-pickN" min="1" max="500" placeholder="tutte" style="width:75px;">
+          <span class="text-muted" style="font-size:12px;">Vuoto = tutte. Con un numero si pescano a caso all'avvio, uguali per tutti gli alunni; se l'attività è divisa in livelli, ripartite tra i livelli in ordine di difficoltà. (Nel torneo non serve: pesca da solo.)</span>
+        </div>
+      </div>
     </div>
 
     <label id="launch-nolistening-row" style="display:none;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;padding:10px 14px;background:#ede9ff;border:1.5px solid #c4b5fd;border-radius:10px;margin-bottom:14px;">
@@ -5814,6 +5821,9 @@ async function startSession(activityId, title) {
   if (!Object.keys(classes).length) { const local = localStorage.getItem('livelearn_classes'); if (local) classes = JSON.parse(local); }
   Object.entries(classes).forEach(([id, c]) => { sel.innerHTML += `<option value="${id}">${esc(c.nome)} (${(c.studenti||[]).length} studenti)</option>`; });
   document.getElementById('start-session-activity-name').textContent = title;
+  // Il numero di domande da pescare vale solo per l'attività scelta adesso
+  const _pickEl = document.getElementById('launch-pickN');
+  if (_pickEl) _pickEl.value = '';
   // Reset grid versioni: evita radio stantii da aperture precedenti del modale
   const _aa = document.getElementById('student-assign-area');
   const _ag = document.getElementById('student-assign-grid');
@@ -6011,10 +6021,13 @@ async function confirmStartSession() {
     });
   }
   // Torneo su un'attività con più domande per livello: si pescano adesso, uguali per tutti
+  // Fuori dal torneo: "🎲 Domande da pescare" (solo se nessun alunno ha una versione differenziata,
+  // perché le versioni hanno domande diverse e non si potrebbero pescare le stesse)
+  const pickN = tournament ? 0 : (parseInt(document.getElementById('launch-pickN')?.value) || 0);
   let tourPick = null;
-  if (tournament) {
-    try { tourPick = _tourPick(fbArr(_actHydrate(await _actGet(S.pendingActivityId))?.questions)); }
-    catch(e) { console.warn('[torneo] estrazione domande non riuscita, si usano tutte:', e.message); }
+  if (tournament || pickN > 0) {
+    try { tourPick = _tourPick(fbArr(_actHydrate(await _actGet(S.pendingActivityId))?.questions), pickN || undefined); }
+    catch(e) { console.warn('[sessione] estrazione domande non riuscita, si usano tutte:', e.message); }
   }
   const code = genCode();
   try {
@@ -6031,6 +6044,10 @@ async function confirmStartSession() {
     if (_isAssigned && document.getElementById('launch-repeatable')?.checked) sessionPayload.repeatable = true;
     if (noListening) sessionPayload.noListening = true;
     if (tournament) sessionPayload.tournament = true;
+    if (tourPick && !tournament && Object.keys(studentVersions).length) {
+      alert('🎲 Hai assegnato versioni differenziate: le domande da pescare non si possono usare insieme alle versioni, quindi gli alunni avranno tutte le domande.');
+      tourPick = null;
+    }
     if (tourPick) sessionPayload.tourPick = tourPick;
     // Torneo: tutti sulla versione originale, così i punteggi si confrontano domanda per domanda
     if (Object.keys(studentVersions).length && !tournament) sessionPayload.studentVersions = studentVersions;
@@ -6608,17 +6625,29 @@ function _tourRanges(nQ, nR) {
 // Attività con più domande per livello (campo roundPick): a ogni torneo si pescano
 // roundPick domande per livello, senza la stessa faccenda (pickKey) due volte nello
 // stesso livello e, finché si può, senza quelle già uscite nei livelli prima.
-function _tourPick(qs) {
-  if (!qs.length || !qs.every(q => q && typeof q.round === 'number') || !qs.some(q => q.roundPick > 0)) return null;
+// total (facoltativo): quante domande in tutto, ripartite tra i livelli (l'avanzo ai livelli
+// finali); senza livelli si pescano a caso, nell'ordine originale.
+function _tourPick(qs, total) {
+  if (!qs.length) return null;
+  const hasLevels = qs.every(q => q && typeof q.round === 'number');
+  if (total) {
+    if (total >= qs.length) return null;
+    if (!hasLevels) {
+      const idx = qs.map((q, i) => i);
+      for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+      return idx.slice(0, total).sort((a, b) => a - b);
+    }
+  } else if (!hasLevels || !qs.some(q => q.roundPick > 0)) return null;
   const levels = [...new Set(qs.map(q => q.round))].sort((a, b) => a - b);
+  const quota = total ? levels.map((lv, li) => Math.floor(total / levels.length) + (li >= levels.length - total % levels.length ? 1 : 0)) : null;
   const key = i => qs[i].pickKey || ('#' + i);
   let used = new Set(), prev = [];
   const out = [];
-  levels.forEach(lv => {
+  levels.forEach((lv, li) => {
     const idx = qs.map((q, i) => i).filter(i => qs[i].round === lv);
     // Faccende già uscite tutte: si evita almeno di ripetere quelle del livello prima
     if (idx.every(i => used.has(key(i)))) used = new Set(prev);
-    const n = Math.min(idx.length, qs[idx[0]].roundPick || idx.length);
+    const n = Math.min(idx.length, quota ? quota[li] : (qs[idx[0]].roundPick || idx.length));
     for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
     const pick = [], here = new Set();
     [i => !here.has(key(i)) && !used.has(key(i)), i => !here.has(key(i)), () => true].forEach(ok => {
