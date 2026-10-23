@@ -25881,7 +25881,7 @@ ${sectionInstr}`;
             }
             return { questions, responses, fuzzyLookup, _agNorm, _agWords, studentVersions, actVersions,
                      activityId: sess.activityId, versionLayout: act.versionLayout || {},
-                     mode: sess.mode || 'test', studentModes: sess.studentModes || {} };
+                     mode: sess.mode || 'test', studentModes: sess.studentModes || {}, tournament: !!sess.tournament };
         } catch(e) {
             console.warn('[Agente] fetchSessionDetail', sessionCode, e.message);
             return null;
@@ -25897,6 +25897,8 @@ ${sectionInstr}`;
     // un'esercitazione (sessions/<codice>/studentModes, per nome).
     // sess: { mode, studentModes } (la sessione o il dettaglio dell'agente).
     function _agentModoRisposta(sess, respKey, respEntry) {
+        // Torneo (Controllo docente con session.tournament): è un'esercitazione
+        if (sess && sess.tournament) return 'practice';
         const base = (sess && sess.mode) || 'test';
         if (base !== 'test' && base !== 'practice') return base;
         const sm = (sess && sess.studentModes) || {};
@@ -26752,10 +26754,13 @@ ${sectionInstr}`;
                 agentCheckAbort(); // ← interrompi se l'utente ha premuto Stop
                 group.students = group.students.filter(st => !_agentEUnTester(st));
                 if (group.students.length < 1) continue;
+                // Torneo: la sessione è in "Controllo docente" (mode 'teacher'), come
+                // nella cronologia degli alunni, ma è un'esercitazione: non si valuta
+                try { if ((await _getSess(code))?.tournament) group.tournament = true; } catch(e) {}
                 // Test ↔ esercitazione per il singolo alunno: si valutano solo
                 // le prove svolte come test (la voce di ognuno porta la sua modalità).
                 {
-                    const _mAl = st => (st.session && st.session.mode) || group.mode;
+                    const _mAl = st => group.tournament ? 'practice' : ((st.session && st.session.mode) || group.mode);
                     const _nonPr = group.students.filter(st => _mAl(st) !== 'practice');
                     if (_nonPr.length && (_nonPr.length < group.students.length || group.mode === 'practice')) {
                         if (_nonPr.length < group.students.length)
@@ -26775,7 +26780,7 @@ ${sectionInstr}`;
                     if (_exT && !_exT.approvedAt && _exT.status !== 'approved' && _exT.status !== 'dismissed') {
                         try {
                             const _sx = await _getSess(code);
-                            if (_sx && (_sx.mode === 'practice' || (_sx.studentModes && Object.keys(_sx.studentModes).length))) {
+                            if (_sx && (_sx.mode === 'practice' || _sx.tournament || (_sx.studentModes && Object.keys(_sx.studentModes).length))) {
                                 const _detX = await agentFetchSessionDetail(code, db);
                                 const _tolti = _agentTogliEsercitazioni(_exT, _detX);
                                 if (_tolti.length) {
@@ -26793,7 +26798,7 @@ ${sectionInstr}`;
                     }
                 }
                 if (group.mode === 'practice') {
-                    console.log(`[Agente] ${classe.nome}: skip ${code} — practice mode`);
+                    console.log(`[Agente] ${classe.nome}: skip ${code} — ${group.tournament ? 'torneo (esercitazione)' : 'practice mode'}`);
                     continue;
                 }
                 if (group.mode === 'assigned') {
@@ -35535,7 +35540,8 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
             try {
                 // Test trasformato in esercitazione dopo il voto: non conta
                 const modo = (await db.ref('livelearn/sessions/' + code + '/mode').get()).val();
-                if (modo === 'practice') { esercitazioni++; console.log(`[Obiettivi] ${code}: ora è un'esercitazione, non conta`); continue; }
+                const torneo = modo === 'teacher' && (await db.ref('livelearn/sessions/' + code + '/tournament').get()).val();
+                if (modo === 'practice' || torneo) { esercitazioni++; console.log(`[Obiettivi] ${code}: ora è un'esercitazione, non conta`); continue; }
                 const detail = await agentFetchSessionDetail(code, db);
                 if (!detail?.activityId) throw new Error('sessione non trovata');
                 attivita.add(detail.activityId);
