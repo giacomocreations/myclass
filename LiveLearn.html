@@ -7131,37 +7131,55 @@ function _trCollect() {
 }
 function _trDictKey(t) { return t.replace(/^[^A-Za-zÀ-ÿ]+/, '').trim(); }
 
-// AI della sessione: Gemini se c'è la chiave, altrimenti Anthropic (le chiavi arrivano dalla sessione)
+// AI della sessione, nell'ordine: AI locale del docente (relay "🤖 AI Locale", passa da
+// Firebase al PC del docente), Gemini con la chiave condivisa dalla sessione, Anthropic.
+// Gemini va con la fetch nativa: quella intercettata la bloccherebbe se la sessione usa l'AI locale.
 async function _trAI(prompt) {
+  if (_AI_RELAY_ENABLED) {
+    try { const t = await _firebaseRelay(prompt); if (t) return t; }
+    catch(e) { console.warn('[traduzione] AI locale:', e.message); }
+  }
   const gk = localStorage.getItem('gemini_api_key');
   if (gk) {
-    const res = await fetch(_geminiUrl(gk), { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
-    if (res.ok) {
-      const data = await res.json();
-      const t = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (t) return t;
-    }
+    try {
+      const res = await _nativeFetch(_geminiUrl(gk), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
+      if (res.ok) {
+        const t = (await res.json()).candidates?.[0]?.content?.parts?.[0]?.text;
+        if (t) return t;
+      } else console.warn('[traduzione] Gemini HTTP', res.status);
+    } catch(e) { console.warn('[traduzione] Gemini:', e.message); }
   }
-  const t = await _callHaikuStudent(prompt, 1500);
-  if (!t) throw new Error('AI non disponibile');
+  let t = null;
+  try { t = await _callHaikuStudent(prompt, 1500); } catch(e) { console.warn('[traduzione] Anthropic:', e.message); }
+  if (!t) throw new Error('AI non disponibile (né AI locale attiva, né chiave Gemini/Anthropic nella sessione)');
   return t;
 }
 
-async function _trLoadPermission(classId, names) {
-  S._trAllowed = null;
+// Nomi confrontati come nel riconoscimento del registro: senza accenti e maiuscole,
+// in qualunque ordine (Cognome Nome / Nome Cognome)
+function _trNameKey(n) {
+  return String(n || '').replace(/_/g, ' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
+}
+// preMap: le abilitazioni già lette con la classe (evita una seconda lettura)
+async function _trLoadPermission(classId, names, preMap) {
   const sel = document.getElementById('tr-lang');
-  if (sel) sel.style.display = 'none';
-  _trRefresh();
-  if (!db || !classId) return;
-  try {
-    const map = (await _fbGet(db.ref('livelearn/classes/' + classId + '/traduzioni'), 6000)).val() || {};
-    const lang = names.filter(Boolean).map(n => map[_toSafe(n)]).find(l => _TR_LANGS[l]);
-    if (!lang) return;
-    S._trAllowed = lang;
-    if (sel) { sel.style.display = ''; sel.value = _trGetLang(); }
+  const apply = map => {
+    const want = names.filter(Boolean).map(_trNameKey);
+    const hit = Object.keys(map || {}).find(k => want.includes(_trNameKey(k)) && _TR_LANGS[map[k]]);
+    S._trAllowed = hit ? map[hit] : null;
+    if (sel) { sel.style.display = S._trAllowed ? '' : 'none'; if (S._trAllowed) sel.value = _trGetLang(); }
+    console.log('[traduzione]', S._trAllowed ? 'abilitata: ' + S._trAllowed : 'non abilitata', names);
     _trRefresh();
-  } catch(e) { console.warn('[traduzione] permesso non letto:', e.message); }
+  };
+  if (preMap) { apply(preMap); return; }
+  apply(null);
+  if (!db || !classId) return;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { apply((await _fbGet(db.ref('livelearn/classes/' + classId + '/traduzioni'), 8000)).val() || {}); return; }
+    catch(e) { console.warn('[traduzione] permesso non letto:', e.message); await new Promise(r => setTimeout(r, 2500)); }
+  }
 }
 
 // Lato docente: chi può tradurre la consegna, per classe
@@ -7209,7 +7227,8 @@ function _trRender(lang, segs, map, failed) {
     : '<div class="tr-line tr-wait">' + (failed ? '⚠️ ' : '… ') + esc(t) + '</div>').join('');
   box.dir = lang === 'ar' ? 'rtl' : 'ltr';
   box.innerHTML = '<div class="tr-head">🌐 ' + _TR_LANGS[lang] + '</div>' + lines +
-    (failed ? '<div class="tr-line tr-wait">⚠️ Translation not available right now.</div>' : '');
+    (failed ? '<div class="tr-line tr-wait">⚠️ Translation not available right now.</div>' +
+      '<div class="tr-line tr-wait" style="font-size:12px;">Per il prof: attiva 🤖 AI Locale nella sessione, oppure imposta la chiave Gemini prima di avviarla.</div>' : '');
   box.style.display = '';
 }
 async function _trRefresh() {
@@ -7229,6 +7248,9 @@ async function _trRefresh() {
   });
   _trRender(lang, segs, map, false);
   if (!missing.length) return;
+  S._trFail = S._trFail || {};
+  const now = Date.now();
+  if (missing.every(t => now - (S._trFail[lang + '|' + t] || 0) < 60000)) { _trRender(lang, segs, map, true); return; }
   const prompt = 'Translate each of these Italian instructions into ' + _TR_AI_NAMES[lang] + '. They come from an English exercise for Italian middle-school students.\n' +
     'Rules: translate ONLY the Italian words. Leave every English word or sentence, every blank (___), every number and symbol exactly as it is. ' +
     'Do not explain and never solve the exercise. Reply ONLY with a JSON array of strings, same order and same length as the input.\n' +
@@ -7243,6 +7265,7 @@ async function _trRefresh() {
     if (seq === _trSeq) _trRender(lang, segs, map, false);
   } catch(e) {
     console.warn('[traduzione]', e.message);
+    missing.forEach(t => { S._trFail[lang + '|' + t] = Date.now(); });
     if (seq === _trSeq) _trRender(lang, segs, map, true);
   }
 }
@@ -9988,7 +10011,8 @@ async function studentEnter() {
   S.studentName = studentName; S.sessionCode = code; S.activity = _sessFilterActivity(_actHydrate(aSnap.val()), session);
   S.sessionMode = _llModeFor(session, [_aliasNow, studentName]);
   S.sessionTournament = S.sessionMode === 'teacher' && !!session.tournament;
-  _trLoadPermission(session.classId, [_aliasNow, studentName]);
+  _trLoadPermission(session.classId, [_aliasNow, studentName, name],
+    cSnap_roster && cSnap_roster.val() ? (cSnap_roster.val().traduzioni || {}) : null);
   S._tourMs = null; S._tourAns = null; S._tourShownAt = 0; S._tourHint = null; S._tourDone = null; S._hintOpenQ = null;
   if (S._tourStuOff) { S._tourStuOff(); S._tourStuOff = null; }
   if (S._hintOff) { S._hintOff(); S._hintOff = null; }
@@ -10769,6 +10793,8 @@ function _listenForStudentStart(code, safeName) {
         S._needsAlias = false;
         _setWaitingUnrecognized(false);
         S.sessionMode = _llModeFor(updatedSess, _names);
+        // Il docente può averlo appena associato al nome del registro: si ricontrolla la traduzione
+        _trLoadPermission(updatedSess.classId, _names);
         // Ricalcola versione assegnata con eventuali modifiche fatte in lobby
         const newVer = _llMapLookup(updatedSess.studentVersions, _names);
         if (newVer && newVer !== S.studentVersion) {
@@ -20660,6 +20686,7 @@ function _startRelayConfigListener() {
 
     // Se il relay si è appena ATTIVATO e c'era un errore quota pendente → riprova
     if (_AI_RELAY_ENABLED && !wasEnabled) {
+      S._trFail = {}; if (S._trAllowed) _trSoon(); // traduzione della consegna rimasta in sospeso
       if (typeof S._relayPendingRetry === 'function') {
         const fn=S._relayPendingRetry; S._relayPendingRetry=null; setTimeout(fn,500);
       }
