@@ -1838,12 +1838,19 @@ function _saveLocalBackup() {
   if (S.removed) return;
   if (!S.sessionCode || !S.studentName) return;
   const key = 'llprog_' + S.sessionCode + '_' + (S.safeName || S.studentName.replace(/[.#$\[\]/]/g,'_'));
+  // Risposte e domanda corrente nell'ordine ORIGINALE: al rientro le domande
+  // vengono rimescolate di nuovo (shuffleQ) e l'ordine di prima non esiste più.
+  // Prima il backup era nell'ordine mescolato e veniva riapplicato posizione
+  // per posizione: le risposte finivano su altre domande.
   try {
+    const map = S.qOrigMap;
     localStorage.setItem(key, JSON.stringify({
       name: S.studentName,
-      answers: S.answers.map(a => a === undefined ? null : a),
+      canon: true,
+      version: S.studentVersion || 'originale',
+      answers: _canonicalAnswersForServer(),
       score: S.studentScore,
-      qIndex: S.qIndex,
+      qOrig: (Array.isArray(map) && map[S.qIndex] !== undefined) ? map[S.qIndex] : S.qIndex,
       savedAt: Date.now()
     }));
   } catch(e) {}
@@ -10292,20 +10299,7 @@ async function studentEnter() {
       // quindi vanno rimappate all'ordine SHUFFLED corrente tramite qOrigMap.
       const _canonRestored = fbArr(existingResp.answers);
       if (_canonRestored && _canonRestored.some(a => a !== null && a !== undefined)) {
-        const _map = S.qOrigMap; // _map[shuffledIdx] = origIdx
-        S.answers = S.answers.map((_, si) => {
-          const oi = (_map && _map[si] !== undefined) ? _map[si] : si;
-          const stored = _canonRestored[oi];
-          if (stored === null || stored === undefined) return undefined;
-          // MC con _optOrigMap: Firebase ha l'indice opzione ORIGINALE; serve
-          // trovare la posizione display nella sessione corrente (nuovo shuffle).
-          const q = S.activity && S.activity.questions && S.activity.questions[si];
-          if (q && Array.isArray(q._optOrigMap) && typeof stored === 'number') {
-            const dispIdx = q._optOrigMap.indexOf(stored);
-            return dispIdx >= 0 ? dispIdx : stored;
-          }
-          return stored;
-        });
+        S.answers = _answersFromCanonical(_canonRestored);
       }
       if (typeof existingResp.score === 'number') S.studentScore = existingResp.score;
       if (existingResp.aiScores)    S.aiScores    = existingResp.aiScores;
@@ -10393,11 +10387,19 @@ async function studentEnter() {
   try {
     const bKey = 'llprog_' + code + '_' + safeName;
     const raw = localStorage.getItem(bKey);
-    if (raw) {
-      const bak = JSON.parse(raw);
+    const _bakRaw = raw ? JSON.parse(raw) : null;
+    // Backup vecchio formato (ordine mescolato della sessione di prima) o di
+    // un'altra versione: non si può rimappare, si ignora
+    const _bakOk = _bakRaw && _bakRaw.canon === true && Array.isArray(_bakRaw.answers) &&
+      (_bakRaw.version || 'originale') === (S.studentVersion || 'originale');
+    if (_bakOk) {
+      // Backup in ordine originale → ordine mescolato di questo ingresso
+      const bak = { ..._bakRaw, answers: _answersFromCanonical(_bakRaw.answers) };
+      const _qi = Array.isArray(S.qOrigMap) ? S.qOrigMap.indexOf(_bakRaw.qOrig) : -1;
+      bak.qIndex = _qi >= 0 ? _qi : 0;
       const ageMin = Math.round((Date.now() - (bak.savedAt||0)) / 60000);
       // Conta risposte valide nel backup e in Firebase
-      const bakCount = Array.isArray(bak.answers) ? bak.answers.filter(a => a !== null && a !== undefined).length : 0;
+      const bakCount = bak.answers.filter(a => a !== null && a !== undefined).length;
       const fbCount  = S.answers.filter(a => a !== null && a !== undefined).length;
       // Proponi ripristino solo se il backup ha ALMENO tante risposte di Firebase
       // (evita di proporre un backup corrotto/vecchio su uno stato Firebase più completo)
@@ -12087,6 +12089,24 @@ function _canonicalAnswersForServer() {
     out[origIdx] = ans;
   }
   return out;
+}
+// Inverso di _canonicalAnswersForServer: risposte in ordine originale (Firebase
+// o backup locale) → ordine mescolato di questo ingresso (S.qOrigMap e _optOrigMap)
+function _answersFromCanonical(canon) {
+  const qs = S.activity?.questions || [];
+  const map = S.qOrigMap; // map[shuffledIdx] = origIdx
+  return qs.map((q, si) => {
+    const oi = (map && map[si] !== undefined) ? map[si] : si;
+    const stored = canon ? canon[oi] : null;
+    if (stored === null || stored === undefined) return undefined;
+    // MC con _optOrigMap: salvato l'indice opzione ORIGINALE; serve la
+    // posizione display nella sessione corrente (nuovo shuffle).
+    if (q && Array.isArray(q._optOrigMap) && typeof stored === 'number') {
+      const dispIdx = q._optOrigMap.indexOf(stored);
+      return dispIdx >= 0 ? dispIdx : stored;
+    }
+    return stored;
+  });
 }
 function _canonicalIndexedForServer(obj) {
   if (!obj) return obj;
