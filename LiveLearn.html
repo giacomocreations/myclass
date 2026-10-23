@@ -672,6 +672,12 @@ textarea.qe-ce::placeholder, input.qe-ce::placeholder { color: var(--muted); opa
 .tour-champ .tc-name { font-size:calc(22px * var(--tf, 1)); font-weight:900; color:#fcd34d; margin-top:6px; }
 #tour-banner { position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:2500; max-width:92vw; background:#1e1b4b; color:white; border-radius:20px; padding:7px 18px; font-size:14px; font-weight:800; box-shadow:0 4px 16px rgba(0,0,0,.2); pointer-events:none; text-align:center; }
 #tour-banner.win { background:#047857; }
+.tour-reveal { background:rgba(255,255,255,.1); border:2px solid #10b981; border-radius:14px; padding:12px 18px; margin-bottom:14px; }
+.tour-reveal .tr-q { font-size:calc(15px * var(--tf, 1)); opacity:.85; line-height:1.45; }
+.tour-reveal .tr-a { font-size:calc(26px * var(--tf, 1)); font-weight:900; color:#6ee7b7; margin:6px 0; }
+.tour-reveal .tr-who { display:flex; flex-direction:column; gap:3px; font-size:calc(14px * var(--tf, 1)); font-weight:700; }
+.tour-reveal .tr-who .ok { color:#6ee7b7; }
+.tour-reveal .tr-who .ko { opacity:.6; }
 #tr-box { background:#ecfeff; border:2px solid #06b6d4; border-radius:12px; padding:10px 14px; margin-bottom:12px; font-size:15px; line-height:1.5; color:#164e63; }
 #tr-box .tr-head { font-size:11px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:#0e7490; margin-bottom:4px; }
 #tr-box .tr-line + .tr-line { margin-top:4px; }
@@ -6231,7 +6237,7 @@ async function openLive(code, activityId, roster, silent) {
   S.selectedStudent = _prevSelected;
   S.liveRoster = roster || [];
   S.teacherCurrentQ = -1;
-  _tourCloseBoard(); S._tour = null; S._liveResp = null; S.liveTournament = false; S._hintOpenQ = null;
+  _tourCloseBoard(); S._tour = null; S._liveResp = null; S.liveTournament = false; S._hintOpenQ = null; S._revealQ = null;
   if (S._tourAutoInt) { clearInterval(S._tourAutoInt); S._tourAutoInt = null; }
   S._tourAdvancing = false;
   S._rosterDebugLogged = {};
@@ -6658,6 +6664,7 @@ async function _tourRestore(code) {
     S._tour = _tourNormalize(c.tour);
     S.teacherCurrentQ = c.currentQ;
     S._hintOpenQ = c.hintQ == null ? null : c.hintQ;
+    S._revealQ = c.revealQ == null ? null : c.revealQ; S._revealAt = Date.now();
     S._qStartAt = Date.now();
     return true;
   } catch(e) { console.warn('[torneo] ripristino fallito:', e.message); return false; }
@@ -6738,6 +6745,11 @@ async function _tourBeforeNext() {
   const t = S._tour;
   if (!t) return false;
   if (t.champ) { _tourCloseBoard(); return false; }
+  // Prima di passare oltre si mostra la risposta della domanda (tabellone + schermo degli alunni)
+  if (t.closed < t.cur && cur >= t.ranges[t.cur][0] && cur <= t.ranges[t.cur][1] && S._revealQ !== cur) {
+    await _tourReveal(cur);
+    return true;
+  }
   if (t.closed < t.cur && cur >= t.ranges[t.cur][1]) {
     await _tourCloseRound();
     updateTeacherControlBar();
@@ -6764,6 +6776,16 @@ function _tourAutoCheck() {
   if (!S._tourAuto || !t || t.champ || t.closed >= t.cur || S._tourAdvancing || !S.liveIsActive) return;
   const [s, e] = t.ranges[t.cur];
   if (cur < s || cur > e) return;
+  const go = delay => {
+    S._tourAdvancing = true;
+    setTimeout(async () => {
+      try { if (S.teacherCurrentQ === cur && S._tourAuto) await teacherNextQ(); }
+      catch(err) { console.warn('[torneo] avanti da solo:', err.message); }
+      finally { S._tourAdvancing = false; }
+    }, delay);
+  };
+  // Risposta già mostrata: dopo qualche secondo si passa alla domanda dopo (o si chiude il turno)
+  if (S._revealQ === cur) { if (Date.now() - (S._revealAt || 0) > _TOUR_REVEAL_MS) go(0); return; }
   const pl = _hintPlayers(), resp = S._liveResp || {};
   if (!pl.length) return;
   const allDone = pl.every(k => _hintAnswered(resp[k], cur));
@@ -6774,13 +6796,52 @@ function _tourAutoCheck() {
     if (allDone && S._hintOpenQ !== cur) { _hintUnlock(); return; }
     ready = timeUp || (allDone && S._hintOpenQ === cur && Date.now() - (S._hintAt || 0) > 10000);
   } else ready = allDone || timeUp;
-  if (!ready) return;
-  S._tourAdvancing = true;
-  setTimeout(async () => {
-    try { if (S.teacherCurrentQ === cur && S._tourAuto) await teacherNextQ(); }
-    catch(err) { console.warn('[torneo] avanti da solo:', err.message); }
-    finally { S._tourAdvancing = false; }
-  }, 1500);
+  if (ready) go(1500);
+}
+
+// ── Risposta dopo ogni domanda ──
+// Il docente scrive control/<codice>/revealQ: il tabellone mostra la soluzione e chi ha
+// risposto giusto, ogni alunno vede sul suo schermo se aveva ragione.
+const _TOUR_REVEAL_MS = 6000;
+async function _tourReveal(cur) {
+  S._revealQ = cur;
+  S._revealAt = Date.now();
+  try { await db.ref('livelearn/control/' + S.liveCode + '/revealQ').set(cur); }
+  catch(e) { console.warn('[torneo] risposta non inviata agli alunni:', e.message); }
+  _tourOpenBoard();
+  updateTeacherControlBar();
+}
+// Soluzione leggibile di una domanda (scelta multipla, spazi da completare)
+function _tourAnswerText(q) {
+  if (!q) return '';
+  const inner = q.type === 'listening' ? (q.question || {}) : q;
+  if (Array.isArray(inner.options) && inner.correct != null) { const ci = _mcCorrectIdx(inner); return ci != null ? String(_mcOpts(inner)[ci]) : ''; }
+  // Spazi da completare: al massimo 3 alternative per spazio, per non affollare il tabellone
+  if (Array.isArray(inner.answers) && inner.answers.length) return inner.answers.map(a => _clozeFormatAlternatives(a).split(' / ').slice(0, 3).join(' / ')).join(' · ');
+  return '';
+}
+function _tourQuestionPlain(q) {
+  const t = _qText(q) || '';
+  return String(t).replace(/\*\*|\*/g, '').replace(/\[\/?(red|blue|green|orange|purple|big)\]/gi, '').replace(/_{3,}/g, '____').trim();
+}
+function _tourRevealHTML(cur) {
+  const q = S.liveActivity?.questions?.[cur], t = S._tour, resp = S._liveResp || {};
+  if (!q || !t) return '';
+  const pl = [];
+  (t.rounds[t.cur] || []).forEach(m => [m.a, m.b].forEach(k => { if (k) pl.push(k); }));
+  const ok = [], ko = [];
+  pl.forEach(k => {
+    const a = fbArr(resp[k]?.answers)[cur];
+    let good = false;
+    try { good = a != null && _earnedFrom(evaluateAnswer(q, a)) > 0; } catch(e) {}
+    (good ? ok : ko).push(esc(t.names[k] || k) + (good && fbArr(resp[k]?.tourHint)[cur] ? ' (½)' : ''));
+  });
+  const lines = _tourQuestionPlain(q).split('\n').filter(x => x.trim() && !/^[_\s]+$/.test(x));
+  return '<div class="tour-reveal">' +
+    '<div class="tr-q">' + lines.map(esc).join('<br>') + '</div>' +
+    '<div class="tr-a">✅ ' + esc(_tourAnswerText(q) || '—') + '</div>' +
+    '<div class="tr-who"><span class="ok">Giusto (' + ok.length + '): ' + (ok.join(', ') || '—') + '</span>' +
+    (ko.length ? '<span class="ko">Sbagliato o senza risposta (' + ko.length + '): ' + ko.join(', ') + '</span>' : '') + '</div></div>';
 }
 
 function _tourDecorateBar() {
@@ -6796,6 +6857,7 @@ function _tourDecorateBar() {
   pill.textContent = '🏆 ' + _tourRoundName(t.cur, nR) + ' · domanda ' + (Math.min(cur, e) - s + 1) + ' di ' + (e - s + 1);
   if (t.champ) btnNext.textContent = '⏹ Termina';
   else if (t.closed === t.cur) btnNext.textContent = '▶ Inizia: ' + _tourRoundName(t.cur + 1, nR);
+  else if (S._revealQ !== cur) btnNext.textContent = '👁 Mostra la risposta';
   else if (cur >= e) btnNext.textContent = '🏁 Chiudi il turno';
   _tourRenderBoard();
 }
@@ -6869,6 +6931,7 @@ function _tourRenderBoard() {
     '<button class="btn" onclick="_tourSetAuto(' + !S._tourAuto + ')" title="Avanza da solo quando tutti hanno inviato o il tempo è scaduto">⏩ Avanti da solo: ' + (S._tourAuto ? 'sì' : 'no') + '</button>' +
     '<button class="btn btn-primary" onclick="teacherNextQ()">' + esc(btnNext ? btnNext.textContent : '▶') + '</button>' +
     '<button class="btn" onclick="_tourCloseBoard()">✕ Nascondi</button></div></div>' +
+    (live && S._revealQ === S.teacherCurrentQ ? _tourRevealHTML(S.teacherCurrentQ) : '') +
     '<div class="tour-grid">' + cols + '</div>';
   _tourTick();
 }
@@ -7318,6 +7381,30 @@ if (typeof window !== 'undefined' && !window._tourEnterGuard) {
       if (!(S._tourDone && S._tourDone[S.qIndex])) _tourSend();
     }
   });
+}
+
+// ── Lato studente: esito della domanda quando il docente mostra la risposta ──
+function _tourRevealListen() {
+  if (S._revealOff) return;
+  const ref = db.ref('livelearn/control/' + S.sessionCode + '/revealQ');
+  const h = ref.on('value', snap => { S._revealOpenQ = snap.val(); _tourStudentReveal(); });
+  S._revealOff = () => ref.off('value', h);
+}
+function _tourStudentReveal() {
+  const i = S.qIndex;
+  if (!S.sessionTournament || S._revealOpenQ !== i || !S.activity) return;
+  const q = S.activity.questions[i], fb = document.getElementById('s-feedback-area');
+  if (!q || !fb) return;
+  if (S.answers[i] == null) saveCurrentAnswer();
+  const a = S.answers[i];
+  let good = false;
+  try { good = a != null && _earnedFrom(evaluateAnswer(q, a)) > 0; } catch(e) {}
+  _tourLockInputs();
+  const half = good && S._tourHint && S._tourHint[i];
+  fb.innerHTML = '<div class="feedback-card ' + (good ? 'correct' : 'wrong') + '" style="border-radius:12px;padding:16px;margin-top:14px;text-align:center;">' +
+    '<div style="font-size:32px;">' + (good ? '✅' : '❌') + '</div>' +
+    '<div style="font-size:17px;font-weight:800;">' + (good ? 'Giusto!' + (half ? ' (½ punto, hai usato l\'aiuto)' : '') : (a == null ? 'Nessuna risposta' : 'Sbagliato')) + '</div>' +
+    '<div style="font-size:15px;margin-top:6px;">Risposta: <strong>' + esc(_tourAnswerText(q) || '—') + '</strong></div></div>';
 }
 
 // ── Lato studente: banner con l'avversario e l'esito del turno ──
@@ -10016,6 +10103,7 @@ async function studentEnter() {
   S._tourMs = null; S._tourAns = null; S._tourShownAt = 0; S._tourHint = null; S._tourDone = null; S._hintOpenQ = null;
   if (S._tourStuOff) { S._tourStuOff(); S._tourStuOff = null; }
   if (S._hintOff) { S._hintOff(); S._hintOff = null; }
+  if (S._revealOff) { S._revealOff(); S._revealOff = null; } S._revealOpenQ = null;
   S.sessionRepeatable = session.status === 'assigned' && !!session.repeatable;
   S._attempts = null; S._retryLocal = false; S._retryNext = null;
   _syncPassageBtn(); // mostra/nascondi il pulsante 📄 Testo
@@ -10966,7 +11054,7 @@ function showSessionClosed() {
 function listenForTeacherAdvance() {
   const ref = db.ref('livelearn/control/' + S.sessionCode + '/currentQ');
   let lastQ = -1;
-  if (S.sessionTournament) _tourStudentListen();
+  if (S.sessionTournament) { _tourStudentListen(); _tourRevealListen(); }
   _hintStudentListen();
   ref.on('value', snap => {
     if (S.removed) { try { ref.off('value'); } catch(e) {} return; }
@@ -10981,6 +11069,7 @@ function listenForTeacherAdvance() {
     if (fbArea) fbArea.innerHTML = '';
     renderQuestion(); showView('student-activity');
     _tourSendUI();
+    _tourStudentReveal();
   });
 }
 
