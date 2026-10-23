@@ -672,6 +672,10 @@ textarea.qe-ce::placeholder, input.qe-ce::placeholder { color: var(--muted); opa
 .tour-champ .tc-name { font-size:22px; font-weight:900; color:#fcd34d; margin-top:6px; }
 #tour-banner { position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:2500; max-width:92vw; background:#1e1b4b; color:white; border-radius:20px; padding:7px 18px; font-size:14px; font-weight:800; box-shadow:0 4px 16px rgba(0,0,0,.2); pointer-events:none; text-align:center; }
 #tour-banner.win { background:#047857; }
+#tr-box { background:#ecfeff; border:2px solid #06b6d4; border-radius:12px; padding:10px 14px; margin-bottom:12px; font-size:15px; line-height:1.5; color:#164e63; }
+#tr-box .tr-head { font-size:11px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:#0e7490; margin-bottom:4px; }
+#tr-box .tr-line + .tr-line { margin-top:4px; }
+#tr-box .tr-wait { opacity:.55; font-style:italic; }
 #tour-banner.out { background:#6b7280; }
 </style>
 </head>
@@ -1125,6 +1129,16 @@ const CONFIG = {
       <div id="relay-student-indicator" style="display:none;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:#ede9ff;color:#6c47ff;border:1.5px solid #8b5cf6;"></div>
       <button id="btn-passage" onclick="openPassage()" title="Apri il testo di riferimento">📄 Testo</button>
       <button id="btn-dict-link" onclick="openDictLink()" title="Apri dizionario/risorsa esterna" style="display:none;align-items:center;gap:5px;font-size:12px;font-weight:800;padding:5px 12px;border-radius:20px;background:#f0fdf4;color:#065f46;border:1.5px solid #86efac;cursor:pointer;">🔗 Dizionario</button>
+      <select id="tr-lang" onchange="_trSetLang(this.value)" title="Traduci la consegna · Translate the instructions" style="display:none;font-size:12px;font-weight:700;padding:4px 8px;border-radius:20px;border:1.5px solid var(--border);background:white;color:var(--text);cursor:pointer;">
+        <option value="">🌐 Traduci</option>
+        <option value="en">🌐 English</option>
+        <option value="ru">🌐 Русский</option>
+        <option value="uk">🌐 Українська</option>
+        <option value="es">🌐 Español</option>
+        <option value="fr">🌐 Français</option>
+        <option value="ar">🌐 العربية</option>
+        <option value="zh">🌐 中文</option>
+      </select>
       <span class="text-muted" style="font-size:13px;" id="s-progress-label"></span>
       <span id="s-score-pill" style="display:none; background:#16a37f; color:white; font-size:13px; font-weight:700; padding:4px 12px; border-radius:20px;">0 pt</span>
     </div>
@@ -1134,6 +1148,7 @@ const CONFIG = {
     <div id="s-timer-wrap" class="timer-bar-wrap" style="display:none;"><div class="timer-bar" id="s-timer-bar" style="width:100%;"></div></div>
     <div class="progress-bar"><div class="progress-fill" id="s-progress-fill" style="width:0%"></div></div>
     <div id="q-dots" class="q-dots"></div>
+    <div id="tr-box" style="display:none;"></div>
     <div id="s-question-area"></div>
     <div id="s-feedback-area"></div>
     <div class="student-nav" id="s-nav">
@@ -6935,6 +6950,301 @@ function _hintStudentListen() {
   S._hintOff = () => ref.off('value', h);
 }
 
+// ══════════════════════════════════════════════════════════════
+// TRADUZIONE DELLA CONSEGNA (lato studente)
+// Il menu 🌐 in alto traduce solo le parti in italiano della domanda
+// (consegna, istruzioni, messaggi di LiveLearn) in un riquadro sopra la
+// domanda. Il testo inglese dell'esercizio resta fuori: si mandano alla
+// traduzione solo le righe riconosciute come italiane. I messaggi fissi di
+// LiveLearn sono già tradotti qui sotto; le consegne dei docenti passano
+// dall'AI della sessione e vengono ricordate sul PC (localStorage).
+// ══════════════════════════════════════════════════════════════
+const _TR_LANGS = { en: 'English', ru: 'Русский', uk: 'Українська', es: 'Español', fr: 'Français', ar: 'العربية', zh: '中文' };
+const _TR_AI_NAMES = { en: 'English', ru: 'Russian', uk: 'Ukrainian', es: 'Spanish', fr: 'French', ar: 'Arabic', zh: 'Simplified Chinese' };
+// Chiave = testo italiano senza icone iniziali; valori in ordine en, ru, uk, es, fr, ar, zh
+const _TR_DICT = (() => {
+  const L = ['en', 'ru', 'uk', 'es', 'fr', 'ar', 'zh'];
+  const raw = {
+    'Scrivi SOLO le parole mancanti negli spazi evidenziati. Non riscrivere il resto del testo.': [
+      'Write ONLY the missing words in the highlighted gaps. Do not rewrite the rest of the text.',
+      'Напиши ТОЛЬКО пропущенные слова в выделенных пропусках. Не переписывай остальной текст.',
+      'Напиши ЛИШЕ пропущені слова у виділених пропусках. Не переписуй решту тексту.',
+      'Escribe SOLO las palabras que faltan en los huecos resaltados. No vuelvas a escribir el resto del texto.',
+      'Écris SEULEMENT les mots manquants dans les espaces en couleur. Ne recopie pas le reste du texte.',
+      'اكتب فقط الكلمات الناقصة في الفراغات المظللة. لا تُعِد كتابة بقية النص.',
+      '只在标出的空格里写出缺少的单词。不要重写其余的文字。'],
+    'Completa SOLO gli spazi evidenziati. Non riscrivere le parole già presenti.': [
+      'Fill in ONLY the highlighted gaps. Do not rewrite the words that are already there.',
+      'Заполни ТОЛЬКО выделенные пропуски. Не переписывай слова, которые уже есть.',
+      'Заповни ЛИШЕ виділені пропуски. Не переписуй слова, які вже є.',
+      'Completa SOLO los huecos resaltados. No vuelvas a escribir las palabras que ya están.',
+      'Complète SEULEMENT les espaces en couleur. Ne recopie pas les mots déjà présents.',
+      'أكمل الفراغات المظللة فقط. لا تُعِد كتابة الكلمات الموجودة.',
+      '只填写标出的空格。不要重写已经有的单词。'],
+    "Clicca l'opzione giusta in ogni frase. Puoi cambiare scelta con un altro clic.": [
+      'Click the right option in each sentence. You can change your choice with another click.',
+      'Нажми на правильный вариант в каждом предложении. Можно изменить выбор ещё одним нажатием.',
+      'Натисни на правильний варіант у кожному реченні. Можна змінити вибір ще одним натисканням.',
+      'Haz clic en la opción correcta de cada frase. Puedes cambiar tu elección con otro clic.',
+      'Clique sur la bonne option dans chaque phrase. Tu peux changer ton choix avec un autre clic.',
+      'انقر على الخيار الصحيح في كل جملة. يمكنك تغيير اختيارك بنقرة أخرى.',
+      '在每个句子中点击正确的选项。再点击一次可以更改选择。'],
+    "Scrivi le parole mancanti negli spazi e clicca l'opzione giusta dove ci sono i pulsanti.": [
+      'Write the missing words in the gaps and click the right option where there are buttons.',
+      'Напиши пропущенные слова в пропусках и нажми на правильный вариант там, где есть кнопки.',
+      'Напиши пропущені слова в пропусках і натисни на правильний варіант там, де є кнопки.',
+      'Escribe las palabras que faltan en los huecos y haz clic en la opción correcta donde hay botones.',
+      'Écris les mots manquants dans les espaces et clique sur la bonne option là où il y a des boutons.',
+      'اكتب الكلمات الناقصة في الفراغات وانقر على الخيار الصحيح حيث توجد الأزرار.',
+      '在空格里写出缺少的单词，在有按钮的地方点击正确的选项。'],
+    'Trascina le parole qui…': ['Drag the words here…', 'Перетащи слова сюда…', 'Перетягни слова сюди…', 'Arrastra las palabras aquí…', 'Fais glisser les mots ici…', 'اسحب الكلمات إلى هنا…', '把单词拖到这里…'],
+    'Trascina qui…': ['Drag here…', 'Перетащи сюда…', 'Перетягни сюди…', 'Arrastra aquí…', 'Fais glisser ici…', 'اسحب إلى هنا…', '拖到这里…'],
+    'Trascina o clicca ogni parola → poi clicca la categoria · ⚠️ Per spostarla, clicca la parola nella colonna': [
+      'Drag or click each word → then click the category · ⚠️ To move it, click the word in the column',
+      'Перетащи или нажми на каждое слово → потом нажми на категорию · ⚠️ Чтобы переместить слово, нажми на него в колонке',
+      'Перетягни або натисни на кожне слово → потім натисни на категорію · ⚠️ Щоб перемістити слово, натисни на нього в колонці',
+      'Arrastra o haz clic en cada palabra → luego haz clic en la categoría · ⚠️ Para moverla, haz clic en la palabra de la columna',
+      'Fais glisser ou clique sur chaque mot → puis clique sur la catégorie · ⚠️ Pour le déplacer, clique sur le mot dans la colonne',
+      'اسحب كل كلمة أو انقر عليها ← ثم انقر على الفئة · ⚠️ لنقلها، انقر على الكلمة في العمود',
+      '拖动或点击每个单词 → 然后点击类别 · ⚠️ 要移动单词，请点击栏中的该单词'],
+    'Scrivi qui la tua risposta…': ['Write your answer here…', 'Напиши здесь свой ответ…', 'Напиши тут свою відповідь…', 'Escribe aquí tu respuesta…', 'Écris ta réponse ici…', 'اكتب إجابتك هنا…', '在这里写你的答案…'],
+    'Scrivi la tua risposta…': ['Write your answer…', 'Напиши свой ответ…', 'Напиши свою відповідь…', 'Escribe tu respuesta…', 'Écris ta réponse…', 'اكتب إجابتك…', '写你的答案…'],
+    'Invia risposta': ['Send answer', 'Отправить ответ', 'Надіслати відповідь', 'Enviar respuesta', 'Envoyer la réponse', 'أرسل الإجابة', '提交答案'],
+    'Risposta inviata! Aspetta gli altri…': ['Answer sent! Wait for the others…', 'Ответ отправлен! Подожди остальных…', 'Відповідь надіслано! Зачекай на інших…', '¡Respuesta enviada! Espera a los demás…', 'Réponse envoyée ! Attends les autres…', 'تم إرسال الإجابة! انتظر الآخرين…', '答案已提交！请等待其他同学…'],
+    'Tempo scaduto! La tua risposta è salvata: aspetta la prossima domanda.': [
+      "Time's up! Your answer is saved: wait for the next question.",
+      'Время вышло! Твой ответ сохранён: жди следующего вопроса.',
+      'Час вийшов! Твою відповідь збережено: чекай на наступне запитання.',
+      '¡Se acabó el tiempo! Tu respuesta está guardada: espera la siguiente pregunta.',
+      'Temps écoulé ! Ta réponse est enregistrée : attends la question suivante.',
+      'انتهى الوقت! تم حفظ إجابتك: انتظر السؤال التالي.',
+      '时间到！你的答案已保存：请等待下一题。'],
+    'Aiuto: si sblocca quando tutti hanno provato a rispondere': [
+      'Help: it unlocks when everybody has tried to answer',
+      'Подсказка: откроется, когда все попробуют ответить',
+      'Підказка: відкриється, коли всі спробують відповісти',
+      'Ayuda: se desbloquea cuando todos han intentado responder',
+      "Aide : elle se débloque quand tout le monde a essayé de répondre",
+      'المساعدة: تُفتح عندما يحاول الجميع الإجابة',
+      '提示：所有人都尝试回答后才会解锁'],
+    "Mostra l'aiuto (la risposta varrà ½ punto)": [
+      'Show the help (the answer will be worth ½ point)',
+      'Показать подсказку (ответ будет стоить ½ балла)',
+      'Показати підказку (відповідь коштуватиме ½ бала)',
+      'Mostrar la ayuda (la respuesta valdrá ½ punto)',
+      "Afficher l'aide (la réponse vaudra ½ point)",
+      'أظهر المساعدة (ستساوي الإجابة نصف نقطة)',
+      '显示提示（答案只得 ½ 分）'],
+  };
+  const out = {};
+  Object.keys(raw).forEach(k => { out[k] = {}; L.forEach((l, i) => { out[k][l] = raw[k][i]; }); });
+  return out;
+})();
+
+// Solo gli alunni abilitati dal docente (classe → 🌐 Traduzione): S._trAllowed = lingua scelta dal docente.
+// L'alunno può cambiarla o spegnerla dal menu; la scelta resta sul PC.
+function _trGetLang() {
+  if (!S._trAllowed) return '';
+  let v = '';
+  try { v = localStorage.getItem('ll_tr_lang') || ''; } catch(e) {}
+  return v === 'off' ? '' : (_TR_LANGS[v] ? v : S._trAllowed);
+}
+function _trSetLang(lang) {
+  try { localStorage.setItem('ll_tr_lang', lang || 'off'); } catch(e) {}
+  const sel = document.getElementById('tr-lang');
+  if (sel && sel.value !== lang) sel.value = lang;
+  _trRefresh();
+}
+function _trCacheGet() { try { return JSON.parse(localStorage.getItem('ll_tr_cache_v1') || '{}'); } catch(e) { return {}; } }
+function _trCachePut(add) {
+  try {
+    let c = _trCacheGet();
+    if (Object.keys(c).length > 500) c = {};
+    localStorage.setItem('ll_tr_cache_v1', JSON.stringify(Object.assign(c, add)));
+  } catch(e) {}
+}
+
+// Riconosce le righe in italiano (parole funzionali e verbi tipici delle consegne)
+const _TR_IT = new Set('il lo la gli le un una uno di del della dello dei delle degli da dal dalla dai con su sul sulla per tra fra che chi cosa quale quali non è e ed oppure ma se poi anche tutte tutti ogni ciascuna ciascun questa questo queste questi quella quello sono hai ha devi puoi alla allo agli alle al ai nel nella nei nelle tua tuo tue tuoi sua suo qui dove quando perché più'.split(' '));
+const _TR_EN = new Set('the an is are to of and on at for with you your he she it they we this that what which who do does did have has be was were will can my his her our their from not'.split(' '));
+const _TR_ITV = /\b(complet|scriv|scegli|clicc|trascin|colleg|riordin|abbin|ascolt|legg|rispond|inserisc|sottoline|mett|trasform|volg|coniug|indic|osserv|guard|ricord|rilegg|corregg|tradu|frase|frasi|parol|verb|spazi|domand|corrett|giust|sbagliat|seguent|testo|immagin|rispost|aspett|consegn|esempi|scadut|aiuto|opzion|elenc|tabella|dialog|brano|vero|falso)\w*/gi;
+function _trIsItalian(t) {
+  const w = t.toLowerCase().match(/[a-zàèéìòù']+/g) || [];
+  let it = 0, en = 0;
+  w.forEach(x => { if (_TR_IT.has(x)) it++; if (_TR_EN.has(x)) en++; });
+  it += (t.match(_TR_ITV) || []).length + (/[àèéìòù]/.test(t) ? 1 : 0);
+  return it >= 2 && it > en;
+}
+
+// Testo "a righe" di un blocco: entra negli elementi in linea, salta quelli a blocco, gli spazi da riempire diventano ___
+function _trInlineText(el) {
+  let out = '';
+  el.childNodes.forEach(n => {
+    if (n.nodeType === 3) { out += n.nodeValue; return; }
+    if (n.nodeType !== 1) return;
+    const tag = n.tagName;
+    if (tag === 'BR') { out += '\n'; return; }
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') { if (n.type !== 'hidden') out += ' ___ '; return; }
+    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'AUDIO' || tag === 'SVG') return;
+    const d = getComputedStyle(n).display;
+    if (d === 'none') return;
+    if (d.startsWith('inline')) out += _trInlineText(n);
+  });
+  return out;
+}
+function _trCollect() {
+  const segs = [];
+  const add = t => {
+    String(t || '').split('\n').forEach(line => {
+      const x = line.replace(/\s+/g, ' ').trim();
+      if (x.length >= 4 && !segs.includes(x) && (_trDictKey(x) in _TR_DICT || _trIsItalian(x))) segs.push(x);
+    });
+  };
+  ['s-question-area', 's-feedback-area', 'tour-banner'].forEach(id => {
+    const root = document.getElementById(id);
+    if (!root) return;
+    [root, ...root.querySelectorAll('*')].forEach(el => {
+      if (el.nodeType !== 1 || ['SCRIPT', 'STYLE', 'BUTTON', 'svg'].includes(el.tagName) && el !== root) {
+        if (el.tagName === 'BUTTON' && el.classList.contains('btn')) add(el.textContent);
+        return;
+      }
+      const d = getComputedStyle(el).display;
+      if (d === 'none' || (el !== root && d.startsWith('inline'))) return;
+      add(_trInlineText(el));
+    });
+    root.querySelectorAll('textarea[placeholder], input[placeholder]').forEach(el => { if (isNaN(Number(el.placeholder))) add(el.placeholder); });
+    root.querySelectorAll('[id^="ro-placeholder"], .cat-zone-placeholder').forEach(el => add(el.textContent));
+  });
+  return segs;
+}
+function _trDictKey(t) { return t.replace(/^[^A-Za-zÀ-ÿ]+/, '').trim(); }
+
+// AI della sessione: Gemini se c'è la chiave, altrimenti Anthropic (le chiavi arrivano dalla sessione)
+async function _trAI(prompt) {
+  const gk = localStorage.getItem('gemini_api_key');
+  if (gk) {
+    const res = await fetch(_geminiUrl(gk), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
+    if (res.ok) {
+      const data = await res.json();
+      const t = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (t) return t;
+    }
+  }
+  const t = await _callHaikuStudent(prompt, 1500);
+  if (!t) throw new Error('AI non disponibile');
+  return t;
+}
+
+async function _trLoadPermission(classId, names) {
+  S._trAllowed = null;
+  const sel = document.getElementById('tr-lang');
+  if (sel) sel.style.display = 'none';
+  _trRefresh();
+  if (!db || !classId) return;
+  try {
+    const map = (await _fbGet(db.ref('livelearn/classes/' + classId + '/traduzioni'), 6000)).val() || {};
+    const lang = names.filter(Boolean).map(n => map[_toSafe(n)]).find(l => _TR_LANGS[l]);
+    if (!lang) return;
+    S._trAllowed = lang;
+    if (sel) { sel.style.display = ''; sel.value = _trGetLang(); }
+    _trRefresh();
+  } catch(e) { console.warn('[traduzione] permesso non letto:', e.message); }
+}
+
+// Lato docente: chi può tradurre la consegna, per classe
+async function openTranslateSettings(classId) {
+  let cl = null;
+  try { cl = (await db.ref('livelearn/classes/' + classId).get()).val(); } catch(e) {}
+  if (!cl) { alert('Classe non trovata.'); return; }
+  const map = cl.traduzioni || {};
+  const opts = cur => '<option value="">—</option>' + Object.entries(_TR_LANGS).map(([k, v]) => '<option value="' + k + '"' + (cur === k ? ' selected' : '') + '>' + v + '</option>').join('');
+  const rows = (cl.studenti || []).map(n => '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">' +
+    '<span style="font-size:14px;font-weight:600;">' + esc(n) + '</span><select data-tr-student="' + esc(n) + '" style="font-size:13px;">' + opts(map[_toSafe(n)]) + '</select></div>').join('');
+  let ov = document.getElementById('modal-translate');
+  if (ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = 'modal-translate';
+  ov.className = 'modal-overlay';
+  ov.innerHTML = '<div class="modal-box" style="max-width:480px;max-height:88vh;overflow-y:auto;">' +
+    '<h2>🌐 Traduzione della consegna · ' + esc(cl.nome || classId) + '</h2>' +
+    '<p class="text-muted" style="font-size:12px;margin-bottom:12px;">Solo gli alunni con una lingua vedono il menu 🌐 nelle attività: traduce la consegna e i messaggi in italiano, mai l\'esercizio in inglese. Le consegne scritte da te usano l\'AI della sessione (una volta per consegna, poi resta sul PC dell\'alunno).</p>' +
+    rows +
+    '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;"><button class="btn btn-ghost btn-sm" onclick="document.getElementById(\'modal-translate\').remove()">Annulla</button>' +
+    '<button class="btn btn-primary btn-sm" onclick="saveTranslateSettings(\'' + esc(classId) + '\')">💾 Salva</button></div></div>';
+  document.body.appendChild(ov);
+}
+async function saveTranslateSettings(classId) {
+  const map = {};
+  document.querySelectorAll('#modal-translate [data-tr-student]').forEach(sel => { if (sel.value) map[_toSafe(sel.dataset.trStudent)] = sel.value; });
+  try { await db.ref('livelearn/classes/' + classId + '/traduzioni').set(Object.keys(map).length ? map : null); }
+  catch(e) { alert('Salvataggio non riuscito: ' + e.message); return; }
+  try {
+    const local = JSON.parse(localStorage.getItem('livelearn_classes') || '{}');
+    if (local[classId]) { if (Object.keys(map).length) local[classId].traduzioni = map; else delete local[classId].traduzioni; localStorage.setItem('livelearn_classes', JSON.stringify(local)); }
+  } catch(e) {}
+  document.getElementById('modal-translate')?.remove();
+  renderClassesTab();
+}
+
+let _trSeq = 0;
+function _trRender(lang, segs, map, failed) {
+  const box = document.getElementById('tr-box');
+  if (!box) return;
+  const lines = segs.map(t => map[t]
+    ? '<div class="tr-line">' + esc(map[t]) + '</div>'
+    : '<div class="tr-line tr-wait">' + (failed ? '⚠️ ' : '… ') + esc(t) + '</div>').join('');
+  box.dir = lang === 'ar' ? 'rtl' : 'ltr';
+  box.innerHTML = '<div class="tr-head">🌐 ' + _TR_LANGS[lang] + '</div>' + lines +
+    (failed ? '<div class="tr-line tr-wait">⚠️ Translation not available right now.</div>' : '');
+  box.style.display = '';
+}
+async function _trRefresh() {
+  const box = document.getElementById('tr-box');
+  if (!box) return;
+  const lang = _trGetLang();
+  const seq = ++_trSeq;
+  if (!lang || !_TR_LANGS[lang] || !S.activity) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  const segs = _trCollect();
+  if (!segs.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  const cache = _trCacheGet(), map = {}, missing = [];
+  segs.forEach(t => {
+    const d = _TR_DICT[_trDictKey(t)];
+    if (d) map[t] = d[lang];
+    else if (cache[lang + '|' + t]) map[t] = cache[lang + '|' + t];
+    else missing.push(t);
+  });
+  _trRender(lang, segs, map, false);
+  if (!missing.length) return;
+  const prompt = 'Translate each of these Italian instructions into ' + _TR_AI_NAMES[lang] + '. They come from an English exercise for Italian middle-school students.\n' +
+    'Rules: translate ONLY the Italian words. Leave every English word or sentence, every blank (___), every number and symbol exactly as it is. ' +
+    'Do not explain and never solve the exercise. Reply ONLY with a JSON array of strings, same order and same length as the input.\n' +
+    'Input: ' + JSON.stringify(missing);
+  try {
+    const raw = await _trAI(prompt);
+    const arr = JSON.parse(String(raw).replace(/```json|```/g, '').trim().replace(/^[^\[]*/, '').replace(/[^\]]*$/, ''));
+    if (!Array.isArray(arr) || arr.length !== missing.length) throw new Error('risposta non valida');
+    const add = {};
+    missing.forEach((t, i) => { if (typeof arr[i] === 'string' && arr[i].trim()) { map[t] = arr[i].trim(); add[lang + '|' + t] = map[t]; } });
+    _trCachePut(add);
+    if (seq === _trSeq) _trRender(lang, segs, map, false);
+  } catch(e) {
+    console.warn('[traduzione]', e.message);
+    if (seq === _trSeq) _trRender(lang, segs, map, true);
+  }
+}
+// Si aggiorna da solo quando cambia la domanda o il messaggio sotto
+let _trTimer = null;
+function _trSoon() { clearTimeout(_trTimer); _trTimer = setTimeout(_trRefresh, 350); }
+if (typeof window !== 'undefined' && !window._trInit) {
+  window._trInit = true;
+  const _trStart = () => {
+    const mo = new MutationObserver(muts => { if (muts.some(m => !(m.target.closest && m.target.closest('#tr-box')))) _trSoon(); });
+    ['s-question-area', 's-feedback-area'].forEach(id => { const el = document.getElementById(id); if (el) mo.observe(el, { childList: true, subtree: true, characterData: true }); });
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _trStart); else _trStart();
+}
+
 // ── Lato studente: invio della risposta (serve al docente per andare avanti da solo) ──
 function _tourLockInputs() {
   document.querySelectorAll('#s-question-area input, #s-question-area textarea, #s-question-area select, #s-question-area button')
@@ -9665,6 +9975,7 @@ async function studentEnter() {
   S.studentName = studentName; S.sessionCode = code; S.activity = _sessFilterActivity(_actHydrate(aSnap.val()), session);
   S.sessionMode = _llModeFor(session, [_aliasNow, studentName]);
   S.sessionTournament = S.sessionMode === 'teacher' && !!session.tournament;
+  _trLoadPermission(session.classId, [_aliasNow, studentName]);
   S._tourMs = null; S._tourAns = null; S._tourShownAt = 0; S._tourHint = null; S._tourDone = null; S._hintOpenQ = null;
   if (S._tourStuOff) { S._tourStuOff(); S._tourStuOff = null; }
   if (S._hintOff) { S._hintOff(); S._hintOff = null; }
@@ -15735,6 +16046,7 @@ async function processMyClassData(parsed) {
   Object.entries(prev || {}).forEach(([id, c]) => {
     if (!c) return;
     if (c.tester && !classesData[id]) { classesData[id] = c; return; }   // classe Tester
+    if (c.traduzioni && classesData[id]) classesData[id].traduzioni = c.traduzioni; // traduzione consegna abilitata dal docente
     const testers = c.testers || [];
     if (!testers.length || !classesData[id]) return;
     testers.forEach(t => { if (!classesData[id].studenti.includes(t)) classesData[id].studenti.push(t); });
@@ -15916,6 +16228,7 @@ async function renderClassesTab() {
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:4px;flex-wrap:wrap;">
         <button class="btn btn-sm btn-primary" style="font-size:12px;" onclick="event.stopPropagation();openClassStats('${esc(id)}')">📊 Statistiche</button>
         <button class="btn btn-sm" style="font-size:12px;background:#d97706;color:#fff;border-color:#d97706;" onclick="event.stopPropagation();openBacheca('${esc(id)}','${esc(c.nome)}')">📢 Bacheca</button>
+        <button class="btn btn-sm" style="font-size:12px;" onclick="event.stopPropagation();openTranslateSettings('${esc(id)}')" title="Scegli quali alunni possono tradurre la consegna e in che lingua">🌐 Traduzione${Object.keys(c.traduzioni||{}).length ? ' (' + Object.keys(c.traduzioni).length + ')' : ''}</button>
         <button class="btn btn-sm" style="font-size:12px;background:#0e7490;color:#fff;border-color:#0e7490;" onclick="event.stopPropagation();addTesterToClass('${esc(id)}')" title="Aggiunge un alunno finto per provare StudentApp e LiveLearn come un alunno">➕ Tester</button>
         ${(c.testers||[]).length ? `<button class="btn btn-sm" style="font-size:12px;background:#fff;color:#0e7490;border-color:#0e7490;" onclick="event.stopPropagation();removeTesterFromClass('${esc(id)}')" title="Toglie il tester e cancella i suoi dati di prova">➖ Tester</button>` : ''}
         <button class="btn btn-sm btn-danger" style="font-size:12px;" onclick="event.stopPropagation();deleteClass('${esc(id)}')">Elimina</button>
