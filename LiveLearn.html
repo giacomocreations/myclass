@@ -15054,7 +15054,7 @@ function _pdfQuestionBlock(q, a) {
   return img + _pdfqBody(q, q.type, a);
 }
 
-// Card di una domanda nel PDF. o = { num, typeLabel, label, color, bg, pts, time, feedback }
+// Card di una domanda nel PDF. o = { num, typeLabel, label, color, bg, pts, time, feedback, exclNote }
 function _pdfQuestionCard(q, a, o) {
   const meta = [o.pts ? '<span class="pq-pts">' + o.pts + '</span>' : '', o.time ? '<span class="pq-time">⏱ ' + o.time + '</span>' : ''].join('');
   return '<div class="pq-card" style="border-left-color:' + (o.color || '#c4b5fd') + ';">' +
@@ -15064,6 +15064,7 @@ function _pdfQuestionCard(q, a, o) {
       '<span class="pq-esito" style="color:' + (o.color || '#555') + ';">' + (o.label || '') + '</span>' + meta +
     '</div>' +
     '<div class="pq-body">' + _pdfQuestionBlock(q, a) + '</div>' +
+    (o.exclNote ? '<div class="pq-excl">🚫 Motivo dell\'esclusione: ' + o.exclNote + '</div>' : '') +
     (o.feedback ? '<div class="pq-fb">' + o.feedback + '</div>' : '') +
   '</div>';
 }
@@ -15114,6 +15115,7 @@ const _PDFQ_CSS = `
   .pq-label { font-size:11px; font-weight:800; color:#5b21b6; text-transform:uppercase; letter-spacing:.3px; margin-top:4px; }
   .pq-free { white-space:normal; background:#f8f7ff; border:1px solid #e5e0ff; border-radius:6px; padding:6px 9px; margin-top:2px; }
   .pq-fb { font-size:12px; color:#4c1d95; background:#f5f3ff; border-top:1px solid #ece9ff; padding:6px 12px; font-style:italic; }
+  .pq-excl { font-size:12px; color:#334155; background:#f1f5f9; border-top:1px dashed #94a3b8; padding:6px 12px; }
   .pq-legend { font-size:11px; color:#555; margin:0 0 10px; display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; }
   @media print { .pq-card { box-shadow:none; } }
 `;
@@ -15194,6 +15196,7 @@ async function exportStudentPDF(studentName) {
       label: res.label, color: res.color,
       bg: res.label.includes('✓') ? '#f0fdf4' : res.label.includes('✗') ? '#fef2f2' : res.label.includes('🔶') ? '#fff7ed' : '#fafafa',
       pts: res.pts, time: qTimes[i] != null ? fmtSecs(qTimes[i]) : '',
+      exclNote: esc(((entry.excludedQuestions || {})[i] || {}).nota || ''),
       feedback: aiFeedbacksData[i] ? '🤖 ' + esc(aiFeedbacksData[i]) : ''
     });
   }).join('');
@@ -16033,7 +16036,8 @@ async function exportAllPDFCorretto() {
       return _pdfQuestionCard(q, a, {
         num: 'Domanda ' + (i+1), typeLabel: (typeIcons[q.type]||'') + ' ' + typeLabel(q.type),
         label, color, bg, pts: isExcl ? 'non valutato' : pts + '/' + effMax + ' pt',
-        time: secs != null ? fmtSec(secs) : '', feedback: fb ? '🤖 ' + esc(fb) : ''
+        time: secs != null ? fmtSec(secs) : '', feedback: fb ? '🤖 ' + esc(fb) : '',
+        exclNote: isExcl ? esc((entry.excludedQuestions[i] || {}).nota || '') : ''
       });
     }).join('');
 
