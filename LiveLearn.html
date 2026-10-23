@@ -8474,11 +8474,13 @@ async function toggleExcludeQuestion(qi) {
       const qs0 = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion, null, resp.answers);
       const restanti = qs0.filter((q, i) => i !== qi && !exc[i] && (qmo[i] != null ? Number(qmo[i]) : (q.points || 1)) > 0).length;
       if (!restanti) { alert('Non puoi escludere tutti gli esercizi: almeno uno deve restare nella valutazione.'); return; }
-      if (!confirm('Togliere l\'esercizio ' + (qi + 1) + ' dalla valutazione di questo alunno?\n\nNon conterà né nel punteggio né nel totale. Puoi reinserirlo in qualunque momento.')) return;
+      const nota = prompt('Togliere l\'esercizio ' + (qi + 1) + ' dalla valutazione di questo alunno?\n\nNon conterà né nel punteggio né nel totale. Puoi reinserirlo in qualunque momento.\n\nPerché lo escludi? (facoltativo, si può scrivere anche dopo) La nota non la vede l\'alunno: la usa la valutazione di MyClass per il feedback in StudentApp.', '');
+      if (nota === null) return;
       updates['excludedQuestions/' + qi] = {
         prevMax:    qmo[qi] != null ? qmo[qi] : null,
         prevManual: ms[qi]  != null ? ms[qi]  : null,
-        at: Date.now()
+        at: Date.now(),
+        ...(nota.trim() ? { nota: nota.trim().slice(0, 500) } : {})
       };
       updates['questionMaxOverrides/' + qi] = 0;
       updates['manualScores/' + qi]         = 0;
@@ -8494,6 +8496,25 @@ async function toggleExcludeQuestion(qi) {
     _refreshPendingForStudent(studentKey, r2);
     // La cronologia personale (media, StudentApp) deve vedere il nuovo esito
     _llSyncStudentHistory(S.liveCode, studentKey).catch(e => console.warn('[Escludi] cronologia:', e.message));
+  } catch(e) {
+    alert('Errore: ' + e.message);
+  }
+}
+
+// Motivo dell'esclusione di un esercizio (excludedQuestions/{i}/nota): lo legge
+// MyClass quando genera la valutazione e il feedback per StudentApp
+async function saveExcludeNote(qi) {
+  const studentKey = S.selectedStudent;
+  if (!db || !studentKey || !S.liveCode) return;
+  const el = document.getElementById('excl-note-' + qi);
+  const btn = document.getElementById('excl-note-btn-' + qi);
+  if (!el) return;
+  const ref = db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey + '/excludedQuestions/' + qi);
+  try {
+    if (!(await ref.get()).exists()) { alert('L\'esercizio non è più escluso.'); return; }
+    const v = el.value.trim().slice(0, 500);
+    await ref.child('nota').set(v || null);
+    if (btn) { btn.textContent = '✓ Salvata'; setTimeout(() => { if (btn) btn.textContent = 'Salva nota'; }, 1800); }
   } catch(e) {
     alert('Errore: ' + e.message);
   }
@@ -9215,7 +9236,7 @@ function renderStudentResultsTeacher(name, response) {
   // finale dello studente cancellerebbe gli interventi del docente)
   const excludedRST = response.excludedQuestions || {};
   const canExcludeRST = !!submitted && !response.aiScoringPending;
-  const cardsHtml = questions.map((q, i) => renderAnswerCard(q, i, answers[i], questionTimes[i], manualScoresRST[i], aiScoresRST[i], aiFeedbacksRST[i], qMaxOverridesRST[i] != null ? Number(qMaxOverridesRST[i]) : null, { excluded: !!excludedRST[i], canExclude: canExcludeRST })).join('');
+  const cardsHtml = questions.map((q, i) => renderAnswerCard(q, i, answers[i], questionTimes[i], manualScoresRST[i], aiScoresRST[i], aiFeedbacksRST[i], qMaxOverridesRST[i] != null ? Number(qMaxOverridesRST[i]) : null, { excluded: !!excludedRST[i], excludedNote: (excludedRST[i] && excludedRST[i].nota) || '', canExclude: canExcludeRST })).join('');
 
   // Recovery panel
   const recStatus = response.status || '';
@@ -9454,6 +9475,7 @@ function _answerScoreTag(q, answer, r) {
 
 function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedback, qMaxOverride, opts) {
   const excluded   = !!(opts && opts.excluded);
+  const excludedNote = (opts && opts.excludedNote) || '';
   const canExclude = !!(opts && opts.canExclude);
   const fmtSecs = s => s == null ? null : s >= 60 ? Math.floor(s/60)+'m '+(s%60)+'s' : s+'s';
   const timeTag = timeSec != null ? `<span style="font-size:10px;background:#f0ede8;color:#888;padding:2px 8px;border-radius:10px;margin-left:6px;">⏱ ${fmtSecs(timeSec)}</span>` : '';
@@ -9502,6 +9524,11 @@ function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedbac
     ? '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
         '<span style="font-size:12px;font-weight:700;color:#475569;">🚫 Esercizio escluso dalla valutazione — non conta nel punteggio né nel totale</span>' +
         '<button class="btn btn-sm btn-primary" style="font-size:11px;padding:3px 10px;margin-left:auto;" onclick="toggleExcludeQuestion(' + i + ')" title="Rimetti l\'esercizio nella valutazione con il punteggio che aveva">↩ Reinserisci</button>' +
+        '<div style="flex-basis:100%;display:flex;gap:6px;align-items:flex-start;">' +
+          '<textarea id="excl-note-' + i + '" rows="2" maxlength="500" placeholder="Perché è escluso? (es. problema tecnico, argomento non ancora spiegato…) — la usa MyClass per la valutazione, l\'alunno non la vede" ' +
+            'style="flex:1;min-width:0;padding:5px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;font-family:inherit;resize:vertical;">' + esc(excludedNote) + '</textarea>' +
+          '<button id="excl-note-btn-' + i + '" class="btn btn-sm" style="font-size:11px;padding:3px 10px;" onclick="saveExcludeNote(' + i + ')">Salva nota</button>' +
+        '</div>' +
       '</div>'
     : '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
       aiTag + feedbackTag +

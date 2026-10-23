@@ -26532,11 +26532,17 @@ ${sectionInstr}`;
         const calcDetPts = (q, a, pts, out) => _agentEvalPts(q, a, out);
 
         // Esercizi tolti dal docente in LiveLearn (🚫 Escludi): non valutabili, l'AI
-        // non li deve vedere né commentare. La nota per lo storico la aggiunge
-        // l'approvazione (_agentNotaEsclusi), non l'AI.
+        // non ne vede risposta e punti. Se il docente ha scritto il motivo, l'AI lo
+        // riceve per tenerne conto nel feedback; senza motivo l'esercizio non compare.
+        // La nota per lo storico la aggiunge l'approvazione (_agentNotaEsclusi), non l'AI.
         const excl = detailedResponse.excludedQuestions || {};
         return questions.map((q, i) => {
-            if (excl[i]) return '';
+            if (excl[i]) {
+                const nota = _agentNotaTxt(excl[i].nota);
+                if (!nota) return '';
+                const qt = (q.text || q.question?.text || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim().substring(0, 140);
+                return `Q${i+1}[ESCLUSO DALLA VALUTAZIONE dal docente] ${qt} | non conta nel voto: non valutarlo e non commentarne la risposta | motivo del docente: "${nota}" (tienine conto nel feedback se è utile all'alunno)`;
+            }
             const a   = answers[i];
             const pts = q.points || 1;
             const ms  = (detailedResponse.manualScores || {})[i];
@@ -26572,8 +26578,9 @@ ${sectionInstr}`;
         }).filter(Boolean).join('\n');
     }
 
-    // Nota per lo storico sugli esercizi esclusi dal docente in LiveLearn.
-    // Va solo nello storico di MyClass: il feedback per StudentApp non li nomina.
+    // Nota per lo storico sugli esercizi esclusi dal docente in LiveLearn, con il
+    // motivo se scritto. Il feedback per StudentApp ne parla solo tramite l'AI,
+    // che riceve il motivo nelle righe per domanda (agentBuildDetailLines).
     function _agentNotaEsclusi(questions, detailedResponse) {
         const excl = (detailedResponse && detailedResponse.excludedQuestions) || {};
         const idx = Object.keys(excl).filter(k => excl[k]).map(Number).filter(n => Number.isFinite(n)).sort((a, b) => a - b);
@@ -26583,9 +26590,20 @@ ${sectionInstr}`;
             const t = String(q.text || q.question?.text || '').replace(/\*\*/g, '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
             return `${i + 1}` + (t ? ` ("${t.length > 60 ? t.slice(0, 60) + '…' : t}")` : '');
         };
+        // Con il motivo scritto dal docente in LiveLearn: una frase per esercizio
+        if (idx.some(i => _agentNotaTxt(excl[i].nota))) {
+            return idx.map(i => {
+                const nota = _agentNotaTxt(excl[i].nota);
+                return `Il docente ha escluso l'esercizio ${desc(i)}: ${nota ? nota.replace(/[.\s]+$/, '') + '.' : 'non valutabile.'}`;
+            }).join('\n');
+        }
         return idx.length === 1
             ? `Il docente ha escluso l'esercizio ${desc(idx[0])} perché non valutabile.`
             : `Il docente ha escluso gli esercizi ${idx.map(desc).join(', ')} perché non valutabili.`;
+    }
+    // Motivo dell'esclusione scritto in LiveLearn, su una riga e senza virgolette doppie
+    function _agentNotaTxt(n) {
+        return String(n || '').replace(/\s+/g, ' ').replace(/"/g, "'").trim().slice(0, 500);
     }
 
     async function agentCheckLiveSessions() {
