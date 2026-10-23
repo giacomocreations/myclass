@@ -6340,6 +6340,8 @@ async function openLive(code, activityId, roster, silent) {
   }
   // Memorizzo sess.classId per poter mostrare warning nel pannello se il roster è vuoto
   S.liveClassId = sess.classId || null;
+  // Torneo chiuso: le consegne che contano ancora le domande non giocate si sistemano
+  if (S.liveTournament && !isActive) _tourFixSession(code);
 
   // Mode badge
   const badges = { test:'<span class="mode-test">📝 Test</span>', practice:'<span class="mode-practice">🎮 Esercitazione</span>', teacher: S.liveTournament ? '<span class="mode-teacher">🏆 Torneo</span>' : '<span class="mode-teacher">🎓 Controllo docente</span>', assigned:'<span class="mode-assigned">📋 Assegnato</span>' };
@@ -6679,6 +6681,63 @@ async function _tourRestore(code) {
 
 function _tourSave() {
   return db.ref('livelearn/control/' + S.liveCode + '/tour').set(S._tour);
+}
+
+// Domande mai giocate nel torneo: con pochi alunni i primi livelli si saltano
+// (_tourRanges), ma le domande pescate restano nella sessione e contavano nel
+// massimo, abbassando la percentuale. Si tolgono dalla valutazione come un
+// esercizio escluso dal docente (stessi campi: PDF, MyClass e StudentApp li
+// rispettano già), con la nota che spiega il perché.
+const _TOUR_SKIP_NOTA = 'Domanda non giocata nel torneo: con questo numero di alunni si giocano solo gli ultimi livelli.';
+function _tourSkippedIdx(t, nQ) {
+  if (!t || !t.ranges || !t.ranges.length) return [];
+  const inR = i => t.ranges.some(r => r && i >= r[0] && i <= r[1]);
+  const out = [];
+  for (let i = 0; i < nQ; i++) if (!inR(i)) out.push(i);
+  return out;
+}
+function _tourSkipFields(skip, at) {
+  const f = { excludedQuestions: {}, questionMaxOverrides: {}, manualScores: {} };
+  skip.forEach(i => {
+    f.excludedQuestions[i] = { prevMax: null, prevManual: null, at: at || Date.now(), tour: true, nota: _TOUR_SKIP_NOTA };
+    f.questionMaxOverrides[i] = 0;
+    f.manualScores[i] = 0;
+  });
+  return f;
+}
+// Lato docente: sistema le consegne di un torneo (anche già giocato) che
+// contano ancora le domande non giocate; ricalcola punteggio e cronologia.
+async function _tourFixSession(code) {
+  if (!db || !code || code !== S.liveCode || !S.liveTournament || !S.liveActivity) return;
+  try {
+    const tour = _tourNormalize((await _fbGet(db.ref('livelearn/control/' + code + '/tour'), 6000)).val());
+    const qs = S.liveActivity.questions || [];
+    const skip = _tourSkippedIdx(tour, qs.length);
+    if (!skip.length) return;
+    const all = (await _fbGet(db.ref('livelearn/responses/' + code), 8000)).val() || {};
+    let n = 0;
+    for (const [key, r] of Object.entries(all)) {
+      if (!r || r.removed || !r.submittedAt) continue;
+      const exc = r.excludedQuestions || {};
+      const todo = skip.filter(i => !exc[i]);
+      if (!todo.length) continue;
+      const f = _tourSkipFields(todo);
+      const upd = {};
+      todo.forEach(i => {
+        upd['excludedQuestions/' + i] = f.excludedQuestions[i];
+        upd['questionMaxOverrides/' + i] = 0;
+        upd['manualScores/' + i] = 0;
+      });
+      const ref = db.ref('livelearn/responses/' + code + '/' + key);
+      await ref.update(upd);
+      const r2 = (await ref.get()).val() || {};
+      const qs2 = getStudentAssignedQuestions(key, r2.name || key, r2.aliasOf, r2.studentVersion, null, r2.answers);
+      await ref.child('score').set(_llEffectiveScore(qs2, r2).score);
+      _llSyncStudentHistory(code, key).catch(e => console.warn('[torneo] cronologia:', key, e.message));
+      n++;
+    }
+    if (n) console.log('[torneo] ' + code + ': tolte ' + skip.length + ' domande non giocate dalla valutazione di ' + n + ' alunni');
+  } catch(e) { console.warn('[torneo] correzione domande non giocate:', e.message); }
 }
 
 // Punti di un alunno nelle domande del turno r; ms = tempo speso sulle risposte giuste
@@ -7425,6 +7484,7 @@ function _tourStudentListen() {
 function _tourStudentRender(raw) {
   let el = document.getElementById('tour-banner');
   const t = _tourNormalize(raw);
+  S._tourSkip = _tourSkippedIdx(t, S.activity?.questions?.length || 0);
   if (!t || S.removed) { if (el) el.remove(); return; }
   if (!el) { el = document.createElement('div'); el.id = 'tour-banner'; document.body.appendChild(el); }
   const me = S.safeName, nR = t.ranges.length, nm = k => esc(t.names[k] || k);
@@ -10294,6 +10354,7 @@ async function studentEnter() {
     S.submitted       = true;
     S.answers         = fbArr(existingResp.answers) || new Array(questions.length).fill(null);
     S.studentScore    = existingResp.score || 0;
+    S._doneQmo        = existingResp.questionMaxOverrides || null;
     S.aiScores        = existingResp.aiScores || {};
     S.aiFeedbacks     = existingResp.aiFeedbacks || {};
     S.recoveryAttempt = existingResp.recoveryAttempt || 0;
@@ -11904,6 +11965,10 @@ async function submitAnswers(auto) {
     studentVersion: S.studentVersion || 'originale'
   };
   if (S._aliasOf) payload.aliasOf = S._aliasOf;
+  // Torneo: le domande dei livelli non giocati non contano (né punti né massimo)
+  const _tSkip = S.sessionTournament ? (S._tourSkip || []).filter(i => S.answers[i] == null) : [];
+  if (_tSkip.length) Object.assign(payload, _tourSkipFields(_tSkip, submittedAt));
+  S._doneQmo = payload.questionMaxOverrides || null;
   // Assegnate ripetibili: il set() riscrive il record, i tentativi precedenti vanno riportati
   if (Array.isArray(S._attempts) && S._attempts.length) payload.attempts = S._attempts;
   if (db && S.sessionCode && !S._retryLocal) {
@@ -12052,6 +12117,9 @@ async function _writeStudentHistory(finalScore, aiScores, questionTimes, submitt
       questions:     S.activity.questions,
       answers:       S.answers,
       aiScores,
+      // Torneo: domande non giocate tolte dalla valutazione (vedi submitAnswers)
+      questionMaxOverrides: S._doneQmo || null,
+      manualScores:  S._doneQmo ? Object.fromEntries(Object.keys(S._doneQmo).map(k => [k, 0])) : null,
       questionTimes,
       finalScore,
       submittedAt,
@@ -14107,7 +14175,9 @@ async function showStudentDone() {
 
   // Usa S.studentScore (già aggiustato con AI) come punteggio effettivo
   const earnedPts = S.studentScore || 0;
-  const totalPts = questions.reduce((s, q) => s + (q.points || 1), 0);
+  // Esercizi tolti dalla valutazione (domande non giocate nel torneo, esclusioni del docente)
+  const _dq = S._doneQmo || {};
+  const totalPts = Math.round(questions.reduce((s, q, i) => s + (_dq[i] != null ? Number(_dq[i]) : (q.points || 1)), 0) * 100) / 100;
 
   // Conta domande automaticamente valutabili (per Gemini analysis)
   let scorableCount = 0;
