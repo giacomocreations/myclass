@@ -1845,12 +1845,19 @@ function _saveLocalBackup() {
   if (S.removed) return;
   if (!S.sessionCode || !S.studentName) return;
   const key = 'llprog_' + S.sessionCode + '_' + (S.safeName || S.studentName.replace(/[.#$\[\]/]/g,'_'));
+  // Risposte e domanda corrente nell'ordine ORIGINALE: al rientro le domande
+  // vengono rimescolate di nuovo (shuffleQ) e l'ordine di prima non esiste più.
+  // Prima il backup era nell'ordine mescolato e veniva riapplicato posizione
+  // per posizione: le risposte finivano su altre domande.
   try {
+    const map = S.qOrigMap;
     localStorage.setItem(key, JSON.stringify({
       name: S.studentName,
-      answers: S.answers.map(a => a === undefined ? null : a),
+      canon: true,
+      version: S.studentVersion || 'originale',
+      answers: _canonicalAnswersForServer(),
       score: S.studentScore,
-      qIndex: S.qIndex,
+      qOrig: (Array.isArray(map) && map[S.qIndex] !== undefined) ? map[S.qIndex] : S.qIndex,
       savedAt: Date.now()
     }));
   } catch(e) {}
@@ -6350,6 +6357,8 @@ async function openLive(code, activityId, roster, silent) {
   }
   // Memorizzo sess.classId per poter mostrare warning nel pannello se il roster è vuoto
   S.liveClassId = sess.classId || null;
+  // Torneo chiuso: le consegne che contano ancora le domande non giocate si sistemano
+  if (S.liveTournament && !isActive) _tourFixSession(code);
 
   // Mode badge
   const badges = { test:'<span class="mode-test">📝 Test</span>', practice:'<span class="mode-practice">🎮 Esercitazione</span>', teacher: S.liveTournament ? '<span class="mode-teacher">🏆 Torneo</span>' : '<span class="mode-teacher">🎓 Controllo docente</span>', assigned:'<span class="mode-assigned">📋 Assegnato</span>' };
@@ -6577,6 +6586,8 @@ async function teacherNextQ() {
     if(S.liveListener){S.liveListener();S.liveListener=null;} loadDashboard(); showView('teacher-dashboard'); return;
   }
   S.teacherCurrentQ++; S._qStartAt = Date.now(); await db.ref('livelearn/control/'+S.liveCode+'/currentQ').set(S.teacherCurrentQ); updateTeacherControlBar();
+  // Torneo: domande mostrate, per non contare quelle mai arrivate (_tourFixSession)
+  if (S.liveTournament) db.ref('livelearn/control/' + S.liveCode + '/shown/' + S.teacherCurrentQ).set(true).catch(() => {});
 }
 async function teacherPrevQ() {
   if (S.teacherCurrentQ <= 0) return;
@@ -6701,6 +6712,107 @@ async function _tourRestore(code) {
 
 function _tourSave() {
   return db.ref('livelearn/control/' + S.liveCode + '/tour').set(S._tour);
+}
+
+// Domande che nel torneo non contano per un alunno. Le domande pescate restano
+// tutte nella sessione e contavano nel massimo, abbassando la percentuale:
+//  • non giocate: livelli saltati (con pochi alunni si giocano solo gli ultimi,
+//    _tourRanges) o mai mostrate perché il torneo si è fermato prima;
+//  • turni che l'alunno non giocava (eliminato o fuori tabellone) e a cui non
+//    ha risposto: erano solo allenamento.
+// Contano sempre le domande a cui ha risposto e quelle mostrate nei turni in cui
+// era in gara. Si tolgono dalla valutazione come un esercizio escluso dal docente
+// (stessi campi: PDF, MyClass e StudentApp li rispettano già), con la nota.
+const _TOUR_NOTA_NONGIOCATA = 'Domanda non giocata nel torneo (livello saltato o torneo finito prima).';
+const _TOUR_NOTA_ALLENAMENTO = 'Turno che l\'alunno non giocava (eliminato o fuori tabellone) e senza risposta: era solo allenamento.';
+const _TOUR_FIX_V = 3;
+function _tourExclMap(t, nQ, key, answers, shown) {
+  const out = {};
+  if (!t || !t.ranges || !t.ranges.length) return out;
+  const roundOf = i => t.ranges.findIndex(r => r && i >= r[0] && i <= r[1]);
+  const plays = r => (t.rounds[r] || []).some(m => m && (m.a === key || m.b === key));
+  for (let i = 0; i < nQ; i++) {
+    const r = roundOf(i);
+    // Fuori dai turni il docente non mostra mai la domanda: un'eventuale
+    // risposta è un clic prima dell'inizio del torneo e non conta
+    if (r < 0) { out[i] = _TOUR_NOTA_NONGIOCATA; continue; }
+    if (answers[i] != null) continue;
+    if (!shown(i)) out[i] = _TOUR_NOTA_NONGIOCATA;
+    else if (!plays(r)) out[i] = _TOUR_NOTA_ALLENAMENTO;
+  }
+  return out;
+}
+function _tourExclFields(map, at) {
+  const f = { excludedQuestions: {}, questionMaxOverrides: {}, manualScores: {}, tourFix: _TOUR_FIX_V };
+  Object.keys(map).forEach(i => {
+    f.excludedQuestions[i] = { prevMax: null, prevManual: null, at: at || Date.now(), tour: true, nota: map[i] };
+    f.questionMaxOverrides[i] = 0;
+    f.manualScores[i] = 0;
+  });
+  return f;
+}
+// Indici segnati in control/<codice>/shown (oggetto o array di Firebase)
+function _tourShownSet(v) {
+  const set = new Set();
+  if (Array.isArray(v)) v.forEach((x, i) => { if (x) set.add(i); });
+  else if (v && typeof v === 'object') Object.keys(v).forEach(k => { if (v[k]) set.add(Number(k)); });
+  return set;
+}
+// Lato docente: ricalcola le domande che non contano nelle consegne di un torneo
+// chiuso (anche già giocato o sistemato con la regola di prima) e aggiorna
+// punteggio e cronologia. Una volta sola per consegna (tourFix): un esercizio
+// reinserito a mano dal docente resta reinserito. Le esclusioni fatte dal
+// docente (senza il segno tour) non si toccano.
+async function _tourFixSession(code) {
+  if (!db || !code || code !== S.liveCode || !S.liveTournament || !S.liveActivity) return;
+  try {
+    const ctl = (await _fbGet(db.ref('livelearn/control/' + code), 6000)).val() || {};
+    const tour = _tourNormalize(ctl.tour);
+    if (!tour) return;
+    const qs = S.liveActivity.questions || [];
+    const all = (await _fbGet(db.ref('livelearn/responses/' + code), 8000)).val() || {};
+    // Domande mostrate alla classe: segnate dal docente; per i tornei giocati
+    // prima che si segnassero, quelle a cui ha risposto almeno un alunno
+    const shown = _tourShownSet(ctl.shown);
+    Object.values(all).forEach(r => {
+      if (!r || r.removed) return;
+      fbArr(r.answers || []).forEach((a, i) => { if (a != null) shown.add(i); });
+    });
+    let n = 0;
+    for (const [key, r] of Object.entries(all)) {
+      if (!r || r.removed || !r.submittedAt || r.tourFix === _TOUR_FIX_V) continue;
+      const answers = fbArr(r.answers || []);
+      const want = _tourExclMap(tour, qs.length, key, answers, i => shown.has(i));
+      const exc = r.excludedQuestions || {};
+      const f = _tourExclFields(want);
+      const upd = { tourFix: _TOUR_FIX_V };
+      for (let i = 0; i < qs.length; i++) {
+        const cur = exc[i];
+        if (want[i] != null) {
+          if (!cur) {
+            upd['excludedQuestions/' + i] = f.excludedQuestions[i];
+            upd['questionMaxOverrides/' + i] = 0;
+            upd['manualScores/' + i] = 0;
+          } else if (cur.tour && cur.nota !== want[i]) {
+            upd['excludedQuestions/' + i + '/nota'] = want[i];
+          }
+        } else if (cur && cur.tour) {
+          // Tolta per sbaglio con la regola di prima: torna a contare
+          upd['excludedQuestions/' + i] = null;
+          upd['questionMaxOverrides/' + i] = cur.prevMax != null ? cur.prevMax : null;
+          upd['manualScores/' + i] = cur.prevManual != null ? cur.prevManual : null;
+        }
+      }
+      const ref = db.ref('livelearn/responses/' + code + '/' + key);
+      await ref.update(upd);
+      const r2 = (await ref.get()).val() || {};
+      const qs2 = getStudentAssignedQuestions(key, r2.name || key, r2.aliasOf, r2.studentVersion, null, r2.answers);
+      await ref.child('score').set(_llEffectiveScore(qs2, r2).score);
+      _llSyncStudentHistory(code, key).catch(e => console.warn('[torneo] cronologia:', key, e.message));
+      n++;
+    }
+    if (n) console.log('[torneo] ' + code + ': ricalcolate le domande che contano per ' + n + ' alunni');
+  } catch(e) { console.warn('[torneo] correzione domande non giocate:', e.message); }
 }
 
 // Punti di un alunno nelle domande del turno r; ms = tempo speso sulle risposte giuste
@@ -7447,6 +7559,7 @@ function _tourStudentListen() {
 function _tourStudentRender(raw) {
   let el = document.getElementById('tour-banner');
   const t = _tourNormalize(raw);
+  S._tourT = t;
   if (!t || S.removed) { if (el) el.remove(); return; }
   if (!el) { el = document.createElement('div'); el.id = 'tour-banner'; document.body.appendChild(el); }
   const me = S.safeName, nR = t.ranges.length, nm = k => esc(t.names[k] || k);
@@ -8496,11 +8609,13 @@ async function toggleExcludeQuestion(qi) {
       const qs0 = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion, null, resp.answers);
       const restanti = qs0.filter((q, i) => i !== qi && !exc[i] && (qmo[i] != null ? Number(qmo[i]) : (q.points || 1)) > 0).length;
       if (!restanti) { alert('Non puoi escludere tutti gli esercizi: almeno uno deve restare nella valutazione.'); return; }
-      if (!confirm('Togliere l\'esercizio ' + (qi + 1) + ' dalla valutazione di questo alunno?\n\nNon conterà né nel punteggio né nel totale. Puoi reinserirlo in qualunque momento.')) return;
+      const nota = prompt('Togliere l\'esercizio ' + (qi + 1) + ' dalla valutazione di questo alunno?\n\nNon conterà né nel punteggio né nel totale. Puoi reinserirlo in qualunque momento.\n\nPerché lo escludi? (facoltativo, si può scrivere anche dopo) La nota non la vede l\'alunno: la usa la valutazione di MyClass per il feedback in StudentApp.', '');
+      if (nota === null) return;
       updates['excludedQuestions/' + qi] = {
         prevMax:    qmo[qi] != null ? qmo[qi] : null,
         prevManual: ms[qi]  != null ? ms[qi]  : null,
-        at: Date.now()
+        at: Date.now(),
+        ...(nota.trim() ? { nota: nota.trim().slice(0, 500) } : {})
       };
       updates['questionMaxOverrides/' + qi] = 0;
       updates['manualScores/' + qi]         = 0;
@@ -8516,6 +8631,25 @@ async function toggleExcludeQuestion(qi) {
     _refreshPendingForStudent(studentKey, r2);
     // La cronologia personale (media, StudentApp) deve vedere il nuovo esito
     _llSyncStudentHistory(S.liveCode, studentKey).catch(e => console.warn('[Escludi] cronologia:', e.message));
+  } catch(e) {
+    alert('Errore: ' + e.message);
+  }
+}
+
+// Motivo dell'esclusione di un esercizio (excludedQuestions/{i}/nota): lo legge
+// MyClass quando genera la valutazione e il feedback per StudentApp
+async function saveExcludeNote(qi) {
+  const studentKey = S.selectedStudent;
+  if (!db || !studentKey || !S.liveCode) return;
+  const el = document.getElementById('excl-note-' + qi);
+  const btn = document.getElementById('excl-note-btn-' + qi);
+  if (!el) return;
+  const ref = db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey + '/excludedQuestions/' + qi);
+  try {
+    if (!(await ref.get()).exists()) { alert('L\'esercizio non è più escluso.'); return; }
+    const v = el.value.trim().slice(0, 500);
+    await ref.child('nota').set(v || null);
+    if (btn) { btn.textContent = '✓ Salvata'; setTimeout(() => { if (btn) btn.textContent = 'Salva nota'; }, 1800); }
   } catch(e) {
     alert('Errore: ' + e.message);
   }
@@ -9237,7 +9371,7 @@ function renderStudentResultsTeacher(name, response) {
   // finale dello studente cancellerebbe gli interventi del docente)
   const excludedRST = response.excludedQuestions || {};
   const canExcludeRST = !!submitted && !response.aiScoringPending;
-  const cardsHtml = questions.map((q, i) => renderAnswerCard(q, i, answers[i], questionTimes[i], manualScoresRST[i], aiScoresRST[i], aiFeedbacksRST[i], qMaxOverridesRST[i] != null ? Number(qMaxOverridesRST[i]) : null, { excluded: !!excludedRST[i], canExclude: canExcludeRST })).join('');
+  const cardsHtml = questions.map((q, i) => renderAnswerCard(q, i, answers[i], questionTimes[i], manualScoresRST[i], aiScoresRST[i], aiFeedbacksRST[i], qMaxOverridesRST[i] != null ? Number(qMaxOverridesRST[i]) : null, { excluded: !!excludedRST[i], excludedNote: (excludedRST[i] && excludedRST[i].nota) || '', canExclude: canExcludeRST })).join('');
 
   // Recovery panel
   const recStatus = response.status || '';
@@ -9383,6 +9517,7 @@ function renderStudentResultsTeacher(name, response) {
           const t = ev.at ? new Date(ev.at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
           if (ev.type === 'leave') return '<div style="font-size:11px;color:#7f1d1d;">🔴 ' + t + ' — uscito/a' + (ev.q ? ' (alla domanda ' + ev.q + ')' : '') + '</div>';
           if (ev.type === 'return') return '<div style="font-size:11px;color:#475569;">🟢 ' + t + ' — rientrato/a' + (ev.ms != null ? ' dopo ' + fmtSecs(Math.round(ev.ms / 1000)) : '') + '</div>';
+          if (ev.type === 'reload') return '<div style="font-size:11px;color:#7f1d1d;">🔄 ' + t + ' — ha ricaricato o chiuso la pagina e poi è rientrato/a' + (ev.q ? ' (era alla domanda ' + ev.q + ')' : '') + (ev.ms != null ? ', fuori ~' + fmtSecs(Math.round(ev.ms / 1000)) : '') + '</div>';
           return '';
         }).join('') +
         '</div>';
@@ -9475,6 +9610,7 @@ function _answerScoreTag(q, answer, r) {
 
 function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedback, qMaxOverride, opts) {
   const excluded   = !!(opts && opts.excluded);
+  const excludedNote = (opts && opts.excludedNote) || '';
   const canExclude = !!(opts && opts.canExclude);
   const fmtSecs = s => s == null ? null : s >= 60 ? Math.floor(s/60)+'m '+(s%60)+'s' : s+'s';
   const timeTag = timeSec != null ? `<span style="font-size:10px;background:#f0ede8;color:#888;padding:2px 8px;border-radius:10px;margin-left:6px;">⏱ ${fmtSecs(timeSec)}</span>` : '';
@@ -9523,6 +9659,11 @@ function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedbac
     ? '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
         '<span style="font-size:12px;font-weight:700;color:#475569;">🚫 Esercizio escluso dalla valutazione — non conta nel punteggio né nel totale</span>' +
         '<button class="btn btn-sm btn-primary" style="font-size:11px;padding:3px 10px;margin-left:auto;" onclick="toggleExcludeQuestion(' + i + ')" title="Rimetti l\'esercizio nella valutazione con il punteggio che aveva">↩ Reinserisci</button>' +
+        '<div style="flex-basis:100%;display:flex;gap:6px;align-items:flex-start;">' +
+          '<textarea id="excl-note-' + i + '" rows="2" maxlength="500" placeholder="Perché è escluso? (es. problema tecnico, argomento non ancora spiegato…) — la usa MyClass per la valutazione, l\'alunno non la vede" ' +
+            'style="flex:1;min-width:0;padding:5px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;font-family:inherit;resize:vertical;">' + esc(excludedNote) + '</textarea>' +
+          '<button id="excl-note-btn-' + i + '" class="btn btn-sm" style="font-size:11px;padding:3px 10px;" onclick="saveExcludeNote(' + i + ')">Salva nota</button>' +
+        '</div>' +
       '</div>'
     : '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
       aiTag + feedbackTag +
@@ -10228,6 +10369,7 @@ async function studentEnter() {
   S.activity = { ...S.activity, questions };
   S.answers = new Array(questions.length).fill(undefined);
   S.skipped = [];
+  S._tourSeen = null; S._tourT = null;
   S.matchLeftSel = null;
   S.questionStartTimes = new Array(questions.length).fill(null);
   S.questionEndTimes   = new Array(questions.length).fill(null);
@@ -10288,6 +10430,7 @@ async function studentEnter() {
     S.submitted       = true;
     S.answers         = fbArr(existingResp.answers) || new Array(questions.length).fill(null);
     S.studentScore    = existingResp.score || 0;
+    S._doneQmo        = existingResp.questionMaxOverrides || null;
     S.aiScores        = existingResp.aiScores || {};
     S.aiFeedbacks     = existingResp.aiFeedbacks || {};
     S.recoveryAttempt = existingResp.recoveryAttempt || 0;
@@ -10321,20 +10464,7 @@ async function studentEnter() {
       // quindi vanno rimappate all'ordine SHUFFLED corrente tramite qOrigMap.
       const _canonRestored = fbArr(existingResp.answers);
       if (_canonRestored && _canonRestored.some(a => a !== null && a !== undefined)) {
-        const _map = S.qOrigMap; // _map[shuffledIdx] = origIdx
-        S.answers = S.answers.map((_, si) => {
-          const oi = (_map && _map[si] !== undefined) ? _map[si] : si;
-          const stored = _canonRestored[oi];
-          if (stored === null || stored === undefined) return undefined;
-          // MC con _optOrigMap: Firebase ha l'indice opzione ORIGINALE; serve
-          // trovare la posizione display nella sessione corrente (nuovo shuffle).
-          const q = S.activity && S.activity.questions && S.activity.questions[si];
-          if (q && Array.isArray(q._optOrigMap) && typeof stored === 'number') {
-            const dispIdx = q._optOrigMap.indexOf(stored);
-            return dispIdx >= 0 ? dispIdx : stored;
-          }
-          return stored;
-        });
+        S.answers = _answersFromCanonical(_canonRestored);
       }
       if (typeof existingResp.score === 'number') S.studentScore = existingResp.score;
       if (existingResp.aiScores)    S.aiScores    = existingResp.aiScores;
@@ -10351,6 +10481,7 @@ async function studentEnter() {
       };
       if (S._needsAlias) _rejoin.unrecognized = true;
       await db.ref('livelearn/responses/' + code + '/' + safeName).update(_rejoin);
+      _writeFocusRejoin(existingResp, code, safeName);
     } else {
       const _first = {
         name: studentName,
@@ -10422,11 +10553,19 @@ async function studentEnter() {
   try {
     const bKey = 'llprog_' + code + '_' + safeName;
     const raw = localStorage.getItem(bKey);
-    if (raw) {
-      const bak = JSON.parse(raw);
+    const _bakRaw = raw ? JSON.parse(raw) : null;
+    // Backup vecchio formato (ordine mescolato della sessione di prima) o di
+    // un'altra versione: non si può rimappare, si ignora
+    const _bakOk = _bakRaw && _bakRaw.canon === true && Array.isArray(_bakRaw.answers) &&
+      (_bakRaw.version || 'originale') === (S.studentVersion || 'originale');
+    if (_bakOk) {
+      // Backup in ordine originale → ordine mescolato di questo ingresso
+      const bak = { ..._bakRaw, answers: _answersFromCanonical(_bakRaw.answers) };
+      const _qi = Array.isArray(S.qOrigMap) ? S.qOrigMap.indexOf(_bakRaw.qOrig) : -1;
+      bak.qIndex = _qi >= 0 ? _qi : 0;
       const ageMin = Math.round((Date.now() - (bak.savedAt||0)) / 60000);
       // Conta risposte valide nel backup e in Firebase
-      const bakCount = Array.isArray(bak.answers) ? bak.answers.filter(a => a !== null && a !== undefined).length : 0;
+      const bakCount = bak.answers.filter(a => a !== null && a !== undefined).length;
       const fbCount  = S.answers.filter(a => a !== null && a !== undefined).length;
       // Proponi ripristino solo se il backup ha ALMENO tante risposte di Firebase
       // (evita di proporre un backup corrotto/vecchio su uno stato Firebase più completo)
@@ -11094,6 +11233,7 @@ function listenForTeacherAdvance() {
     }
     if (q === lastQ) return;
     lastQ = q; S.qIndex = q; S._tourShownAt = Date.now();
+    if (S.sessionTournament) (S._tourSeen = S._tourSeen || new Set()).add(q);
     const fbArea = document.getElementById('s-feedback-area');
     if (fbArea) fbArea.innerHTML = '';
     renderQuestion(); showView('student-activity');
@@ -11902,6 +12042,16 @@ async function submitAnswers(auto) {
     studentVersion: S.studentVersion || 'originale'
   };
   if (S._aliasOf) payload.aliasOf = S._aliasOf;
+  // Torneo: le domande non giocate o di turni in cui non era in gara (e senza
+  // risposta) non contano, né punti né massimo (vedi _tourExclMap)
+  if (S.sessionTournament && S._tourT) {
+    const _tShown = new Set(S._tourSeen || []);
+    try { _tourShownSet((await _fbGet(db.ref('livelearn/control/' + S.sessionCode + '/shown'), 3000)).val()).forEach(i => _tShown.add(i)); } catch(e) {}
+    const _tEx = _tourExclMap(S._tourT, S.activity.questions.length, safeName, S.answers, i => _tShown.has(i));
+    Object.assign(payload, _tourExclFields(_tEx, submittedAt));
+    if (!Object.keys(_tEx).length) { delete payload.excludedQuestions; delete payload.questionMaxOverrides; delete payload.manualScores; }
+  }
+  S._doneQmo = payload.questionMaxOverrides || null;
   // Assegnate ripetibili: il set() riscrive il record, i tentativi precedenti vanno riportati
   if (Array.isArray(S._attempts) && S._attempts.length) payload.attempts = S._attempts;
   if (db && S.sessionCode && !S._retryLocal) {
@@ -12050,6 +12200,9 @@ async function _writeStudentHistory(finalScore, aiScores, questionTimes, submitt
       questions:     S.activity.questions,
       answers:       S.answers,
       aiScores,
+      // Torneo: domande non giocate tolte dalla valutazione (vedi submitAnswers)
+      questionMaxOverrides: S._doneQmo || null,
+      manualScores:  S._doneQmo ? Object.fromEntries(Object.keys(S._doneQmo).map(k => [k, 0])) : null,
       questionTimes,
       finalScore,
       submittedAt,
@@ -12116,6 +12269,24 @@ function _canonicalAnswersForServer() {
     out[origIdx] = ans;
   }
   return out;
+}
+// Inverso di _canonicalAnswersForServer: risposte in ordine originale (Firebase
+// o backup locale) → ordine mescolato di questo ingresso (S.qOrigMap e _optOrigMap)
+function _answersFromCanonical(canon) {
+  const qs = S.activity?.questions || [];
+  const map = S.qOrigMap; // map[shuffledIdx] = origIdx
+  return qs.map((q, si) => {
+    const oi = (map && map[si] !== undefined) ? map[si] : si;
+    const stored = canon ? canon[oi] : null;
+    if (stored === null || stored === undefined) return undefined;
+    // MC con _optOrigMap: salvato l'indice opzione ORIGINALE; serve la
+    // posizione display nella sessione corrente (nuovo shuffle).
+    if (q && Array.isArray(q._optOrigMap) && typeof stored === 'number') {
+      const dispIdx = q._optOrigMap.indexOf(stored);
+      return dispIdx >= 0 ? dispIdx : stored;
+    }
+    return stored;
+  });
 }
 function _canonicalIndexedForServer(obj) {
   if (!obj) return obj;
@@ -14087,7 +14258,9 @@ async function showStudentDone() {
 
   // Usa S.studentScore (già aggiustato con AI) come punteggio effettivo
   const earnedPts = S.studentScore || 0;
-  const totalPts = questions.reduce((s, q) => s + (q.points || 1), 0);
+  // Esercizi tolti dalla valutazione (domande non giocate nel torneo, esclusioni del docente)
+  const _dq = S._doneQmo || {};
+  const totalPts = Math.round(questions.reduce((s, q, i) => s + (_dq[i] != null ? Number(_dq[i]) : (q.points || 1)), 0) * 100) / 100;
 
   // Conta domande automaticamente valutabili (per Gemini analysis)
   let scorableCount = 0;
@@ -15034,7 +15207,7 @@ function _pdfQuestionBlock(q, a) {
   return img + _pdfqBody(q, q.type, a);
 }
 
-// Card di una domanda nel PDF. o = { num, typeLabel, label, color, bg, pts, time, feedback }
+// Card di una domanda nel PDF. o = { num, typeLabel, label, color, bg, pts, time, feedback, exclNote }
 function _pdfQuestionCard(q, a, o) {
   const meta = [o.pts ? '<span class="pq-pts">' + o.pts + '</span>' : '', o.time ? '<span class="pq-time">⏱ ' + o.time + '</span>' : ''].join('');
   return '<div class="pq-card" style="border-left-color:' + (o.color || '#c4b5fd') + ';">' +
@@ -15044,6 +15217,7 @@ function _pdfQuestionCard(q, a, o) {
       '<span class="pq-esito" style="color:' + (o.color || '#555') + ';">' + (o.label || '') + '</span>' + meta +
     '</div>' +
     '<div class="pq-body">' + _pdfQuestionBlock(q, a) + '</div>' +
+    (o.exclNote ? '<div class="pq-excl">🚫 Motivo dell\'esclusione: ' + o.exclNote + '</div>' : '') +
     (o.feedback ? '<div class="pq-fb">' + o.feedback + '</div>' : '') +
   '</div>';
 }
@@ -15094,6 +15268,7 @@ const _PDFQ_CSS = `
   .pq-label { font-size:11px; font-weight:800; color:#5b21b6; text-transform:uppercase; letter-spacing:.3px; margin-top:4px; }
   .pq-free { white-space:normal; background:#f8f7ff; border:1px solid #e5e0ff; border-radius:6px; padding:6px 9px; margin-top:2px; }
   .pq-fb { font-size:12px; color:#4c1d95; background:#f5f3ff; border-top:1px solid #ece9ff; padding:6px 12px; font-style:italic; }
+  .pq-excl { font-size:12px; color:#334155; background:#f1f5f9; border-top:1px dashed #94a3b8; padding:6px 12px; }
   .pq-legend { font-size:11px; color:#555; margin:0 0 10px; display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; }
   @media print { .pq-card { box-shadow:none; } }
 `;
@@ -15174,6 +15349,7 @@ async function exportStudentPDF(studentName) {
       label: res.label, color: res.color,
       bg: res.label.includes('✓') ? '#f0fdf4' : res.label.includes('✗') ? '#fef2f2' : res.label.includes('🔶') ? '#fff7ed' : '#fafafa',
       pts: res.pts, time: qTimes[i] != null ? fmtSecs(qTimes[i]) : '',
+      exclNote: esc(((entry.excludedQuestions || {})[i] || {}).nota || ''),
       feedback: aiFeedbacksData[i] ? '🤖 ' + esc(aiFeedbacksData[i]) : ''
     });
   }).join('');
@@ -16013,7 +16189,8 @@ async function exportAllPDFCorretto() {
       return _pdfQuestionCard(q, a, {
         num: 'Domanda ' + (i+1), typeLabel: (typeIcons[q.type]||'') + ' ' + typeLabel(q.type),
         label, color, bg, pts: isExcl ? 'non valutato' : pts + '/' + effMax + ' pt',
-        time: secs != null ? fmtSec(secs) : '', feedback: fb ? '🤖 ' + esc(fb) : ''
+        time: secs != null ? fmtSec(secs) : '', feedback: fb ? '🤖 ' + esc(fb) : '',
+        exclNote: isExcl ? esc((entry.excludedQuestions[i] || {}).nota || '') : ''
       });
     }).join('');
 
@@ -22241,15 +22418,51 @@ function _writeFocusLeave() {
   const key = _focusStudentKey(); if (!key) return;
   const base = 'livelearn/responses/' + S.sessionCode + '/' + key;
   const incCount = _fbInc(1);
+  const qNum = _focusQNum();
   const payload = {
     name: S.studentName,
     leftAt: Date.now(),
-    atQuestion: (S.qIndex != null ? S.qIndex + 1 : null),
+    atQuestion: qNum,
     updatedAt: Date.now()
   };
   payload.count = (incCount != null) ? incCount : (S.focusAway.count || 0);
   try { db.ref(base + '/focus').update(payload); } catch(e) {}
-  try { db.ref(base + '/focusEvents').push({ type: 'leave', at: Date.now(), q: (S.qIndex != null ? S.qIndex + 1 : null) }); } catch(e) {}
+  try { db.ref(base + '/focusEvents').push({ type: 'leave', at: Date.now(), q: qNum }); } catch(e) {}
+}
+// Numero della domanda come lo vede il docente (ordine originale, non mescolato)
+function _focusQNum() {
+  if (S.qIndex == null) return null;
+  const map = S.qOrigMap;
+  return ((Array.isArray(map) && map[S.qIndex] !== undefined) ? map[S.qIndex] : S.qIndex) + 1;
+}
+// Pagina ricaricata o chiusa a test in corso: la pagina muore prima della
+// soglia di 1s e l'uscita non viene scritta. Si registra al rientro, con
+// l'ultimo segno di vita dell'alunno (ultimo salvataggio o chiusura pagina).
+function _writeFocusRejoin(prev, code, key) {
+  if (!db || !prev || !prev.updatedAt) return;   // nessuna risposta ancora: non era nel test
+  const f = prev.focus || {};
+  const now = Date.now();
+  // Uscita già contata (cambio scheda) e mai rientrato: solo il rientro
+  const alreadyOut = (f.leftAt || 0) > (f.returnedAt || 0);
+  const lastSeen = alreadyOut ? f.leftAt : Math.max(prev.updatedAt || 0, f.unloadAt || 0);
+  const ms = Math.max(0, now - lastSeen);
+  let qNum = f.unloadQ || null;
+  if (!qNum) {
+    try { const b = JSON.parse(localStorage.getItem('llprog_' + code + '_' + key) || 'null'); if (b && b.canon && b.qOrig != null) qNum = b.qOrig + 1; } catch(e) {}
+  }
+  const base = 'livelearn/responses/' + code + '/' + key;
+  const incCount = _fbInc(1), incTot = _fbInc(ms);
+  const payload = { returnedAt: now, lastDurationMs: ms, updatedAt: now, unloadAt: null, unloadQ: null };
+  if (!alreadyOut) {
+    payload.leftAt = lastSeen;
+    payload.atQuestion = qNum;
+    payload.count = (incCount != null) ? incCount : ((f.count || 0) + 1);
+  }
+  payload.totalMs = (incTot != null) ? incTot : ((f.totalMs || 0) + ms);
+  S.focusAway.count = (f.count || 0) + (alreadyOut ? 0 : 1);
+  S.focusAway.totalMs = (f.totalMs || 0) + ms;
+  try { db.ref(base + '/focus').update(payload); } catch(e) {}
+  try { db.ref(base + '/focusEvents').push({ type: 'reload', at: now, ms: ms, q: qNum }); } catch(e) {}
 }
 function _writeFocusReturn(ms) {
   if (!db || !S.sessionCode) return;
@@ -22299,6 +22512,15 @@ function _showFocusWarning(ms) {
       S._focusAwayStart = 0;
       S._focusAwayConfirmed = false;
     }
+  });
+  // Ricarica / chiusura: tentativo di segnare l'istante (può non arrivare,
+  // il rientro registra comunque l'uscita)
+  window.addEventListener('pagehide', function() {
+    if (!_isStudentTesting() || !db) return;
+    try {
+      db.ref('livelearn/responses/' + S.sessionCode + '/' + _focusStudentKey() + '/focus')
+        .update({ unloadAt: Date.now(), unloadQ: _focusQNum() });
+    } catch(e) {}
   });
 })();
 
