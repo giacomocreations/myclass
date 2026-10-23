@@ -648,17 +648,17 @@ textarea.qe-ce::placeholder, input.qe-ce::placeholder { color: var(--muted); opa
 #tour-overlay { position:fixed; inset:0; z-index:3000; background:#1e1b4b; color:white; display:flex; flex-direction:column; padding:18px 22px; font-family:'Nunito',sans-serif; }
 .tour-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
 .tour-head h2 { font-size:24px; font-weight:900; margin:0; }
-.tour-head .tour-sub { font-size:14px; opacity:.75; font-weight:700; }
+.tour-head .tour-sub { font-size:calc(14px * var(--tf, 1)); opacity:.75; font-weight:700; }
 .tour-head .btn { font-size:15px; }
 .tour-grid { flex:1; min-height:0; display:flex; gap:14px; overflow:auto; }
-.tour-col { flex:1; min-width:150px; display:flex; flex-direction:column; }
-.tour-ch { text-align:center; font-size:13px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; opacity:.6; margin-bottom:8px; }
+.tour-col { flex:1; min-width:calc(150px * var(--tf, 1)); display:flex; flex-direction:column; }
+.tour-ch { text-align:center; font-size:calc(13px * var(--tf, 1)); font-weight:800; letter-spacing:.6px; text-transform:uppercase; opacity:.6; margin-bottom:8px; }
 .tour-col.cur .tour-ch { opacity:1; color:#fcd34d; }
 .tour-ms { flex:1; display:flex; flex-direction:column; justify-content:space-around; gap:6px; }
 .tour-m { background:rgba(255,255,255,.08); border:2px solid rgba(255,255,255,.12); border-radius:10px; overflow:hidden; }
 .tour-col.cur .tour-m { border-color:#fcd34d; }
 .tour-m.empty { opacity:.35; }
-.tour-p { display:flex; justify-content:space-between; gap:8px; padding:4px 10px; font-size:14px; font-weight:700; white-space:nowrap; }
+.tour-p { display:flex; justify-content:space-between; gap:8px; padding:4px 10px; font-size:calc(14px * var(--tf, 1)); font-weight:700; white-space:nowrap; }
 .tour-p + .tour-p { border-top:1px solid rgba(255,255,255,.12); }
 .tour-p span { overflow:hidden; text-overflow:ellipsis; }
 .tour-p.win { background:rgba(16,185,129,.35); }
@@ -666,10 +666,10 @@ textarea.qe-ce::placeholder, input.qe-ce::placeholder { color: var(--muted); opa
 .tour-p.bye { font-style:italic; opacity:.55; font-weight:600; }
 .tour-col.dense .tour-ms { gap:3px; }
 .tour-col.dense .tour-m { border-width:1px; border-radius:7px; }
-.tour-col.dense .tour-p { font-size:11.5px; padding:0 8px; line-height:1.35; }
-.tour-champ { min-width:170px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+.tour-col.dense .tour-p { font-size:calc(11.5px * var(--tf, 1)); padding:0 8px; line-height:1.35; }
+.tour-champ { min-width:calc(170px * var(--tf, 1)); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
 .tour-champ .tc-cup { font-size:64px; }
-.tour-champ .tc-name { font-size:22px; font-weight:900; color:#fcd34d; margin-top:6px; }
+.tour-champ .tc-name { font-size:calc(22px * var(--tf, 1)); font-weight:900; color:#fcd34d; margin-top:6px; }
 #tour-banner { position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:2500; max-width:92vw; background:#1e1b4b; color:white; border-radius:20px; padding:7px 18px; font-size:14px; font-weight:800; box-shadow:0 4px 16px rgba(0,0,0,.2); pointer-events:none; text-align:center; }
 #tour-banner.win { background:#047857; }
 #tr-box { background:#ecfeff; border:2px solid #06b6d4; border-radius:12px; padding:10px 14px; margin-bottom:12px; font-size:15px; line-height:1.5; color:#164e63; }
@@ -6811,6 +6811,14 @@ function _tourCloseBoard() {
   const ov = document.getElementById('tour-overlay');
   if (ov) ov.remove();
 }
+// Grandezza del testo del tabellone (A− / A+), salvata sul PC del docente
+const _TOUR_FS = [0.8, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.4];
+S._tourFsI = (() => { try { const i = _TOUR_FS.indexOf(parseFloat(localStorage.getItem('ll_tour_fs'))); return i < 0 ? 1 : i; } catch(e) { return 1; } })();
+function _tourFont(d) {
+  S._tourFsI = Math.max(0, Math.min(_TOUR_FS.length - 1, S._tourFsI + d));
+  try { localStorage.setItem('ll_tour_fs', String(_TOUR_FS[S._tourFsI])); } catch(e) {}
+  _tourRenderBoard();
+}
 function _tourRenderBoardSoon() {
   if (!S._tourBoardOpen || S._tourRenderTimer) return;
   S._tourRenderTimer = setTimeout(() => { S._tourRenderTimer = null; _tourRenderBoard(); }, 500);
@@ -6820,6 +6828,7 @@ function _tourRenderBoard() {
   if (!S._tourBoardOpen || !S._tour) return;
   let ov = document.getElementById('tour-overlay');
   if (!ov) { ov = document.createElement('div'); ov.id = 'tour-overlay'; document.body.appendChild(ov); }
+  ov.style.setProperty('--tf', _TOUR_FS[S._tourFsI]);
   const t = S._tour, nR = t.ranges.length, resp = S._liveResp || {};
   const nm = k => esc(t.names[k] || k);
   const live = t.closed < t.cur; // punteggi in diretta del turno in corso
@@ -6854,7 +6863,10 @@ function _tourRenderBoard() {
   }
   ov.innerHTML = '<div class="tour-head"><div><h2>🏆 ' + esc(S.liveActivity?.title || 'Torneo') + '</h2><div class="tour-sub">' + sub + extra +
     (t.closed >= 0 ? ' · ⏱ = passa per velocità a parità di punti' : '') + '</div></div>' +
-    '<div class="flex gap-8"><button class="btn" onclick="_tourSetAuto(' + !S._tourAuto + ')" title="Avanza da solo quando tutti hanno inviato o il tempo è scaduto">⏩ Avanti da solo: ' + (S._tourAuto ? 'sì' : 'no') + '</button>' +
+    '<div class="flex gap-8"><button class="btn" onclick="_tourFont(-1)" title="Testo più piccolo">A−</button>' +
+    '<span style="align-self:center;font-weight:800;min-width:46px;text-align:center;">' + Math.round(_TOUR_FS[S._tourFsI] * 100) + '%</span>' +
+    '<button class="btn" onclick="_tourFont(1)" title="Testo più grande">A+</button>' +
+    '<button class="btn" onclick="_tourSetAuto(' + !S._tourAuto + ')" title="Avanza da solo quando tutti hanno inviato o il tempo è scaduto">⏩ Avanti da solo: ' + (S._tourAuto ? 'sì' : 'no') + '</button>' +
     '<button class="btn btn-primary" onclick="teacherNextQ()">' + esc(btnNext ? btnNext.textContent : '▶') + '</button>' +
     '<button class="btn" onclick="_tourCloseBoard()">✕ Nascondi</button></div></div>' +
     '<div class="tour-grid">' + cols + '</div>';
