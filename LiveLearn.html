@@ -1605,7 +1605,7 @@ const CONFIG = {
     <!-- Opzione modalità CONTROLLO DOCENTE: torneo a eliminazione -->
     <label id="tournament-options" style="display:none;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;padding:10px 14px;background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;margin-bottom:14px;">
       <input type="checkbox" id="launch-tournament" style="margin-top:2px;">
-      <span><strong>🏆 Modalità torneo</strong><br><span class="text-muted" style="font-size:12px;">Tabellone a eliminazione tra gli alunni collegati. Le domande vengono divise in turni (se l'attività è divisa in livelli, si giocano gli ultimi, così la finale è sempre il livello più difficile): in ogni turno tutte le coppie rispondono insieme, ognuno dal suo PC, e passa chi fa più punti (a parità, chi è stato più veloce). Il tabellone si apre col pulsante 🏆 da proiettare sulla LIM. Le domande non vengono mescolate e tutti svolgono la versione originale.</span></span>
+      <span><strong>🏆 Modalità torneo</strong><br><span class="text-muted" style="font-size:12px;">Tabellone a eliminazione tra gli alunni collegati. Le domande vengono divise in turni (se l'attività è divisa in livelli, si giocano gli ultimi, così la finale è sempre il livello più difficile): in ogni turno tutte le coppie rispondono insieme, ognuno dal suo PC, e passa chi fa più punti (a parità, chi è stato più veloce). Il tabellone si apre col pulsante 🏆 da proiettare sulla LIM. Le domande non vengono mescolate e tutti svolgono la versione originale; se l'attività ha più domande per livello, a ogni torneo ne vengono pescate di nuove.</span></span>
     </label>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px;background:#f9f8f6;border-radius:10px;margin-bottom:14px;">
@@ -2389,7 +2389,13 @@ function _sessActHasListening(a) {
   return lists.some(qs => qs && Object.values(qs).some(q => q && q.type === 'listening'));
 }
 function _sessFilterActivity(act, sess) {
-  if (!act || !sess || !sess.noListening) return act;
+  if (!act || !sess) return act;
+  // Torneo con domande pescate all'avvio (session.tourPick = indici delle domande originali)
+  if (sess.tourPick && typeof sess.tourPick === 'object') {
+    const all = fbArr(act.questions);
+    act = Object.assign({}, act, { questions: fbArr(sess.tourPick).map(i => all[i]).filter(Boolean) });
+  }
+  if (!sess.noListening) return act;
   const keep = qs => {
     if (!qs || typeof qs !== 'object') return qs;
     const arr = Array.isArray(qs) ? qs : Object.values(qs);
@@ -5983,6 +5989,12 @@ async function confirmStartSession() {
       }
     });
   }
+  // Torneo su un'attività con più domande per livello: si pescano adesso, uguali per tutti
+  let tourPick = null;
+  if (tournament) {
+    try { tourPick = _tourPick(fbArr(_actHydrate(await _actGet(S.pendingActivityId))?.questions)); }
+    catch(e) { console.warn('[torneo] estrazione domande non riuscita, si usano tutte:', e.message); }
+  }
   const code = genCode();
   try {
     // Modalità ASSEGNA: status='assigned' (studenti accedono senza lobby né docente online)
@@ -5998,6 +6010,7 @@ async function confirmStartSession() {
     if (_isAssigned && document.getElementById('launch-repeatable')?.checked) sessionPayload.repeatable = true;
     if (noListening) sessionPayload.noListening = true;
     if (tournament) sessionPayload.tournament = true;
+    if (tourPick) sessionPayload.tourPick = tourPick;
     // Torneo: tutti sulla versione originale, così i punteggi si confrontano domanda per domanda
     if (Object.keys(studentVersions).length && !tournament) sessionPayload.studentVersions = studentVersions;
     if (Object.keys(studentModes).length) sessionPayload.studentModes = studentModes;
@@ -6568,6 +6581,32 @@ function _tourRanges(nQ, nR) {
     const len = base + (r >= nR - extra ? 1 : 0);
     out.push([s, s + len - 1]); s += len;
   }
+  return out;
+}
+
+// Attività con più domande per livello (campo roundPick): a ogni torneo si pescano
+// roundPick domande per livello, senza la stessa faccenda (pickKey) due volte nello
+// stesso livello e, finché si può, senza quelle già uscite nei livelli prima.
+function _tourPick(qs) {
+  if (!qs.length || !qs.every(q => q && typeof q.round === 'number') || !qs.some(q => q.roundPick > 0)) return null;
+  const levels = [...new Set(qs.map(q => q.round))].sort((a, b) => a - b);
+  const key = i => qs[i].pickKey || ('#' + i);
+  let used = new Set(), prev = [];
+  const out = [];
+  levels.forEach(lv => {
+    const idx = qs.map((q, i) => i).filter(i => qs[i].round === lv);
+    // Faccende già uscite tutte: si evita almeno di ripetere quelle del livello prima
+    if (idx.every(i => used.has(key(i)))) used = new Set(prev);
+    const n = Math.min(idx.length, qs[idx[0]].roundPick || idx.length);
+    for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+    const pick = [], here = new Set();
+    [i => !here.has(key(i)) && !used.has(key(i)), i => !here.has(key(i)), () => true].forEach(ok => {
+      idx.forEach(i => { if (pick.length < n && !pick.includes(i) && ok(i)) { pick.push(i); here.add(key(i)); } });
+    });
+    pick.sort((a, b) => a - b).forEach(i => used.add(key(i)));
+    prev = pick.map(key);
+    out.push(...pick);
+  });
   return out;
 }
 
