@@ -9361,6 +9361,7 @@ function renderStudentResultsTeacher(name, response) {
           const t = ev.at ? new Date(ev.at).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
           if (ev.type === 'leave') return '<div style="font-size:11px;color:#7f1d1d;">🔴 ' + t + ' — uscito/a' + (ev.q ? ' (alla domanda ' + ev.q + ')' : '') + '</div>';
           if (ev.type === 'return') return '<div style="font-size:11px;color:#475569;">🟢 ' + t + ' — rientrato/a' + (ev.ms != null ? ' dopo ' + fmtSecs(Math.round(ev.ms / 1000)) : '') + '</div>';
+          if (ev.type === 'reload') return '<div style="font-size:11px;color:#7f1d1d;">🔄 ' + t + ' — ha ricaricato o chiuso la pagina e poi è rientrato/a' + (ev.q ? ' (era alla domanda ' + ev.q + ')' : '') + (ev.ms != null ? ', fuori ~' + fmtSecs(Math.round(ev.ms / 1000)) : '') + '</div>';
           return '';
         }).join('') +
         '</div>';
@@ -10316,6 +10317,7 @@ async function studentEnter() {
       };
       if (S._needsAlias) _rejoin.unrecognized = true;
       await db.ref('livelearn/responses/' + code + '/' + safeName).update(_rejoin);
+      _writeFocusRejoin(existingResp, code, safeName);
     } else {
       const _first = {
         name: studentName,
@@ -22232,15 +22234,51 @@ function _writeFocusLeave() {
   const key = _focusStudentKey(); if (!key) return;
   const base = 'livelearn/responses/' + S.sessionCode + '/' + key;
   const incCount = _fbInc(1);
+  const qNum = _focusQNum();
   const payload = {
     name: S.studentName,
     leftAt: Date.now(),
-    atQuestion: (S.qIndex != null ? S.qIndex + 1 : null),
+    atQuestion: qNum,
     updatedAt: Date.now()
   };
   payload.count = (incCount != null) ? incCount : (S.focusAway.count || 0);
   try { db.ref(base + '/focus').update(payload); } catch(e) {}
-  try { db.ref(base + '/focusEvents').push({ type: 'leave', at: Date.now(), q: (S.qIndex != null ? S.qIndex + 1 : null) }); } catch(e) {}
+  try { db.ref(base + '/focusEvents').push({ type: 'leave', at: Date.now(), q: qNum }); } catch(e) {}
+}
+// Numero della domanda come lo vede il docente (ordine originale, non mescolato)
+function _focusQNum() {
+  if (S.qIndex == null) return null;
+  const map = S.qOrigMap;
+  return ((Array.isArray(map) && map[S.qIndex] !== undefined) ? map[S.qIndex] : S.qIndex) + 1;
+}
+// Pagina ricaricata o chiusa a test in corso: la pagina muore prima della
+// soglia di 1s e l'uscita non viene scritta. Si registra al rientro, con
+// l'ultimo segno di vita dell'alunno (ultimo salvataggio o chiusura pagina).
+function _writeFocusRejoin(prev, code, key) {
+  if (!db || !prev || !prev.updatedAt) return;   // nessuna risposta ancora: non era nel test
+  const f = prev.focus || {};
+  const now = Date.now();
+  // Uscita già contata (cambio scheda) e mai rientrato: solo il rientro
+  const alreadyOut = (f.leftAt || 0) > (f.returnedAt || 0);
+  const lastSeen = alreadyOut ? f.leftAt : Math.max(prev.updatedAt || 0, f.unloadAt || 0);
+  const ms = Math.max(0, now - lastSeen);
+  let qNum = f.unloadQ || null;
+  if (!qNum) {
+    try { const b = JSON.parse(localStorage.getItem('llprog_' + code + '_' + key) || 'null'); if (b && b.canon && b.qOrig != null) qNum = b.qOrig + 1; } catch(e) {}
+  }
+  const base = 'livelearn/responses/' + code + '/' + key;
+  const incCount = _fbInc(1), incTot = _fbInc(ms);
+  const payload = { returnedAt: now, lastDurationMs: ms, updatedAt: now, unloadAt: null, unloadQ: null };
+  if (!alreadyOut) {
+    payload.leftAt = lastSeen;
+    payload.atQuestion = qNum;
+    payload.count = (incCount != null) ? incCount : ((f.count || 0) + 1);
+  }
+  payload.totalMs = (incTot != null) ? incTot : ((f.totalMs || 0) + ms);
+  S.focusAway.count = (f.count || 0) + (alreadyOut ? 0 : 1);
+  S.focusAway.totalMs = (f.totalMs || 0) + ms;
+  try { db.ref(base + '/focus').update(payload); } catch(e) {}
+  try { db.ref(base + '/focusEvents').push({ type: 'reload', at: now, ms: ms, q: qNum }); } catch(e) {}
 }
 function _writeFocusReturn(ms) {
   if (!db || !S.sessionCode) return;
@@ -22290,6 +22328,15 @@ function _showFocusWarning(ms) {
       S._focusAwayStart = 0;
       S._focusAwayConfirmed = false;
     }
+  });
+  // Ricarica / chiusura: tentativo di segnare l'istante (può non arrivare,
+  // il rientro registra comunque l'uscita)
+  window.addEventListener('pagehide', function() {
+    if (!_isStudentTesting() || !db) return;
+    try {
+      db.ref('livelearn/responses/' + S.sessionCode + '/' + _focusStudentKey() + '/focus')
+        .update({ unloadAt: Date.now(), unloadQ: _focusQNum() });
+    } catch(e) {}
   });
 })();
 
