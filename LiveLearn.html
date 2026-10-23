@@ -1060,6 +1060,7 @@ const CONFIG = {
       <div class="progress-bar" style="width:160px;margin-bottom:0;height:7px;"><div class="progress-fill" id="teacher-q-progress" style="width:0%"></div></div>
     </div>
     <div class="flex gap-8">
+      <button class="btn btn-sm" id="btn-hint-unlock" onclick="_hintUnlock()" style="display:none;" title="Di solito si sblocca da solo quando tutti hanno scritto una risposta">💡 Sblocca l'aiuto</button>
       <button class="btn btn-sm" id="btn-tour-board" onclick="_tourOpenBoard()" style="display:none;">🏆 Tabellone</button>
       <button class="btn btn-sm" id="btn-prev-tq" onclick="teacherPrevQ()" style="display:none;">← Prec.</button>
       <button class="btn btn-primary btn-sm" id="btn-next-tq" onclick="teacherNextQ()">▶ Prima domanda</button>
@@ -1603,7 +1604,7 @@ const CONFIG = {
     <!-- Opzione modalità CONTROLLO DOCENTE: torneo a eliminazione -->
     <label id="tournament-options" style="display:none;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;padding:10px 14px;background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;margin-bottom:14px;">
       <input type="checkbox" id="launch-tournament" style="margin-top:2px;">
-      <span><strong>🏆 Modalità torneo</strong><br><span class="text-muted" style="font-size:12px;">Tabellone a eliminazione tra gli alunni collegati. Le domande vengono divise in turni: in ogni turno tutte le coppie rispondono insieme, ognuno dal suo PC, e passa chi fa più punti (a parità, chi è stato più veloce). Il tabellone si apre col pulsante 🏆 da proiettare sulla LIM. Le domande non vengono mescolate e tutti svolgono la versione originale.</span></span>
+      <span><strong>🏆 Modalità torneo</strong><br><span class="text-muted" style="font-size:12px;">Tabellone a eliminazione tra gli alunni collegati. Le domande vengono divise in turni (se l'attività è divisa in livelli, si giocano gli ultimi, così la finale è sempre il livello più difficile): in ogni turno tutte le coppie rispondono insieme, ognuno dal suo PC, e passa chi fa più punti (a parità, chi è stato più veloce). Il tabellone si apre col pulsante 🏆 da proiettare sulla LIM. Le domande non vengono mescolate e tutti svolgono la versione originale.</span></span>
     </label>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px;background:#f9f8f6;border-radius:10px;margin-bottom:14px;">
@@ -6201,7 +6202,7 @@ async function openLive(code, activityId, roster, silent) {
   S.selectedStudent = _prevSelected;
   S.liveRoster = roster || [];
   S.teacherCurrentQ = -1;
-  _tourCloseBoard(); S._tour = null; S._liveResp = null; S.liveTournament = false;
+  _tourCloseBoard(); S._tour = null; S._liveResp = null; S.liveTournament = false; S._hintOpenQ = null;
   S._rosterDebugLogged = {};
   window._pillKeyMap = new Map();
   document.getElementById('live-code-val').textContent = code;
@@ -6260,6 +6261,7 @@ async function openLive(code, activityId, roster, silent) {
   if (_nlBadge) _nlBadge.style.display = sess.noListening ? '' : 'none';
   S.liveMode = sess.mode || 'test';
   S.liveTournament = S.liveMode === 'teacher' && !!sess.tournament;
+  S.liveTimer = sess.timer || 0;
   S.liveStudentVersions = sess.studentVersions || {};
   S.liveStudentModes = sess.studentModes || {};
   S.liveOpened = !!sess.opened; // dopo il primo alunno accettato la sessione resta aperta
@@ -6363,6 +6365,7 @@ async function openLive(code, activityId, roster, silent) {
     const responses = snap.val() || {};
     S._liveResp = responses;
     if (S.liveTournament) _tourRenderBoardSoon();
+    if (S.liveMode === 'teacher') _hintAutoCheck(responses);
     try {
       renderLiveSidebar(responses);
     } catch(sidebarErr) {
@@ -6507,6 +6510,7 @@ function updateTeacherControlBar() {
   const btnPrev = document.getElementById('btn-prev-tq');
   if (cur < 0) { pill.textContent = 'Sessione aperta — premi per iniziare'; prog.style.width='0%'; btnNext.textContent='▶ Prima domanda'; if(btnPrev) btnPrev.style.display='none'; }
   else { pill.textContent=`Domanda ${cur+1} di ${total}`; prog.style.width=((cur+1)/total*100)+'%'; btnNext.textContent=cur<total-1?'▶ Prossima domanda':'⏹ Termina'; if(btnPrev) btnPrev.style.display=cur>0?'inline-flex':'none'; }
+  _hintDecorateBar();
   _tourDecorateBar();
 }
 async function teacherNextQ() {
@@ -6517,11 +6521,11 @@ async function teacherNextQ() {
     await _closeSessionAndWipeKeys(S.liveCode);
     if(S.liveListener){S.liveListener();S.liveListener=null;} loadDashboard(); showView('teacher-dashboard'); return;
   }
-  S.teacherCurrentQ++; await db.ref('livelearn/control/'+S.liveCode+'/currentQ').set(S.teacherCurrentQ); updateTeacherControlBar();
+  S.teacherCurrentQ++; S._qStartAt = Date.now(); await db.ref('livelearn/control/'+S.liveCode+'/currentQ').set(S.teacherCurrentQ); updateTeacherControlBar();
 }
 async function teacherPrevQ() {
   if (S.teacherCurrentQ <= 0) return;
-  S.teacherCurrentQ--; await db.ref('livelearn/control/'+S.liveCode+'/currentQ').set(S.teacherCurrentQ); updateTeacherControlBar();
+  S.teacherCurrentQ--; S._qStartAt = Date.now(); await db.ref('livelearn/control/'+S.liveCode+'/currentQ').set(S.teacherCurrentQ); updateTeacherControlBar();
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -6541,8 +6545,19 @@ function _tourRoundName(r, nR) {
   return left === 1 ? 'Finale' : left === 2 ? 'Semifinali' : left === 3 ? 'Quarti' : left === 4 ? 'Ottavi' : 'Turno ' + (r + 1);
 }
 
-// Le domande in parti uguali; l'avanzo va ai turni finali
+// Attività divise in livelli (campo "round" numerico su ogni domanda): si giocano
+// gli ultimi nR livelli, così la difficoltà sale sempre e la finale resta l'ultimo.
+// Altrimenti le domande in parti uguali, con l'avanzo ai turni finali.
 function _tourRanges(nQ, nR) {
+  const qs = S.liveActivity?.questions || [];
+  if (qs.length === nQ && qs.every(q => typeof q.round === 'number')) {
+    const blocks = [];
+    qs.forEach((q, i) => {
+      const last = blocks[blocks.length - 1];
+      if (last && qs[last[0]].round === q.round) last[1] = i; else blocks.push([i, i]);
+    });
+    if (blocks.length >= nR) return blocks.slice(blocks.length - nR);
+  }
   const base = Math.floor(nQ / nR), extra = nQ % nR, out = [];
   let s = 0;
   for (let r = 0; r < nR; r++) {
@@ -6584,6 +6599,8 @@ async function _tourRestore(code) {
     if (!c || !c.tour || !(c.currentQ >= 0)) return false;
     S._tour = _tourNormalize(c.tour);
     S.teacherCurrentQ = c.currentQ;
+    S._hintOpenQ = c.hintQ == null ? null : c.hintQ;
+    S._qStartAt = Date.now();
     return true;
   } catch(e) { console.warn('[torneo] ripristino fallito:', e.message); return false; }
 }
@@ -6595,13 +6612,14 @@ function _tourSave() {
 // Punti di un alunno nelle domande del turno r; ms = tempo speso sulle risposte giuste
 function _tourScore(resp, r, t) {
   if (!resp || resp.removed) return { pts: -1, ms: 0 };
-  const qs = S.liveActivity?.questions || [], ans = fbArr(resp.answers), times = fbArr(resp.tourMs);
+  const qs = S.liveActivity?.questions || [], ans = fbArr(resp.answers), times = fbArr(resp.tourMs), hints = fbArr(resp.tourHint);
   const [s, e] = t.ranges[r];
   let pts = 0, ms = 0;
   for (let i = s; i <= e; i++) {
     if (!qs[i] || ans[i] == null) continue;
     let got = 0;
     try { got = _earnedFrom(evaluateAnswer(qs[i], ans[i])); } catch(err) {}
+    if (hints[i]) got /= 2; // aiuto sbloccato e usato: mezzo punto
     pts += got;
     if (got > 0) ms += Number(times[i]) || 0;
   }
@@ -6655,6 +6673,8 @@ async function _tourBeforeNext() {
     S._tour = t;
     await _tourSave();
     _tourOpenBoard();
+    // Con meno alunni i primi livelli si saltano: teacherNextQ parte dalla prima domanda del primo turno
+    S.teacherCurrentQ = t.ranges[0][0] - 1;
     return false;
   }
   const t = S._tour;
@@ -6684,9 +6704,14 @@ function _tourDecorateBar() {
   _tourRenderBoard();
 }
 
-function _tourOpenBoard() { S._tourBoardOpen = true; _tourRenderBoard(); }
+function _tourOpenBoard() {
+  S._tourBoardOpen = true;
+  if (!S._tourClockInt) S._tourClockInt = setInterval(_tourTick, 1000);
+  _tourRenderBoard();
+}
 function _tourCloseBoard() {
   S._tourBoardOpen = false;
+  if (S._tourClockInt) { clearInterval(S._tourClockInt); S._tourClockInt = null; }
   const ov = document.getElementById('tour-overlay');
   if (ov) ov.remove();
 }
@@ -6725,11 +6750,98 @@ function _tourRenderBoard() {
   const sub = t.champ ? 'Torneo concluso!'
     : _tourRoundName(t.cur, nR) + ' · domande ' + (s + 1) + (e > s ? '–' + (e + 1) : '') + (live ? ' · in corso' : ' · turno chiuso');
   const btnNext = document.getElementById('btn-next-tq');
-  ov.innerHTML = '<div class="tour-head"><div><h2>🏆 ' + esc(S.liveActivity?.title || 'Torneo') + '</h2><div class="tour-sub">' + sub +
+  let extra = '';
+  if (live && S.teacherCurrentQ >= s && S.teacherCurrentQ <= e) {
+    const pl = _hintPlayers(), done = pl.filter(k => _hintAnswered(resp[k], S.teacherCurrentQ)).length;
+    extra = ' · ✍️ risposte ' + done + '/' + pl.length + (S._hintOpenQ === S.teacherCurrentQ ? ' · 💡 aiuto sbloccato' : '') +
+      (S.liveTimer > 0 ? ' · <span id="tour-clock"></span>' : '');
+  }
+  ov.innerHTML = '<div class="tour-head"><div><h2>🏆 ' + esc(S.liveActivity?.title || 'Torneo') + '</h2><div class="tour-sub">' + sub + extra +
     (t.closed >= 0 ? ' · ⏱ = passa per velocità a parità di punti' : '') + '</div></div>' +
     '<div class="flex gap-8"><button class="btn btn-primary" onclick="teacherNextQ()">' + esc(btnNext ? btnNext.textContent : '▶') + '</button>' +
     '<button class="btn" onclick="_tourCloseBoard()">✕ Nascondi</button></div></div>' +
     '<div class="tour-grid">' + cols + '</div>';
+  _tourTick();
+}
+
+// Conto alla rovescia sul tabellone, allineato al timer per domanda degli alunni
+function _tourTick() {
+  const el = document.getElementById('tour-clock');
+  if (!el) return;
+  const left = Math.max(0, Math.ceil(S.liveTimer - (Date.now() - (S._qStartAt || Date.now())) / 1000));
+  el.textContent = left > 0 ? '⏱ ' + left + 's' : '⏱ tempo scaduto';
+}
+
+// ══════════════════════════════════════════════════════════════
+// AIUTO BLOCCATO (q.lockedHint, solo Controllo docente)
+// L'aiuto della domanda resta chiuso finché tutti hanno scritto una risposta
+// (nel torneo: i giocatori ancora in gara nel turno), poi il docente lo apre
+// scrivendo control/<codice>/hintQ = indice domanda. L'alunno che lo usa lo
+// segna in tourHint: nel torneo quella risposta vale mezzo punto.
+// ══════════════════════════════════════════════════════════════
+function _hintAnswered(resp, i) {
+  if (!resp) return false;
+  const a = fbArr(resp.answers)[i];
+  if (a == null) return false;
+  if (typeof a === 'object') return fbArr(a).some(x => String(x == null ? '' : x).trim() !== '');
+  return String(a).trim() !== '';
+}
+function _hintPlayers() {
+  const resp = S._liveResp || {};
+  if (S.liveTournament) {
+    const t = S._tour;
+    if (!t || t.closed >= t.cur) return [];
+    const out = [];
+    (t.rounds[t.cur] || []).forEach(m => { [m.a, m.b].forEach(k => { if (k && resp[k] && !resp[k].removed) out.push(k); }); });
+    return out;
+  }
+  return Object.keys(resp).filter(k => resp[k] && !resp[k].removed);
+}
+function _hintAutoCheck(responses) {
+  const cur = S.teacherCurrentQ, q = S.liveActivity?.questions?.[cur];
+  if (!q || !q.lockedHint || S._hintOpenQ === cur || !S.liveIsActive) return;
+  const pl = _hintPlayers();
+  if (pl.length && pl.every(k => _hintAnswered(responses[k], cur))) _hintUnlock();
+}
+function _hintUnlock() {
+  const cur = S.teacherCurrentQ;
+  if (cur < 0 || S._hintOpenQ === cur) return;
+  S._hintOpenQ = cur;
+  db.ref('livelearn/control/' + S.liveCode + '/hintQ').set(cur).catch(e => console.warn('[aiuto] sblocco fallito:', e.message));
+  updateTeacherControlBar();
+}
+function _hintDecorateBar() {
+  const btn = document.getElementById('btn-hint-unlock');
+  if (!btn) return;
+  const cur = S.teacherCurrentQ, q = S.liveActivity?.questions?.[cur];
+  btn.style.display = S.liveMode === 'teacher' && q && q.lockedHint && S._hintOpenQ !== cur ? 'inline-flex' : 'none';
+}
+
+// Lato studente: riquadro dell'aiuto sotto la domanda
+function _lockedHintHTML(q, i) {
+  if (!q.lockedHint || S.sessionMode !== 'teacher') return '';
+  let inner;
+  if (S._tourHint && S._tourHint[i]) inner = '<p style="font-size:16px;font-weight:800;color:#4c2fc0;letter-spacing:1px;margin:0;">💡 ' + esc(q.lockedHint) + '</p>';
+  else if (S._hintOpenQ === i && !S._timeUp) inner = '<button type="button" class="btn btn-sm" onclick="_useLockedHint(' + i + ')">💡 Mostra l\'aiuto' + (S.sessionTournament ? ' (la risposta varrà ½ punto)' : '') + '</button>';
+  else inner = '<button type="button" class="btn btn-sm" disabled>🔒 Aiuto: si sblocca quando tutti hanno provato a rispondere</button>';
+  return '<div id="lh-box" style="margin:16px 0 0;">' + inner + '</div>';
+}
+function _lhRefresh() {
+  const box = document.getElementById('lh-box'), q = S.activity?.questions?.[S.qIndex];
+  if (box && q) box.outerHTML = _lockedHintHTML(q, S.qIndex);
+}
+function _useLockedHint(i) {
+  if (S._hintOpenQ !== i || S._timeUp) return;
+  S._tourHint = S._tourHint || {};
+  S._tourHint[i] = true;
+  _lhRefresh();
+  pushProgress();
+}
+function _hintStudentListen() {
+  if (S._hintOff) return;
+  const ref = db.ref('livelearn/control/' + S.sessionCode + '/hintQ');
+  const h = ref.on('value', snap => { S._hintOpenQ = snap.val(); _lhRefresh(); });
+  S._hintOff = () => ref.off('value', h);
 }
 
 // ── Lato studente: banner con l'avversario e l'esito del turno ──
@@ -9423,8 +9535,9 @@ async function studentEnter() {
   S.studentName = studentName; S.sessionCode = code; S.activity = _sessFilterActivity(_actHydrate(aSnap.val()), session);
   S.sessionMode = _llModeFor(session, [_aliasNow, studentName]);
   S.sessionTournament = S.sessionMode === 'teacher' && !!session.tournament;
-  S._tourMs = null; S._tourAns = null; S._tourShownAt = 0;
+  S._tourMs = null; S._tourAns = null; S._tourShownAt = 0; S._tourHint = null; S._hintOpenQ = null;
   if (S._tourStuOff) { S._tourStuOff(); S._tourStuOff = null; }
+  if (S._hintOff) { S._hintOff(); S._hintOff = null; }
   S.sessionRepeatable = session.status === 'assigned' && !!session.repeatable;
   S._attempts = null; S._retryLocal = false; S._retryNext = null;
   _syncPassageBtn(); // mostra/nascondi il pulsante 📄 Testo
@@ -9631,6 +9744,7 @@ async function studentEnter() {
       if (typeof existingResp.score === 'number') S.studentScore = existingResp.score;
       if (existingResp.aiScores)    S.aiScores    = existingResp.aiScores;
       if (existingResp.aiFeedbacks) S.aiFeedbacks = existingResp.aiFeedbacks;
+      if (existingResp.tourHint) S._tourHint = Object.fromEntries(Object.entries(existingResp.tourHint).filter(([, v]) => v === true));
       if (existingResp.tourMs) S._tourMs = Object.fromEntries(Object.entries(existingResp.tourMs).filter(([, v]) => typeof v === 'number'));
       const _rejoin = {
         name: studentName,
@@ -10372,6 +10486,7 @@ function listenForTeacherAdvance() {
   const ref = db.ref('livelearn/control/' + S.sessionCode + '/currentQ');
   let lastQ = -1;
   if (S.sessionTournament) _tourStudentListen();
+  _hintStudentListen();
   ref.on('value', snap => {
     if (S.removed) { try { ref.off('value'); } catch(e) {} return; }
     const q = snap.val();
@@ -10642,6 +10757,7 @@ function renderQuestion() {
 
 function startTimer() {
   if (S.timerInterval) { clearInterval(S.timerInterval); S.timerInterval = null; }
+  S._timeUp = false;
   const secs = S.sessionTimer;
   const wrapEl = document.getElementById('s-timer-wrap');
   const barEl = document.getElementById('s-timer-bar');
@@ -10658,6 +10774,17 @@ function startTimer() {
     if (S.timerLeft <= 0) {
       clearInterval(S.timerInterval); S.timerInterval = null;
       saveCurrentAnswer();
+      // Controllo docente: si blocca la risposta e si aspetta il docente (prima si
+      // passava da soli alla domanda dopo e all'ultima si consegnava in anticipo)
+      if (S.sessionMode === 'teacher') {
+        S._timeUp = true;
+        pushProgress();
+        document.getElementById('s-question-area').querySelectorAll('button,input,textarea,select').forEach(el => el.disabled = true);
+        const fbA = document.getElementById('s-feedback-area');
+        if (fbA) fbA.innerHTML = '<div class="feedback-card neutral" style="border-radius:12px;padding:14px;margin-top:14px;text-align:center;font-weight:700;">⏱ Tempo scaduto! La tua risposta è salvata: aspetta la prossima domanda.</div>';
+        _lhRefresh();
+        return;
+      }
       if (S.sessionMode === 'practice') showFeedbackAndAdvance();
       else { if (S.qIndex < S.activity.questions.length-1) { S.qIndex++; renderQuestion(); } else submitAnswers(); }
     }
@@ -11476,7 +11603,8 @@ function pushProgress() {
     updatedAt: Date.now(),
     ...(S.aiScores && Object.keys(S.aiScores).length ? { aiScores: _canonicalIndexedForServer(S.aiScores) } : {}),
     ...(S.aiFeedbacks && Object.keys(S.aiFeedbacks).length ? { aiFeedbacks: _canonicalIndexedForServer(S.aiFeedbacks) } : {}),
-    ...(S._tourMs ? { tourMs: S._tourMs } : {})
+    ...(S._tourMs ? { tourMs: S._tourMs } : {}),
+    ...(S._tourHint ? { tourHint: S._tourHint } : {})
   };
   // Debounce: se l'alunno salta tra pallini rapidamente, accorpa le
   // scritture in una sola ogni 400ms. Evita di floodare Firebase e il
@@ -12100,7 +12228,7 @@ function buildQuestionHTML(q, i) {
       wordBank = '<div class="word-bank"><div class="word-bank-label">📚 Banca parole — scegli tra queste</div>' +
         q.wordBank.map(w => '<span class="word-bank-item">' + esc(w) + '</span>').join('') + '</div>';
     }
-    return `<div class="question-card">${qLabel}${qImg}${instr}${wordBank}${clozeHint}<div class="cloze-text">${html}</div></div>`;
+    return `<div class="question-card">${qLabel}${qImg}${instr}${wordBank}${clozeHint}<div class="cloze-text">${html}</div>${_lockedHintHTML(q, i)}</div>`;
   }
   if (q.type === 'matching') {
     // Invalida shuffle stale: se lunghezza o contenuti non combaciano più con q.right, rigenera

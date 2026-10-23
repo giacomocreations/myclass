@@ -115,9 +115,6 @@ input[type=text]:focus{border-color:var(--blue)}
 .ico-wrap{position:relative;display:inline-block}
 .ico-x{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:52px;color:var(--red);font-weight:700;line-height:1;opacity:.85}
 .ico-ok{position:absolute;right:-18px;bottom:-8px;font-size:30px;color:var(--green);font-weight:700;line-height:1}
-.judge-row{display:none;gap:8px;margin-bottom:.625rem}
-.jb{flex:1;padding:14px 8px;font-family:'Unbounded',sans-serif;font-size:11px;font-weight:700;letter-spacing:.04em;border:none;border-radius:var(--rs);color:#fff}
-.jb.ok{background:var(--green)}.jb.no{background:var(--red)}
 .fmt-list{margin:6px 0 0 0;padding-left:18px;line-height:1.6}
 
 /* CLASS IMPORT (MyClass roster) */
@@ -166,9 +163,9 @@ input[type=text]:focus{border-color:var(--blue)}
     <div style="background:var(--blue-bg);border:1px solid var(--border);border-radius:var(--rs);padding:10px 14px;font-size:12px;color:var(--blue-t);margin-bottom:1.5rem">⚡ <strong>Each round gets harder</strong> · 3 questions per match · <span style="color:var(--amber);font-weight:600">⭐ Final → 5 questions</span>
       <ol class="fmt-list">
         <li><strong>Round of 32 &amp; Round of 16 – What's the chore?</strong> One missing word: <em>___ my bed</em> → make · <em>do the ___</em> → ironing</li>
-        <li><strong>Quarterfinals – Mix &amp; match</strong> Three chores, three verbs, in order: <em>___ the ironing · ___ my bed · ___ the rubbish out</em>. +1 for each right one</li>
-        <li><strong>Semifinals – At home</strong> One word in each gap, with the right form: <em>He never ___ his bed!</em> → makes</li>
-        <li><strong>Final – Have to? 🗣️</strong> Situation + chore + ✓ / ✗, say the full sentence aloud: ✓ <em>I have to walk the dog.</em> ✗ <em>I don't have to cook dinner.</em> Then <em>he / she has to…</em> The teacher judges</li>
+        <li><strong>Quarterfinals – Write the chore · Level 1</strong> A full definition + the picture + the first letters: write the <em>whole</em> chore. <em>c____ t__ t____</em> → clear the table (not just <em>clear</em>)</li>
+        <li><strong>Semifinals – Write the chore · Level 2</strong> A full definition, no help: write the whole chore. Wrong? Try again with the hint (first letters) — then it's worth ½ point</li>
+        <li><strong>Final – ⭐ Chore Challenge</strong> Harder definitions, no help, 5 questions. Same rule: the hint only after a first try, for ½ point</li>
       </ol>
       <div style="margin-top:6px">Solo le 12 faccende del libro (Unit 7, p. 154, Ex 1). Attenzione a <em>make</em> / <em>do</em> (iCompare). Accettate anche le varianti fuori dal libro: <em>do the dishes</em>, <em>do the laundry</em>, <em>set the table</em>, <em>make dinner</em>, <em>clean my room</em>, <em>do the hoovering</em>, <em>take the trash out</em>; <em>washing up</em> = <em>washing-up</em>.</div>
       <div style="margin-top:6px;color:var(--green-t);font-weight:600">BYE = auto-advance (se siete meno di 32)</div>
@@ -215,7 +212,6 @@ input[type=text]:focus{border-color:var(--blue)}
     </div>
     <div class="mfb" id="mfb"></div>
     <div class="ans-row" id="ans-row"><input type="text" id="ans" placeholder="Type your answer…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/><button class="btn-check" onclick="checkTyped()">✓ Check</button></div>
-    <div class="judge-row" id="judge-row"><button class="jb ok" onclick="judge(true)">✓ CORRECT</button><button class="jb no" onclick="judge(false)">✗ WRONG</button></div>
     <div class="buzz-row" id="buzz-row"><button class="bz b1" id="bz1" onclick="buzzerPt(0)">▲ P1</button><button class="bz b2" id="bz2" onclick="buzzerPt(1)">▲ P2</button></div>
     <div class="aux-row"><button class="btn-hint" id="btn-hint" onclick="revealHint()">💡 Show hint</button><button class="btn-skip-q" onclick="skipQ()">↷ Skip card</button></div>
   </div>
@@ -290,55 +286,50 @@ const PACK=[
 {q:'Tidy or clear? It\'s a mess!',g:'___ my room',ok:['tidy'],ic:'room'},
 {q:'Feed or cook? It\'s my pet!',g:'___ the fish',ok:['feed'],ic:'bowl'}];
 
-// ROUND 1 – MIX & MATCH (three chores → three verbs, in order). Never two chores with the same noun.
-const MULTI=[
-{f:['ironing','bed','rubbish']},{f:['vacuuming','tidy','walk']},{f:['washing','cook','feed']},
-{f:['bed','washingup','clear']},{f:['rubbish','lay','washing']},{f:['walk','ironing','cook']},
-{f:['tidy','feed','vacuuming']},{f:['clear','bed','washing']},{f:['washingup','rubbish','tidy']},
-{f:['cook','vacuuming','bed']},{f:['feed','ironing','lay']},{f:['bed','walk','washingup']},
-{f:['rubbish','clear','ironing']},{f:['washing','tidy','cook']},{f:['lay','vacuuming','feed']},
-{f:['bed','washing','walk']}];
+// ROUNDS 2–3 – WRITE THE CHORE (full definition → the whole chore). Level 1 shows picture + first letters, Level 2 nothing
+// a = accepted answers; my / your / the / his / her are all the same, and so are "washing-up" and "washing up"
+const A={
+ clear:['clear the table'],
+ lay:['lay the table','set the table'],
+ cook:['cook dinner','make dinner'],
+ ironing:['do the ironing'],
+ vacuuming:['do the vacuuming','do the hoovering','vacuum the floor','hoover the floor'],
+ washing:['do the washing','do the laundry'],
+ washingup:['do the washing-up','do the dishes','wash the dishes'],
+ bed:['make my bed'],
+ rubbish:['take the rubbish out','take out the rubbish','take the trash out','take out the trash'],
+ tidy:['tidy my room','tidy up my room','clean my room'],
+ walk:['walk the dog']};
+const DEF=[
+{q:'After dinner, you take the dirty plates, glasses and cutlery off the table.',a:A.clear,ic:'plate'},
+{q:'Before a meal, you put the plates, glasses, knives and forks on the table.',a:A.lay,ic:'plate'},
+{q:'In the evening you prepare the meal for your family: pasta, meat, vegetables…',a:A.cook,ic:'pot'},
+{q:'You use a hot iron to make your shirts and T-shirts smooth.',a:A.ironing,ic:'iron'},
+{q:'You clean the floors and the carpets with a noisy electric machine.',a:A.vacuuming,ic:'vacuum'},
+{q:'You put your dirty clothes in the washing machine.',a:A.washing,ic:'washer'},
+{q:'You wash the dirty plates, glasses and pans in the sink.',a:A.washingup,ic:'sink'},
+{q:'Your cat is hungry, so you give it its food.',a:['feed the cat'],ic:'bowl'},
+{q:'Your goldfish needs its food every day, so you give it.',a:['feed the fish'],ic:'bowl'},
+{q:'In the morning you put the sheets, the blanket and the pillow in order.',a:A.bed,ic:'bed'},
+{q:'The bin in the kitchen is full, so you carry it outside.',a:A.rubbish,ic:'bin'},
+{q:'You put your clothes, books and toys back in their place in your bedroom.',a:A.tidy,ic:'room'},
+{q:'You take your dog to the park on a lead.',a:A.walk,ic:'dog'}];
 
-// ROUND 2 – AT HOME (one word in each gap, as in Ex 5)
-const TABLE=[
-{q:'Mum: Look at your room! It\'s a mess!',g:'You have to ___ it now!',ok:['tidy','clean'],ic:'room'},
-{q:'Dad: The dog is at the door.',g:'Can you ___ him in the park, please?',ok:['walk'],ic:'dog'},
-{q:'Jen: My brother never helps at home.',g:'He never ___ his bed!',ok:['makes'],ic:'bed'},
-{q:'Gran: Lunch is ready!',g:'Can you ___ the table, please?',ok:['lay','set'],ic:'plate'},
-{q:'Mum: The bin is full.',g:'___ the rubbish out, please!',ok:['take'],ic:'bin'},
-{q:'Tom: My dad is a great chef!',g:'He ___ dinner every evening.',ok:['cooks','makes'],ic:'pot'},
-{q:'Ben: My sister helps with the clothes.',g:'She ___ the ironing on Saturdays.',ok:['does'],ic:'iron'},
-{q:'Mum: Fido is hungry!',g:'Can you ___ him, please?',ok:['feed'],ic:'bowl'},
-{q:'Lisa: After lunch I help Mum.',g:'I always ___ the table and put the plates in the sink.',ok:['clear'],ic:'plate'},
-{q:'Dad: The floor is very dirty!',g:'Can you do the ___, please?',ok:['vacuuming','hoovering'],ic:'vacuum'},
-{q:'Sam: My clothes are dirty.',g:'Mum, can you do the ___ today?',ok:['washing','laundry'],ic:'washer'},
-{q:'Mum: The sink is full of dirty plates!',g:'Who is doing the ___?',ok:['washing-up','dishes'],ic:'sink'},
-{q:'Anna: My dad is very busy.',g:'Who ___ the vacuuming in your house?',ok:['does'],ic:'vacuum'},
-{q:'Leo: I\'ve got a dog called Max.',g:'I ___ him every day after school.',ok:['walk','feed'],ic:'dog'},
-{q:'Jen: It isn\'t fair, Mum!',g:'I ___ the washing-up every day!',ok:['do'],ic:'sink'},
-{q:'Mum: Jen, it\'s 8 o\'clock!',g:'Get up and ___ your bed!',ok:['make'],ic:'bed'}];
+// FINAL – CHORE CHALLENGE (harder definitions, no key words like iron, vacuum, bin, dog)
+const FINAL=[
+{q:'Your shirts are clean but full of creases: you make them smooth before you put them in the wardrobe.',a:A.ironing,ic:'iron'},
+{q:'After lunch the sink is full of dirty dishes and pans: you clean them with soap and water.',a:A.washingup,ic:'sink'},
+{q:'Your clothes are dirty: you put them in a machine with soap and then hang them out to dry.',a:A.washing,ic:'washer'},
+{q:'The meal is over: you remove the plates, the glasses and the cutlery from the table.',a:A.clear,ic:'plate'},
+{q:'Your guests are arriving for lunch: you get the table ready with plates, glasses and cutlery.',a:A.lay,ic:'plate'},
+{q:'There is dust on the carpet: you clean it with a machine that sucks up the dirt.',a:A.vacuuming,ic:'vacuum'},
+{q:'You have just got up: you straighten the sheets and the blanket and put the pillow in its place.',a:A.bed,ic:'bed'},
+{q:'The kitchen bin is full and smelly: you carry the bag outside to the big container in the street.',a:A.rubbish,ic:'bin'},
+{q:'Your bedroom is a mess: you put everything back where it belongs.',a:A.tidy,ic:'room'},
+{q:'The family is hungry: you prepare the evening meal in the kitchen.',a:A.cook,ic:'pot'}];
 
-// ROUND 3 – HAVE TO? (oral, teacher judges) — first steps with have to / don't have to
-// ✓ = it's necessary → have to · ✗ = it isn't necessary → don't have to. I/we first, then he/she (has to / doesn't have to).
-const BROKEN=[
-{who:'I',k:'walk',yes:true,ctx:'Fido is at the door and Mum is at work.',model:'I have to walk the dog.'},
-{who:'I',k:'ironing',yes:false,ctx:'Dad always does the ironing in our house.',model:'I don\'t have to do the ironing.'},
-{who:'I',k:'bed',yes:true,ctx:'It\'s 7 o\'clock and Mum is coming to check your room!',model:'I have to make my bed.'},
-{who:'I',k:'cook',yes:false,ctx:'Tonight we\'re eating at a pizzeria!',model:'I don\'t have to cook dinner.'},
-{who:'I',k:'rubbish',yes:true,ctx:'The bin in the kitchen is full.',model:'I have to take the rubbish out.'},
-{who:'I',k:'washingup',yes:false,ctx:'We\'ve got a new dishwasher!',model:'I don\'t have to do the washing-up.'},
-{who:'I',k:'feed',yes:true,ctx:'My cat is hungry.',model:'I have to feed the cat.'},
-{who:'I',k:'tidy',yes:false,ctx:'It\'s my birthday today: Mum tidies my room for me!',model:'I don\'t have to tidy my room.'},
-{who:'We',k:'lay',yes:true,ctx:'Grandma and Grandpa are coming for lunch.',model:'We have to lay the table.'},
-{who:'We',k:'vacuuming',yes:false,ctx:'A cleaner comes to our house every Friday.',model:'We don\'t have to do the vacuuming.'},
-{who:'My brother',k:'tidy',yes:true,ctx:'His room is a mess!',model:'My brother has to tidy his room.'},
-{who:'My sister',k:'washing',yes:false,ctx:'Mum always does the washing.',model:'My sister doesn\'t have to do the washing.'},
-{who:'Jen',k:'clear',yes:true,ctx:'After dinner it\'s Jen\'s turn.',model:'Jen has to clear the table.'},
-{who:'Tom',k:'walk',yes:false,ctx:'Tom hasn\'t got a dog!',model:'Tom doesn\'t have to walk the dog.'}];
-function hasTo(c){return /^(I|We|You|They)$/.test(c.who)?'have to / don\'t have to':'has to / doesn\'t have to';}
-
-const POOLS=[PACK,MULTI,TABLE,BROKEN];
-const RNAME=['What\'s the chore?','Mix & match','At home','Have to? 🗣️'];
+const POOLS=[PACK,DEF,DEF,FINAL];
+const RNAME=['What\'s the chore?','Write the chore · Level 1','Write the chore · Level 2','⭐ Chore Challenge'];
 const STOP=new Set(['a','an','the','my','to','it','i','you','he','she','his','her','your','and']);
 
 // ── STATE ──
@@ -673,13 +664,13 @@ async function moveTeacherWinToOtherScreen(){
     teacherWin.resizeTo(Math.min(620,other.availWidth-60),other.availHeight-60);
   }catch(e){}
 }
-function phrase(k,i){const c=CHORE[k];return (i==null?c.v.join('/'):'___')+' '+c.n;}
+// Level 1 help: first letter of every word → "c____ t__ t____"
+function initials(ph){return ph.split(' ').map(w=>w.replace(/[a-z]/gi,(ch,i)=>i===0||w[i-1]==='-'?ch:'_')).join('  ');}
 function tQuestion(c,p){
-  if(p===1)return{q:'Say the verb for each chore, in order.',gap:c.f.map(x=>phrase(x,0)).join('  ·  '),ans:c.f.map(x=>phrase(x)).join('\n'),list:true};
-  if(p===3)return{q:`Have to? (oral) · ${c.ctx} · `+phrase(c.k),gap:`${c.who} · ${c.yes?'✓ have to':'✗ don\'t have to'}`,ans:c.model+(CHORE[c.k].alt?'\n(also: '+CHORE[c.k].alt+')':''),long:true};
+  if(p>0)return{q:c.q,gap:p===1?'Write the chore · '+initials(c.a[0]):'Write the chore',ans:c.a.join('\n'),long:true};
   return{q:c.q,gap:c.g,ans:c.ok.join(' / ')};
 }
-function tShort(c,p){const t=tQuestion(c,p);return{l:p===3?t.gap:(p===1?t.gap:c.q+' '+c.g),a:p===1?c.f.map(x=>CHORE[x].v[0]).join(' · '):(p===3?phrase(c.k):t.ans)};}
+function tShort(c,p){return p>0?{l:c.q,a:c.a[0]}:{l:c.q+' '+c.g,a:c.ok.join(' / ')};}
 function updateTeacherWin(){
   if(!teacherWin||teacherWin.closed)return;
   const d=teacherWin.document,root=d.getElementById('t-root');if(!root)return;
@@ -705,9 +696,8 @@ function updateTeacherWin(){
 function ph(){return Math.max(0,curR-1);}
 
 // controls: which input row is visible for this card
-function setControls(){const oral=ph()===3,m=G.mode;
-document.getElementById('ans-row').style.display=(m==='typed'&&!oral)?'flex':'none';
-document.getElementById('judge-row').style.display=(m==='typed'&&oral)?'flex':'none';
+function setControls(){const m=G.mode;
+document.getElementById('ans-row').style.display=m==='typed'?'flex':'none';
 document.getElementById('buzz-row').style.display=m==='buzzer'?'flex':'none';
 document.getElementById('turn-tag').style.display=m==='typed'?'block':'none';
 if(m==='buzzer'){document.getElementById('mbp1').classList.add('lit');document.getElementById('mbp2').classList.add('lit');const mt=rounds[curR][curM];document.getElementById('bz1').textContent='▲ '+sn(players[mt.p1]).split(' ')[0].toUpperCase();document.getElementById('bz2').textContent='▲ '+sn(players[mt.p2]).split(' ')[0].toUpperCase();}}
@@ -717,43 +707,49 @@ function startMatch(r,m){curR=r;curM=m;const match=rounds[r][m],p1=players[match
 function pattern(w){return w.toUpperCase().split('').map((c,i,a)=>(i===0||i===a.length-1||c===' '||c==='-')?c:'_').join(' ');}
 function setIcon(key,crossed,ticked){const ico=document.getElementById('qico');ico.innerHTML=key&&SVGICO[key]?`<span class="ico-wrap">${SVGICO[key]}${crossed?'<span class="ico-x">✕</span>':''}${ticked?'<span class="ico-ok">✓</span>':''}</span>`:'';const s=ico.querySelector('svg');if(s)s.style.cssText='width:56px;height:56px;stroke:var(--text2);stroke-width:1.4;fill:none';}
 
-function renderQ(){if(G.qi>=G.totalQ){endMatch();return;}G.locked=false;G.hint=false;const c=G.cards[G.qi];const ico=document.getElementById('qico');
-document.getElementById('rtag').textContent=RNAME[ph()];
-const qt=document.getElementById('qtext'),qg=document.getElementById('qgap'),inp=document.getElementById('ans');
-if(ph()===0){setIcon(c.ic);ico.classList.add('hidden');qt.textContent=c.q;qg.textContent=c.g;inp.placeholder='Type the missing word…';}
-else if(ph()===1){setIcon(null);ico.classList.add('hidden');qt.textContent='Say the verb for each chore, in order.';qg.textContent=c.f.map(x=>phrase(x,0)).join('  ·  ');inp.placeholder='e.g. do, make, take';}
-else if(ph()===2){setIcon(c.ic);ico.classList.add('hidden');qt.textContent=c.q;qg.textContent=c.g;inp.placeholder='One word in the gap…';}
-else{setIcon(CHORE[c.k].ic,!c.yes,c.yes);ico.classList.remove('hidden');document.getElementById('rtag').textContent='Have to? 🗣️ · ✓ have to · ✗ don\'t have to';qt.textContent=c.ctx;qg.textContent=`${c.who} · ${c.yes?'✓':'✗'}`;}
-document.getElementById('qhint').textContent='';
-const label=G.sd?'⚡ SUDDEN DEATH · ':(ph()===3?'⭐ FINAL · ':'');document.getElementById('qprog').textContent=G.sd?'⚡ SUDDEN DEATH':`${label}Q ${G.qi+1} / ${G.totalQ}`;
+function renderQ(){if(G.qi>=G.totalQ){endMatch();return;}G.locked=false;G.hint=false;G.tries=0;const c=G.cards[G.qi],p=ph();const ico=document.getElementById('qico');
+document.getElementById('rtag').textContent=RNAME[p];
+const qt=document.getElementById('qtext'),qg=document.getElementById('qgap'),inp=document.getElementById('ans'),h=document.getElementById('qhint');
+setIcon(c.ic);qt.textContent=c.q;
+if(p===0){ico.classList.add('hidden');qg.textContent=c.g;inp.placeholder='Type the missing word…';h.textContent='';}
+else{ico.classList.toggle('hidden',p!==1);qg.textContent='✏️ Write the whole chore';inp.placeholder='e.g. make dinner';h.textContent=p===1?initials(c.a[0]):'';}
+const label=G.sd?'⚡ SUDDEN DEATH · ':(p===3?'⭐ FINAL · ':'');document.getElementById('qprog').textContent=G.sd?'⚡ SUDDEN DEATH':`${label}Q ${G.qi+1} / ${G.totalQ}`;
 const wr=document.getElementById('word-reveal');wr.textContent='';wr.classList.remove('show','long');clrFb();
-const hb=document.getElementById('btn-hint');hb.textContent=ph()===3?'💡 Show chore + have to':(ph()===1?'💡 Show first letters':'💡 Show image hint');hb.disabled=false;
-if(G.mode==='typed'){const match=rounds[curR][curM],nm=G.turn===0?sn(players[match.p1]):sn(players[match.p2]);document.getElementById('turn-pill').textContent=nm+(ph()===3?' — speak!':"'s turn");document.getElementById('mbp1').classList.toggle('lit',G.turn===0);document.getElementById('mbp2').classList.toggle('lit',G.turn===1);if(ph()!==3){inp.value='';setTimeout(()=>inp.focus(),40);}}updateTeacherWin();}
+// Level 1: the first letters are already there. Levels 2–3: the hint unlocks only after a first try (typed) and is worth ½ point
+const hb=document.getElementById('btn-hint');
+if(p===0){hb.textContent='💡 Show image hint';hb.disabled=false;}
+else if(p===1){hb.textContent='💡 First letters shown';hb.disabled=true;}
+else{hb.textContent=G.mode==='typed'?'🔒 Hint after the first try':'💡 Hint (after both tried) · ½ point';hb.disabled=G.mode==='typed';}
+if(G.mode==='typed'){const match=rounds[curR][curM],nm=G.turn===0?sn(players[match.p1]):sn(players[match.p2]);document.getElementById('turn-pill').textContent=nm+"'s turn";document.getElementById('mbp1').classList.toggle('lit',G.turn===0);document.getElementById('mbp2').classList.toggle('lit',G.turn===1);inp.value='';setTimeout(()=>inp.focus(),40);}updateTeacherWin();}
 
 function revealHint(){if(G.hint)return;G.hint=true;const c=G.cards[G.qi],h=document.getElementById('qhint');
-if(ph()===0||ph()===2){document.getElementById('qico').classList.remove('hidden');h.textContent=pattern(c.ok[0]);}
-else if(ph()===1){h.textContent=c.f.map(x=>CHORE[x].v[0][0].toUpperCase()+'…').join('   ');}
-else{h.textContent=phrase(c.k).replace(/\/\S+/,'')+'  ·  '+hasTo(c);}
-const hb=document.getElementById('btn-hint');hb.textContent='💡 Hint shown';hb.disabled=true;}
+if(ph()===0){document.getElementById('qico').classList.remove('hidden');h.textContent=pattern(c.ok[0]);}
+else{document.getElementById('qico').classList.remove('hidden');h.textContent=initials(c.a[0]);}
+const hb=document.getElementById('btn-hint');hb.textContent=ph()>1?'💡 Hint shown · ½ point':'💡 Hint shown';hb.disabled=true;
+if(G.mode==='typed')setTimeout(()=>document.getElementById('ans').focus(),40);}
 
 function showReveal(){const c=G.cards[G.qi],wr=document.getElementById('word-reveal');let t;
-if(ph()===0||ph()===2){t=c.ok.join(' / ').toUpperCase();document.getElementById('qico').classList.remove('hidden');}
-else if(ph()===1){t=c.f.map(x=>CHORE[x].v.join('/')).join(' · ').toUpperCase();}
-else{t='✓ '+c.model+(CHORE[c.k].alt?'  (also: '+CHORE[c.k].alt+')':'');wr.classList.add('long');}
+document.getElementById('qico').classList.remove('hidden');
+if(ph()===0)t=c.ok.join(' / ').toUpperCase();
+else{t=c.a[0].toUpperCase()+(c.a.length>1?'  (also: '+c.a.slice(1).join(' · ')+')':'');wr.classList.add('long');}
 wr.textContent=t;setTimeout(()=>wr.classList.add('show'),20);}
 
 // "washing up", "Washing-up", "washingup" are all the same answer; "the", "my" and the words of the gap are ignored
 function nw(w){return String(w).toLowerCase().replace(/[^a-z]/g,'');}
 function matchWord(raw,list,gap){const okW=new Set(list.map(nw)),gapW=new Set(String(gap||'').split(/[\s,;!?.]+/).map(nw));const w=raw.toLowerCase().split(/[\s,;\/]+/).map(nw).filter(t=>t&&!STOP.has(t)&&!(gapW.has(t)&&!okW.has(t))).join('');return w?list.find(v=>nw(v)===w):null;}
+// The whole chore: "make my bed" = "make the bed" = "Make your bed.", but "make" alone or "make bed" is wrong
+function np(s){return String(s).toLowerCase().replace(/\b(my|your|his|her|the)\b/g,'the').replace(/[^a-z]/g,'');}
+function matchPhrase(raw,list){const w=np(raw);return w?list.find(v=>np(v)===w):null;}
 
-function checkTyped(){if(G.locked||G.mode!=='typed'||ph()===3)return;const raw=document.getElementById('ans').value.trim().toLowerCase();if(!raw)return;G.locked=true;const c=G.cards[G.qi];
-if(ph()===1){const nounS=c.f.map(x=>CHORE[x].n).join(' '),nounW=new Set([...nounS.split(/[\s-]+/),...nounS.split(/\s+/)].map(nw));const toks=raw.split(/[\s,;\/]+/).map(nw).filter(t=>t&&!STOP.has(t)&&!nounW.has(t));let good=0;const marks=c.f.map((x,i)=>{const ok=!!(toks[i]&&CHORE[x].v.includes(toks[i]));if(ok)good++;return (ok?'✓ ':'✗ ')+(toks[i]||'—');});G.scores[G.turn]+=good;updScores();setFb(good>0?`✓ +${good}  (${marks.join(' · ')})`:`✗ 0 points  (${marks.join(' · ')})`,good>0?'ok':'no');}
-else{if(matchWord(raw,c.ok,c.g)){G.scores[G.turn]++;updScores();setFb('✓ Correct! +1','ok');}else setFb('✗ Wrong! The answer is below','no');}
-showReveal();G.turn=1-G.turn;setTimeout(()=>{G.qi++;renderQ();},ph()===1?2600:1800);}
+function checkTyped(){if(G.locked||G.mode!=='typed')return;const raw=document.getElementById('ans').value.trim().toLowerCase();if(!raw)return;G.locked=true;const c=G.cards[G.qi],p=ph();
+if(p===0){if(matchWord(raw,c.ok,c.g)){G.scores[G.turn]++;updScores();setFb('✓ Correct! +1','ok');}else setFb('✗ Wrong! The answer is below','no');}
+else if(matchPhrase(raw,c.a)){const pt=G.hint&&p>1?0.5:1;G.scores[G.turn]+=pt;updScores();setFb('✓ Correct! +'+(pt===1?'1':'½'),'ok');}
+else if(p>1&&G.tries===0){G.tries=1;G.locked=false;setFb('✗ Not quite — try again, or ask for the hint (then it\'s worth ½ point)','no');const hb=document.getElementById('btn-hint');hb.textContent='💡 Show first letters · ½ point';hb.disabled=false;document.getElementById('ans').select();return;}
+else setFb(raw.split(/\s+/).length<2?'✗ Write the whole chore, not just one word! The answer is below':'✗ Wrong! The answer is below','no');
+showReveal();G.turn=1-G.turn;setTimeout(()=>{G.qi++;renderQ();},p>0?2600:1800);}
 
-function judge(ok){if(G.locked)return;G.locked=true;if(ok){G.scores[G.turn]++;updScores();setFb('✓ Great sentence! +1','ok');}else setFb('✗ Not quite — listen to the model:','no');showReveal();G.turn=1-G.turn;setTimeout(()=>{G.qi++;renderQ();},3000);}
-function buzzerPt(p){if(G.locked)return;G.locked=true;G.scores[p]++;updScores();const match=rounds[curR][curM],nm=sn(players[p===0?match.p1:match.p2]);setFb('✓ '+nm+' +1','ok');showReveal();setTimeout(()=>{G.qi++;renderQ();},ph()===3?3000:1800);}
-function skipQ(){if(G.locked)return;G.locked=true;setFb('↷ Skipped','sk');showReveal();if(G.mode==='typed')G.turn=1-G.turn;setTimeout(()=>{G.qi++;renderQ();},ph()===3?3000:1800);}
+function buzzerPt(p){if(G.locked)return;G.locked=true;const pt=G.hint&&ph()>1?0.5:1;G.scores[p]+=pt;updScores();const match=rounds[curR][curM],nm=sn(players[p===0?match.p1:match.p2]);setFb('✓ '+nm+' +'+(pt===1?'1':'½'),'ok');showReveal();setTimeout(()=>{G.qi++;renderQ();},ph()>0?2600:1800);}
+function skipQ(){if(G.locked)return;G.locked=true;setFb('↷ Skipped','sk');showReveal();if(G.mode==='typed')G.turn=1-G.turn;setTimeout(()=>{G.qi++;renderQ();},ph()>0?2600:1800);}
 function updScores(){document.getElementById('mbs1').textContent=G.scores[0];document.getElementById('mbs2').textContent=G.scores[1];}
 function setFb(t,c){const e=document.getElementById('mfb');e.textContent=t;e.className='mfb '+c;}
 function clrFb(){const e=document.getElementById('mfb');e.textContent='';e.className='mfb';}
@@ -772,7 +768,7 @@ function skipRound(){
   drawBracket();
 }
 document.addEventListener('keydown',e=>{if((e.key==='n'||e.key==='N')&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&document.getElementById('sc-bracket').classList.contains('on')){e.preventDefault();skipRound();}});
-document.addEventListener('keydown',e=>{if(e.key==='Enter'&&G&&G.mode==='typed'&&ph()!==3&&document.getElementById('sc-match').classList.contains('on'))checkTyped();});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&G&&G.mode==='typed'&&document.getElementById('sc-match').classList.contains('on'))checkTyped();});
 </script>
 </body>
 </html>
