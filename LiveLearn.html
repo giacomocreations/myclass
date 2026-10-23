@@ -1060,6 +1060,7 @@ const CONFIG = {
       <div class="progress-bar" style="width:160px;margin-bottom:0;height:7px;"><div class="progress-fill" id="teacher-q-progress" style="width:0%"></div></div>
     </div>
     <div class="flex gap-8">
+      <label id="tour-auto-wrap" style="display:none;align-items:center;gap:6px;font-size:13px;font-weight:600;cursor:pointer;" title="Quando tutti i giocatori in gara hanno inviato la risposta (o il tempo è scaduto) si passa da soli alla domanda dopo; a fine turno si chiude il turno. Il turno successivo lo fai partire tu."><input type="checkbox" id="tour-auto" checked onchange="_tourSetAuto(this.checked)"> ⏩ Avanti da solo</label>
       <button class="btn btn-sm" id="btn-hint-unlock" onclick="_hintUnlock()" style="display:none;" title="Di solito si sblocca da solo quando tutti hanno scritto una risposta">💡 Sblocca l'aiuto</button>
       <button class="btn btn-sm" id="btn-tour-board" onclick="_tourOpenBoard()" style="display:none;">🏆 Tabellone</button>
       <button class="btn btn-sm" id="btn-prev-tq" onclick="teacherPrevQ()" style="display:none;">← Prec.</button>
@@ -6203,6 +6204,8 @@ async function openLive(code, activityId, roster, silent) {
   S.liveRoster = roster || [];
   S.teacherCurrentQ = -1;
   _tourCloseBoard(); S._tour = null; S._liveResp = null; S.liveTournament = false; S._hintOpenQ = null;
+  if (S._tourAutoInt) { clearInterval(S._tourAutoInt); S._tourAutoInt = null; }
+  S._tourAdvancing = false;
   S._rosterDebugLogged = {};
   window._pillKeyMap = new Map();
   document.getElementById('live-code-val').textContent = code;
@@ -6308,6 +6311,7 @@ async function openLive(code, activityId, roster, silent) {
     // Torneo già avviato (pagina ricaricata): si riprende da dove era, senza azzerare il tabellone
     if (!(S.liveTournament && await _tourRestore(code)))
       await db.ref('livelearn/control/' + code).set({ currentQ: -1 });
+    if (S.liveTournament) S._tourAutoInt = setInterval(_tourAutoCheck, 1000);
     updateTeacherControlBar();
   } else { ctrlBar.style.display = 'none'; }
 
@@ -6364,7 +6368,7 @@ async function openLive(code, activityId, roster, silent) {
     S._lastListenerCall = Date.now();
     const responses = snap.val() || {};
     S._liveResp = responses;
-    if (S.liveTournament) _tourRenderBoardSoon();
+    if (S.liveTournament) { _tourRenderBoardSoon(); _tourAutoCheck(); }
     if (S.liveMode === 'teacher') _hintAutoCheck(responses);
     try {
       renderLiveSidebar(responses);
@@ -6689,7 +6693,45 @@ async function _tourBeforeNext() {
   return false;
 }
 
+// ── Avanti da solo ──
+// Domanda normale: quando tutti i giocatori in gara hanno inviato, o il tempo è scaduto.
+// Domanda con aiuto bloccato: quando tutti hanno inviato si apre l'aiuto; si va avanti
+// quando tutti hanno inviato di nuovo e sono passati almeno 10 secondi, o col tempo scaduto.
+// Sull'ultima domanda del turno si chiude il turno; il turno dopo lo avvia il docente.
+S._tourAuto = true;
+function _tourSetAuto(on) {
+  S._tourAuto = !!on;
+  const cb = document.getElementById('tour-auto');
+  if (cb) cb.checked = S._tourAuto;
+  _tourRenderBoard();
+}
+function _tourAutoCheck() {
+  const t = S._tour, cur = S.teacherCurrentQ;
+  if (!S._tourAuto || !t || t.champ || t.closed >= t.cur || S._tourAdvancing || !S.liveIsActive) return;
+  const [s, e] = t.ranges[t.cur];
+  if (cur < s || cur > e) return;
+  const pl = _hintPlayers(), resp = S._liveResp || {};
+  if (!pl.length) return;
+  const allDone = pl.every(k => _hintAnswered(resp[k], cur));
+  const timeUp = S.liveTimer > 0 && Date.now() - (S._qStartAt || Date.now()) > (S.liveTimer + 1.5) * 1000;
+  const q = S.liveActivity?.questions?.[cur];
+  let ready;
+  if (q && q.lockedHint) {
+    if (allDone && S._hintOpenQ !== cur) { _hintUnlock(); return; }
+    ready = timeUp || (allDone && S._hintOpenQ === cur && Date.now() - (S._hintAt || 0) > 10000);
+  } else ready = allDone || timeUp;
+  if (!ready) return;
+  S._tourAdvancing = true;
+  setTimeout(async () => {
+    try { if (S.teacherCurrentQ === cur && S._tourAuto) await teacherNextQ(); }
+    catch(err) { console.warn('[torneo] avanti da solo:', err.message); }
+    finally { S._tourAdvancing = false; }
+  }, 1500);
+}
+
 function _tourDecorateBar() {
+  const autoWrap = document.getElementById('tour-auto-wrap');
+  if (autoWrap) autoWrap.style.display = S.liveTournament ? 'inline-flex' : 'none';
   const boardBtn = document.getElementById('btn-tour-board');
   if (boardBtn) boardBtn.style.display = S.liveTournament && S._tour ? 'inline-flex' : 'none';
   if (!S.liveTournament) return;
@@ -6758,7 +6800,8 @@ function _tourRenderBoard() {
   }
   ov.innerHTML = '<div class="tour-head"><div><h2>🏆 ' + esc(S.liveActivity?.title || 'Torneo') + '</h2><div class="tour-sub">' + sub + extra +
     (t.closed >= 0 ? ' · ⏱ = passa per velocità a parità di punti' : '') + '</div></div>' +
-    '<div class="flex gap-8"><button class="btn btn-primary" onclick="teacherNextQ()">' + esc(btnNext ? btnNext.textContent : '▶') + '</button>' +
+    '<div class="flex gap-8"><button class="btn" onclick="_tourSetAuto(' + !S._tourAuto + ')" title="Avanza da solo quando tutti hanno inviato o il tempo è scaduto">⏩ Avanti da solo: ' + (S._tourAuto ? 'sì' : 'no') + '</button>' +
+    '<button class="btn btn-primary" onclick="teacherNextQ()">' + esc(btnNext ? btnNext.textContent : '▶') + '</button>' +
     '<button class="btn" onclick="_tourCloseBoard()">✕ Nascondi</button></div></div>' +
     '<div class="tour-grid">' + cols + '</div>';
   _tourTick();
@@ -6781,6 +6824,8 @@ function _tourTick() {
 // ══════════════════════════════════════════════════════════════
 function _hintAnswered(resp, i) {
   if (!resp) return false;
+  // Torneo: conta solo chi ha inviato (✓ Invia risposta, clic su un'opzione o tempo scaduto)
+  if (S.liveTournament) return fbArr(resp.tourDone)[i] === true;
   const a = fbArr(resp.answers)[i];
   if (a == null) return false;
   if (typeof a === 'object') return fbArr(a).some(x => String(x == null ? '' : x).trim() !== '');
@@ -6807,6 +6852,7 @@ function _hintUnlock() {
   const cur = S.teacherCurrentQ;
   if (cur < 0 || S._hintOpenQ === cur) return;
   S._hintOpenQ = cur;
+  S._hintAt = Date.now();
   db.ref('livelearn/control/' + S.liveCode + '/hintQ').set(cur).catch(e => console.warn('[aiuto] sblocco fallito:', e.message));
   updateTeacherControlBar();
 }
@@ -6834,6 +6880,12 @@ function _useLockedHint(i) {
   if (S._hintOpenQ !== i || S._timeUp) return;
   S._tourHint = S._tourHint || {};
   S._tourHint[i] = true;
+  // Chi aveva già inviato può correggere e inviare di nuovo
+  if (S._tourDone && S._tourDone[i]) {
+    S._tourDone[i] = false;
+    document.querySelectorAll('#s-question-area input, #s-question-area textarea, #s-question-area select, #s-question-area button').forEach(el => { el.disabled = false; });
+    _tourSendUI();
+  }
   _lhRefresh();
   pushProgress();
 }
@@ -6842,6 +6894,45 @@ function _hintStudentListen() {
   const ref = db.ref('livelearn/control/' + S.sessionCode + '/hintQ');
   const h = ref.on('value', snap => { S._hintOpenQ = snap.val(); _lhRefresh(); });
   S._hintOff = () => ref.off('value', h);
+}
+
+// ── Lato studente: invio della risposta (serve al docente per andare avanti da solo) ──
+function _tourLockInputs() {
+  document.querySelectorAll('#s-question-area input, #s-question-area textarea, #s-question-area select, #s-question-area button')
+    .forEach(el => { if (!el.closest('#lh-box')) el.disabled = true; });
+}
+function _tourSentMsg() {
+  return '<div class="feedback-card neutral" style="border-radius:12px;padding:14px;margin-top:14px;text-align:center;font-weight:700;">✅ Risposta inviata! Aspetta gli altri…</div>';
+}
+// Dopo ogni nuova domanda: pulsante "Invia" (le scelte multiple si inviano col clic)
+function _tourSendUI() {
+  if (!S.sessionTournament || S.sessionMode !== 'teacher') return;
+  const i = S.qIndex, q = S.activity?.questions?.[i], fb = document.getElementById('s-feedback-area');
+  if (!q || !fb) return;
+  if (S._tourDone && S._tourDone[i]) { _tourLockInputs(); fb.innerHTML = _tourSentMsg(); return; }
+  fb.innerHTML = q.type === 'multiple-choice' ? ''
+    : '<div style="text-align:center;margin-top:14px;"><button class="btn btn-primary" onclick="_tourSend()">✓ Invia risposta</button></div>';
+}
+function _tourSend() {
+  if (!S.sessionTournament || S._timeUp) return;
+  const i = S.qIndex;
+  saveCurrentAnswer();
+  if (S.answers[i] == null) return;
+  S._tourDone = S._tourDone || {};
+  S._tourDone[i] = true;
+  _tourLockInputs();
+  const fb = document.getElementById('s-feedback-area');
+  if (fb) fb.innerHTML = _tourSentMsg();
+  pushProgress();
+}
+if (typeof window !== 'undefined' && !window._tourEnterGuard) {
+  window._tourEnterGuard = true;
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && S.sessionTournament && e.target && e.target.classList && e.target.classList.contains('blank-input')) {
+      e.preventDefault();
+      if (!(S._tourDone && S._tourDone[S.qIndex])) _tourSend();
+    }
+  });
 }
 
 // ── Lato studente: banner con l'avversario e l'esito del turno ──
@@ -9535,7 +9626,7 @@ async function studentEnter() {
   S.studentName = studentName; S.sessionCode = code; S.activity = _sessFilterActivity(_actHydrate(aSnap.val()), session);
   S.sessionMode = _llModeFor(session, [_aliasNow, studentName]);
   S.sessionTournament = S.sessionMode === 'teacher' && !!session.tournament;
-  S._tourMs = null; S._tourAns = null; S._tourShownAt = 0; S._tourHint = null; S._hintOpenQ = null;
+  S._tourMs = null; S._tourAns = null; S._tourShownAt = 0; S._tourHint = null; S._tourDone = null; S._hintOpenQ = null;
   if (S._tourStuOff) { S._tourStuOff(); S._tourStuOff = null; }
   if (S._hintOff) { S._hintOff(); S._hintOff = null; }
   S.sessionRepeatable = session.status === 'assigned' && !!session.repeatable;
@@ -9744,6 +9835,7 @@ async function studentEnter() {
       if (typeof existingResp.score === 'number') S.studentScore = existingResp.score;
       if (existingResp.aiScores)    S.aiScores    = existingResp.aiScores;
       if (existingResp.aiFeedbacks) S.aiFeedbacks = existingResp.aiFeedbacks;
+      if (existingResp.tourDone) S._tourDone = Object.fromEntries(Object.entries(existingResp.tourDone).filter(([, v]) => v === true));
       if (existingResp.tourHint) S._tourHint = Object.fromEntries(Object.entries(existingResp.tourHint).filter(([, v]) => v === true));
       if (existingResp.tourMs) S._tourMs = Object.fromEntries(Object.entries(existingResp.tourMs).filter(([, v]) => typeof v === 'number'));
       const _rejoin = {
@@ -10499,6 +10591,7 @@ function listenForTeacherAdvance() {
     const fbArea = document.getElementById('s-feedback-area');
     if (fbArea) fbArea.innerHTML = '';
     renderQuestion(); showView('student-activity');
+    _tourSendUI();
   });
 }
 
@@ -10778,6 +10871,7 @@ function startTimer() {
       // passava da soli alla domanda dopo e all'ultima si consegnava in anticipo)
       if (S.sessionMode === 'teacher') {
         S._timeUp = true;
+        if (S.sessionTournament && S.answers[S.qIndex] != null) { S._tourDone = S._tourDone || {}; S._tourDone[S.qIndex] = true; }
         pushProgress();
         document.getElementById('s-question-area').querySelectorAll('button,input,textarea,select').forEach(el => el.disabled = true);
         const fbA = document.getElementById('s-feedback-area');
@@ -11604,7 +11698,8 @@ function pushProgress() {
     ...(S.aiScores && Object.keys(S.aiScores).length ? { aiScores: _canonicalIndexedForServer(S.aiScores) } : {}),
     ...(S.aiFeedbacks && Object.keys(S.aiFeedbacks).length ? { aiFeedbacks: _canonicalIndexedForServer(S.aiFeedbacks) } : {}),
     ...(S._tourMs ? { tourMs: S._tourMs } : {}),
-    ...(S._tourHint ? { tourHint: S._tourHint } : {})
+    ...(S._tourHint ? { tourHint: S._tourHint } : {}),
+    ...(S._tourDone ? { tourDone: S._tourDone } : {})
   };
   // Debounce: se l'alunno salta tra pallini rapidamente, accorpa le
   // scritture in una sola ogni 400ms. Evita di floodare Firebase e il
@@ -12888,6 +12983,7 @@ function pickOption(idx) {
   S.answers[S.qIndex] = idx;
   pushProgress();
   updateNavButtons();
+  if (S.sessionTournament && S.sessionMode === 'teacher') _tourSend();
 }
 
 // ── MATCHING COLORS ──────────────────────────────────────────────────────────
