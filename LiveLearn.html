@@ -6569,6 +6569,8 @@ async function teacherNextQ() {
     if(S.liveListener){S.liveListener();S.liveListener=null;} loadDashboard(); showView('teacher-dashboard'); return;
   }
   S.teacherCurrentQ++; S._qStartAt = Date.now(); await db.ref('livelearn/control/'+S.liveCode+'/currentQ').set(S.teacherCurrentQ); updateTeacherControlBar();
+  // Torneo: domande mostrate, per non contare quelle mai arrivate (_tourFixSession)
+  if (S.liveTournament) db.ref('livelearn/control/' + S.liveCode + '/shown/' + S.teacherCurrentQ).set(true).catch(() => {});
 }
 async function teacherPrevQ() {
   if (S.teacherCurrentQ <= 0) return;
@@ -6683,51 +6685,92 @@ function _tourSave() {
   return db.ref('livelearn/control/' + S.liveCode + '/tour').set(S._tour);
 }
 
-// Domande mai giocate nel torneo: con pochi alunni i primi livelli si saltano
-// (_tourRanges), ma le domande pescate restano nella sessione e contavano nel
-// massimo, abbassando la percentuale. Si tolgono dalla valutazione come un
-// esercizio escluso dal docente (stessi campi: PDF, MyClass e StudentApp li
-// rispettano già), con la nota che spiega il perché.
-const _TOUR_SKIP_NOTA = 'Domanda non giocata nel torneo: con questo numero di alunni si giocano solo gli ultimi livelli.';
-function _tourSkippedIdx(t, nQ) {
-  if (!t || !t.ranges || !t.ranges.length) return [];
-  const inR = i => t.ranges.some(r => r && i >= r[0] && i <= r[1]);
-  const out = [];
-  for (let i = 0; i < nQ; i++) if (!inR(i)) out.push(i);
+// Domande che nel torneo non contano per un alunno. Le domande pescate restano
+// tutte nella sessione e contavano nel massimo, abbassando la percentuale:
+//  • non giocate: livelli saltati (con pochi alunni si giocano solo gli ultimi,
+//    _tourRanges) o mai mostrate perché il torneo si è fermato prima;
+//  • turni che l'alunno non giocava (eliminato o fuori tabellone) e a cui non
+//    ha risposto: erano solo allenamento.
+// Contano sempre le domande a cui ha risposto e quelle mostrate nei turni in cui
+// era in gara. Si tolgono dalla valutazione come un esercizio escluso dal docente
+// (stessi campi: PDF, MyClass e StudentApp li rispettano già), con la nota.
+const _TOUR_NOTA_NONGIOCATA = 'Domanda non giocata nel torneo (livello saltato o torneo finito prima).';
+const _TOUR_NOTA_ALLENAMENTO = 'Turno che l\'alunno non giocava (eliminato o fuori tabellone) e senza risposta: era solo allenamento.';
+const _TOUR_FIX_V = 2;
+function _tourExclMap(t, nQ, key, answers, shown) {
+  const out = {};
+  if (!t || !t.ranges || !t.ranges.length) return out;
+  const roundOf = i => t.ranges.findIndex(r => r && i >= r[0] && i <= r[1]);
+  const plays = r => (t.rounds[r] || []).some(m => m && (m.a === key || m.b === key));
+  for (let i = 0; i < nQ; i++) {
+    if (answers[i] != null) continue;
+    const r = roundOf(i);
+    if (!shown(i)) out[i] = _TOUR_NOTA_NONGIOCATA;
+    else if (r < 0 || !plays(r)) out[i] = _TOUR_NOTA_ALLENAMENTO;
+  }
   return out;
 }
-function _tourSkipFields(skip, at) {
-  const f = { excludedQuestions: {}, questionMaxOverrides: {}, manualScores: {} };
-  skip.forEach(i => {
-    f.excludedQuestions[i] = { prevMax: null, prevManual: null, at: at || Date.now(), tour: true, nota: _TOUR_SKIP_NOTA };
+function _tourExclFields(map, at) {
+  const f = { excludedQuestions: {}, questionMaxOverrides: {}, manualScores: {}, tourFix: _TOUR_FIX_V };
+  Object.keys(map).forEach(i => {
+    f.excludedQuestions[i] = { prevMax: null, prevManual: null, at: at || Date.now(), tour: true, nota: map[i] };
     f.questionMaxOverrides[i] = 0;
     f.manualScores[i] = 0;
   });
   return f;
 }
-// Lato docente: sistema le consegne di un torneo (anche già giocato) che
-// contano ancora le domande non giocate; ricalcola punteggio e cronologia.
+// Indici segnati in control/<codice>/shown (oggetto o array di Firebase)
+function _tourShownSet(v) {
+  const set = new Set();
+  if (Array.isArray(v)) v.forEach((x, i) => { if (x) set.add(i); });
+  else if (v && typeof v === 'object') Object.keys(v).forEach(k => { if (v[k]) set.add(Number(k)); });
+  return set;
+}
+// Lato docente: ricalcola le domande che non contano nelle consegne di un torneo
+// chiuso (anche già giocato o sistemato con la regola di prima) e aggiorna
+// punteggio e cronologia. Una volta sola per consegna (tourFix): un esercizio
+// reinserito a mano dal docente resta reinserito. Le esclusioni fatte dal
+// docente (senza il segno tour) non si toccano.
 async function _tourFixSession(code) {
   if (!db || !code || code !== S.liveCode || !S.liveTournament || !S.liveActivity) return;
   try {
-    const tour = _tourNormalize((await _fbGet(db.ref('livelearn/control/' + code + '/tour'), 6000)).val());
+    const ctl = (await _fbGet(db.ref('livelearn/control/' + code), 6000)).val() || {};
+    const tour = _tourNormalize(ctl.tour);
+    if (!tour) return;
     const qs = S.liveActivity.questions || [];
-    const skip = _tourSkippedIdx(tour, qs.length);
-    if (!skip.length) return;
     const all = (await _fbGet(db.ref('livelearn/responses/' + code), 8000)).val() || {};
+    // Domande mostrate alla classe: segnate dal docente; per i tornei giocati
+    // prima che si segnassero, quelle a cui ha risposto almeno un alunno
+    const shown = _tourShownSet(ctl.shown);
+    Object.values(all).forEach(r => {
+      if (!r || r.removed) return;
+      fbArr(r.answers || []).forEach((a, i) => { if (a != null) shown.add(i); });
+    });
     let n = 0;
     for (const [key, r] of Object.entries(all)) {
-      if (!r || r.removed || !r.submittedAt) continue;
+      if (!r || r.removed || !r.submittedAt || r.tourFix === _TOUR_FIX_V) continue;
+      const answers = fbArr(r.answers || []);
+      const want = _tourExclMap(tour, qs.length, key, answers, i => shown.has(i));
       const exc = r.excludedQuestions || {};
-      const todo = skip.filter(i => !exc[i]);
-      if (!todo.length) continue;
-      const f = _tourSkipFields(todo);
-      const upd = {};
-      todo.forEach(i => {
-        upd['excludedQuestions/' + i] = f.excludedQuestions[i];
-        upd['questionMaxOverrides/' + i] = 0;
-        upd['manualScores/' + i] = 0;
-      });
+      const f = _tourExclFields(want);
+      const upd = { tourFix: _TOUR_FIX_V };
+      for (let i = 0; i < qs.length; i++) {
+        const cur = exc[i];
+        if (want[i] != null) {
+          if (!cur) {
+            upd['excludedQuestions/' + i] = f.excludedQuestions[i];
+            upd['questionMaxOverrides/' + i] = 0;
+            upd['manualScores/' + i] = 0;
+          } else if (cur.tour && cur.nota !== want[i]) {
+            upd['excludedQuestions/' + i + '/nota'] = want[i];
+          }
+        } else if (cur && cur.tour) {
+          // Tolta per sbaglio con la regola di prima: torna a contare
+          upd['excludedQuestions/' + i] = null;
+          upd['questionMaxOverrides/' + i] = cur.prevMax != null ? cur.prevMax : null;
+          upd['manualScores/' + i] = cur.prevManual != null ? cur.prevManual : null;
+        }
+      }
       const ref = db.ref('livelearn/responses/' + code + '/' + key);
       await ref.update(upd);
       const r2 = (await ref.get()).val() || {};
@@ -6736,7 +6779,7 @@ async function _tourFixSession(code) {
       _llSyncStudentHistory(code, key).catch(e => console.warn('[torneo] cronologia:', key, e.message));
       n++;
     }
-    if (n) console.log('[torneo] ' + code + ': tolte ' + skip.length + ' domande non giocate dalla valutazione di ' + n + ' alunni');
+    if (n) console.log('[torneo] ' + code + ': ricalcolate le domande che contano per ' + n + ' alunni');
   } catch(e) { console.warn('[torneo] correzione domande non giocate:', e.message); }
 }
 
@@ -7484,7 +7527,7 @@ function _tourStudentListen() {
 function _tourStudentRender(raw) {
   let el = document.getElementById('tour-banner');
   const t = _tourNormalize(raw);
-  S._tourSkip = _tourSkippedIdx(t, S.activity?.questions?.length || 0);
+  S._tourT = t;
   if (!t || S.removed) { if (el) el.remove(); return; }
   if (!el) { el = document.createElement('div'); el.id = 'tour-banner'; document.body.appendChild(el); }
   const me = S.safeName, nR = t.ranges.length, nm = k => esc(t.names[k] || k);
@@ -10294,6 +10337,7 @@ async function studentEnter() {
   S.activity = { ...S.activity, questions };
   S.answers = new Array(questions.length).fill(undefined);
   S.skipped = [];
+  S._tourSeen = null; S._tourT = null;
   S.matchLeftSel = null;
   S.questionStartTimes = new Array(questions.length).fill(null);
   S.questionEndTimes   = new Array(questions.length).fill(null);
@@ -11157,6 +11201,7 @@ function listenForTeacherAdvance() {
     }
     if (q === lastQ) return;
     lastQ = q; S.qIndex = q; S._tourShownAt = Date.now();
+    if (S.sessionTournament) (S._tourSeen = S._tourSeen || new Set()).add(q);
     const fbArea = document.getElementById('s-feedback-area');
     if (fbArea) fbArea.innerHTML = '';
     renderQuestion(); showView('student-activity');
@@ -11965,9 +12010,15 @@ async function submitAnswers(auto) {
     studentVersion: S.studentVersion || 'originale'
   };
   if (S._aliasOf) payload.aliasOf = S._aliasOf;
-  // Torneo: le domande dei livelli non giocati non contano (né punti né massimo)
-  const _tSkip = S.sessionTournament ? (S._tourSkip || []).filter(i => S.answers[i] == null) : [];
-  if (_tSkip.length) Object.assign(payload, _tourSkipFields(_tSkip, submittedAt));
+  // Torneo: le domande non giocate o di turni in cui non era in gara (e senza
+  // risposta) non contano, né punti né massimo (vedi _tourExclMap)
+  if (S.sessionTournament && S._tourT) {
+    const _tShown = new Set(S._tourSeen || []);
+    try { _tourShownSet((await _fbGet(db.ref('livelearn/control/' + S.sessionCode + '/shown'), 3000)).val()).forEach(i => _tShown.add(i)); } catch(e) {}
+    const _tEx = _tourExclMap(S._tourT, S.activity.questions.length, safeName, S.answers, i => _tShown.has(i));
+    Object.assign(payload, _tourExclFields(_tEx, submittedAt));
+    if (!Object.keys(_tEx).length) { delete payload.excludedQuestions; delete payload.questionMaxOverrides; delete payload.manualScores; }
+  }
   S._doneQmo = payload.questionMaxOverrides || null;
   // Assegnate ripetibili: il set() riscrive il record, i tentativi precedenti vanno riportati
   if (Array.isArray(S._attempts) && S._attempts.length) payload.attempts = S._attempts;
