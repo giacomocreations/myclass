@@ -608,6 +608,19 @@ function ensureUrl(u){
   return 'https://' + s;
 }
 
+// Link a LiveLearn con il nome dell'alunno (&name=): LiveLearn lo pre-compila
+// insieme al codice e all'alunno resta solo da premere "Entra". Si tocca solo
+// un link a LiveLearn che porta già ?code=; gli altri restano com'erano.
+function llLinkWithName(u){
+  if (!u || !S.studentName) return u;
+  try {
+    const url = new URL(u, location.href);
+    if (!/LiveLearn\.html$/i.test(url.pathname) || !url.searchParams.get('code')) return u;
+    url.searchParams.set('name', S.studentName);
+    return url.href;
+  } catch(e) { return u; }
+}
+
 // Aggiorna S.sessions con i punteggi CORRETTI per FILA/versione.
 // Replica la stessa logica di openFullPdf: risolve le domande della versione
 // dello studente (A/B/C/DSA) e ricalcola score con _evalSimple.
@@ -1725,7 +1738,7 @@ function _assignedTodo(){
     const deadline = info.deadline || m.deadline || null;
     if(deadline && deadline < today) return;
     out.push({ code, title: info.title || (m.text||'').split('\n')[0].replace(/^📋 Compito assegnato:\s*/,''),
-               deadline, done, url: m.url ? ensureUrl(m.url) : ('LiveLearn.html?code='+code) });
+               deadline, done, url: llLinkWithName(m.url ? ensureUrl(m.url) : ('LiveLearn.html?code='+code)) });
   });
   return out.sort((a,b)=>(a.deadline||'9999').localeCompare(b.deadline||'9999'));
 }
@@ -2260,8 +2273,10 @@ async function markOraleRead(key){
 
 function openRecoveryActivity(code){
   if(!code) return;
-  // Apre LiveLearn con il codice pre-inserito (LiveLearn legge ?code= via _checkUrlCode)
-  const url = 'LiveLearn.html?code='+encodeURIComponent(code);
+  // Apre LiveLearn con codice e nome pre-inseriti (LiveLearn legge ?code= e ?name=
+  // via _checkUrlCode): l'alunno deve solo premere "Entra".
+  const url = 'LiveLearn.html?code='+encodeURIComponent(code)
+            + (S.studentName ? '&name='+encodeURIComponent(S.studentName) : '');
   window.open(url,'_blank');
 }
 
@@ -3004,7 +3019,7 @@ function renderBoard(){
      const isQuiz = msg.type==='avviso_quiz';
      const isPiano = msg.type==='piano';
      const quizCode = isQuiz && msg.sessionCode ? msg.sessionCode : '';
-     const quizLink = ensureUrl(msg.url||msg.link||'LiveLearn.html'+(quizCode?'?code='+quizCode:''));
+     const quizLink = llLinkWithName((msg.url||msg.link) ? ensureUrl(msg.url||msg.link) : 'LiveLearn.html'+(quizCode?'?code='+quizCode:''));
      const quizBlock = isQuiz && quizCode ? `
        <div style="margin-top:10px;background:#f5f3ff;border:1.5px solid #c4b5fd;border-radius:10px;padding:12px;text-align:center">
          <div style="font-size:10px;font-weight:700;color:#7c3aed;letter-spacing:.5px;margin-bottom:4px">CODICE DI ACCESSO</div>
@@ -3033,7 +3048,7 @@ function renderBoard(){
                ? `<a href="${esc(ensureUrl(m.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-top:6px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;text-decoration:none;color:#3C3489;font-size:13px;font-weight:600;min-width:0;"><span style="flex-shrink:0">🔗</span><span style="flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word">${esc(m.titolo||m.url)}</span><span style="flex-shrink:0;font-size:11px;color:#7c3aed">Apri ›</span></a>`
                : `<div style="padding:6px 10px;margin-top:6px;font-size:13px;color:#3C3489;overflow-wrap:anywhere">• ${esc(m.titolo)}</div>`).join('')}
            </div>`; })()}
-         ${msg.url?`<a href="${ensureUrl(msg.url)}" target="_blank" rel="noopener noreferrer"
+         ${msg.url?`<a href="${esc(llLinkWithName(ensureUrl(msg.url))).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer"
            style="display:block;text-align:center;padding:10px 20px;background:#5b21b6;color:#fff;border-radius:10px;font-size:13px;font-weight:700;text-decoration:none;">▶ Accedi all'attività</a>`:''}
        </div>`;
      })() : '';
