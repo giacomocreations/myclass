@@ -476,6 +476,9 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--primary); 
 .match-item.drag-over { border-style: dashed !important; transform: scale(1.02); box-shadow: 0 0 0 3px rgba(108,71,255,0.25); }
 .match-item[draggable="true"] { cursor: grab; }
 .match-item.matched[draggable="true"] { cursor: pointer; }
+.ll-teacher-audio-note { display: none; background: #e0f2fe; border: 2px dashed #0284c7; color: #075985; border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; font-size: 14px; font-weight: 700; }
+body.ll-audio-teacher #s-question-area audio, body.ll-audio-teacher #s-question-area .audio-player { display: none !important; }
+body.ll-audio-teacher #s-question-area .ll-teacher-audio-note { display: block; }
 .audio-player { background: var(--primary-light); border-radius: 14px; padding: 16px 20px; margin-bottom: 22px; display: flex; align-items: center; gap: 14px; border: 2px solid var(--primary); }
 .play-btn { width: 48px; height: 48px; border-radius: 50%; background: var(--primary); border: none; color: white; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.15s; box-shadow: 0 4px 12px rgba(108,71,255,0.3); }
 .play-btn:hover { background: var(--primary-dark); transform: scale(1.05); }
@@ -1076,6 +1079,8 @@ const CONFIG = {
       <label id="tour-auto-wrap" style="display:none;align-items:center;gap:6px;font-size:13px;font-weight:600;cursor:pointer;" title="Quando tutti i giocatori in gara hanno inviato la risposta (o il tempo è scaduto) si passa da soli alla domanda dopo; a fine turno si chiude il turno. Il turno successivo lo fai partire tu."><input type="checkbox" id="tour-auto" checked onchange="_tourSetAuto(this.checked)"> ⏩ Avanti da solo</label>
       <button class="btn btn-sm" id="btn-hint-unlock" onclick="_hintUnlock()" style="display:none;" title="Di solito si sblocca da solo quando tutti hanno scritto una risposta">💡 Sblocca l'aiuto</button>
       <button class="btn btn-sm" id="btn-tour-board" onclick="_tourOpenBoard()" style="display:none;">🏆 Tabellone</button>
+      <button class="btn btn-sm" id="btn-audio-toggle" onclick="_audioTeacherToggle()">🔈 Audio: alunni</button>
+      <button class="btn btn-sm" id="btn-audio-play" onclick="_audioTeacherPlay()" style="display:none;" title="Fai sentire alla classe l'audio di questa domanda">🔊 Ascolta</button>
       <button class="btn btn-sm" id="btn-prev-tq" onclick="teacherPrevQ()" style="display:none;">← Prec.</button>
       <button class="btn btn-primary btn-sm" id="btn-next-tq" onclick="teacherNextQ()">▶ Prima domanda</button>
     </div>
@@ -4931,6 +4936,80 @@ function toggleTTSStudent(btn) {
   });
 }
 
+// ── Audio delle scene e "audio solo dal prof" (10/2026) ──────────────────
+// Una domanda di qualsiasi tipo può avere ttsText (es. il dialogo di una scena):
+// sotto l'immagine compare "Ascolta", con una voce per personaggio come nei
+// listening ("Mum: … Tom: …"). Nel Controllo docente il prof può togliere
+// l'audio agli alunni (livelearn/control/<codice>/audioTeacher) e farlo partire
+// solo dal suo PC con 🔊 nella barra. Fuori dal Controllo docente (compito a
+// casa, esercitazione) quel nodo non c'è: l'audio resta sempre ascoltabile.
+const _AUDIO_TEACHER_NOTE = '<div class="ll-teacher-audio-note">🔈 L\'audio lo fa partire il prof: ascolta dalla LIM.</div>';
+function _qTtsPlayerHTML(q) {
+  return '<div class="audio-player" style="margin-bottom:16px;"><div style="flex:1;">' +
+      '<div style="font-size:13px;font-weight:800;color:var(--primary);">🔊 Ascolta la scena</div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:2px;">Ogni personaggio ha la sua voce</div></div>' +
+    '<button class="btn btn-primary" data-tts="' + _ttsRegister(q.ttsText, q.ttsRate) + '" onclick="toggleTTSStudent(this)" style="white-space:nowrap;min-width:110px;">▶ Ascolta</button>' +
+    '</div>' + _AUDIO_TEACHER_NOTE;
+}
+// Alunno: segue l'interruttore del prof
+function _audioStudentListen() {
+  if (S._audioOff) return;
+  const ref = db.ref('livelearn/control/' + S.sessionCode + '/audioTeacher');
+  const h = ref.on('value', snap => _audioApplyTeacherOnly(!!snap.val()));
+  S._audioOff = () => { ref.off('value', h); _audioApplyTeacherOnly(false); };
+}
+function _audioApplyTeacherOnly(on) {
+  document.body.classList.toggle('ll-audio-teacher', on);
+  if (!on) return;
+  _ttsStop();
+  document.querySelectorAll('#s-question-area audio').forEach(a => { try { a.pause(); } catch(e) {} });
+  document.querySelectorAll('#s-question-area [data-playing="1"]').forEach(b => { b.dataset.playing = ''; b.innerHTML = '▶ Ascolta'; b.style.background = ''; });
+}
+// Docente: audio della domanda mostrata (MP3 del listening oppure testo da leggere)
+function _audioOfQ(q) {
+  if (!q) return null;
+  if (q.type === 'listening' && q.audioData) return { mp3: q.audioData };
+  return q.ttsText ? { tts: q.ttsText, rate: q.ttsRate || 1 } : null;
+}
+function _audioTeacherStop() {
+  if (S._tAudio) { try { S._tAudio.pause(); } catch(e) {} S._tAudio = null; }
+  _ttsStop();
+  S._tAudioQ = null;
+  const b = document.getElementById('btn-audio-play');
+  if (b) b.textContent = '🔊 Ascolta';
+}
+function _audioTeacherPlay() {
+  const cur = S.teacherCurrentQ, a = _audioOfQ(S.liveActivity?.questions?.[cur]);
+  const b = document.getElementById('btn-audio-play');
+  if (S._tAudioQ === cur) { _audioTeacherStop(); return; }   // secondo clic = stop
+  _audioTeacherStop();
+  if (!a) return;
+  S._tAudioQ = cur;
+  if (b) b.textContent = '⏹ Stop';
+  const done = () => { if (S._tAudioQ === cur) { S._tAudioQ = null; if (b) b.textContent = '🔊 Ascolta di nuovo'; } };
+  if (a.mp3) { S._tAudio = new Audio(a.mp3); S._tAudio.onended = done; S._tAudio.play().catch(done); }
+  else _ttsSpeak(a.tts, a.rate, done);
+}
+async function _audioTeacherToggle() {
+  S.liveAudioTeacher = !S.liveAudioTeacher;
+  try { localStorage.setItem('ll_audio_teacher', S.liveAudioTeacher ? '1' : ''); } catch(e) {}
+  _audioDecorateBar();
+  try { await db.ref('livelearn/control/' + S.liveCode + '/audioTeacher').set(S.liveAudioTeacher); }
+  catch(e) { alert('Non riesco a cambiare l\'audio degli alunni: ' + e.message); }
+}
+function _audioDecorateBar() {
+  const t = document.getElementById('btn-audio-toggle'), b = document.getElementById('btn-audio-play');
+  if (!t || !b) return;
+  t.style.display = (S.liveActivity?.questions || []).some(q => _audioOfQ(q)) ? '' : 'none';   // niente audio nell'attività
+  t.textContent = S.liveAudioTeacher ? '🔇 Audio: solo prof' : '🔈 Audio: alunni';
+  t.title = S.liveAudioTeacher ? 'Gli alunni non sentono l\'audio: lo fai partire tu con 🔊. Clic per ridarlo agli alunni.'
+                               : 'Gli alunni ascoltano dal loro dispositivo. Clic per togliere l\'audio agli alunni e farlo partire solo tu.';
+  t.style.background = S.liveAudioTeacher ? '#e0f2fe' : '';
+  const cur = S.teacherCurrentQ;
+  if (S._tAudioQ != null && S._tAudioQ !== cur) _audioTeacherStop();   // cambiata domanda
+  b.style.display = cur >= 0 && _audioOfQ(S.liveActivity?.questions?.[cur]) ? 'inline-flex' : 'none';
+}
+
 // ── Quick audio upload (directly from question list) ──────
 function quickUploadAudio(i) {
   const input = document.getElementById('quick-audio-' + i);
@@ -5321,6 +5400,8 @@ async function saveEditQ(i) {
   } else if (q.image) {
     updated.image = q.image; // preserve existing if no new file selected
   }
+  // Audio della scena (ttsText su domande non listening): il modulo non lo mostra, si conserva
+  if (newType !== 'listening' && q.ttsText && !updated.ttsText) { updated.ttsText = q.ttsText; if (q.ttsRate) updated.ttsRate = q.ttsRate; }
   // Preserve tag if not in the form
   const tagEl = document.getElementById('qf-edit-tag');
   if (tagEl) updated.tag = tagEl.value || '';
@@ -6390,6 +6471,8 @@ async function openLive(code, activityId, roster, silent) {
     if (!(S.liveTournament && await _tourRestore(code)))
       await db.ref('livelearn/control/' + code).set({ currentQ: -1 });
     if (S.liveTournament) S._tourAutoInt = setInterval(_tourAutoCheck, 1000);
+    try { S.liveAudioTeacher = localStorage.getItem('ll_audio_teacher') === '1'; } catch(e) { S.liveAudioTeacher = false; }
+    db.ref('livelearn/control/' + code + '/audioTeacher').set(S.liveAudioTeacher).catch(() => {});
     updateTeacherControlBar();
   } else { ctrlBar.style.display = 'none'; }
 
@@ -6595,6 +6678,7 @@ function updateTeacherControlBar() {
   else { pill.textContent=`Domanda ${cur+1} di ${total}`; prog.style.width=((cur+1)/total*100)+'%'; btnNext.textContent=cur<total-1?'▶ Prossima domanda':'⏹ Termina'; if(btnPrev) btnPrev.style.display=cur>0?'inline-flex':'none'; }
   _hintDecorateBar();
   _tourDecorateBar();
+  _audioDecorateBar();
 }
 async function teacherNextQ() {
   if (S.liveTournament && await _tourBeforeNext()) return;
@@ -10295,6 +10379,7 @@ async function studentEnter() {
   S._tourMs = null; S._tourAns = null; S._tourShownAt = 0; S._tourHint = null; S._tourDone = null; S._hintOpenQ = null;
   if (S._tourStuOff) { S._tourStuOff(); S._tourStuOff = null; }
   if (S._hintOff) { S._hintOff(); S._hintOff = null; }
+  if (S._audioOff) { S._audioOff(); S._audioOff = null; }
   if (S._revealOff) { S._revealOff(); S._revealOff = null; } S._revealOpenQ = null;
   S.sessionRepeatable = session.status === 'assigned' && !!session.repeatable;
   S._attempts = null; S._retryLocal = false; S._retryNext = null;
@@ -11246,6 +11331,7 @@ function listenForTeacherAdvance() {
   let lastQ = -1;
   if (S.sessionTournament) { _tourStudentListen(); _tourRevealListen(); }
   _hintStudentListen();
+  _audioStudentListen();
   ref.on('value', snap => {
     if (S.removed) { try { ref.off('value'); } catch(e) {} return; }
     const q = snap.val();
@@ -13066,7 +13152,8 @@ function buildQuestionHTML(q, i) {
     ${tagHtml}
     ${isSkipped ? '<span class="skip-badge">Saltata — rispondi ora</span>' : ''}
   </div>`;
-  const qImg = q.image ? '<img src="' + q.image + '" class="q-image-student" alt="Immagine domanda">' : '';
+  const qImg = (q.image ? '<img src="' + q.image + '" class="q-image-student" alt="Immagine domanda">' : '') +
+    (q.type !== 'listening' && q.ttsText ? _qTtsPlayerHTML(q) : '');
   if (q.type === 'multiple-choice') {
     const mcHint = q.hint ? `<p class="text-muted mb-16" style="font-size:14px;font-weight:600;color:#4c2fc0;">💡 ${esc(q.hint)}</p>` : '';
     return `<div class="question-card">${qLabel}${qImg}<div class="q-text">${richText(q.text)}</div>
@@ -13148,7 +13235,7 @@ function buildQuestionHTML(q, i) {
       <textarea id="free-ans" rows="6" placeholder="Scrivi qui la tua risposta…" style="width:100%;"></textarea></div>`;
   }
   if (q.type === 'listening') {
-    const audio = q.audioData
+    const audioPlayer = q.audioData
       ? `<audio id="audio-${i}" src="${q.audioData}" style="width:100%;margin-bottom:16px;border-radius:8px;" controls></audio>`
       : q.ttsText
         ? `<div class="audio-player" style="margin-bottom:16px;">
@@ -13159,6 +13246,7 @@ function buildQuestionHTML(q, i) {
             <button id="tts-play-btn" class="btn btn-primary" data-tts="${_ttsRegister(q.ttsText, q.ttsRate)}" onclick="toggleTTSStudent(this)" style="white-space:nowrap;min-width:110px;">▶ Ascolta</button>
           </div>`
         : `<div style="background:#fef3c7;border:1.5px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;font-weight:700;color:#92400e;">⚠️ Audio non disponibile — il docente caricherà il file MP3</div>`;
+    const audio = audioPlayer + _AUDIO_TEACHER_NOTE;
     const inner = q.question || {};
     const subtype = q.subtype || inner.type || 'free-response';
     let qPart = '';
@@ -23286,7 +23374,7 @@ function qeReadCurrentQ() {
     if (QE.pendingAudio !== undefined) { if (QE.pendingAudio === null) delete q.audioData; else q.audioData = QE.pendingAudio; }
   } else {
     // non-listening: rimuovi residui listening + tutti i campi-contenuto, poi riassegna quelli del tipo corrente
-    ['question','subtype','audioData','ttsText','ttsRate'].forEach(function(k){ delete q[k]; });
+    ['question','subtype','audioData'].forEach(function(k){ delete q[k]; });  // ttsText resta: audio della scena
     QE_CONTENT_KEYS.forEach(function(k){ delete q[k]; });
     var mainBody = document.querySelector('[data-scope="main"]');
     var frag = qeReadBody(mainBody);
