@@ -1038,6 +1038,7 @@ const CONFIG = {
       <span id="live-nolistening-badge" style="display:none;font-size:11px;font-weight:800;padding:3px 10px;border-radius:20px;background:#ede9ff;color:#4c1d95;border:1.5px solid #c4b5fd;" title="In questa sessione le domande di ascolto sono escluse e non contano nel punteggio">🔇 Listening escluso</span>
       <button class="btn btn-sm" id="btn-show-code" onclick="showCodeScreen()" title="Mostra codice a schermo intero">🖥️ Mostra codice</button>
       <button class="btn btn-sm" onclick="reloadLiveSession()" title="Ricarica la lista studenti e riconnetti il listener">🔄 Ricarica</button>
+      <button class="btn btn-sm" id="btn-polls" onclick="openPollResults()" style="display:none;" title="Cosa ha risposto la classe ai sondaggi (si aggiorna da solo)">📊 Sondaggi</button>
       <button class="btn btn-sm" id="btn-launch-all-lobby" onclick="launchAllLobby()" title="Avvia tutti gli alunni in attesa (lobby)" style="display:none;">▶ Avvia tutti</button>
       <span id="live-opened-badge" style="display:none;font-size:11px;font-weight:800;padding:3px 10px;border-radius:20px;background:#dcfce7;color:#166534;border:1.5px solid #86efac;" title="Hai gia' accettato un alunno: chi arriva adesso entra subito, senza attesa">🔓 Sessione aperta</span>
       <span id="ll-model-badge-live" style="display:inline-flex;align-items:center;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:#f0fdf4;color:#065f46;border:1.5px solid #86efac;cursor:pointer;" onclick="openApiKeyModal()" title="Modello AI attivo — clicca per cambiare">🤖 —</span>
@@ -1396,6 +1397,16 @@ const CONFIG = {
 <!-- ════════════════════
      MODAL: BACHECA CLASSE
      ════════════════════ -->
+<div id="modal-polls" class="modal-overlay hidden" onclick="if(event.target===this)closePollResults()">
+  <div class="modal-box" style="max-width:640px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <h3 style="font-size:16px;font-weight:700;margin:0;">📊 Sondaggi — risposte della classe</h3>
+      <button class="btn btn-ghost btn-sm" onclick="closePollResults()">✕</button>
+    </div>
+    <div id="poll-results-body"></div>
+  </div>
+</div>
+
 <div id="modal-bacheca" class="modal-overlay hidden" onclick="if(event.target===this)closeBacheca()">
   <div class="modal-box" style="max-width:560px;max-height:88vh;display:flex;flex-direction:column;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-shrink:0;">
@@ -2307,7 +2318,7 @@ function _actIdxEntry(a) {
   const tagPts = [];
   let totalPts = 0;
   qs.forEach(q => {
-    const p = q.points || 1;
+    const p = _qPts(q);
     totalPts += p;
     if (!q.tag) return;
     const t = tagPts.find(x => x.t === q.tag);
@@ -3234,7 +3245,7 @@ function renderActivitiesGrouped(actArr, activeFilter) {
       const badges = (a.classes || []).map(classBadgeHtml).join('');
       // a = voce dell'indice leggero (qCount/totalPts/tagPts); a.questions solo per compatibilità
       const qCount = a.questions ? a.questions.length : (a.qCount || 0);
-      const totalPts = a.questions ? a.questions.reduce((s, q) => s + (q.points || 1), 0) : (a.totalPts || 0);
+      const totalPts = a.questions ? a.questions.reduce((s, q) => s + _qPts(q), 0) : (a.totalPts || 0);
       const safeId = id.replace(/['"]/g, '');
       const tagVal = esc(a.topicTag || '');
       const tagPillsHtml = _actTagPills(a.questions, a.tagPts);
@@ -3331,7 +3342,7 @@ function _actTagPills(questions, tagPts) {
   questions.forEach(q => {
     if (!q.tag) return;
     if (!totals[q.tag]) totals[q.tag] = 0;
-    totals[q.tag] += (q.points || 1);
+    totals[q.tag] += _qPts(q);
   });
   const tags = Object.keys(totals);
   if (!tags.length) return '';
@@ -3530,7 +3541,7 @@ function _uploadParseActivity(raw, opts) {
     if (n && typeof vpSrc[k] === 'string' && vpSrc[k].trim()) versionPassages[n] = vpSrc[k];
   });
 
-  const fixQs = qs => qs.filter(q => q && q.type).map(q => { if (!q.points) q.points = 10; return q; });
+  const fixQs = qs => qs.filter(q => q && q.type).map(q => { if (!q.points && !_qIsPoll(q)) q.points = 10; return q; });
   const mainQs = _hasMain ? fixQs(_vkQs(questions, 'lt', 'dsaLargeText')) : [];
   if (_hasMain && !mainQs.length) throw new Error('Nessuna domanda valida (manca il campo "type").');
   mainQs.forEach(q => _autoTagQuestion(q));
@@ -3826,6 +3837,7 @@ function renderAddForm(type) {
       <div class="form-group"><label>Risposta corretta</label>
         <select id="qf-correct"><option value="0">A</option><option value="1">B</option><option value="2">C</option><option value="3">D</option></select>
       </div>
+      <div class="form-group"><label style="font-size:12px;cursor:pointer;"><input type="checkbox" id="qf-poll" onchange="var c=document.getElementById('qf-correct');if(c)c.disabled=this.checked;"> 📊 Sondaggio: nessuna risposta giusta, non conta nel punteggio (es. "Hai capito?")</label></div>
       <div class="form-group" id="qf-image-field-container"></div>
       <div class="form-group"><label>⭐ Punti per questa domanda</label><input type="number" id="qf-points" value="1" min="0.5" max="100" step="0.5" style="width:80px;"></div>
       <button class="btn btn-primary btn-block" onclick="addQuestion()">+ Aggiungi</button>`;
@@ -4370,6 +4382,7 @@ async function addQuestion() {
     const opts = ['qf-a','qf-b','qf-c','qf-d'].map(id => v(id)).filter(Boolean);
     if (opts.length < 2) return alert('Inserisci almeno 2 opzioni');
     q = { type, text, options: opts, correct: parseInt(v('qf-correct')), points: parseFloat(v('qf-points'))||10 };
+    if (document.getElementById('qf-poll')?.checked) { delete q.correct; q.poll = true; q.points = 0; }
 
   } else if (type === 'cloze') {
     const text = v('qf-text');
@@ -4498,7 +4511,7 @@ function updateFilaAHeader() {
   const stats = document.getElementById('builder-fila-a-stats');
   if (!stats) return;
   const n = S.questions.length;
-  const tot = S.questions.reduce((s, q) => s + (q.points || 1), 0);
+  const tot = S.questions.reduce((s, q) => s + _qPts(q), 0);
   stats.textContent = n === 0 ? 'Nessuna domanda' : `${n} domand${n === 1 ? 'a' : 'e'} · ${tot} pt`;
 }
 function toggleFilaASection() {
@@ -5044,7 +5057,7 @@ renderQList = function() {
 
 function qPreview(q) {
   const imgTag = q.image ? '🖼️ ' : '';
-  if (q.type === 'multiple-choice') return imgTag + esc(q.text) + (q.options ? ' → [' + q.options.map(esc).join(', ') + ']' : '');
+  if (q.type === 'multiple-choice') return imgTag + (q.poll ? '📊 ' : '') + esc(q.text) + (q.options ? ' → [' + q.options.map(esc).join(', ') + ']' : '');
   if (q.type === 'cloze') return imgTag + esc(_qText(q));
   if (q.type === 'matching') return imgTag + 'Coppie: ' + (q.left || []).map(esc).join(', ');
   if (q.type === 'free-response') return imgTag + esc(q.text);
@@ -5422,7 +5435,8 @@ function getEditFormHTML(q, forcedType) {
       fg+'<label>Opzione B</label><input type="text" id="qf-b" value="'+esc(q.options&&q.options[1]||'')+'"></div>'+
       fg+'<label>Opzione C</label><input type="text" id="qf-c" value="'+esc(q.options&&q.options[2]||'')+'"></div>'+
       fg+'<label>Opzione D</label><input type="text" id="qf-d" value="'+esc(q.options&&q.options[3]||'')+'"></div>'+
-      fg+'<label>Risposta corretta</label><select id="qf-correct">'+sel+'</select></div>'+
+      fg+'<label>Risposta corretta</label><select id="qf-correct"'+(q.poll?' disabled':'')+'>'+sel+'</select></div>'+
+      fg+'<label style="font-size:12px;cursor:pointer;"><input type="checkbox" id="qf-poll"'+(q.poll?' checked':'')+' onchange="var c=document.getElementById(\'qf-correct\');if(c)c.disabled=this.checked;"> 📊 Sondaggio: nessuna risposta giusta, non conta nel punteggio (es. "Hai capito?")</label></div>'+
       fg+'<label>🖼️ Immagine (opzionale)</label>'+
       '<div id="qf-image-field-container"></div>'+
       fg+'<label>⭐ Punti</label><input type="number" id="qf-points" value="'+(q.points||1)+'" min="0.5" max="100" step="0.5" style="width:80px;"></div>';
@@ -5582,6 +5596,7 @@ async function buildQFromCurrentForm(type) {
     const opts = ['qf-a','qf-b','qf-c','qf-d'].map(id => v(id)).filter(Boolean);
     if (opts.length < 2) return alert('Inserisci almeno 2 opzioni'), null;
     q = { type, text, options: opts, correct: parseInt(v('qf-correct')), points: pts };
+    if (document.getElementById('qf-poll')?.checked) { delete q.correct; q.poll = true; q.points = 0; }
   } else if (type === 'cloze') {
     const text = v('qf-text'); if (!text) return alert('Inserisci il testo'), null;
     q = { type, text, answers: v('qf-answers').split('\n').map(s=>s.trim()).filter(Boolean), hint: v('qf-hint'), points: pts };
@@ -6319,6 +6334,7 @@ async function openLive(code, activityId, roster, silent) {
     sessionMode: sess.mode
   });
   S.liveActivity = _sessFilterActivity(S.liveActivity, sess);
+  _pollUpdateButton();
   S.liveNoListening = !!sess.noListening;
   const _nlBadge = document.getElementById('live-nolistening-badge');
   if (_nlBadge) _nlBadge.style.display = sess.noListening ? '' : 'none';
@@ -6432,6 +6448,7 @@ async function openLive(code, activityId, roster, silent) {
     S._liveResp = responses;
     if (S.liveTournament) { _tourRenderBoardSoon(); _tourAutoCheck(); }
     if (S.liveMode === 'teacher') _hintAutoCheck(responses);
+    if (!document.getElementById('modal-polls').classList.contains('hidden')) { try { _pollRender(); } catch(e) {} }
     try {
       renderLiveSidebar(responses);
     } catch(sidebarErr) {
@@ -7889,7 +7906,7 @@ function renderLiveSidebar(responses) {
         const qMaxOverridesPct = r.questionMaxOverrides || {};
         let earned = 0, maxPts = 0;
         qsForPct.forEach((qq, ii) => {
-          const origPts = qq.points || 1;
+          const origPts = _qPts(qq);
           const effMax  = qMaxOverridesPct[ii] != null ? Number(qMaxOverridesPct[ii]) : origPts;
           maxPts += effMax;
           if (manualScoresPct[ii] != null) {
@@ -8572,7 +8589,7 @@ function _llEffectiveScore(qs, r) {
   const qmo = (r && r.questionMaxOverrides) || {};
   let score = 0, maxPts = 0;
   (qs || []).forEach((q, i) => {
-    const op = q.points || 1;
+    const op = _qPts(q);
     const em = qmo[i] != null ? Number(qmo[i]) : op;
     maxPts += em;
     if (ms[i] != null) score += Number(ms[i]);
@@ -8609,7 +8626,7 @@ async function toggleExcludeQuestion(qi) {
       updates['excludedQuestions/' + qi]    = null;
     } else {
       const qs0 = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion, null, resp.answers);
-      const restanti = qs0.filter((q, i) => i !== qi && !exc[i] && (qmo[i] != null ? Number(qmo[i]) : (q.points || 1)) > 0).length;
+      const restanti = qs0.filter((q, i) => i !== qi && !exc[i] && (qmo[i] != null ? Number(qmo[i]) : _qPts(q)) > 0).length;
       if (!restanti) { alert('Non puoi escludere tutti gli esercizi: almeno uno deve restare nella valutazione.'); return; }
       const nota = prompt('Togliere l\'esercizio ' + (qi + 1) + ' dalla valutazione di questo alunno?\n\nNon conterà né nel punteggio né nel totale. Puoi reinserirlo in qualunque momento.\n\nPerché lo escludi? (facoltativo, si può scrivere anche dopo) La nota non la vede l\'alunno: la usa la valutazione di MyClass per il feedback in StudentApp.', '');
       if (nota === null) return;
@@ -9263,7 +9280,7 @@ function renderStudentResultsTeacher(name, response) {
 
   // Compute totals
   const answeredCount = answers.filter(a => a !== undefined && a !== null).length;
-  const totalPts = questions.reduce((s, q) => s + (q.points || 1), 0);
+  const totalPts = questions.reduce((s, q) => s + _qPts(q), 0);
   const totalTime = (submitted && joinedAt) ? Math.round((submitted - joinedAt) / 1000) : null;
   const fmtSecs = s => s == null ? '—' : s >= 60 ? Math.floor(s/60)+'m '+(s%60)+'s' : s+'s';
 
@@ -9309,7 +9326,7 @@ function renderStudentResultsTeacher(name, response) {
   const qMaxOverridesRST = response.questionMaxOverrides || {};
   let effectiveScore = 0;
   questions.forEach((qq, ii) => {
-    const _origPts = qq.points || 1;
+    const _origPts = _qPts(qq);
     const _effMax  = qMaxOverridesRST[ii] != null ? Number(qMaxOverridesRST[ii]) : _origPts;
     if (manualScoresRST[ii] != null) {
       // manualScore è già sulla scala _effMax
@@ -9346,7 +9363,7 @@ function renderStudentResultsTeacher(name, response) {
   }
   // Denominatore effettivo (somma dei max per domanda, considerando gli override)
   const effectiveTotalPts = questions.reduce((s, qq, ii) =>
-    s + (qMaxOverridesRST[ii] != null ? Number(qMaxOverridesRST[ii]) : (qq.points || 1)), 0);
+    s + (qMaxOverridesRST[ii] != null ? Number(qMaxOverridesRST[ii]) : _qPts(qq)), 0);
   const scoreBadge = '<span class="badge badge-blue">⭐ ' + effectiveScore + ' pt</span>';
   // Percentuale risposte corrette (badge colorato come nella sidebar)
   let pctBadgeCenter = '';
@@ -9444,7 +9461,7 @@ function renderStudentResultsTeacher(name, response) {
                 const aTxt = hasAns ? answerText(rq, ans) : '—';
                 const icon = !hasAns ? '⬜' : (rr.scorable ? (ok ? '✅' : '❌') : '📝');
                 // FIX #2: badge punteggio per ogni domanda — legge manualScores/aiScores del recupero
-                const rPts = rq.points || 1;
+                const rPts = _qPts(rq);
                 const hEntryMs = hEntry.manualScores || {};
                 const hEntryAs = hEntry.aiScores    || {};
                 const rManual  = hEntryMs[ri] != null ? Number(hEntryMs[ri]) : null;
@@ -9599,8 +9616,9 @@ function _answerScoreTag(q, answer, r) {
   const hasAnswer = !_pdfqEmpty(answer) &&
     (typeof answer !== 'object' || (_pdfqArr(answer) || []).some(v => !_pdfqEmpty(v)));
   if (!hasAnswer) return '';
+  if (_qIsPoll(q)) return pill('📊 sondaggio', '#0369a1', '#e0f2fe');
   if (!r || !r.scorable) return pill('📝 da valutare', 'var(--muted)', '#f0ede8');
-  const qPts = q.points || 1;
+  const qPts = _qPts(q);
   if (r.correct) return pill('✓ ' + qPts + ' pt', 'var(--success)', 'var(--success-light)');
   if ((r.correctCount || 0) > 0 && r.totalCount) {
     const sub = q.type === 'listening' ? (q.subtype || q.question?.type) : q.type;
@@ -9625,7 +9643,7 @@ function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedbac
   let scoreTag = _answerScoreTag(q, answer, baseR);
 
   // Score override row — sempre visibile al docente
-  const qPointsEff = q.points || 1;
+  const qPointsEff = _qPts(q);
   // Max corrente (originale o override docente)
   const currentMax = qMaxOverride != null ? qMaxOverride : qPointsEff;
   const autoScore = baseR.scorable
@@ -9657,7 +9675,9 @@ function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedbac
     ? '<button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 10px;" onclick="toggleExcludeQuestion(' + i + ')" title="Togli questo esercizio dalla valutazione dell\'alunno (non conta né nel punteggio né nel massimo)">🚫 Escludi</button>'
     : '';
 
-  const overrideRow = excluded
+  const overrideRow = _qIsPoll(q)
+    ? '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);font-size:12px;color:#0369a1;font-weight:700;">📊 Sondaggio: non ha una risposta giusta e non conta nel punteggio.</div>'
+    : excluded
     ? '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
         '<span style="font-size:12px;font-weight:700;color:#475569;">🚫 Esercizio escluso dalla valutazione — non conta nel punteggio né nel totale</span>' +
         '<button class="btn btn-sm btn-primary" style="font-size:11px;padding:3px 10px;margin-left:auto;" onclick="toggleExcludeQuestion(' + i + ')" title="Rimetti l\'esercizio nella valutazione con il punteggio che aveva">↩ Reinserisci</button>' +
@@ -9694,7 +9714,7 @@ function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedbac
   const detailBtn = '<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); openQuestionDetailTeacher(' + i + ')" title="Vedi dettaglio domanda" style="font-size:11px;padding:2px 8px;">🔍</button>';
   return '<div class="answer-card" style="border-color:' + borderColor + ';' + (excluded ? 'border-style:dashed;background:#f8fafc;' : '') + '">' +
     '<div class="answer-card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">' +
-      '<span>' + (i+1) + '. ' + typeLabel(q.type).toUpperCase() + ' — ' + esc(qPreviewText.substring(0,60)) + (qPreviewText.length>60?'…':'') + '</span>' +
+      '<span>' + (i+1) + '. ' + (_qIsPoll(q) ? 'SONDAGGIO' : typeLabel(q.type).toUpperCase()) + ' — ' + esc(qPreviewText.substring(0,60)) + (qPreviewText.length>60?'…':'') + '</span>' +
       '<span style="display:flex;gap:6px;align-items:center;">' + scoreTag + timeTag + detailBtn + '</span>' +
     '</div>' +
     '<div class="answer-card-body">' + (excluded ? '<div style="opacity:0.55;">' + body + '</div>' : body) + overrideRow + '</div>' +
@@ -9884,7 +9904,7 @@ async function closeSession() {
     const respSnap = await db.ref('livelearn/responses/' + S.liveCode).get();
     const responses = respSnap.val() || {};
     const questions = S.liveActivity?.questions || [];
-    const maxPts = questions.reduce((s, q) => s + (q.points || 1), 0);
+    const maxPts = questions.reduce((s, q) => s + _qPts(q), 0);
     const forcedAt = Date.now();
 
     const forcedWrites = [];
@@ -9980,7 +10000,7 @@ async function _retroForcedSubmit(code) {
 
   const actVal = sessData.activityId ? await _actGet(sessData.activityId) : null;
   const questions = _sessFilterActivity(actVal, sessData)?.questions || S.liveActivity?.questions || [];
-  const maxPts = questions.reduce((s, q) => s + (q.points || 1), 0);
+  const maxPts = questions.reduce((s, q) => s + _qPts(q), 0);
 
   const respSnap = await db.ref('livelearn/responses/' + code).get();
   const responses = respSnap.val() || {};
@@ -10350,7 +10370,7 @@ async function studentEnter() {
   if (session.shuffleOpts) {
     questions = questions.map(q => {
       // MC top-level
-      if (q.type === 'multiple-choice') {
+      if (q.type === 'multiple-choice' && !q.poll) {
         const indexed = (q.options||[]).map((o, i) => ({ o, i }));
         indexed.sort(() => Math.random() - 0.5);
         const optOrigMap = indexed.map(x => x.i);
@@ -11076,7 +11096,7 @@ function _listenForStudentStart(code, safeName) {
             // Riapplica shuffleOpts alle domande della nuova versione
             if (updatedSess.shuffleOpts) {
               _newQs = _newQs.map(q => {
-                if (q.type === 'multiple-choice') {
+                if (q.type === 'multiple-choice' && !q.poll) {
                   const _idx = (q.options||[]).map((o, i) => ({ o, i }));
                   _idx.sort(() => Math.random() - 0.5);
                   const _oMap = _idx.map(x => x.i);
@@ -11782,6 +11802,64 @@ function _mcNormalizeActivity(act) {
   });
   return act;
 }
+// Sondaggio (09/2026): scelta multipla senza risposta giusta, "poll": true e niente
+// "correct". Non conta nel punteggio (né nei punti fatti né nel totale), non si colora
+// di giusto/sbagliato e le opzioni non si mescolano. Il docente vede le risposte
+// della classe con 📊 Sondaggi nella sessione live.
+function _qIsPoll(q) { return !!(q && q.type === 'multiple-choice' && q.poll); }
+// Punti massimi di una domanda: 0 per i sondaggi, altrimenti points (1 se manca)
+function _qPts(q) { return _qIsPoll(q) ? 0 : ((q && q.points) || 1); }
+// Risultati dei sondaggi nella sessione live. Un sondaggio = stesso testo e stesse
+// opzioni: le versioni (DSA, PEI, Fila B…) che lo ripetono si sommano.
+function _pollKey(q) { return String(q.text || '') + '|' + _mcOpts(q).join('|'); }
+function _pollList(act) {
+  const out = [], seen = {};
+  [act && act.questions].concat(Object.values((act && act.versions) || {})).forEach(qs => {
+    (Array.isArray(qs) ? qs : fbArr(qs) || []).forEach(q => {
+      if (!_qIsPoll(q) || seen[_pollKey(q)]) return;
+      const opts = _mcOpts(q);
+      seen[_pollKey(q)] = { q, counts: opts.map(() => 0), names: opts.map(() => []), n: 0 };
+      out.push(seen[_pollKey(q)]);
+    });
+  });
+  return { list: out, byKey: seen };
+}
+function _pollUpdateButton() {
+  const b = document.getElementById('btn-polls');
+  if (b) b.style.display = _pollList(S.liveActivity).list.length ? '' : 'none';
+}
+function _pollRender() {
+  const box = document.getElementById('poll-results-body');
+  if (!box) return;
+  const { list, byKey } = _pollList(S.liveActivity), resp = S._liveResp || {};
+  Object.keys(resp).forEach(k => {
+    const r = resp[k];
+    if (!r || r.removed || !r.answers) return;
+    const answers = fbArr(r.answers) || [];
+    getStudentAssignedQuestions(k, r.name || k, r.aliasOf, r.studentVersion, null, r.answers).forEach((q, i) => {
+      const p = _qIsPoll(q) ? byKey[_pollKey(q)] : null;
+      const oi = p ? _mcIndexOf(q, answers[i]) : null;
+      if (oi == null || oi < 0 || oi >= p.counts.length) return;
+      p.counts[oi]++; p.names[oi].push(r.name || k); p.n++;
+    });
+  });
+  if (!list.length) { box.innerHTML = '<p class="text-muted">Questa attività non ha sondaggi.</p>'; return; }
+  box.innerHTML = list.map((p, pi) => {
+    const rows = _mcOpts(p.q).map((o, oi) => {
+      const c = p.counts[oi], pct = p.n ? Math.round(c / p.n * 100) : 0;
+      return '<div style="margin:8px 0;">' +
+        '<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;"><span>' + esc(o) + '</span><span>' + c + (p.n ? ' · ' + pct + '%' : '') + '</span></div>' +
+        '<div style="height:10px;background:#f0ede8;border-radius:6px;overflow:hidden;margin-top:3px;"><div style="height:100%;width:' + pct + '%;background:#0ea5e9;border-radius:6px;"></div></div>' +
+        (c ? '<div style="font-size:11px;color:var(--muted);margin-top:2px;">' + p.names[oi].map(esc).join(', ') + '</div>' : '') +
+      '</div>';
+    }).join('');
+    return '<div style="border:2px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:12px;">' +
+      '<div style="font-size:12px;color:var(--muted);font-weight:800;margin-bottom:4px;">SONDAGGIO ' + (pi + 1) + ' · ' + p.n + ' rispost' + (p.n === 1 ? 'a' : 'e') + '</div>' +
+      '<div style="font-size:14px;margin-bottom:6px;">' + richText(p.q.text || '') + '</div>' + rows + '</div>';
+  }).join('');
+}
+function openPollResults() { _pollRender(); document.getElementById('modal-polls').classList.remove('hidden'); }
+function closePollResults() { document.getElementById('modal-polls').classList.add('hidden'); }
 function _evalMC(q, a, pts) {
   const ci = _mcCorrectIdx(q);
   const ai = _mcIndexOf(q, a);
@@ -11790,6 +11868,7 @@ function _evalMC(q, a, pts) {
 }
 
 function evaluateAnswer(q, a) {
+  if (_qIsPoll(q)) return {scorable:false,correct:false,points:0,poll:true,detail:''};
   const pts = q.points || 1;
   if (q.type === 'multiple-choice') return _evalMC(q, a, pts);
   if (q.type === 'cloze')       return _evalCloze(q.answers||[], a, pts);
@@ -11841,13 +11920,13 @@ function showFeedbackAndAdvance() {
     const el = document.getElementById(id); if (el) el.style.display = 'none';
   });
   document.getElementById('s-question-area').querySelectorAll('button,input,textarea').forEach(el=>el.disabled=true);
-  if (q.type==='multiple-choice') {
+  if (q.type==='multiple-choice' && !q.poll) {
     document.querySelectorAll('.option-btn').forEach((btn,i)=>{ if(i===q.correct) btn.classList.add('correct'); else if(i===a) btn.classList.add('wrong'); });
   }
   const fbArea = document.getElementById('s-feedback-area');
   if (fbArea) {
     const isPartial = r.partial && typeof r.earnedPoints === 'number' && r.earnedPoints > 0;
-    const icon = r.scorable ? (r.correct ? '✅' : (isPartial ? '🔶' : '❌')) : '💬';
+    const icon = r.poll ? '📊' : r.scorable ? (r.correct ? '✅' : (isPartial ? '🔶' : '❌')) : '💬';
     const sub4fb = q.type === 'listening' ? (q.subtype || q.question?.type) : null;
     const unitFb = (q.type === 'matching' || sub4fb === 'matching') ? 'coppie'
       : (q.type === 'reorder' || sub4fb === 'reorder') ? 'frasi'
@@ -11858,6 +11937,7 @@ function showFeedbackAndAdvance() {
           : (isPartial
               ? `Parziale: +${r.earnedPoints}/${r.points} pt (${r.correctCount}/${r.totalCount} ${unitFb})`
               : 'Sbagliato'))
+      : r.poll ? 'Grazie! Risposta registrata.'
       : (q.type === 'free-response' || q.type === 'fill-blanks' ? "Risposta registrata! 🤖 Sarà valutata dall'AI alla consegna." : 'Risposta registrata!');
     const cardClass = r.scorable ? (r.correct ? 'correct' : (isPartial ? 'partial' : 'wrong')) : 'neutral';
     fbArea.innerHTML = `<div class="feedback-card ${cardClass}" style="border-radius:12px;padding:18px;margin-top:14px;text-align:center;${isPartial?'background:var(--warning-light);border:2px solid var(--warning);':''}">
@@ -12078,7 +12158,7 @@ async function submitAnswers(auto) {
   if (!S._retryLocal) _writeStudentHistory(finalScore, aiScores, questionTimes, submittedAt);
   // Piano Personalizzato: scrivi risultato se siamo in una sessione REC-/CON-/APP-
   if (S._planCode) {
-    const _totalPlanPts = (S.activity.questions||[]).reduce((s,q)=>s+(q.points||1),0);
+    const _totalPlanPts = (S.activity.questions||[]).reduce((s,q)=>s+_qPts(q),0);
     const _planPct = _totalPlanPts > 0 ? Math.round(finalScore / _totalPlanPts * 100) : null;
     if (_planPct !== null) _writePlanResult(_planPct, {
       score: finalScore, maxPts: _totalPlanPts, answers: payload.answers, aiScores: payload.aiScores, aiFeedbacks: payload.aiFeedbacks,
@@ -12109,14 +12189,14 @@ function _buildHistoryEntry(o) {
   // Massimo per domanda riscalato dal docente (0 = esercizio escluso). Lato
   // alunno e' sempre assente e il calcolo resta identico a prima.
   const qmo = o.questionMaxOverrides || null;
-  const maxDi = (q, i) => (qmo && qmo[i] != null) ? Number(qmo[i]) : (q.points || 1);
+  const maxDi = (q, i) => (qmo && qmo[i] != null) ? Number(qmo[i]) : _qPts(q);
 
   const maxPts = questions.reduce((s, q, i) => s + maxDi(q, i), 0);
   const pct    = maxPts > 0 ? Math.round((o.finalScore || 0) / maxPts * 100) : 0;
 
   const puntiDi = (q, i) => {
     if (manualScores && manualScores[i] != null) return Number(manualScores[i]);
-    const op = q.points || 1, em = maxDi(q, i);
+    const op = _qPts(q), em = maxDi(q, i);
     let raw;
     if (aiScores && aiScores[i] != null) raw = Number(aiScores[i]);
     else { try { raw = _earnedFrom(evaluateAnswer(q, answers[i])); } catch(e) { raw = 0; } }
@@ -12432,10 +12512,10 @@ function buildTagBreakdown(questions, answers, aiScores, manualScores, styleMode
   const tagData = {};
   questions.forEach((q, i) => {
     const tag = q.tag;
-    if (!tag) return;
+    if (!tag || _qIsPoll(q)) return;
     if (excluded && excluded[i]) return;
     if (!tagData[tag]) tagData[tag] = { earned: 0, total: 0, hasPending: false };
-    const pts = q.points || 1;
+    const pts = _qPts(q);
     tagData[tag].total += pts;
     const manual = manualScores ? manualScores[i] : null;
     const ai     = aiScores    ? aiScores[i]     : null;
@@ -12811,7 +12891,8 @@ function richText(s) {
 const _BLANK_RE = /___|\[\[([^\[\]\n]*\|[^\[\]\n]*)\]\]/g;
 function _countBlanks(text) { return (String(text || '').match(_BLANK_RE) || []).length; }
 // Riga per i prompt AI: così la sintassi [[a|b|c]] sopravvive alle rigenerazioni
-const _IC_AI_RULE = 'SCELTA DENTRO LA FRASE (cloze/fill-blanks, anche dentro un listening): nel testo [[a|b|c]] è uno spazio in cui lo studente clicca una delle opzioni (es. "[[Chloe|Noah|Lisa]] loves tennis."). Conta come uno spazio, esattamente come ___, nello stesso ordine del testo; answers[i] contiene il testo dell\'opzione giusta, che deve essere una delle opzioni. Se l\'originale usa [[...]] MANTIENI questa sintassi (doppie parentesi quadre, opzioni separate da |), anche cambiando frasi e opzioni; non trasformarla in ___ e non trasformare gli ___ in [[...]].';
+const _IC_AI_RULE = 'SCELTA DENTRO LA FRASE (cloze/fill-blanks, anche dentro un listening): nel testo [[a|b|c]] è uno spazio in cui lo studente clicca una delle opzioni (es. "[[Chloe|Noah|Lisa]] loves tennis."). Conta come uno spazio, esattamente come ___, nello stesso ordine del testo; answers[i] contiene il testo dell\'opzione giusta, che deve essere una delle opzioni. Se l\'originale usa [[...]] MANTIENI questa sintassi (doppie parentesi quadre, opzioni separate da |), anche cambiando frasi e opzioni; non trasformarla in ___ e non trasformare gli ___ in [[...]]. ' +
+  'SONDAGGIO: una multiple-choice con "poll": true (es. "Hai capito?") non ha una risposta giusta: copiala uguale, con "poll": true, senza "correct" e con "points": 0.';
 function _hasInlineChoice(text) { return /\[\[[^\[\]\n]*\|[^\[\]\n]*\]\]/.test(String(text || '')); }
 function _icOptions(inner) { return String(inner || '').split('|').map(s => s.trim()).filter(Boolean); }
 function _icNorm(s) { return String(s == null ? '' : s).trim().toLowerCase(); }
@@ -14262,11 +14343,11 @@ async function showStudentDone() {
   const earnedPts = S.studentScore || 0;
   // Esercizi tolti dalla valutazione (domande non giocate nel torneo, esclusioni del docente)
   const _dq = S._doneQmo || {};
-  const totalPts = Math.round(questions.reduce((s, q, i) => s + (_dq[i] != null ? Number(_dq[i]) : (q.points || 1)), 0) * 100) / 100;
+  const totalPts = Math.round(questions.reduce((s, q, i) => s + (_dq[i] != null ? Number(_dq[i]) : _qPts(q)), 0) * 100) / 100;
 
   // Conta domande automaticamente valutabili (per Gemini analysis)
   let scorableCount = 0;
-  questions.forEach(q => { if (evaluateAnswer(q, null).scorable !== false || q.type !== 'free-response') scorableCount++; });
+  questions.forEach(q => { if (!_qIsPoll(q) && (evaluateAnswer(q, null).scorable !== false || q.type !== 'free-response')) scorableCount++; });
 
   const pct = totalPts > 0 ? Math.round(earnedPts / totalPts * 100) : null;
   document.getElementById('done-pct').textContent = pct !== null ? pct + '%' : '—';
@@ -14290,7 +14371,7 @@ async function showStudentDone() {
     questions.map((q, i) => {
     const a = answers[i];
     const r = evaluateAnswer(q, a);
-    const pts = q.points || 1;
+    const pts = _qPts(q);
     const aiPts = aiScoresDone[i];
     const aiFb = aiFeedbacksDone[i];
 
@@ -14458,7 +14539,7 @@ async function restartAssignedActivity() {
       const r = (await ref.get()).val() || {};
       const prev = r.attempts ? (fbArr(r.attempts) || []).filter(Boolean) : [];
       if (r.submittedAt) {
-        const maxPts = qs.reduce((t, q) => t + (q.points || 1), 0);
+        const maxPts = qs.reduce((t, q) => t + _qPts(q), 0);
         const sc = Number(r.score) || 0;
         prev.push({
           score: sc, maxScore: maxPts, pct: maxPts > 0 ? Math.round(sc / maxPts * 100) : null,
@@ -14553,7 +14634,7 @@ async function runAIAnalysis(apiKey, questions, answers, pct, mode, isRecovery, 
   const summary = questions.map((q, i) => {
     const a   = answers[i];
     const r   = evaluateAnswer(q, a);
-    const pts = q.points || 1;
+    const pts = _qPts(q);
     let ans = '—';
     if (a !== undefined && a !== null) {
       const rd = _readableAnswer(q, a, fbArr);
@@ -14573,7 +14654,7 @@ async function runAIAnalysis(apiKey, questions, answers, pct, mode, isRecovery, 
              : overridePts >  0  ? 'PARZIALE(' + overridePts + '/' + pts + ')'
              : 'SBAGLIATA';
     } else if (!r.scorable) {
-      status = 'APERTA';
+      status = r.poll ? 'SONDAGGIO' : 'APERTA';
     } else if (r.correct) {
       status = 'CORRETTA';
     } else if (r.partial && r.earnedPoints > 0) {
@@ -14719,7 +14800,7 @@ async function runGlobalAnalysis(apiKey, origQuestions, origAnswers, origPct, mo
       else if (Array.isArray(a)) ans = a.join(' / ');
       else ans = String(a);
     }
-    const status = !r.scorable ? 'APERTA' : r.correct ? 'CORRETTA' : (r.partial && r.earnedPoints > 0 ? 'PARZIALE' : 'SBAGLIATA');
+    const status = r.poll ? 'SONDAGGIO' : !r.scorable ? 'APERTA' : r.correct ? 'CORRETTA' : (r.partial && r.earnedPoints > 0 ? 'PARZIALE' : 'SBAGLIATA');
     return 'Q' + (i+1) + ' (' + typeLabel(q.type) + '): "' + _qText(q, a).substring(0,60) + '" \u2192 ' + ans + ' \u2192 ' + status;
   }).join('\n');
 
@@ -14737,7 +14818,7 @@ async function runGlobalAnalysis(apiKey, origQuestions, origAnswers, origPct, mo
         else if (Array.isArray(a)) ans = a.join(' / ');
         else ans = String(a);
       }
-      const status = !r.scorable ? 'APERTA' : r.correct ? 'CORRETTA' : (r.partial && r.earnedPoints > 0 ? 'PARZIALE' : 'SBAGLIATA');
+      const status = r.poll ? 'SONDAGGIO' : !r.scorable ? 'APERTA' : r.correct ? 'CORRETTA' : (r.partial && r.earnedPoints > 0 ? 'PARZIALE' : 'SBAGLIATA');
       return 'Q' + (i+1) + ': "' + _qText(q, a).substring(0,55) + '" \u2192 ' + ans + ' \u2192 ' + status;
     }).join('\n');
     return 'RECUPERO ' + (idx+1) + ' (' + recPct + '):\n' + lines;
@@ -15039,9 +15120,11 @@ function _pdfqBody(q, type, a) {
     const opts = _mcOpts(q);
     // Stessa lettura di evaluateAnswer: punteggio e colori sempre d'accordo
     const sel = typeof a === 'object' ? null : _mcIndexOf(q, a);
-    const corr = _mcCorrectIdx(q);
+    const corr = _qIsPoll(q) ? null : _mcCorrectIdx(q);
     const rows = opts.map((o, oi) => {
       const isSel = sel === oi, isCorr = corr === oi;
+      if (corr === null && _qIsPoll(q)) return '<div class="pq-opt"><span class="pq-letter">' + (L[oi] || (oi + 1)) + '</span><span class="pq-otext">' + _pdfqEsc(o) + '</span>' +
+        (isSel ? '<span class="pq-tag" style="background:#e0f2fe;color:#0369a1;">● scelta dall\'alunno</span>' : '') + '</div>';
       const cls = isSel ? (isCorr ? 'pq-opt pq-opt-ok' : 'pq-opt pq-opt-ko') : (isCorr ? 'pq-opt pq-opt-right' : 'pq-opt');
       const tags = (isSel ? '<span class="pq-tag ' + (isCorr ? 'pq-tag-ok' : 'pq-tag-ko') + '">' + (isCorr ? '✓ scelta dall\'alunno' : '✗ scelta dall\'alunno') + '</span>' : '') +
         (isCorr && !isSel ? '<span class="pq-tag pq-tag-right">✓ risposta corretta</span>' : '');
@@ -15305,7 +15388,7 @@ async function exportStudentPDF(studentName) {
   // Ricalcola punteggio effettivo con questionMaxOverrides
   let score = 0;
   questions.forEach((q, i) => {
-    const _op = q.points || 1;
+    const _op = _qPts(q);
     const _em = qMaxOverridesData[i] != null ? Number(qMaxOverridesData[i]) : _op;
     if (manualScoresData[i] != null) score += Number(manualScoresData[i]);
     else if (aiScoresData[i] != null) score += _op > 0 ? Math.round(Number(aiScoresData[i]) / _op * _em * 100) / 100 : Number(aiScoresData[i]);
@@ -15313,7 +15396,7 @@ async function exportStudentPDF(studentName) {
   });
   score = Math.round(score * 100) / 100;
   // Denominatore effettivo (considera override)
-  const totalPts = questions.reduce((s, q, i) => s + (qMaxOverridesData[i] != null ? Number(qMaxOverridesData[i]) : (q.points || 1)), 0);
+  const totalPts = questions.reduce((s, q, i) => s + (qMaxOverridesData[i] != null ? Number(qMaxOverridesData[i]) : _qPts(q)), 0);
   const totalTime  = (submitted && joinedAt) ? Math.round((submitted - joinedAt)/1000) : null;
   const fmtSecs    = s => s==null?'—': s>=60?Math.floor(s/60)+'m '+(s%60)+'s':s+'s';
   const fmtDt      = ts => ts ? new Date(ts).toLocaleString('it-IT') : '—';
@@ -15327,12 +15410,13 @@ async function exportStudentPDF(studentName) {
     const manual = manualScoresData[qi];
     const ai = aiScoresData[qi];
     const r = evaluateAnswer(q, a);
-    const qP = q.points || 1;
+    const qP = _qPts(q);
     const effMax = qMaxOverridesData[qi] != null ? Number(qMaxOverridesData[qi]) : qP;
     const manualDisp = manual != null ? Number(manual) : null;
     const aiDisp     = ai     != null ? (qP > 0 ? Math.round(Number(ai) / qP * effMax * 100) / 100 : Number(ai)) : null;
     if (manualDisp != null) return { label: '✏️ Manuale', color: '#3b82f6', pts: manualDisp+'/'+effMax+' pt' };
     if (aiDisp     != null) return { label: '🤖 AI: '+aiDisp, color: '#6c47ff', pts: aiDisp+'/'+effMax+' pt' };
+    if (r.poll) return { label: '📊 Sondaggio', color: '#0369a1', pts: '—' };
     if (!r.scorable) return { label: 'Aperta', color: '#555', pts: '—' };
     if (r.correct) return { label: 'Corretta ✓', color: '#059669', pts: '+'+effMax+' pt' };
     if (r.partial && typeof r.earnedPoints === 'number' && r.earnedPoints > 0) {
@@ -15396,7 +15480,7 @@ async function exportStudentPDF(studentName) {
         hQs.forEach((rq, ri) => {
           const ra  = hAns[ri];
           const rr  = evaluateAnswer(rq, ra);
-          const rPts  = rq.points || 1;
+          const rPts  = _qPts(rq);
           // Legge punteggio e feedback AI dal recupero (salvati in recoveryHistory da recoveryFinish)
           const _hAiSc  = histEntry.aiScores   || {};
           const _hAiFb  = histEntry.aiFeedbacks || {};
@@ -15755,7 +15839,7 @@ async function saveScoreFromDetailModal(qi, maxPts) {
     const qmo = resp.questionMaxOverrides || {};
     let total = 0;
     qs.forEach((q2, i) => {
-      const _op = q2.points || 1;
+      const _op = _qPts(q2);
       const _em = qmo[i] != null ? Number(qmo[i]) : _op;
       if (ms[i] != null) {
         total += Number(ms[i]);
@@ -15826,7 +15910,7 @@ async function saveRecoveryScoreFromDetailModal(qi, maxPts) {
     hQs.forEach((hq, i) => {
       const mp  = hMs[i];
       const ap  = hAs[i];
-      const hPts = hq.points || 1;
+      const hPts = _qPts(hq);
       totalMax += hPts;
       if (mp != null) {
         totalEarned += Number(mp);
@@ -15904,7 +15988,7 @@ async function saveScoreOverride(qi, origPts) {
     const qmo  = resp.questionMaxOverrides || {};
     let total = 0;
     qs.forEach((q2, i) => {
-      const _op  = q2.points || 1;
+      const _op  = _qPts(q2);
       const _em  = qmo[i] != null ? Number(qmo[i]) : _op;
       if (ms[i] != null) {
         total += Number(ms[i]);
@@ -16151,14 +16235,14 @@ async function exportAllPDFCorretto() {
     // Punteggio effettivo con questionMaxOverrides
     let score = 0;
     questions.forEach((q, i) => {
-      const _op = q.points || 1;
+      const _op = _qPts(q);
       const _em = qMaxOverrides[i] != null ? Number(qMaxOverrides[i]) : _op;
       if (manualScores[i] != null)      score += Number(manualScores[i]);
       else if (aiScores[i] != null)     score += _op > 0 ? Math.round(Number(aiScores[i]) / _op * _em * 100) / 100 : Number(aiScores[i]);
       else { const r = evaluateAnswer(q, answers[i]); const raw = _earnedFrom(r); score += _op > 0 ? Math.round(raw / _op * _em * 100) / 100 : raw; }
     });
     score = Math.round(score * 100) / 100;
-    const totalPts  = questions.reduce((s, q, i) => s + (qMaxOverrides[i] != null ? Number(qMaxOverrides[i]) : (q.points || 1)), 0);
+    const totalPts  = questions.reduce((s, q, i) => s + (qMaxOverrides[i] != null ? Number(qMaxOverrides[i]) : _qPts(q)), 0);
     const pct       = totalPts > 0 ? Math.round(score / totalPts * 100) : 0;
     const pctColor  = pct >= 70 ? '#059669' : pct >= 50 ? '#d97706' : '#dc2626';
     const totalTime = (submittedAt && joinedAt) ? Math.round((submittedAt - joinedAt) / 1000) : null;
@@ -16172,7 +16256,7 @@ async function exportAllPDFCorretto() {
       const ms  = manualScores[i] != null ? Number(manualScores[i]) : null;
       const as_ = aiScores[i]     != null ? Number(aiScores[i])     : null;
       const r   = evaluateAnswer(q, a);
-      const qP  = q.points || 1;
+      const qP  = _qPts(q);
       const effMax = qMaxOverrides[i] != null ? Number(qMaxOverrides[i]) : qP;
       const autoPts = r.scorable ? (typeof r.earnedPoints === 'number' ? r.earnedPoints : (r.correct ? qP : 0)) : 0;
       // Scala al denominatore effettivo
@@ -16231,7 +16315,7 @@ async function exportAllPDFCorretto() {
             const rAiScore2    = _hAiSc2[ri] != null ? Number(_hAiSc2[ri]) : (_hAiSc2[String(ri)] != null ? Number(_hAiSc2[String(ri)]) : null);
             const rAiFeedback2 = _hAiFb2[ri] != null ? String(_hAiFb2[ri]) : (_hAiFb2[String(ri)] != null ? String(_hAiFb2[String(ri)]) : null);
             const rManual2     = _hMs2[ri] != null ? Number(_hMs2[ri]) : (_hMs2[String(ri)] != null ? Number(_hMs2[String(ri)]) : null);
-            const rqP = rq.points||1;
+            const rqP = _qPts(rq);
             // Priorità: manuale > AI > evaluateAnswer
             const rOv2 = rManual2 != null ? rManual2 : rAiScore2;
             const rOk2 = rOv2 != null ? rOv2 >= rqP : (rr.scorable && rr.correct);
@@ -19594,7 +19678,7 @@ async function startRecovery() {
   const wrongQs   = [];
   questions.forEach((q, i) => {
     const r = evaluateAnswer(q, answers[i]);
-    const pts = q.points || 1;
+    const pts = _qPts(q);
     const aiPts = S.aiScores?.[i];
     if (aiPts != null) {
       if (Number(aiPts) < pts) wrongQs.push(q);
@@ -20176,7 +20260,7 @@ async function recoveryFinish() {
 
   let earned = 0, total = 0;
   const results = qs.map((q, i) => {
-    const pts = q.points || 1;
+    const pts = _qPts(q);
     total += pts;
     // Usa AI score se disponibile, altrimenti valutazione locale
     if (recAiScores[i] != null) {
@@ -20295,7 +20379,7 @@ function showCombinedResults() {
   const aiFeedbacksDone = S.aiFeedbacks || {};
   const mode = S.sessionMode;
   const earnedPts = S.studentScore || 0;
-  const totalPts  = questions.reduce((s, q) => s + (q.points || 1), 0);
+  const totalPts  = questions.reduce((s, q) => s + _qPts(q), 0);
   const pct = totalPts > 0 ? Math.round(earnedPts / totalPts * 100) : null;
 
   document.getElementById('done-pct').textContent = pct !== null ? pct + '%' : '—';
@@ -20314,7 +20398,7 @@ function showCombinedResults() {
   const origRows = questions.map((q, i) => {
     const a = answers[i];
     const r = evaluateAnswer(q, a);
-    const pts = q.points || 1;
+    const pts = _qPts(q);
     const aiPts = aiScoresDone[i];
     const aiFb  = aiFeedbacksDone[i];
     let si, ptsLabel, bg, bdr;
@@ -20367,7 +20451,7 @@ function showCombinedResults() {
     const _recMs = histEntry.manualScores || {};
     const _recAs = histEntry.aiScores     || {};
     recQs.forEach((q, i) => {
-      const pts = q.points || 1; recTotal += pts;
+      const pts = _qPts(q); recTotal += pts;
       if (_recMs[i] != null) { recEarned += Number(_recMs[i]); return; }
       if (_recAs[i] != null) { recEarned += Number(_recAs[i]); return; }
       const r = evaluateAnswer(q, recAns[i]);
@@ -20384,7 +20468,7 @@ function showCombinedResults() {
         recQs.map((q, i) => {
           const a   = recAns[i];
           const r   = evaluateAnswer(q, a);
-          const pts = q.points || 1;
+          const pts = _qPts(q);
           const ok  = r.scorable && r.correct;
           const isPart = r.scorable && !r.correct && r.partial && typeof r.earnedPoints==='number' && r.earnedPoints>0;
           const earnedP = _earnedFrom(r);
@@ -21721,7 +21805,7 @@ function typeLabel(t) {
 function _qdRenderDetail(q, i, answer, opts) {
   opts = opts || {};
   const r = evaluateAnswer(q, answer);
-  const pts = q.points || 1;
+  const pts = _qPts(q);
   const aiPts = opts.aiScore;
   const manualPts = opts.manualScore;
   const aiFb = opts.aiFeedback;
@@ -23215,6 +23299,8 @@ function qeReadCurrentQ() {
   var tagEl = document.getElementById('qe-tag'); if (tagEl) { if (tagEl.value) q.tag = tagEl.value; else delete q.tag; }
   var dsaEl = document.getElementById('qe-dsa'); if (dsaEl) { if (dsaEl.checked) q.dsaLargeText = true; else delete q.dsaLargeText; }
   var hiEl = document.getElementById('qe-hideinstr'); if (hiEl) { if (hiEl.checked) q.hideInstruction = true; else delete q.hideInstruction; }
+  // Sondaggio: resta senza risposta giusta e a 0 punti (vale solo per la scelta multipla)
+  if (q.poll) { if (q.type === 'multiple-choice') { delete q.correct; q.points = 0; } else delete q.poll; }
   // Reference (PEI)
   var refEl = document.querySelector('#qedit-canvas textarea[data-field="ref"]');
   if (refEl) { if (refEl.value.trim()) q.referenceTable = refEl.value.trim(); else delete q.referenceTable; }
