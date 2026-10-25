@@ -1,0 +1,1184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>I Have To – Have to / Must</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&display=swap');
+
+  :root {
+    --bg: #0b0d17;
+    --surface: #141827;
+    --card: #1b2033;
+    --accent: #ff7a59;
+    --accent2: #4cc9f0;
+    --gold: #ffd166;
+    --text: #f3f5fa;
+    --muted: #9aa3b8;
+    --correct: #06d6a0;
+    --wrong: #ff3c5f;
+    --neg: #ff8fab;
+    --border: rgba(255,255,255,0.07);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; overflow-x: hidden; }
+  body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(ellipse 60% 40% at 20% 20%, rgba(255,122,89,0.13) 0%, transparent 60%), radial-gradient(ellipse 50% 50% at 80% 80%, rgba(76,201,240,0.10) 0%, transparent 60%); pointer-events: none; z-index: 0; }
+
+  .container { max-width: 780px; margin: 0 auto; padding: 24px 16px 60px; position: relative; z-index: 1; }
+  .header { text-align: center; margin: 30px 0 28px; padding-bottom: 22px; border-bottom: 1px solid var(--border); }
+  .header .eyebrow { font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  .header h1 { font-family: 'Bebas Neue', sans-serif; font-size: clamp(36px, 8vw, 64px); letter-spacing: 2px; line-height: 1; background: linear-gradient(135deg, #fff 30%, var(--accent) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 8px; }
+  .header .subtitle { color: var(--muted); font-size: 14px; font-weight: 300; }
+
+  .score-bar { display: flex; align-items: center; justify-content: center; gap: 24px; margin-bottom: 24px; padding: 12px 20px; background: var(--surface); border-radius: 12px; border: 1px solid var(--border); }
+  .score-item { text-align: center; }
+  .score-item .val { font-family: 'Bebas Neue', sans-serif; font-size: 28px; line-height: 1; }
+  .score-item .lbl { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
+  .score-item.correct .val { color: var(--correct); }
+  .score-item.wrong .val { color: var(--wrong); }
+  .score-item.total .val { color: var(--gold); }
+
+  .phase-tabs { display: flex; gap: 6px; margin-bottom: 24px; background: var(--surface); padding: 6px; border-radius: 12px; border: 1px solid var(--border); }
+  .phase-tab { flex: 1; padding: 10px 4px; border-radius: 8px; border: none; background: transparent; color: var(--muted); font-family: 'DM Sans', sans-serif; font-size: 11px; font-weight: 500; cursor: pointer; transition: all 0.2s; text-align: center; line-height: 1.3; }
+  .phase-tab.active { background: var(--accent); color: var(--bg); }
+  .phase-tab .phase-num { display: block; font-family: 'Bebas Neue', sans-serif; font-size: 18px; line-height: 1; margin-bottom: 2px; }
+  .phase-tab:not(.active):hover { color: var(--text); background: var(--border); }
+  .phase-panel { display: none; }
+  .phase-panel.active { display: block; }
+  .phase-title { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 1px; color: var(--accent); margin-bottom: 12px; }
+
+  .instruction { background: var(--card); border-left: 3px solid var(--accent2); border-radius: 0 10px 10px 0; padding: 14px 18px; margin-bottom: 20px; font-size: 14px; line-height: 1.6; }
+  .instruction strong { color: var(--gold); }
+
+  /* VIDEO */
+  .audio-box { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .audio-title { font-family: 'Bebas Neue', sans-serif; font-size: 20px; letter-spacing: 1px; color: var(--gold); }
+  .video-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: #000; }
+  .video-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .audio-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .video-link { font-size: 13px; color: var(--accent2); text-decoration: none; }
+  .gap-toggle { padding: 8px 14px; border-radius: 9px; border: 1px solid var(--accent2); background: rgba(76,201,240,0.1); color: var(--accent2); font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .gap-toggle.on { background: var(--accent2); color: var(--bg); }
+
+  /* RULES */
+  .rules-panel { background: var(--card); border-radius: 14px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 16px; }
+  .rules-head { padding: 10px 18px; background: rgba(255,122,89,0.15); font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+  .rules-body { padding: 16px 20px; display: none; font-size: 14px; line-height: 1.9; }
+  .rules-body.open { display: block; }
+  .rule-row { margin-bottom: 6px; }
+  .rtag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; margin-right: 6px; font-family: 'Space Mono', monospace; }
+  .rtag-1 { background: rgba(255,209,102,0.2); color: var(--gold); }
+  .rtag-2 { background: rgba(255,122,89,0.2); color: var(--accent); }
+  .rtag-3 { background: rgba(76,201,240,0.18); color: var(--accent2); }
+  .rule-table { width: 100%; border-collapse: collapse; margin: 6px 0 12px; font-size: 13px; }
+  .rule-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  .rule-table td:first-child { color: var(--muted); font-family: 'Space Mono', monospace; font-size: 11px; }
+  .rule-table b { color: var(--gold); }
+
+  /* LYRICS */
+  .lyrics-container { background: var(--card); border-radius: 14px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 16px; }
+  .lyrics-label { background: var(--accent2); padding: 6px 16px; font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--bg); font-weight: 700; }
+  .chorus-label { background: var(--accent); }
+  .intro-label { background: var(--muted); }
+  .lyrics-lines { padding: 14px 18px; display: grid; gap: 6px; }
+  .lyric-line { display: flex; gap: 12px; align-items: baseline; font-size: 15px; line-height: 1.5; cursor: pointer; padding: 4px 8px; border-radius: 6px; transition: background 0.15s; }
+  .lyric-line:hover { background: rgba(255,255,255,0.04); }
+  .lyric-line.highlighted { background: rgba(255,209,102,0.1); }
+  .lyric-q { color: var(--gold); }
+  .lyric-a { color: var(--correct); }
+  .lyric-a.neg { color: var(--neg); }
+  .lyric-c { color: var(--text); }
+  .lyric-i { color: var(--muted); font-style: italic; }
+  .hf { background: rgba(255,209,102,0.15); border-radius: 4px; padding: 0 3px; font-weight: 700; }
+  .hing { color: var(--accent); font-weight: 700; }
+  .cw { text-decoration: underline; text-decoration-color: var(--accent2); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+  .gap-mode .cw { color: transparent !important; background: rgba(255,255,255,0.07); border-bottom: 2px dashed var(--muted); border-radius: 4px; text-decoration: none; padding: 0 6px; }
+  .gap-mode .cw.shown { color: var(--accent2) !important; background: rgba(76,201,240,0.12); border-bottom-color: transparent; }
+
+  /* SPEAK — steps */
+  .speak-step-indicator { display: flex; align-items: center; justify-content: center; margin-bottom: 22px; }
+  .step-pip { width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: var(--muted); transition: all 0.25s; flex-shrink: 0; cursor: pointer; background: transparent; }
+  .step-pip.active { border-color: var(--accent); background: var(--accent); color: var(--bg); }
+  .step-pip.done { border-color: var(--accent2); color: var(--accent2); }
+  .step-line { width: 40px; height: 2px; background: var(--border); flex-shrink: 0; }
+  .step-line.done { background: var(--accent2); }
+  .speak-step { display: none; }
+  .speak-step.active { display: block; }
+  .speak-screen { display: none; }
+  .speak-screen.active { display: block; }
+
+  .activity-card { background: var(--card); border-radius: 14px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 16px; }
+  .activity-head { padding: 10px 18px; background: rgba(76,201,240,0.15); font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent2); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .activity-head.head-b { background: rgba(255,122,89,0.15); color: var(--accent); }
+  .activity-head.head-c { background: rgba(255,209,102,0.1); color: var(--gold); }
+  .act-badge { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent2); color: var(--bg); font-family: 'Bebas Neue', sans-serif; font-size: 14px; margin-right: 8px; }
+  .head-b .act-badge { background: var(--accent); }
+  .head-c .act-badge { background: var(--gold); }
+  .act-time { color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .activity-body { padding: 14px 16px; }
+  .act-text { font-size: 13px; line-height: 1.7; margin-bottom: 12px; }
+  .act-text em { color: var(--gold); font-style: normal; font-weight: 600; }
+  .act-text .y { color: var(--correct); font-weight: 600; }
+  .act-text .n { color: var(--neg); font-weight: 600; }
+  .mini-label { font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; margin: 14px 0 8px; }
+
+  .step-nav { display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-top: 18px; }
+  .step-count { font-size: 11px; color: var(--muted); font-family: 'Space Mono', monospace; margin-right: auto; }
+  .btn-ghost { padding: 10px 18px; background: transparent; border: 1px solid var(--border); border-radius: 9px; color: var(--muted); font-family: 'DM Sans', sans-serif; font-size: 13px; cursor: pointer; }
+  .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+  .btn-main { padding: 11px 24px; background: linear-gradient(135deg, var(--accent2), var(--accent)); border: none; border-radius: 9px; color: var(--bg); font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; transition: transform 0.15s; }
+  .btn-main:hover { transform: translateY(-1px); }
+  .btn-main:disabled { opacity: 0.4; cursor: default; transform: none; }
+
+  /* STEP A — clothes survey */
+  .who-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+  .who-row label { font-size: 12px; color: var(--muted); }
+  .txt-inp { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 13px; padding: 6px 14px; outline: none; width: 150px; }
+  .txt-inp:focus { border-color: var(--accent2); }
+  .chip { padding: 5px 12px; border-radius: 20px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 13px; cursor: pointer; font-family: 'DM Sans', sans-serif; font-weight: 600; }
+  .chip.on { border-color: var(--accent); background: rgba(255,122,89,0.16); color: var(--accent); }
+  .cl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .cl-item { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; transition: border-color 0.15s, background 0.15s; }
+  .cl-item.yes { border-color: var(--correct); background: rgba(6,214,160,0.07); }
+  .cl-item.no { border-color: var(--wrong); background: rgba(255,60,95,0.06); }
+  .cl-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .cl-label { font-size: 13px; line-height: 1.25; }
+  .cl-label small { display: block; font-size: 10px; color: var(--muted); font-family: 'Space Mono', monospace; }
+  .yn { display: flex; gap: 4px; flex-shrink: 0; }
+  .yn button { padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: transparent; font-size: 11px; font-weight: 700; cursor: pointer; color: var(--muted); font-family: 'DM Sans', sans-serif; }
+  .yn button.y-on { background: rgba(6,214,160,0.2); border-color: var(--correct); color: var(--correct); }
+  .yn button.n-on { background: rgba(255,60,95,0.2); border-color: var(--wrong); color: var(--wrong); }
+  .colours { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+  .col-dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.15); cursor: pointer; padding: 0; }
+  .col-dot.on { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+  .summary-box { background: var(--bg); border: 1px solid rgba(255,122,89,0.3); border-radius: 12px; padding: 12px 16px; margin-top: 14px; font-size: 15px; line-height: 1.7; }
+  .summary-box .sum-lbl { font-family: 'Space Mono', monospace; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); display: block; }
+  .summary-box .s1 { color: var(--correct); }
+  .summary-box .s3 { color: var(--accent2); }
+  .summary-box .sneg { color: var(--neg); }
+  .summary-box .empty { color: var(--muted); font-style: italic; font-size: 13px; }
+
+  /* STEP B — mystery person */
+  .role-select-btn { display: flex; align-items: center; gap: 16px; width: 100%; padding: 16px 20px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: 'DM Sans', sans-serif; cursor: pointer; transition: all 0.22s; margin-bottom: 12px; text-align: left; }
+  .role-select-btn:hover { border-color: var(--accent); background: rgba(255,122,89,0.08); transform: translateX(4px); }
+  .role-emoji-big { font-size: 34px; flex-shrink: 0; }
+  .role-text { flex: 1; }
+  .role-title { font-size: 16px; font-weight: 700; display: block; margin-bottom: 3px; }
+  .role-desc { font-size: 12px; color: var(--muted); display: block; line-height: 1.4; }
+  .question-template { background: var(--card); border-radius: 10px; border: 1px solid rgba(255,122,89,0.25); padding: 10px 16px; margin-bottom: 16px; font-size: 13px; line-height: 1.7; color: var(--muted); }
+  .question-template strong { color: var(--gold); }
+  .question-template em { color: var(--accent); font-style: normal; font-weight: 600; }
+  .q-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 18px; }
+  .q-item { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 13px; }
+  .q-item.yes { border-color: var(--correct); background: rgba(6,214,160,0.08); }
+  .q-item.no { border-color: var(--wrong); background: rgba(255,60,95,0.08); }
+  .q-item small { display: block; font-size: 10px; color: var(--muted); font-family: 'Space Mono', monospace; }
+  .q-item.lim-ask { cursor: pointer; }
+  .q-item.locked { opacity: 0.4; cursor: not-allowed; }
+  .lim-tap { font-size: 12px; font-weight: 700; color: var(--gold); white-space: nowrap; }
+  .people-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+  .person-btn { background: var(--card); border: 2px solid var(--border); border-radius: 12px; padding: 10px 6px 8px; cursor: pointer; transition: all 0.2s; text-align: center; font-family: 'DM Sans', sans-serif; color: var(--text); }
+  .person-btn:hover { border-color: var(--accent2); transform: translateY(-2px); }
+  .person-btn.selected { border-color: var(--gold); background: rgba(255,209,102,0.1); }
+  .person-btn.out { opacity: 0.22; filter: grayscale(1); }
+  .person-btn .pe { font-size: 28px; display: block; }
+  .person-btn .pn { font-size: 12px; font-weight: 700; display: block; margin: 2px 0 4px; }
+  .person-btn .pw { font-size: 15px; letter-spacing: 1px; line-height: 1.3; }
+  .still { font-size: 12px; color: var(--muted); margin: 0 0 14px; }
+  .still b { color: var(--gold); }
+  .mystery-card-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .mystery-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px 8px; text-align: center; cursor: pointer; transition: all 0.2s; }
+  .mystery-card:hover { border-color: var(--accent); background: rgba(255,122,89,0.08); transform: translateY(-3px); }
+  .mc-num { font-family: 'Bebas Neue', sans-serif; font-size: 40px; color: var(--gold); line-height: 1; }
+  .mc-q { font-size: 22px; color: var(--muted); margin-top: 2px; }
+  .char-card { background: var(--card); border-radius: 14px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 16px; animation: pop-in 0.3s ease; }
+  .char-card-head { padding: 18px; text-align: center; background: rgba(255,122,89,0.12); border-bottom: 1px solid var(--border); }
+  .char-card-emoji { font-size: 50px; display: block; margin-bottom: 6px; }
+  .char-card-name { font-family: 'Bebas Neue', sans-serif; font-size: 30px; color: var(--gold); letter-spacing: 1px; }
+  .char-card-sub { font-size: 12px; color: var(--muted); margin-top: 4px; font-family: 'Space Mono', monospace; }
+  .char-card-body { padding: 14px 18px; }
+  .char-card-hint { font-size: 13px; text-align: center; padding: 8px; margin-bottom: 10px; background: rgba(255,255,255,0.03); border-radius: 8px; line-height: 1.6; }
+  .char-card-hint b { color: var(--gold); }
+  .wear-row { display: flex; align-items: center; gap: 10px; padding: 7px 4px; font-size: 14px; border-bottom: 1px solid var(--border); }
+  .wear-row:last-child { border-bottom: none; }
+  .wear-row .wi { font-size: 18px; flex-shrink: 0; }
+  .wear-row .yes-text { color: var(--correct); }
+  .wear-row .no-text { color: var(--neg); }
+  .guess-result-box { background: var(--surface); border-radius: 14px; border: 1px solid var(--border); padding: 20px; text-align: center; margin-bottom: 16px; animation: pop-in 0.25s ease; }
+  .gr-emoji { font-size: 44px; display: block; margin-bottom: 8px; }
+  .gr-name { font-family: 'Bebas Neue', sans-serif; font-size: 26px; color: var(--gold); }
+  .gr-msg { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .lim-answer { margin: 0 0 14px; padding: 12px 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); font-size: 20px; font-weight: 700; text-align: center; }
+  .lim-answer.yes { color: var(--correct); border-color: var(--correct); }
+  .lim-answer.no { color: var(--neg); border-color: var(--neg); }
+  .speak-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+
+  /* STEP C — mime */
+  .mime-score { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .team { background: var(--surface); border: 2px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; transition: border-color 0.2s; }
+  .team.turn { border-color: var(--gold); background: rgba(255,209,102,0.07); }
+  .team .tn { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .team .tp { font-family: 'Bebas Neue', sans-serif; font-size: 34px; color: var(--gold); line-height: 1; }
+  .team .tr { font-size: 11px; color: var(--accent2); min-height: 15px; }
+  .mime-card { background: var(--bg); border: 2px dashed rgba(255,122,89,0.4); border-radius: 14px; padding: 22px 16px; text-align: center; min-height: 170px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px; }
+  .mime-card .me { font-size: 56px; line-height: 1; }
+  .mime-card .mt { font-family: 'Bebas Neue', sans-serif; font-size: 30px; letter-spacing: 1px; color: var(--gold); }
+  .mime-card .ms { font-size: 13px; color: var(--muted); }
+  .tries { font-size: 13px; color: var(--muted); text-align: center; margin-bottom: 10px; }
+  .tries b { color: var(--neg); }
+  .mime-btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .btn-yes { padding: 11px 18px; border-radius: 9px; border: 1px solid var(--correct); background: rgba(6,214,160,0.12); color: var(--correct); font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; }
+  .btn-no { padding: 11px 18px; border-radius: 9px; border: 1px solid var(--wrong); background: rgba(255,60,95,0.1); color: var(--neg); font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; }
+  .report-box { margin-top: 12px; padding: 12px 16px; background: rgba(76,201,240,0.08); border: 1px solid rgba(76,201,240,0.3); border-radius: 10px; font-size: 14px; line-height: 1.7; display: none; }
+  .report-box.show { display: block; }
+  .report-box b { color: var(--accent2); }
+  .report-box .s1 { color: var(--correct); font-weight: 700; }
+
+  /* DRILL */
+  .progress-wrap { background: var(--surface); border-radius: 4px; height: 4px; margin-bottom: 20px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--accent2), var(--accent)); transition: width 0.4s ease; }
+  .drill-card { background: var(--card); border-radius: 16px; padding: 28px 24px; border: 1px solid var(--border); margin-bottom: 16px; text-align: center; position: relative; overflow: hidden; }
+  .drill-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--accent2), var(--accent)); }
+  .drill-counter { font-family: 'Space Mono', monospace; font-size: 11px; color: var(--muted); letter-spacing: 2px; margin-bottom: 20px; }
+  .drill-question { font-family: 'Bebas Neue', sans-serif; font-size: clamp(22px, 5vw, 32px); letter-spacing: 1px; color: var(--gold); margin-bottom: 10px; line-height: 1.2; }
+  .drill-hint { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+  .drill-hint span { color: var(--accent2); font-weight: 600; }
+  .answer-options { display: grid; gap: 10px; max-width: 440px; margin: 0 auto; counter-reset: opt; }
+  .answer-btn { padding: 14px 20px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 500; cursor: pointer; transition: all 0.18s; text-align: left; }
+  .answer-btn:hover:not(:disabled) { border-color: var(--accent2); background: rgba(76,201,240,0.1); transform: translateX(4px); }
+  .answer-btn.correct-ans { border-color: var(--correct); background: rgba(6,214,160,0.12); color: var(--correct); }
+  .answer-btn.wrong-ans { border-color: var(--wrong); background: rgba(255,60,95,0.12); color: var(--wrong); }
+  .answer-btn:disabled { cursor: default; }
+  .feedback-msg { margin-top: 16px; font-size: 15px; font-weight: 600; min-height: 24px; }
+  .feedback-msg.ok { color: var(--correct); }
+  .feedback-msg.ko { color: var(--wrong); }
+  .next-btn { margin-top: 20px; padding: 12px 32px; background: linear-gradient(135deg, var(--accent2), var(--accent)); border: none; border-radius: 10px; color: var(--bg); font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 700; cursor: pointer; display: none; }
+  .next-btn.visible { display: inline-block; }
+
+  /* BUILD IT */
+  .build-area { background: var(--card); border-radius: 16px; padding: 24px; border: 1px solid var(--border); margin-bottom: 16px; }
+  .build-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .build-nav-btn { padding: 6px 14px; background: transparent; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 13px; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+  #build-nav-counter { font-family: 'Space Mono', monospace; font-size: 11px; color: var(--muted); letter-spacing: 2px; }
+  .build-prompt { font-size: 14px; color: var(--muted); margin-bottom: 8px; font-style: italic; }
+  .build-clue { font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: var(--gold); min-height: 32px; margin-bottom: 20px; letter-spacing: 0.5px; }
+  .build-display { background: var(--bg); border-radius: 10px; padding: 16px 18px; min-height: 56px; font-size: 18px; font-weight: 600; margin-bottom: 20px; border: 1px dashed var(--border); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .build-display .ph { color: var(--muted); font-size: 14px; font-weight: 400; }
+  .word-token { background: var(--accent); padding: 4px 10px; border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer; user-select: none; color: var(--bg); }
+  .word-bank { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .word-chip { background: var(--surface); border: 1px solid var(--border); padding: 8px 14px; border-radius: 8px; font-size: 14px; cursor: pointer; user-select: none; font-weight: 500; color: var(--text); font-family: 'DM Sans', sans-serif; }
+  .word-chip:hover:not(.used) { border-color: var(--accent2); background: rgba(76,201,240,0.12); }
+  .word-chip.used { opacity: 0.3; cursor: not-allowed; }
+  .build-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn-check { padding: 11px 24px; background: var(--accent); border: none; border-radius: 9px; color: var(--bg); font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; }
+
+  /* FREE */
+  .free-card { background: var(--card); border-radius: 14px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 12px; }
+  .free-card-head { padding: 10px 18px; background: rgba(76,201,240,0.15); font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent2); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .free-card-body { padding: 18px 20px; }
+  .role-task { font-size: 15px; line-height: 1.6; }
+  .role-task em { color: var(--gold); font-style: normal; font-weight: 600; }
+  .example-box { margin-top: 10px; padding: 10px 14px; background: rgba(255,255,255,0.04); border-radius: 8px; font-size: 14px; color: var(--muted); line-height: 1.7; }
+  .example-box .q { color: var(--gold); }
+  .example-box .a { color: var(--correct); }
+  .example-box .n { color: var(--neg); }
+  .situation { margin-top: 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .situation-out { flex: 1; min-width: 200px; padding: 10px 14px; border-radius: 10px; background: var(--bg); border: 1px solid rgba(255,209,102,0.3); font-size: 15px; font-weight: 600; color: var(--gold); }
+
+  /* FINAL */
+  .final-screen { text-align: center; padding: 40px 20px; background: var(--card); border-radius: 20px; border: 1px solid var(--border); }
+  .final-emoji { font-size: 64px; margin-bottom: 16px; }
+  .final-title { font-family: 'Bebas Neue', sans-serif; font-size: 48px; background: linear-gradient(135deg, var(--gold), var(--accent)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 8px; }
+  .final-sub { color: var(--muted); font-size: 15px; margin-bottom: 28px; }
+  .final-score-big { font-family: 'Bebas Neue', sans-serif; font-size: 80px; color: var(--gold); line-height: 1; margin-bottom: 4px; }
+  .restart-btn { padding: 14px 36px; background: linear-gradient(135deg, var(--accent2), var(--accent)); border: none; border-radius: 12px; color: var(--bg); font-family: 'DM Sans', sans-serif; font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 20px; }
+
+  /* MODALITÀ CLASSE (LIM) / SALA PC */
+  #mode-switch { position: fixed; top: 14px; right: 14px; z-index: 101; display: inline-flex; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 3px; backdrop-filter: blur(6px); font-family: 'DM Sans', sans-serif; }
+  #mode-switch button { border: none; background: transparent; color: #aaa; font-family: inherit; font-size: 13px; font-weight: 500; padding: 6px 12px; border-radius: 7px; cursor: pointer; }
+  #mode-switch button[aria-pressed="true"] { background: var(--gold); color: var(--bg); font-weight: 700; }
+  .lim-only { display: none !important; }
+  body.lim-mode .lim-only { display: block !important; }
+  body.lim-mode span.lim-only { display: inline !important; }
+  body.lim-mode .pc-only { display: none !important; }
+  body.lim-mode .role-select-btn.lim-only { display: flex !important; }
+  body.lim-mode .team .tp { cursor: pointer; }
+  .lim-note { background: rgba(255,209,102,0.08); border: 1px dashed var(--gold); border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; font-size: 14px; line-height: 1.6; }
+  .lim-note b { color: var(--gold); }
+  .pc-note { background: rgba(76,201,240,0.07); border: 1px dashed var(--accent2); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; line-height: 1.6; }
+  .pc-note b { color: var(--accent2); }
+  body.lim-mode .container { max-width: 1180px; zoom: 1.22; }
+  body.lim-mode .answer-options > button::before { counter-increment: opt; content: counter(opt, upper-alpha) ")  "; font-weight: 700; color: var(--gold); }
+
+  @keyframes pop-in { from { transform: scale(0.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .pop { animation: pop-in 0.25s ease; }
+  @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+  .shake { animation: shake 0.3s ease; }
+  @media (max-width: 600px) {
+    #mode-switch button { padding: 6px 8px; font-size: 12px; }
+    .phase-tab { font-size: 10px; }
+    .people-grid, .mystery-card-grid { grid-template-columns: repeat(2, 1fr); }
+    .cl-grid, .q-grid { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  button:focus-visible, .word-chip:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+  /* MODALI nel ritornello: obbligo · divieto · non necessario */
+  .m-ob { color: var(--accent2); font-weight: 700; }
+  .m-pr { color: var(--wrong); font-weight: 700; }
+  .m-nn { color: #b8c0ff; font-weight: 700; }
+  /* Listening mode: il colore della riga non deve suggerire Yes / No */
+  .gap-mode .lyric-a, .gap-mode .lyric-a.neg { color: var(--muted); }
+
+  /* STEP C — sign race */
+  .sign-btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 4px; }
+  .sign-btn { padding: 12px 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.15s; }
+  .sign-btn:hover:not(:disabled) { transform: translateY(-2px); }
+  .sign-btn.k-ob { border-color: var(--accent2); color: var(--accent2); }
+  .sign-btn.k-pr { border-color: var(--wrong); color: var(--wrong); }
+  .sign-btn.k-nn { border-color: #b8c0ff; color: #b8c0ff; }
+  .sign-btn.picked-ok { background: rgba(6,214,160,0.18); border-color: var(--correct); color: var(--correct); }
+  .sign-btn.picked-ko { background: rgba(255,60,95,0.15); }
+  .sign-btn:disabled { cursor: default; }
+  @media (max-width: 600px) { .sign-btns { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div style="position:fixed;top:14px;left:14px;z-index:100;">
+  <a href="index.html" style="display:inline-flex;align-items:center;gap:7px;padding:8px 16px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:10px;color:#aaa;text-decoration:none;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;backdrop-filter:blur(6px);">← Home</a>
+</div>
+<div id="mode-switch" role="group" aria-label="Modalità lezione">
+  <button type="button" data-mode="pc" onclick="setLessonMode('pc')">🖥️ Sala PC</button>
+  <button type="button" data-mode="lim" onclick="setLessonMode('lim')">📺 Classe (LIM)</button>
+</div>
+
+<div class="container">
+
+  <div class="header">
+    <div class="eyebrow">🎵 Have to · Must · Mustn't · Unit 7</div>
+    <h1>I Have To</h1>
+    <div class="subtitle">Do you have to…? · Short answers · must / mustn't / don't have to</div>
+  </div>
+
+  <div class="score-bar">
+    <div class="score-item correct"><div class="val" id="score-correct">0</div><div class="lbl">Correct</div></div>
+    <div class="score-item wrong"><div class="val" id="score-wrong">0</div><div class="lbl">Wrong</div></div>
+    <div class="score-item total"><div class="val" id="score-total">0</div><div class="lbl"><span class="pc-only">Total</span><span class="lim-only">Classe</span></div></div>
+  </div>
+
+  <div class="phase-tabs">
+    <button class="phase-tab active" data-phase="0" onclick="showPhase(0)"><span class="phase-num">1</span> Lyrics</button>
+    <button class="phase-tab" data-phase="speak" onclick="showPhase('speak')"><span class="phase-num">2</span> Speak</button>
+    <button class="phase-tab" data-phase="1" onclick="showPhase(1)"><span class="phase-num">3</span> Drill</button>
+    <button class="phase-tab" data-phase="2" onclick="showPhase(2)"><span class="phase-num">4</span> Build It</button>
+    <button class="phase-tab" data-phase="3" onclick="showPhase(3)"><span class="phase-num">5</span> Free</button>
+  </div>
+
+  <!-- ===================== PHASE 1: LYRICS ===================== -->
+  <div class="phase-panel active" id="phase-0">
+    <div class="lim-note lim-only">📺 <b>In classe:</b> video e testo alla LIM. <b>1° ascolto</b> con il <em>Listening mode</em>: spariscono le risposte brevi e i verbi del ritornello (<em>have to, must, mustn't, don't have to</em>); gli studenti li scrivono sul quaderno, poi un volontario tocca gli spazi alla LIM per la correzione. <b>2° ascolto:</b> canta tutta la classe — metà classe fa le domande, l'altra metà risponde; il ritornello tutti insieme.</div>
+    <div class="pc-note pc-only">🖥️ <b>A coppie:</b> mettete le cuffie (una a testa, o una coppia di cuffie con lo sdoppiatore). 1° ascolto con il <em>Listening mode</em>: scrivete le parole nascoste sul quaderno, poi toccate gli spazi per controllare. 2° ascolto: <b>A</b> canta le domande, <b>B</b> le risposte. Poi scambiatevi.</div>
+
+    <div class="audio-box">
+      <div class="audio-title">▶️ I Have To — the song</div>
+      <div class="video-wrap"><iframe src="https://drive.google.com/file/d/198j3whtLWQ4QnsxdvK9FKl_BpyP021IX/preview" allow="autoplay; fullscreen" allowfullscreen title="I Have To – song video"></iframe></div>
+      <div class="audio-row">
+        <button class="gap-toggle" id="gap-toggle" onclick="toggleGapMode()">🙈 Listening mode: nascondi le parole</button>
+        <a class="video-link" href="https://drive.google.com/file/d/198j3whtLWQ4QnsxdvK9FKl_BpyP021IX/view?usp=sharing" target="_blank" rel="noopener">Il video non parte? Aprilo su Google Drive ↗</a>
+      </div>
+    </div>
+
+    <div class="instruction">
+      🎵 Domande in <span style="color:var(--gold)">giallo</span>, risposte affermative in <span style="color:var(--correct)">verde</span>, negative in <span style="color:var(--neg)">rosa</span>. Nel ritornello: <span class="m-ob">have to / must</span> = obbligo, <span class="m-pr">mustn't</span> = divieto, <span class="m-nn">don't have to</span> = non è necessario.<br>
+      👀 Guarda le risposte: <strong>Do you…? → I do / I don't</strong> · <strong>Does he / she…? → he does / she doesn't</strong>.
+    </div>
+
+    <div class="rules-panel">
+      <div class="rules-head" onclick="toggleRules()">📋 Quick Rules — Have to / Must <span id="rules-toggle">▼ show</span></div>
+      <div class="rules-body" id="rules-body">
+        <div class="rule-row"><span class="rtag rtag-1">HAVE TO</span> soggetto + <strong>have to / has to</strong> + verbo base</div>
+        <table class="rule-table">
+          <tr><td>I / you / we / they</td><td><b>I have to</b> study</td><td><b>I don't have to</b> study</td><td><b>Do you have to</b> study?</td></tr>
+          <tr><td>he / she / it</td><td><b>She has to</b> study</td><td><b>She doesn't have to</b> study</td><td><b>Does she have to</b> study?</td></tr>
+        </table>
+        <div class="rule-row"><span class="rtag rtag-2">SHORT ANSWERS</span> Do you have to…? — <span style="color:var(--correct)">Yes, I do.</span> / <span style="color:var(--neg)">No, I don't.</span> · Does he have to…? — <span style="color:var(--correct)">Yes, he does.</span> / <span style="color:var(--neg)">No, he doesn't.</span></div>
+        <div class="rule-row"><span class="rtag rtag-3">MUST</span> uguale per tutte le persone, <strong>senza to</strong>: <em>I must try · She must try</em> · negativa: <strong>mustn't</strong> → <em>You mustn't judge the others.</em></div>
+        <div class="rule-row"><span class="rtag rtag-1">SIGNIFICATO</span> <span class="m-ob">must / have to</span> = è obbligatorio ✅ · <span class="m-pr">mustn't</span> = è vietato ⛔ · <span class="m-nn">don't have to</span> = non è necessario, ma puoi farlo 🆓<br>→ <em>You <b>mustn't</b> run in the corridor.</em> (è vietato) · <em>You <b>don't have to</b> wear a uniform.</em> (non serve)</div>
+        <div class="rule-row"><span class="rtag rtag-2">MUST o HAVE TO?</span> <strong>must</strong> = lo sento io come un dovere: <em>I must do my best!</em> · <strong>have to</strong> = una regola che viene da fuori: <em>I have to wear a uniform at school.</em></div>
+        <div class="rule-row" style="color:var(--muted);font-size:13px;">⚠️ <s>She have to</s> · <s>Does she has to</s> · <s>I must to go</s> · <s>She musts</s> · <s>I don't must</s> · <s>Do you must…?</s></div>
+      </div>
+    </div>
+
+    <div class="lyrics-container" id="lyrics"></div>
+
+    <div style="text-align:center;margin-top:20px;">
+      <button class="next-btn visible" onclick="showPhase('speak')">Oral Activities →</button>
+    </div>
+  </div>
+
+  <!-- ===================== PHASE 2: SPEAK ===================== -->
+  <div class="phase-panel" id="phase-speak">
+    <div class="speak-step-indicator">
+      <button class="step-pip active" id="pip-0" onclick="goToSpeakStep(0)" aria-label="Step A">A</button><div class="step-line" id="line-0"></div>
+      <button class="step-pip" id="pip-1" onclick="goToSpeakStep(1)" aria-label="Step B">B</button><div class="step-line" id="line-1"></div>
+      <button class="step-pip" id="pip-2" onclick="goToSpeakStep(2)" aria-label="Step C">C</button>
+    </div>
+
+    <!-- STEP A: DO YOU HAVE TO…? -->
+    <div class="speak-step active" id="speak-step-0">
+      <div class="activity-card">
+        <div class="activity-head"><span><span class="act-badge">A</span> Do you have to…?</span><span class="act-time"><span class="pc-only">⏱ 6 min · coppia</span><span class="lim-only">⏱ 8 min · classe</span></span></div>
+        <div class="activity-body">
+          <div class="lim-note lim-only">📺 <b>In classe:</b> un volontario viene davanti alla classe. Gli altri, a turno, fanno la domanda come nella canzone: <em>"Do you have to make your bed?"</em> — il volontario risponde <b>sul serio</b> <em>"Yes, I do! / No, I don't!"</em> e voi toccate ✓ / ✗. Alla fine il volontario legge la frase in 1ª persona, la classe in coro quella in 3ª persona.</div>
+          <div class="act-text pc-only">
+            <strong style="color:var(--gold)">Student A</strong> fa le domande, <strong style="color:var(--correct)">Student B</strong> risponde <b>sul serio</b>, pensando alla sua vita: <em>"Do you have to walk the dog?"</em> → <span class="y">"Yes, I do!"</span> / <span class="n">"No, I don't!"</span><br>
+            A tocca ✓ / ✗ e, se è sì, chiede anche: <em>"When?"</em> → <span class="y">"Every evening!"</span><br>
+            Alla fine <b>B legge</b> la frase in 1ª persona, <b>A la legge</b> in 3ª persona. Poi premete <em>Swap</em> e scambiatevi i ruoli.
+          </div>
+          <div class="act-text lim-only">Domanda: <em>"Do you have to … ?"</em> → <span class="y">"Yes, I do!"</span> / <span class="n">"No, I don't!"</span> · Poi: <em>"When?"</em></div>
+          <div class="who-row">
+            <label for="sv-name"><span class="pc-only">Il nome di B:</span><span class="lim-only">Il volontario:</span></label>
+            <input class="txt-inp" id="sv-name" maxlength="15" placeholder="es. Giulia" oninput="renderSummary()">
+            <button class="chip on" data-pr="she" onclick="setSurveyPronoun('she')">she</button>
+            <button class="chip" data-pr="he" onclick="setSurveyPronoun('he')">he</button>
+          </div>
+          <div class="cl-grid" id="cl-grid"></div>
+          <div class="summary-box" id="summary-box"></div>
+          <div class="step-nav">
+            <span class="step-count">1 / 3</span>
+            <button class="btn-ghost" onclick="resetSurvey()">🔄 Swap / Reset</button>
+            <button class="btn-main" onclick="goToSpeakStep(1)">Mystery Job →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP B: MYSTERY JOB -->
+    <div class="speak-step" id="speak-step-1">
+      <div class="speak-screen active" id="myst-home">
+        <div class="activity-card">
+          <div class="activity-head head-b"><span><span class="act-badge">B</span> Mystery Job 🕵️</span><span class="act-time"><span class="pc-only">⏱ 8 min · coppia</span><span class="lim-only">⏱ 8 min · classe</span></span></div>
+          <div class="activity-body">
+            <div class="act-text pc-only">
+              <strong style="color:var(--gold)">Student B</strong> sceglie una carta segreta: una persona con un lavoro misterioso. Dice subito ad A: <em>"It's a man!"</em> / <em>"It's a woman!"</em><br>
+              <strong style="color:var(--correct)">Student A</strong> fa le domande della canzone: <em>"Does he have to wear a uniform?"</em> — B risponde <span class="y">"Yes, he does! He has to wear a uniform."</span> / <span class="n">"No, he doesn't!"</span>. Massimo <b>3 domande</b>, poi A indovina il lavoro. Poi scambiatevi.
+            </div>
+            <div class="lim-note lim-only">📺 <b>In classe:</b> tutta la classe è il detective. La LIM ha scelto una persona segreta e dice se è <em>a man</em> o <em>a woman</em>. Uno studente alla volta fa la domanda ad alta voce (<em>"Does she have to work at night?"</em>), voi toccate la domanda e la LIM risponde. Solo <b>2 domande</b>: poi la classe vota chi è.</div>
+            <button class="role-select-btn lim-only" onclick="startClassMystery()">
+              <span class="role-emoji-big">🕵️</span>
+              <span class="role-text"><span class="role-title">Tutta la classe — la LIM ha la persona segreta</span><span class="role-desc">La LIM sceglie una persona a caso. La classe fa le domande, la LIM risponde.</span></span>
+              <span style="color:var(--muted);font-size:18px;">→</span>
+            </button>
+            <div class="pc-only">
+              <div class="mini-label">Scegli il tuo ruolo:</div>
+              <button class="role-select-btn" onclick="selectMystRole('A')">
+                <span class="role-emoji-big">🕵️</span>
+                <span class="role-text"><span class="role-title">I'm Student A — The Detective</span><span class="role-desc">Fai le domande e indovina il lavoro della persona di B</span></span>
+                <span style="color:var(--muted);font-size:18px;">→</span>
+              </button>
+              <button class="role-select-btn" onclick="selectMystRole('B')">
+                <span class="role-emoji-big">🃏</span>
+                <span class="role-text"><span class="role-title">I'm Student B — The Mystery Job</span><span class="role-desc">Scegli una carta segreta e rispondi alle domande di A</span></span>
+                <span style="color:var(--muted);font-size:18px;">→</span>
+              </button>
+            </div>
+            <div class="step-nav">
+              <span class="step-count">2 / 3</span>
+              <button class="btn-ghost" onclick="goToSpeakStep(0)">← Do you have to…?</button>
+              <button class="btn-main" onclick="goToSpeakStep(2)">Sign Race →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detective -->
+      <div class="speak-screen" id="myst-a">
+        <div class="phase-title">🕵️ <span class="pc-only" style="display:inline">Student A — The Detective</span><span class="lim-only">The Class Detective</span></div>
+        <div class="question-template">
+          <strong>Usa la domanda della canzone:</strong> <em>"Does he / she have to <span style="color:var(--gold)">wear a uniform</span>?"</em><br>
+          → <span style="color:var(--correct)">"Yes, he does! He has to wear a uniform."</span> / <span style="color:var(--neg)">"No, she doesn't!"</span>
+        </div>
+        <div class="lim-answer" id="lim-answer" style="display:none"></div>
+        <div class="pc-only">
+          <div class="mini-label">1 · B dice: "It's a man / It's a woman!"</div>
+          <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <button class="chip" data-g="he" onclick="setGender('he')">👨 It's a man</button>
+            <button class="chip" data-g="she" onclick="setGender('she')">👩 It's a woman</button>
+          </div>
+        </div>
+        <div class="mini-label"><span class="pc-only" style="display:inline">2 · Fai la domanda e segna la risposta di B:</span><span class="lim-only">Tocca la domanda:</span></div>
+        <div class="q-grid" id="q-grid"></div>
+        <div class="mini-label">🎯 Who is it?</div>
+        <div class="people-grid" id="people-grid"></div>
+        <div class="still" id="still"></div>
+        <div id="guess-result" style="display:none"></div>
+        <div class="speak-actions">
+          <button class="btn-main" id="guess-btn" onclick="makeGuess()">🎯 Make My Guess!</button>
+          <button class="btn-ghost pc-only" onclick="showMystScreen('myst-home')">← Change Role</button>
+          <button class="btn-ghost lim-only" onclick="startClassMystery()">🔄 Nuova partita</button>
+        </div>
+      </div>
+
+      <!-- Student B choose -->
+      <div class="speak-screen" id="myst-b-choose">
+        <div class="phase-title">🃏 Student B — Choose Your Card</div>
+        <div class="instruction">Tocca una carta per scoprire la tua persona segreta. <strong>Non mostrare lo schermo a Student A!</strong> 🤫</div>
+        <div class="mystery-card-grid" id="mystery-card-grid"></div>
+        <button class="btn-ghost" onclick="showMystScreen('myst-home')">← Change Role</button>
+      </div>
+
+      <!-- Student B card -->
+      <div class="speak-screen" id="myst-b-card">
+        <div class="phase-title">🃏 La tua persona segreta</div>
+        <div id="b-card-content"></div>
+        <div class="speak-actions">
+          <button class="btn-main" onclick="selectMystRole('B')">🔄 Nuova carta</button>
+          <button class="btn-ghost" onclick="showMystScreen('myst-home')">← Change Role</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP C: SIGN RACE -->
+    <div class="speak-step" id="speak-step-2">
+      <div class="activity-card">
+        <div class="activity-head head-c"><span><span class="act-badge">C</span> Sign Race 🚦</span><span class="act-time"><span class="pc-only">⏱ 8 min · coppia</span><span class="lim-only">⏱ 10 min · 2 squadre</span></span></div>
+        <div class="activity-body">
+          <div class="act-text pc-only">
+            Gara a coppie! A turno uno pesca un cartello e decide <b>da solo</b>: è un obbligo, un divieto o non è necessario?<br>
+            Poi dice la regola ad alta voce: <em>"You mustn't smoke here!"</em> · <em>"You have to wear a helmet!"</em> · <em>"You don't have to pay!"</em><br>
+            Scelta giusta = +1 punto. Il compagno controlla che la frase sia giusta. Poi tocca all'altro.
+          </div>
+          <div class="lim-note lim-only">📺 <b>In classe:</b> due squadre. La squadra di turno guarda il cartello, si consulta 10 secondi e un portavoce dice la regola ad alta voce: <em>"You mustn't…"</em> / <em>"You have to…"</em> / <em>"You don't have to…"</em>. Toccate la sua scelta: giusta = +1 punto. Frase completa e corretta = +1 punto extra (tocca il punteggio).</div>
+          <div class="mime-score">
+            <div class="team turn" id="team-0"><div class="tn"><span class="pc-only">Student A</span><span class="lim-only">Team 1</span></div><div class="tp" id="pts-0">0</div><div class="tr" id="tr-0">🚦 tocca a te</div></div>
+            <div class="team" id="team-1"><div class="tn"><span class="pc-only">Student B</span><span class="lim-only">Team 2</span></div><div class="tp" id="pts-1">0</div><div class="tr" id="tr-1"></div></div>
+          </div>
+          <div class="mime-card" id="sign-card"></div>
+          <div class="mime-btns" id="sign-btns"></div>
+          <div class="report-box" id="sign-report"></div>
+          <div class="step-nav">
+            <span class="step-count">3 / 3</span>
+            <button class="btn-ghost" onclick="goToSpeakStep(1)">← Mystery Job</button>
+            <button class="btn-main" onclick="showPhase(1)">Quick Drill →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== PHASE 3: QUICK DRILL ===================== -->
+  <div class="phase-panel" id="phase-1">
+    <p class="phase-title">⚡ Quick Drill</p>
+    <div class="lim-note lim-only">📺 <b>In classe:</b> leggete la domanda, la classe pensa 5 secondi, poi risponde a mano alzata con la lettera (A / B / C / D). Toccate la risposta della maggioranza: il punteggio diventa quello della classe.</div>
+    <div class="pc-note pc-only">🖥️ <b>A coppie:</b> a turno uno legge la domanda ad alta voce, decidete insieme e solo dopo cliccate. Chi sbaglia spiega perché la risposta giusta è giusta!</div>
+    <div class="instruction">🎯 <strong>Choose the correct answer.</strong> Ricorda: <span style="color:var(--gold)">have to / has to</span> + verbo base · <span class="m-pr">mustn't</span> = vietato · <span class="m-nn">don't have to</span> = non necessario.</div>
+    <div class="progress-wrap"><div class="progress-fill" id="drill-progress" style="width:0%"></div></div>
+    <div class="drill-card" id="drill-card">
+      <div class="drill-counter" id="drill-counter"></div>
+      <div class="drill-question" id="drill-question"></div>
+      <div class="drill-hint" id="drill-hint"></div>
+      <div class="answer-options" id="answer-options"></div>
+      <div class="feedback-msg" id="feedback-msg"></div>
+      <button class="next-btn" id="drill-next" onclick="nextDrill()">Next →</button>
+    </div>
+  </div>
+
+  <!-- ===================== PHASE 4: BUILD IT ===================== -->
+  <div class="phase-panel" id="phase-2">
+    <p class="phase-title">🔨 Build It</p>
+    <div class="lim-note lim-only">📺 <b>In classe:</b> tutti scrivono la frase sul quaderno, poi un volontario la compone alla LIM e la classe controlla prima del Check.</div>
+    <div class="pc-note pc-only">🖥️ <b>A coppie:</b> una frase a testa — chi non tocca il mouse controlla e può dire "Stop!" prima del Check.</div>
+    <div class="instruction">🔨 <strong>Read the clue. Build the question or the sentence.</strong> Clicca le parole nell'ordine giusto, poi premi Check. Attenzione: ci sono parole-trappola!</div>
+    <div class="progress-wrap"><div class="progress-fill" id="build-progress" style="width:0%"></div></div>
+    <div class="build-area">
+      <div class="build-nav">
+        <button class="build-nav-btn" id="build-prev" onclick="prevBuild()">← Back</button>
+        <span id="build-nav-counter"></span>
+        <button class="build-nav-btn" onclick="skipBuild()">Skip →</button>
+      </div>
+      <div class="build-prompt" id="build-clue-label"></div>
+      <div class="build-clue" id="build-clue"></div>
+      <div class="build-prompt" id="build-task-label"></div>
+      <div class="build-display" id="build-display"></div>
+      <div class="word-bank" id="word-bank"></div>
+      <div class="build-actions">
+        <button class="btn-check" onclick="checkBuild()">✓ Check</button>
+        <button class="btn-ghost" onclick="clearBuild()">Clear</button>
+        <button class="btn-main" id="build-next" style="display:none" onclick="nextBuild()">Next →</button>
+      </div>
+      <div class="feedback-msg" id="build-feedback" style="margin-top:14px"></div>
+    </div>
+  </div>
+
+  <!-- ===================== PHASE 5: FREE PRACTICE ===================== -->
+  <div class="phase-panel" id="phase-3">
+    <p class="phase-title">🗣️ Free Practice</p>
+    <div class="lim-note lim-only">📺 <b>In classe:</b> Activity 1 a gruppi di 4 e poi tutti insieme (le regole migliori vanno in bacheca); Activity 2 con 2 volontari davanti alla LIM (toccate 🎲 per l'argomento), poi a coppie con il compagno di banco; Activity 3 sul quaderno.</div>
+    <div class="pc-note pc-only">🖥️ <b>A coppie:</b> Activity 1 e 2 a voce con il compagno (A e B si scambiano), Activity 3 sul quaderno, ognuno per conto suo.</div>
+
+    <div class="free-card">
+      <div class="free-card-head"><span>Activity 1 — Speaking: Kindness Charter 🤝</span><span style="color:var(--muted)"><span class="pc-only">👥 Pairs</span><span class="lim-only">👥 Groups</span></span></div>
+      <div class="free-card-body">
+        <div class="role-task">Come nel ritornello, scrivete le regole della gentilezza per la vostra classe: <em>2 regole con must / have to</em>, <em>2 con mustn't</em> e <em>1 con don't have to</em>. Poi leggetele ad alta voce: gli altri dicono se sono d'accordo — <em>"I agree!"</em> / <em>"I don't agree!"</em></div>
+        <div class="example-box"><span class="a">We must listen to each other. We have to help new students.</span><br><span class="n">We mustn't laugh at mistakes. We mustn't judge the others.</span><br><span class="q">We don't have to be perfect!</span></div>
+      </div>
+    </div>
+
+    <div class="free-card">
+      <div class="free-card-head"><span>Activity 2 — Speaking: Interview 🎤</span><span style="color:var(--muted)"><span class="pc-only">👥 Pairs</span><span class="lim-only">🙋 2 volunteers</span></span></div>
+      <div class="free-card-body">
+        <div class="role-task">A intervista B. Tocca 🎲 per l'argomento: A fa <em>almeno 4 domande</em> con <em>Do you have to…?</em>, B risponde con la risposta breve e aggiunge un dettaglio. Alla fine A racconta alla classe in 3ª persona: <em>"Marco has to… He doesn't have to…"</em>. Poi scambiatevi.</div>
+        <div class="example-box"><span class="q">Do you have to help at home?</span> <span class="a">— Yes, I do. I have to lay the table every evening.</span><br><span class="q">Do you have to cook dinner?</span> <span class="n">— No, I don't. My dad cooks.</span><br><span class="a">→ Marco has to lay the table, but he doesn't have to cook dinner.</span></div>
+        <div class="situation">
+          <button class="btn-main" onclick="drawSituation()">🎲 Argomento</button>
+          <div class="situation-out" id="situation-out">Tocca 🎲 per l'argomento dell'intervista!</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="free-card">
+      <div class="free-card-head"><span>Activity 3 — Writing: My verse ✏️</span><span style="color:var(--muted)">✏️ Individual</span></div>
+      <div class="free-card-body">
+        <div class="role-task">Scrivi una <em>nuova strofa</em> della canzone: <em>4 domande con le risposte brevi</em> (2 con <em>you</em>, 2 con <em>he / she</em>). Poi aggiungi <em>2 versi sul tuo futuro</em>: uno con <em>I have to</em> e uno con <em>I don't have to</em>.</div>
+        <div class="example-box"><span class="q">Do you have to give up your dreams?</span> <span class="n">No, I don't!</span><br><span class="q">Does she have to tell the truth?</span> <span class="a">Yes, she does!</span><br><span class="a">I have to study hard,</span> <span class="n">but I don't have to be the best!</span></div>
+        <div style="margin-top:10px;font-size:13px;color:var(--muted)">⚠️ She <strong style="color:var(--correct)">has</strong> to ✓ · She have to ✗ · Does she <strong style="color:var(--correct)">have</strong> to ✓ · Does she has to ✗ · I must <strong style="color:var(--correct)">go</strong> ✓ · I must to go ✗</div>
+      </div>
+    </div>
+
+    <div style="text-align:center;margin-top:24px;"><button class="next-btn visible" onclick="showFinal()"><span class="pc-only" style="display:inline">See my score 🎉</span><span class="lim-only">Punteggio della classe 🎉</span></button></div>
+  </div>
+
+  <!-- FINAL -->
+  <div class="phase-panel" id="phase-final">
+    <div class="final-screen">
+      <div class="final-emoji" id="final-emoji">🌟</div>
+      <div class="final-title">Don't give it up!</div>
+      <div class="final-sub" id="final-message">Great work!</div>
+      <div class="final-score-big" id="final-score-big">0</div>
+      <div style="color:var(--muted);font-size:14px;">correct out of <span id="final-total">0</span> answered</div>
+      <button class="restart-btn" onclick="restart()">🔄 Restart</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ===================== GLOBAL =====================
+const isLim = () => document.body.classList.contains('lim-mode');
+const shuffle = a => { const b = [...a]; for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
+const cap1 = s => s.charAt(0).toUpperCase() + s.slice(1);
+const listJoin = (arr, conj) => arr.length <= 1 ? arr.join('') : arr.slice(0, -1).join(', ') + ' ' + conj + ' ' + arr[arr.length - 1];
+
+let scoreCorrect = 0, scoreWrong = 0, scoreTotal = 0;
+function updateScore(ok) {
+  scoreTotal++; if (ok) scoreCorrect++; else scoreWrong++;
+  document.getElementById('score-correct').textContent = scoreCorrect;
+  document.getElementById('score-wrong').textContent = scoreWrong;
+  document.getElementById('score-total').textContent = scoreTotal;
+}
+function showPhase(n) {
+  document.querySelectorAll('.phase-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.phase-tab').forEach(t => t.classList.remove('active'));
+  const panel = document.getElementById('phase-' + n); if (panel) panel.classList.add('active');
+  const tab = document.querySelector(`.phase-tab[data-phase="${n}"]`); if (tab) tab.classList.add('active');
+  if (n === 'speak') goToSpeakStep(speakStep);
+  if (n === 1 && !drillStarted) loadDrill();
+  if (n === 2 && !buildStarted) loadBuild();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+function toggleRules() {
+  const b = document.getElementById('rules-body'), t = document.getElementById('rules-toggle');
+  b.classList.toggle('open'); t.textContent = b.classList.contains('open') ? '▲ hide' : '▼ show';
+}
+// {p} becomes your / my / his / her when the sentence changes person
+const withPoss = (t, poss) => t.replace('{p}', poss);
+
+// ===================== LYRICS =====================
+// q = question, a = yes answer, n = no answer, c = chorus, i = intro
+// {x} = Do / Does + have to · [ans:x] = short answer · [ob:x] obbligo · [pr:x] divieto · [nn:x] non necessario
+// ([k:x] = hidden in Listening mode)
+const lyrics = [
+  { label: 'INTRO', cls: 'intro-label', lines: [['i','This is another hit'], ['i','Sing with me']] },
+  { label: 'VERSE 1 — Do you have to…?', lines: [
+    ['q','{Do} you {have to} hide your feelings?'], ['n',"[ans:No, I don't]!"],
+    ['q','{Do} you {have to} follow your dreams?'], ['a','[ans:Yes, I do]!'],
+    ['q','{Do} you {have to} please the whole world?'], ['n',"[ans:No, I don't]!"],
+    ['q','{Do} you {have to} learn to be kind?'], ['a','[ans:Yes, I do]!'],
+    ['q','{Do} you {have to} fear your mistakes?'], ['n',"[ans:No, I don't]!"],
+    ['q','{Do} you {have to} stand up again?'], ['a','[ans:Yes, I do]!'],
+    ['q','{Do} you {have to} copy others?'], ['n',"[ans:No, I don't]!"],
+    ['q','{Do} you {have to} find your own way?'], ['a','[ans:Yes, I do]!'] ] },
+  { label: 'CHORUS — I have to…', cls: 'chorus-label', lines: [
+    ['c','I [ob:have to] build my future,'], ['c','I [ob:must] try to do my best!'],
+    ['c',"I [pr:mustn't] judge the others,"], ['c','Put my kindness to the test!'],
+    ['c',"I [nn:don't have to] be so perfect,"], ['c',"I [nn:don't have to] win the cup,"],
+    ['c','We [ob:have to] walk together,'], ['c',"So please, don't give it up!"] ] },
+  { label: 'VERSE 2 — Does he / she have to…?', lines: [
+    ['q','{Does} he {have to} hide his sadness?'], ['n',"[ans:No, he doesn't]!"],
+    ['q','{Does} she {have to} speak her own mind?'], ['a','[ans:Yes, she does]!'],
+    ['q','{Does} he {have to} be the strongest?'], ['n',"[ans:No, he doesn't]!"],
+    ['q','{Does} she {have to} follow her heart?'], ['a','[ans:Yes, she does]!'],
+    ['q','{Does} he {have to} walk all alone?'], ['n',"[ans:No, he doesn't]!"],
+    ['q','{Does} she {have to} help a good friend?'], ['a','[ans:Yes, she does]!'],
+    ['q','{Does} he {have to} stop his journey?'], ['n',"[ans:No, he doesn't]!"],
+    ['q','{Does} she {have to} keep on trying?'], ['a','[ans:Yes, she does]!'] ] },
+  { label: 'CHORUS × 2', cls: 'chorus-label', lines: [['i','I have to build my future, I must try to do my best… (repeat × 2)']] },
+];
+function renderLyrics() {
+  const box = document.getElementById('lyrics'); box.innerHTML = '';
+  lyrics.forEach(sec => {
+    const s = document.createElement('div');
+    let html = `<div class="lyrics-label ${sec.cls || ''}">${sec.label}</div><div class="lyrics-lines">`;
+    sec.lines.forEach(([type, txt]) => {
+      const cls = { q: 'lyric-q', a: 'lyric-a', n: 'lyric-a neg', c: 'lyric-c', i: 'lyric-i' }[type];
+      const t = txt.replace(/\{(.+?)\}/g, '<span class="hf">$1</span>')
+                   .replace(/\[(\w+):(.+?)\]/g, `<span class="cw m-$1" onclick="event.stopPropagation();this.classList.add('shown')">$2</span>`);
+      const arrow = type === 'a' || type === 'n' ? '<span style="opacity:0.6;font-size:13px">↳</span>' : '';
+      html += `<div class="lyric-line ${cls}" onclick="this.classList.toggle('highlighted')">${arrow}<span>${t}</span></div>`;
+    });
+    s.innerHTML = html + '</div>'; box.appendChild(s);
+  });
+}
+function toggleGapMode() {
+  const box = document.getElementById('lyrics'), btn = document.getElementById('gap-toggle');
+  const on = !box.classList.contains('gap-mode');
+  box.classList.toggle('gap-mode', on); btn.classList.toggle('on', on);
+  box.querySelectorAll('.cw').forEach(g => g.classList.remove('shown'));
+  btn.textContent = on ? '👀 Mostra tutto il testo' : '🙈 Listening mode: nascondi le parole';
+}
+
+// ===================== SPEAK — steps =====================
+let speakStep = 0;
+function goToSpeakStep(n) {
+  speakStep = n;
+  document.querySelectorAll('.speak-step').forEach((el, i) => el.classList.toggle('active', i === n));
+  [0, 1, 2].forEach(i => { const p = document.getElementById('pip-' + i); p.classList.remove('active', 'done'); if (i === n) p.classList.add('active'); else if (i < n) p.classList.add('done'); });
+  [0, 1].forEach(i => document.getElementById('line-' + i).classList.toggle('done', i < n));
+  if (n === 1) { if (isLim()) startClassMystery(); else showMystScreen('myst-home'); }
+}
+
+// ===================== SPEAK A: DO YOU HAVE TO…? =====================
+// Le 12 faccende di casa della Unit 7 (come in Chore Wars) + 4 della routine di scuola
+const DUTIES = [
+  { t:'make {p} bed', i:'🛏️' }, { t:'tidy {p} room', i:'🧸' }, { t:'lay the table', i:'🍴' }, { t:'clear the table', i:'🍽️' },
+  { t:'do the washing-up', i:'🧽' }, { t:'cook dinner', i:'🍳' }, { t:'do the ironing', i:'👔' }, { t:'do the vacuuming', i:'🧹' },
+  { t:'do the washing', i:'🧺' }, { t:'take the rubbish out', i:'🗑️' }, { t:'feed the cat', i:'🐱' }, { t:'walk the dog', i:'🐕' },
+  { t:'get up before 7', i:'⏰' }, { t:'wear a uniform', i:'🦺' }, { t:'do {p} homework every day', i:'📚' }, { t:'go to bed before 10', i:'🌙' },
+];
+let survey = DUTIES.map(() => null), surveyPr = 'she';
+function buildSurveyGrid() {
+  const g = document.getElementById('cl-grid'); g.innerHTML = '';
+  DUTIES.forEach((d, k) => {
+    const st = survey[k], el = document.createElement('div');
+    el.className = 'cl-item' + (st === true ? ' yes' : st === false ? ' no' : '');
+    el.innerHTML = `<div class="cl-top"><div class="cl-label"><small>Do you have to ${withPoss(d.t, 'your')}?</small>${d.i} ${withPoss(d.t, 'my')}</div>
+      <div class="yn"><button class="${st === true ? 'y-on' : ''}" onclick="markSurvey(${k},true)" aria-label="yes">✓</button><button class="${st === false ? 'n-on' : ''}" onclick="markSurvey(${k},false)" aria-label="no">✗</button></div></div>`;
+    g.appendChild(el);
+  });
+  renderSummary();
+}
+function markSurvey(k, v) { survey[k] = survey[k] === v ? null : v; buildSurveyGrid(); }
+function setSurveyPronoun(p) { surveyPr = p; document.querySelectorAll('.who-row .chip').forEach(c => c.classList.toggle('on', c.dataset.pr === p)); renderSummary(); }
+function resetSurvey() { survey = DUTIES.map(() => null); document.getElementById('sv-name').value = ''; buildSurveyGrid(); }
+function renderSummary() {
+  const box = document.getElementById('summary-box');
+  if (!survey.some(v => v !== null)) { box.innerHTML = '<span class="empty">Segna almeno una domanda: qui compaiono le frasi da leggere ad alta voce.</span>'; return; }
+  const poss3 = surveyPr === 'she' ? 'her' : 'his';
+  const pick = (v, poss) => DUTIES.map((d, k) => survey[k] === v ? withPoss(d.t, poss) : null).filter(Boolean);
+  const name = document.getElementById('sv-name').value.trim(), P = cap1(surveyPr);
+  const subj3 = name || P;
+  const yes1 = pick(true, 'my'), no1 = pick(false, 'my'), yes3 = pick(true, poss3), no3 = pick(false, poss3);
+  const first = yes1.length ? `I have to ${listJoin(yes1, 'and')}. ` : '';
+  const third = yes3.length ? `${subj3} has to ${listJoin(yes3, 'and')}. ` : '';
+  const firstNeg = no1.length ? `I don't have to ${listJoin(no1, 'or')}.` : '';
+  const thirdNeg = no3.length ? `${yes3.length ? P : subj3} doesn't have to ${listJoin(no3, 'or')}.` : '';
+  box.innerHTML = `<span class="sum-lbl">🗣️ <span class="pc-only" style="display:inline">B legge</span><span class="lim-only">Il volontario legge</span> (1ª persona)</span><span class="s1">${first}</span><span class="sneg">${firstNeg}</span>
+    <span class="sum-lbl" style="margin-top:8px">🗣️ <span class="pc-only" style="display:inline">A legge</span><span class="lim-only">La classe in coro</span> (3ª persona)</span><span class="s3">${third}</span><span class="sneg">${thirdNeg}</span>`;
+}
+
+// ===================== SPEAK B: MYSTERY JOB =====================
+const MYST_ITEMS = [
+  { t:'wear a uniform', i:'🦺' }, { t:'work at night', i:'🌙' }, { t:'work outside', i:'🌳' }, { t:'drive', i:'🚗' },
+  { t:'travel a lot', i:'✈️' }, { t:'work with animals', i:'🐾' }, { t:'be very strong', i:'💪' }, { t:'talk to a lot of people', i:'🗣️' },
+];
+// duty[k] = 1 if the person has to do MYST_ITEMS[k], 0 if not (per genere, ogni carta ha risposte diverse)
+const PEOPLE = [
+  { name:'Firefighter Fred', job:'a firefighter', emoji:'🧑‍🚒', pr:'he',  sub:'Ready for an emergency',  duty:[1,1,1,1,0,0,1,0] },
+  { name:'Pilot Paul',       job:'a pilot',       emoji:'👨‍✈️', pr:'he',  sub:'Flying to New York',      duty:[1,1,0,0,1,0,0,0] },
+  { name:'Farmer Frank',     job:'a farmer',      emoji:'👨‍🌾', pr:'he',  sub:'Up with the sun',         duty:[0,0,1,1,0,1,1,0] },
+  { name:'Chef Charlie',     job:'a chef',        emoji:'👨‍🍳', pr:'he',  sub:'In a busy restaurant',    duty:[1,1,0,0,0,0,0,0] },
+  { name:'Doctor Dora',      job:'a doctor',      emoji:'👩‍⚕️', pr:'she', sub:'At the hospital',         duty:[1,1,0,0,0,0,0,1] },
+  { name:'Vet Vicky',        job:'a vet',         emoji:'🐶',  pr:'she', sub:'At the animal clinic',    duty:[1,0,0,0,0,1,0,0] },
+  { name:'Teacher Tina',     job:'a teacher',     emoji:'👩‍🏫', pr:'she', sub:'In her classroom',        duty:[0,0,0,0,0,0,0,1] },
+  { name:'Tour Guide Gina',  job:'a tour guide',  emoji:'🧭',  pr:'she', sub:'Showing Rome to tourists', duty:[0,0,1,0,1,0,0,1] },
+];
+const MAX_Q_PC = 3, MAX_Q_LIM = 2;
+let mAnswers = MYST_ITEMS.map(() => null), mGuess = null, mGender = null, mSecret = null;
+
+function dutyAnswer(p, k) {
+  const t = MYST_ITEMS[k].t, P = cap1(p.pr);
+  return p.duty[k] ? `Yes, ${p.pr} does! ${P} has to ${t}.` : `No, ${p.pr} doesn't! ${P} doesn't have to ${t}.`;
+}
+function showMystScreen(id) {
+  document.querySelectorAll('#speak-step-1 .speak-screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  if (id !== 'myst-a') { mSecret = null; document.getElementById('lim-answer').style.display = 'none'; }
+}
+function resetDetective() {
+  mAnswers = MYST_ITEMS.map(() => null); mGuess = null;
+  document.getElementById('guess-result').style.display = 'none';
+  document.getElementById('guess-btn').style.display = 'inline-block';
+}
+function selectMystRole(role) {
+  if (role === 'A') { resetDetective(); setGender(null); showMystScreen('myst-a'); }
+  else { renderMysteryCards(); showMystScreen('myst-b-choose'); }
+}
+function startClassMystery() {
+  resetDetective();
+  showMystScreen('myst-a');
+  mSecret = Math.floor(Math.random() * PEOPLE.length);
+  mGender = PEOPLE[mSecret].pr;
+  const a = document.getElementById('lim-answer');
+  a.style.display = 'block'; a.className = 'lim-answer';
+  a.textContent = mGender === 'he' ? '🤫 It\'s a man! Ask: "Does he have to …?"' : '🤫 It\'s a woman! Ask: "Does she have to …?"';
+  renderDetective();
+}
+function setGender(g) {
+  mGender = g; mGuess = null;
+  document.querySelectorAll('#myst-a .chip[data-g]').forEach(c => c.classList.toggle('on', c.dataset.g === g));
+  renderDetective();
+}
+function candidates() {
+  return PEOPLE.map((p, i) => i).filter(i => !mGender || PEOPLE[i].pr === mGender);
+}
+function possible() {
+  return candidates().filter(i => mAnswers.every((v, k) => v === null || !!PEOPLE[i].duty[k] === v));
+}
+function renderDetective() {
+  const classGame = mSecret !== null, maxQ = classGame ? MAX_Q_LIM : MAX_Q_PC;
+  const asked = mAnswers.filter(v => v !== null).length, pr = mGender || 'he/she';
+  const grid = document.getElementById('q-grid'); grid.innerHTML = '';
+  MYST_ITEMS.forEach((it, k) => {
+    const st = mAnswers[k], el = document.createElement('div');
+    el.className = 'q-item' + (st === true ? ' yes' : st === false ? ' no' : '');
+    const label = `<div><small>Does ${pr} have to ${it.t}?</small>${it.i} ${it.t}</div>`;
+    if (classGame) {
+      const locked = st === null && asked >= maxQ;
+      el.classList.add('lim-ask'); if (locked) el.classList.add('locked');
+      const tag = st === null ? `<span class="lim-tap">${locked ? '🔒' : '❓ Tocca'}</span>`
+        : `<span class="lim-tap" style="color:${st ? 'var(--correct)' : 'var(--neg)'}">${st ? '✓ YES' : '✗ NO'}</span>`;
+      el.innerHTML = label + tag;
+      if (st === null && !locked) el.onclick = () => revealClassAnswer(k);
+    } else {
+      el.innerHTML = label + `<div class="yn"><button class="${st === true ? 'y-on' : ''}" onclick="markMyst(${k},true)">YES</button><button class="${st === false ? 'n-on' : ''}" onclick="markMyst(${k},false)">NO</button></div>`;
+    }
+    grid.appendChild(el);
+  });
+  const cand = candidates(), poss = possible(), pg = document.getElementById('people-grid'); pg.innerHTML = '';
+  PEOPLE.forEach((p, i) => {
+    if (!cand.includes(i)) return;
+    const b = document.createElement('button');
+    // in classe niente eliminazione automatica: la classe ragiona da sola
+    b.className = 'person-btn' + (mGuess === i ? ' selected' : '') + (!classGame && !poss.includes(i) ? ' out' : '');
+    b.innerHTML = `<span class="pe">${p.emoji}</span><span class="pn">${p.name}</span><span class="pw">${MYST_ITEMS.map((it, k) => p.duty[k] ? it.i : '').join('')}</span>`;
+    b.onclick = () => { mGuess = i; renderDetective(); };
+    pg.appendChild(b);
+  });
+  const still = document.getElementById('still');
+  if (!mGender && !classGame) still.innerHTML = '👆 Prima chiedi a B: <b>a man or a woman?</b>';
+  else if (classGame) still.innerHTML = asked < maxQ ? `Domande usate: <b>${asked}</b> / ${maxQ} — sceglietele bene!` : '<b>Domande finite!</b> Guardate le figurine e votate: chi è?';
+  else still.innerHTML = `Domande fatte: <b>${asked}</b> / ${maxQ} · Persone ancora possibili: <b>${poss.length}</b>` + (poss.length === 0 ? ' — 🤔 qualcosa non torna: ricontrolla le risposte!' : '') + (asked > maxQ ? ' · ⚠️ troppe domande!' : '');
+}
+function markMyst(k, v) { mAnswers[k] = mAnswers[k] === v ? null : v; renderDetective(); }
+function revealClassAnswer(k) {
+  const p = PEOPLE[mSecret];
+  mAnswers[k] = !!p.duty[k];
+  const a = document.getElementById('lim-answer');
+  a.className = 'lim-answer ' + (mAnswers[k] ? 'yes' : 'no'); a.textContent = dutyAnswer(p, k);
+  renderDetective();
+}
+function makeGuess() {
+  if (mGuess === null) { const pg = document.getElementById('people-grid'); pg.style.outline = '2px solid var(--wrong)'; setTimeout(() => pg.style.outline = '', 1200); return; }
+  const p = PEOPLE[mGuess], box = document.getElementById('guess-result');
+  if (mSecret === null) {
+    box.innerHTML = `<div class="guess-result-box"><span class="gr-emoji">${p.emoji}</span><div class="gr-name">Is ${p.pr} ${p.job}?</div>
+      <div class="gr-msg">Fai la domanda ad alta voce! B risponde: <em>"Yes, ${p.pr} is!"</em> o <em>"No, ${p.pr} isn't!"</em> — poi B descrive la sua persona: <em>"${cap1(p.pr)} has to…"</em></div></div>`;
+  } else {
+    const s = PEOPLE[mSecret], right = mGuess === mSecret, P = cap1(s.pr);
+    const desc = `${P} has to ${listJoin(MYST_ITEMS.map((it, k) => s.duty[k] ? it.t : null).filter(Boolean), 'and')}.`;
+    box.innerHTML = `<div class="guess-result-box"><span class="gr-emoji">${p.emoji}</span><div class="gr-name">Is ${s.pr} ${p.job}?</div>
+      <div style="margin-top:12px"><button class="btn-main" id="reveal-btn">🎁 Svela la persona segreta</button></div></div>`;
+    box.querySelector('#reveal-btn').onclick = () => {
+      box.querySelector('#reveal-btn').parentElement.innerHTML = `<div class="lim-answer ${right ? 'yes' : 'no'}" style="margin:0">${right ? `✅ Yes, ${s.pr} is!` : `❌ No, ${s.pr} isn't! It's`} ${s.emoji} ${s.name}</div>
+        <div class="gr-msg" style="font-size:15px;color:var(--text)">${desc}</div>`;
+      updateScore(right);
+    };
+  }
+  box.style.display = 'block'; document.getElementById('guess-btn').style.display = 'none';
+}
+function renderMysteryCards() {
+  const g = document.getElementById('mystery-card-grid'); g.innerHTML = '';
+  shuffle(PEOPLE.map((_, i) => i)).forEach((pi, n) => {
+    const c = document.createElement('div'); c.className = 'mystery-card';
+    c.innerHTML = `<div class="mc-num">${n + 1}</div><div class="mc-q">?</div>`;
+    c.onclick = () => showBCard(pi); g.appendChild(c);
+  });
+}
+function showBCard(i) {
+  const p = PEOPLE[i];
+  const rows = MYST_ITEMS.map((it, k) => `<div class="wear-row"><span class="wi">${it.i}</span><span class="${p.duty[k] ? 'yes-text' : 'no-text'}">${dutyAnswer(p, k)}</span></div>`).join('');
+  document.getElementById('b-card-content').innerHTML = `<div class="char-card">
+    <div class="char-card-head"><span class="char-card-emoji">${p.emoji}</span><div class="char-card-name">${p.name}</div><div class="char-card-sub">${cap1(p.job)} · ${p.sub}</div></div>
+    <div class="char-card-body"><div class="char-card-hint">1️⃣ Di' subito ad A: <b>"It's a ${p.pr === 'he' ? 'man' : 'woman'}!"</b><br>2️⃣ Rispondi alle domande di A leggendo qui sotto. 🤫</div>${rows}</div></div>`;
+  showMystScreen('myst-b-card');
+}
+
+// ===================== SPEAK C: SIGN RACE =====================
+// k: ob = must / have to (obbligo) · pr = mustn't (divieto) · nn = don't have to (non necessario)
+const SIGNS = [
+  { i:'🚭', s:'NO SMOKING', k:'pr', r:"You mustn't smoke here." },
+  { i:'📵', s:'At the cinema: phones OFF', k:'pr', r:"You mustn't use your phone." },
+  { i:'🤫', s:'Library: SILENCE, please', k:'ob', r:'You must be quiet.' },
+  { i:'🆓', s:'Museum: FREE ENTRY', k:'nn', r:"You don't have to pay." },
+  { i:'🏊', s:'Swimming pool: swimming cap required', k:'ob', r:'You have to wear a swimming cap.' },
+  { i:'🏃', s:'School corridor: walk, don\'t run!', k:'pr', r:"You mustn't run in the corridor." },
+  { i:'🎟️', s:'Concert: tickets at the door', k:'ob', r:'You have to show your ticket.' },
+  { i:'👕', s:'Our school: no uniform', k:'nn', r:"You don't have to wear a uniform." },
+  { i:'🍔', s:'Classroom: no food', k:'pr', r:"You mustn't eat in the classroom." },
+  { i:'🚲', s:'Bike park: helmet ON', k:'ob', r:'You must wear a helmet.' },
+  { i:'🚗', s:'In the car: seat belts', k:'ob', r:'You have to wear a seat belt.' },
+  { i:'🐕', s:'Supermarket: no dogs', k:'pr', r:"You mustn't bring your dog." },
+  { i:'📸', s:'Art gallery: no photos', k:'pr', r:"You mustn't take photos." },
+  { i:'📅', s:'Pizzeria: no booking needed', k:'nn', r:"You don't have to book a table." },
+  { i:'🛌', s:"It's Sunday! No school today", k:'nn', r:"You don't have to get up early." },
+  { i:'🚦', s:'Traffic light: RED', k:'ob', r:'You must stop.' },
+  { i:'🗑️', s:'Park: keep it clean', k:'pr', r:"You mustn't drop litter." },
+  { i:'🥪', s:'School trip: lunch included', k:'nn', r:"You don't have to bring a packed lunch." },
+  { i:'🛂', s:'Airport: passport control', k:'ob', r:'You have to show your passport.' },
+  { i:'📶', s:'Hotel: free wi-fi', k:'nn', r:"You don't have to pay for the wi-fi." },
+];
+const SIGN_KINDS = [
+  { k:'ob', l:'✅ must / have to' }, { k:'pr', l:"⛔ mustn't" }, { k:'nn', l:"🆓 don't have to" },
+];
+let race = { turn: 0, pts: [0, 0], deck: [], card: null, picked: null };
+function raceTeamName(i) { return isLim() ? `Team ${i + 1}` : `Student ${'AB'[i]}`; }
+function drawSign() {
+  if (!race.deck.length) race.deck = shuffle(SIGNS.map((_, i) => i));
+  race.card = SIGNS[race.deck.pop()]; race.picked = null;
+  document.getElementById('sign-report').classList.remove('show');
+  renderRace();
+}
+function renderRace() {
+  [0, 1].forEach(i => {
+    document.getElementById('team-' + i).classList.toggle('turn', race.turn === i);
+    document.getElementById('pts-' + i).textContent = race.pts[i];
+    document.getElementById('tr-' + i).textContent = race.turn === i ? '🚦 tocca a te' : '';
+  });
+  const card = document.getElementById('sign-card'), btns = document.getElementById('sign-btns');
+  const who = raceTeamName(race.turn);
+  if (!race.card) {
+    card.innerHTML = `<div class="me">🚦</div><div class="ms">Tocca a <b>${who}</b>: pesca un cartello!</div>`;
+    btns.innerHTML = `<button class="btn-main" onclick="drawSign()">🎲 Pesca un cartello</button>`;
+    return;
+  }
+  card.innerHTML = `<div class="me">${race.card.i}</div><div class="mt">${race.card.s}</div>` +
+    (race.picked === null ? `<div class="ms"><b>${who}</b>: obbligo, divieto o non è necessario? Di' la regola: <em>"You…"</em></div>` : '');
+  if (race.picked === null) {
+    btns.innerHTML = `<div class="sign-btns" style="width:100%">${SIGN_KINDS.map(o => `<button class="sign-btn k-${o.k}" onclick="pickSign('${o.k}')">${o.l}</button>`).join('')}</div>`;
+    return;
+  }
+  btns.innerHTML = `<div class="sign-btns" style="width:100%;margin-bottom:10px">${SIGN_KINDS.map(o => {
+      const cls = o.k === race.card.k ? ' picked-ok' : o.k === race.picked ? ' picked-ko' : '';
+      return `<button class="sign-btn k-${o.k}${cls}" disabled>${o.l}</button>`;
+    }).join('')}</div><button class="btn-main" onclick="nextRaceTurn()">➡️ Turno di ${raceTeamName(1 - race.turn)}</button>`;
+}
+function pickSign(k) {
+  if (!race.card || race.picked !== null) return;
+  race.picked = k;
+  const right = k === race.card.k;
+  if (right) race.pts[race.turn]++;
+  const rb = document.getElementById('sign-report');
+  rb.innerHTML = (right ? '🎉 <b>Right!</b> ' : '❌ <b>Not quite!</b> ') +
+    `La regola è: <span class="s1">"${race.card.r}"</span>` +
+    (isLim() ? `<br><span style="color:var(--muted);font-size:13px">👉 Il portavoce l'ha detta tutta giusta? +1 punto extra (tocca il punteggio).</span>`
+             : `<br><span style="color:var(--muted);font-size:13px">👉 Ripetila ad alta voce, poi dilla in 3ª persona: <em>"${to3rd(race.card.r, 'She')}"</em></span>`);
+  rb.classList.add('show');
+  renderRace();
+}
+// "You have to…" → "She has to…" (e your → her) per ripetere la regola in 3ª persona
+function to3rd(r, P) {
+  const poss = P === 'She' ? 'her' : 'his';
+  return r.replace(/^You don't have to/, P + " doesn't have to").replace(/^You have to/, P + ' has to').replace(/^You /, P + ' ').replace(/\byour\b/g, poss);
+}
+function nextRaceTurn() { race.turn = 1 - race.turn; race.card = null; race.picked = null; document.getElementById('sign-report').classList.remove('show'); renderRace(); }
+// in classe il punto extra della frase completa si assegna toccando il punteggio
+function bumpTeam(i) { if (!isLim()) return; race.pts[i]++; renderRace(); }
+
+// ===================== QUICK DRILL =====================
+const drillData = [
+  { q:'"Do you have to follow your dreams?" — ✓', hint:'Short answer con YOU → <span>Yes, I do.</span>', options:['Yes, I do.','Yes, I am.','Yes, I does.','Yes, I have.'] },
+  { q:'"Does he have to hide his sadness?" — ✗', hint:'HE → <span>doesn\'t</span>', options:["No, he doesn't.","No, he don't.","No, he hasn't.","No, he isn't."] },
+  { q:'"Does she have to speak her own mind?" — ✓', hint:'SHE → <span>Yes, she does.</span>', options:['Yes, she does.','Yes, she do.','Yes, she has.','Yes, she is.'] },
+  { q:'"Do they have to help at home?" — ✓', hint:'THEY → <span>do</span>', options:['Yes, they do.','Yes, they does.','Yes, they have.','Yes, they are.'] },
+  { q:'"My brother ___ to tidy his room."', hint:'MY BROTHER = he → <span>has to</span>', options:['has','have','haves','is'] },
+  { q:'"___ your sister have to get up early?"', hint:'Domanda con he / she → <span>Does</span>', options:['Does','Do','Has','Is'] },
+  { q:'Which question is CORRECT?', hint:'Dopo <span>Does</span> il verbo resta base: <span>have</span>', options:['Does she have to work?','Does she has to work?','Do she have to work?','She does have to work?'] },
+  { q:'Which sentence is CORRECT?', hint:'Dopo <span>must</span> niente "to" e niente -s', options:['I must try to do my best.','I must to try to do my best.','I musts try to do my best.','I must trying to do my best.'] },
+  { q:'"We ___ walk together." (song)', hint:'WE → <span>have to</span>', options:['have to','has to','must to','haves to'] },
+  { q:'Library: "You ___ talk loudly." ⛔', hint:'È vietato → <span>mustn\'t</span>', options:["mustn't","don't have to","doesn't have to","must"] },
+  { q:'The museum is free! "You ___ pay."', hint:'Non è necessario → <span>don\'t have to</span>', options:["don't have to","mustn't","must","have to"] },
+  { q:'"She ___ wear a uniform at school." (non serve)', hint:'SHE + non è necessario → <span>doesn\'t have to</span>', options:["doesn't have to","mustn't","don't have to","hasn't to"] },
+  { q:'"You ___ use your phone during the test." ⛔', hint:'È vietato → <span>mustn\'t</span>', options:["mustn't","don't have to","doesn't have to","must"] },
+  { q:'"Tomorrow is Sunday! I ___ get up early."', hint:'Niente scuola: non è necessario → <span>don\'t have to</span>', options:["don't have to","mustn't","have to","doesn't have to"] },
+  { q:'"mustn\'t" means…', hint:'⛔ <span>divieto</span>', options:['è vietato','non è necessario','è obbligatorio','è possibile'] },
+  { q:'"don\'t have to" means…', hint:'🆓 <span>puoi farlo, ma non serve</span>', options:['non è necessario','è vietato','è obbligatorio','non posso'] },
+  { q:'"I don\'t have to be so ___." (song)', hint:'L\'aggettivo del ritornello!', options:['perfect','perfectly','perfection','perfects'] },
+]; // correct answer is always options[0] (options are shuffled)
+let drillIndex = 0, drillAnswered = false, drillStarted = false;
+function loadDrill() { drillIndex = 0; drillStarted = true; renderDrill(); }
+function renderDrill() {
+  if (drillIndex >= drillData.length) { showPhase(2); return; }
+  const d = drillData[drillIndex];
+  document.getElementById('drill-counter').textContent = (drillIndex + 1) + ' / ' + drillData.length;
+  document.getElementById('drill-question').textContent = d.q;
+  document.getElementById('drill-hint').innerHTML = d.hint;
+  document.getElementById('drill-progress').style.width = (drillIndex / drillData.length * 100) + '%';
+  const fb = document.getElementById('feedback-msg'); fb.textContent = ''; fb.className = 'feedback-msg';
+  document.getElementById('drill-next').classList.remove('visible');
+  drillAnswered = false;
+  const opts = document.getElementById('answer-options'); opts.innerHTML = '';
+  shuffle([0, 1, 2, 3]).forEach(k => {
+    const b = document.createElement('button'); b.className = 'answer-btn'; b.textContent = d.options[k];
+    b.onclick = () => selectAnswer(b, k === 0, d.options[0]); opts.appendChild(b);
+  });
+  const card = document.getElementById('drill-card'); card.classList.add('pop'); setTimeout(() => card.classList.remove('pop'), 300);
+}
+function selectAnswer(btn, ok, correctText) {
+  if (drillAnswered) return; drillAnswered = true;
+  document.querySelectorAll('.answer-btn').forEach(b => { b.disabled = true; if (b.textContent === correctText) b.classList.add('correct-ans'); });
+  const fb = document.getElementById('feedback-msg');
+  if (ok) { fb.textContent = '✓ Yes, you do — you got it!'; fb.className = 'feedback-msg ok'; updateScore(true); }
+  else { btn.classList.add('wrong-ans'); fb.textContent = "✗ Don't give it up… guarda la risposta giusta."; fb.className = 'feedback-msg ko'; updateScore(false);
+    const c = document.getElementById('drill-card'); c.classList.add('shake'); setTimeout(() => c.classList.remove('shake'), 350); }
+  document.getElementById('drill-next').classList.add('visible');
+}
+function nextDrill() { drillIndex++; renderDrill(); }
+
+// ===================== BUILD IT =====================
+// type q = build the question from the answer; s = build the sentence from the clue
+const buildData = [
+  { type:'q', clue:"Yes, I do! I have to find my own way. 🧭", words:['Do','you','have','to','find','your','own','way','?'], extra:['Does','has','must','my'] },
+  { type:'q', clue:"No, she doesn't. She doesn't have to win the cup. 🏆", words:['Does','she','have','to','win','the','cup','?'], extra:['Do','has','is','must'] },
+  { type:'q', clue:"Yes, he does. He has to get up at 6. ⏰", words:['Does','he','have','to','get','up','at','6','?'], extra:['has','Do','must','gets'] },
+  { type:'q', clue:"No, I don't. My dad does the washing-up. 🧽", words:['Do','you','have','to','do','the','washing-up','?'], extra:['Does','make','has','your'] },
+  { type:'s', clue:'✅ obbligo · I / build / my future', words:['I','have','to','build','my','future','.'], extra:['has','musts','building','me'] },
+  { type:'s', clue:'⛔ vietato · You / judge / the others', words:['You',"mustn't",'judge','the','others','.'], extra:["don't",'have','to','must'] },
+  { type:'s', clue:'🆓 non è necessario · She / be / perfect', words:['She',"doesn't",'have','to','be','perfect','.'], extra:["don't","mustn't",'has','is'] },
+  { type:'s', clue:'✅ must · We / do / our best', words:['We','must','do','our','best','.'], extra:['to','musts','have','us'] },
+  { type:'s', clue:'🆓 non è necessario · Tom / go to school / on Sunday', words:['Tom',"doesn't",'have','to','go','to','school','on','Sunday','.'], extra:["don't","mustn't",'has','goes'] },
+];
+let buildIndex = 0, currentBuilt = [], buildStarted = false;
+function loadBuild() { buildIndex = 0; buildStarted = true; renderBuild(); }
+function prevBuild() { if (buildIndex === 0) return; buildIndex--; renderBuild(); }
+function skipBuild() { if (buildIndex < buildData.length - 1) { buildIndex++; renderBuild(); } else showPhase(3); }
+const placeholder = '<span class="ph">Click the words in the right order…</span>';
+function renderBuild() {
+  if (buildIndex >= buildData.length) { showPhase(3); return; }
+  const d = buildData[buildIndex];
+  document.getElementById('build-clue-label').textContent = d.type === 'q' ? 'The answer is:' : 'The clue is:';
+  document.getElementById('build-task-label').textContent = d.type === 'q' ? 'Build the question:' : 'Build the sentence:';
+  document.getElementById('build-clue').textContent = d.clue;
+  document.getElementById('build-progress').style.width = (buildIndex / buildData.length * 100) + '%';
+  const fb = document.getElementById('build-feedback'); fb.textContent = ''; fb.className = 'feedback-msg';
+  document.getElementById('build-next').style.display = 'none';
+  document.getElementById('build-nav-counter').textContent = (buildIndex + 1) + ' / ' + buildData.length;
+  document.getElementById('build-prev').style.opacity = buildIndex === 0 ? '0.3' : '1';
+  currentBuilt = [];
+  const bank = document.getElementById('word-bank'); bank.innerHTML = '';
+  shuffle([...d.words, ...d.extra]).forEach((w, i) => {
+    const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'word-chip'; chip.textContent = w; chip.dataset.idx = i;
+    chip.onclick = () => addWord(chip, w, i);
+    bank.appendChild(chip);
+  });
+  renderBuilt();
+}
+function addWord(chip, w, i) { if (chip.classList.contains('used')) return; chip.classList.add('used'); currentBuilt.push({ word: w, idx: i }); renderBuilt(); }
+function renderBuilt() {
+  const disp = document.getElementById('build-display');
+  if (!currentBuilt.length) { disp.innerHTML = placeholder; return; }
+  disp.innerHTML = '';
+  currentBuilt.forEach((it, pos) => {
+    const t = document.createElement('span'); t.className = 'word-token'; t.textContent = it.word; t.title = 'Click to remove';
+    t.onclick = () => removeWord(pos, it.idx); disp.appendChild(t);
+  });
+}
+function removeWord(pos, idx) { currentBuilt.splice(pos, 1); document.querySelectorAll('.word-chip').forEach(c => { if (+c.dataset.idx === idx) c.classList.remove('used'); }); renderBuilt(); }
+function clearBuild() { currentBuilt = []; document.querySelectorAll('.word-chip').forEach(c => c.classList.remove('used')); renderBuilt(); document.getElementById('build-feedback').textContent = ''; document.getElementById('build-next').style.display = 'none'; }
+const norm = arr => arr.filter(w => !['?', '.', '!'].includes(w)).join(' ').toLowerCase();
+const pretty = arr => arr.join(' ').replace(/ ([?.!])/g, '$1');
+function checkBuild() {
+  const d = buildData[buildIndex], fb = document.getElementById('build-feedback');
+  if (norm(currentBuilt.map(x => x.word)) === norm(d.words)) {
+    fb.textContent = '✓ Perfect! ' + pretty(d.words); fb.className = 'feedback-msg ok';
+    document.getElementById('build-next').style.display = 'inline-block'; updateScore(true);
+  } else { fb.textContent = '✗ Not quite — controlla ordine e parole-trappola!'; fb.className = 'feedback-msg ko'; updateScore(false); }
+}
+function nextBuild() { buildIndex++; renderBuild(); }
+
+// ===================== FREE: INTERVIEW =====================
+const SITUATIONS = ['🏠 at home — chores','🏫 at school','⚽ at sports practice','🐶 with your pet','🎂 at a family party','🏖️ on holiday','📱 with your phone','🌙 in the evening','🛒 when you go shopping','🎸 at your music lesson','🚌 on the school bus','👵 at your grandparents\' house'];
+let sitLast = -1;
+function drawSituation() {
+  let i; do { i = Math.floor(Math.random() * SITUATIONS.length); } while (i === sitLast);
+  sitLast = i; document.getElementById('situation-out').textContent = 'Topic: ' + SITUATIONS[i];
+}
+
+// ===================== FINAL =====================
+function showFinal() {
+  document.getElementById('final-score-big').textContent = scoreCorrect;
+  document.getElementById('final-total').textContent = scoreTotal;
+  const pct = Math.round(scoreCorrect / Math.max(scoreTotal, 1) * 100);
+  let e = '🏆', m = isLim() ? 'What a class — you have to be proud!' : 'You did your best — you\'re a star!';
+  if (pct < 50) { e = '💪'; m = "You don't have to be perfect — keep practising!"; }
+  else if (pct < 75) { e = '👍'; m = 'Good job! Review your mistakes and try again.'; }
+  else if (pct < 90) { e = '🎉'; m = 'Great work! Almost perfect!'; }
+  document.getElementById('final-emoji').textContent = e;
+  document.getElementById('final-message').textContent = m;
+  showPhase('final');
+}
+function restart() {
+  scoreCorrect = scoreWrong = scoreTotal = 0;
+  ['score-correct', 'score-wrong', 'score-total'].forEach(id => document.getElementById(id).textContent = '0');
+  drillStarted = false; buildStarted = false; speakStep = 0;
+  race = { turn: 0, pts: [0, 0], deck: [], card: null, picked: null };
+  document.getElementById('sign-report').classList.remove('show');
+  resetSurvey(); renderRace();
+  showPhase(0);
+}
+
+// ===================== MODALITÀ CLASSE (LIM) / SALA PC =====================
+const MODE_KEY = 'lessonMode';
+function setLessonMode(mode) {
+  const lim = mode === 'lim';
+  document.body.classList.toggle('lim-mode', lim);
+  document.querySelectorAll('#mode-switch button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === mode));
+  try { localStorage.setItem(MODE_KEY, mode); } catch (e) {}
+  renderSummary(); renderRace();
+  // lo step B cambia gioco: in classe parte subito la partita con la carta della LIM
+  if (speakStep === 1) { if (lim) startClassMystery(); else showMystScreen('myst-home'); }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  renderLyrics(); buildSurveyGrid(); renderRace();
+  [0, 1].forEach(i => document.getElementById('pts-' + i).addEventListener('click', () => bumpTeam(i)));
+  const url = new URLSearchParams(location.search).get('mode');
+  let mode = url === 'classe' || url === 'lim' ? 'lim' : url === 'pc' ? 'pc' : null;
+  if (!mode) { try { mode = localStorage.getItem(MODE_KEY); } catch (e) {} }
+  setLessonMode(mode === 'lim' ? 'lim' : 'pc');
+});
+</script>
+</body>
+</html>
