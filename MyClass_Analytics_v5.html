@@ -25833,10 +25833,17 @@ ${sectionInstr}`;
             // _oi (non enumerabile): posizione della domanda nell'attività su Firebase, serve per
             // ritrovarne la foto anche quando il filtro listening sposta gli indici
             const _noL = qs => {
-                qs.forEach((q, i) => { if (q && typeof q === 'object') Object.defineProperty(q, '_oi', { value: i, enumerable: false }); });
+                qs.forEach((q, i) => { if (q && typeof q === 'object' && !('_oi' in q)) Object.defineProperty(q, '_oi', { value: i, enumerable: false }); });
                 return sess.noListening ? qs.filter(q => !q || q.type !== 'listening') : qs;
             };
-            const questions = _noL(agentFbArr(act.questions));
+            // Torneo con domande pescate all'avvio (sess.tourPick = indici delle domande
+            // originali): le risposte sono indicizzate sulle sole domande pescate
+            const _tourPick = qs => {
+                if (!sess.tourPick || typeof sess.tourPick !== 'object') return qs;
+                qs.forEach((q, i) => { if (q && typeof q === 'object') Object.defineProperty(q, '_oi', { value: i, enumerable: false }); });
+                return agentFbArr(sess.tourPick).map(i => qs[i]).filter(Boolean);
+            };
+            const questions = _noL(_tourPick(agentFbArr(act.questions)));
             // ── Versioni per-studente (fila B/C/recupero) ──────────────────────────
             // sess.studentVersions → { [safeKey]: 'fila_b' | 'fila_c' | 'recupero' | ... }
             // act.versions         → { fila_b: [...], fila_c: [...], recupero: [...], ... }
