@@ -34158,6 +34158,513 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         }).join('');
     }
 
+    // ── Disegno delle domande con la soluzione attesa (revisione bozze) ──────
+    // Copia del renderer del PDF di LiveLearn/StudentApp (_pdfqBody), con al posto
+    // della risposta dell'alunno la soluzione attesa: se si cambia là, va cambiato anche qui.
+    const _PPKQ_BLANK_RE = /___|\[\[([^\[\]\n]*\|[^\[\]\n]*)\]\]/g;
+    function _ppkqEsc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    function _ppkqArr(v) {
+      if (Array.isArray(v)) return v;
+      if (v && typeof v === 'object') {
+        const ks = Object.keys(v).map(Number).filter(n => Number.isFinite(n));
+        if (!ks.length) return Object.values(v);
+        const arr = new Array(Math.max(...ks) + 1).fill(null);
+        Object.keys(v).forEach(k => { const n = Number(k); if (Number.isFinite(n)) arr[n] = v[k]; });
+        return arr;
+      }
+      return null;
+    }
+    function _ppkqRich(s) {
+      let h = _ppkqEsc(s);
+      h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      h = h.replace(/\*([^\n]+?)\*/g, '<em>$1</em>');
+      h = h.replace(/\[(red|blue|green|orange|purple|big)\]([\s\S]+?)\[\/\1\]/gi, (m, c, t) =>
+        c.toLowerCase() === 'big' ? '<span style="font-size:1.25em;font-weight:700;">' + t + '</span>'
+          : '<span style="color:' + ({ red:'#ef4444', blue:'#3b82f6', green:'#10b981', orange:'#f59e0b', purple:'#8b5cf6' })[c.toLowerCase()] + '">' + t + '</span>');
+      return h.replace(/\n/g, '<br>');
+    }
+    function _ppkqNorm(s) {
+      return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+        .replace(/[-–—]/g, '').replace(/[.,!?;:'"()]/g, '').replace(/\s+/g, ' ').trim();
+    }
+    function _ppkqAlts(c) { return String(c == null ? '' : c).split('|').map(x => x.trim()).filter(Boolean); }
+    function _ppkqClozeOk(given, corr) { const g = _ppkqNorm(given); return _ppkqAlts(corr).some(alt => _ppkqNorm(alt) === g); }
+    function _ppkqEmpty(v) { return v === null || v === undefined || (typeof v === 'string' && v.trim() === ''); }
+    const _PPKQ_NONE = '<span class="pq-none">nessuna risposta</span>';
+    // Spazio compilato: risposta dell'alunno (verde/rossa) + quella giusta se sbagliata
+    function _ppkqChip(given, ok, correctTxt) {
+      if (_ppkqEmpty(given)) {
+        return '<span class="pq-chip pq-ko">___</span>' + (correctTxt ? '<span class="pq-fix">→ ' + _ppkqEsc(correctTxt) + '</span>' : '');
+      }
+      const cls = ok === true ? 'pq-ok' : ok === false ? 'pq-ko' : 'pq-neutral';
+      return '<span class="pq-chip ' + cls + '">' + _ppkqEsc(given) + (ok === true ? ' ✓' : ok === false ? ' ✗' : '') + '</span>' +
+        (ok === false && correctTxt ? '<span class="pq-fix">→ ' + _ppkqEsc(correctTxt) + '</span>' : '');
+    }
+    // Testo con gli spazi (___ e [[a|b|c]]) sostituiti dalle risposte dell'alunno
+    function _ppkqFillText(text, given, corrects, startIdx) {
+      let k = startIdx || 0;
+      const parts = [];
+      const tok = String(text || '').replace(_PPKQ_BLANK_RE, (m, inner) => {
+        const n = k++;
+        const corr = corrects[n];
+        const hasCorr = corr != null && String(corr).trim() !== '';
+        let h = _ppkSol(hasCorr ? _ppkqAlts(corr).join(' / ') : '');
+        if (inner !== undefined) h += '<span class="pq-icopts">(' + inner.split('|').map(o => _ppkqEsc(o.trim())).join(' / ') + ')</span>';
+        parts.push(h);
+        return '\u0000' + (parts.length - 1) + '\u0000';
+      });
+      return { html: _ppkqRich(tok).replace(/\u0000(\d+)\u0000/g, (m, i) => parts[+i]), next: k };
+    }
+    function _ppkqCountBlanks(t) { return (String(t || '').match(_PPKQ_BLANK_RE) || []).length; }
+
+    // Corpo della domanda secondo il tipo. q = domanda (per il listening: quella interna)
+    function _ppkqBody(q, type, a) {
+      const L = 'ABCDEFGHIJ';
+      const textHtml = q.text ? '<div class="pq-text">' + _ppkqRich(q.text) + '</div>' : '';
+      const hint = q.hint ? '<div class="pq-hint">💡 ' + _ppkqEsc(q.hint) + '</div>' : '';
+
+      if (type === 'multiple-choice') {
+        const opts = Array.isArray(q.options) ? q.options : (_ppkqArr(q.options) || []);
+        let sel = null;
+        if (typeof a === 'number') sel = a;
+        else if (typeof a === 'string' && a.trim() !== '' && /^\d+$/.test(a.trim())) sel = Number(a.trim());
+        else if (typeof a === 'string' && a.trim() !== '') {
+          const f = opts.findIndex(o => _ppkqNorm(o) === _ppkqNorm(a));
+          if (f >= 0) sel = f;
+        }
+        const corr = q.correct != null && q.correct !== '' ? Number(q.correct) : null;
+        const rows = opts.map((o, oi) => {
+          const isSel = sel === oi, isCorr = corr === oi;
+          const cls = isSel ? (isCorr ? 'pq-opt pq-opt-ok' : 'pq-opt pq-opt-ko') : (isCorr ? 'pq-opt pq-opt-right' : 'pq-opt');
+          const tags = (isSel ? '<span class="pq-tag ' + (isCorr ? 'pq-tag-ok' : 'pq-tag-ko') + '">' + (isCorr ? '✓ risposta corretta' : '✗') + '</span>' : '') +
+            (isCorr && !isSel ? '<span class="pq-tag pq-tag-right">✓ risposta corretta</span>' : '');
+          return '<div class="' + cls + '"><span class="pq-letter">' + (L[oi] || (oi + 1)) + '</span><span class="pq-otext">' + _ppkqEsc(o) + '</span>' + tags + '</div>';
+        }).join('');
+        const extra = corr == null || !(corr >= 0 && corr < opts.length) ? '<div class="pq-note" style="color:#b91c1c;font-weight:700;">⚠️ Nessuna opzione segnata come corretta</div>' : '';
+        return textHtml + hint + '<div class="pq-opts">' + rows + '</div>' + extra;
+      }
+
+      if (type === 'cloze' || type === 'fill-blanks') {
+        const given = _ppkqArr(a) || (_ppkqEmpty(a) ? [] : [a]);
+        const corrects = _ppkqArr(q.answers) || [];
+        const bank = Array.isArray(q.wordBank) && q.wordBank.length
+          ? '<div class="pq-bank"><strong>Banca parole:</strong> ' + q.wordBank.map(_ppkqEsc).join(' · ') + '</div>' : '';
+        const nBlanks = _ppkqCountBlanks(q.text);
+        let html = '';
+        let used = 0;
+        if (nBlanks > 0) {
+          const r = _ppkqFillText(q.text, given, corrects, 0);
+          html = '<div class="pq-text pq-filled">' + r.html + '</div>';
+          used = r.next;
+        } else {
+          html = textHtml;
+        }
+        // Spazi senza segnaposto nel testo (fill-blanks senza ___): elenco numerato
+        const n = Math.max(corrects.length, given.length);
+        if (used < n) {
+          let li = '';
+          for (let b = used; b < n; b++) {
+            const corr = corrects[b];
+            const hasCorr = corr != null && String(corr).trim() !== '';
+            li += '<li>' + _ppkSol(hasCorr ? _ppkqAlts(corr).join(' / ') : '') + '</li>';
+          }
+          html += '<ol class="pq-list" start="' + (used + 1) + '">' + li + '</ol>';
+        }
+        return bank + hint + html + (_ppkqEmpty(a) ? '<div class="pq-note">⚠️ Manca la soluzione.</div>' : '');
+      }
+
+      if (type === 'matching') {
+        const left = _ppkqArr(q.left) || [], right = _ppkqArr(q.right) || [];
+        const arr = _ppkqArr(a);
+        const rightOf = v => {
+          if (_ppkqEmpty(v)) return null;
+          if (typeof v === 'number' || /^\d+$/.test(String(v).trim())) return right[Number(v)] != null ? right[Number(v)] : '?';
+          return String(v);
+        };
+        const rows = left.map((l, li) => {
+          const g = arr ? arr[li] : null;
+          const gv = rightOf(g);
+          const cv = right[li];
+          const ok = gv != null && _ppkqNorm(gv) === _ppkqNorm(cv);
+          return '<tr><td class="pq-mleft">' + _ppkqEsc(l) + '</td><td class="pq-marrow">→</td><td>' +
+            (gv == null ? '<span class="pq-chip pq-ko">⚠ manca</span>' : '<span class="pq-chip ' + (ok ? 'pq-ok' : 'pq-ko') + '">' + _ppkqEsc(gv) + (ok ? ' ✓' : ' ✗') + '</span>') +
+            (!ok && cv != null ? '<span class="pq-fix">→ ' + _ppkqEsc(cv) + '</span>' : '') + '</td></tr>';
+        }).join('');
+        const colB = right.length ? '<div class="pq-bank"><strong>Colonna B:</strong> ' + right.map(_ppkqEsc).join(' · ') + '</div>' : '';
+        return textHtml + hint + colB +
+          '<table class="pq-match"><thead><tr><th>Colonna A</th><th></th><th>Abbinamento corretto</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+          (arr ? '' : (_ppkqEmpty(a) ? '<div class="pq-note">⚠️ Manca la soluzione.</div>' : '<div class="pq-note">Risposta registrata: <strong>' + _ppkqEsc(a) + '</strong></div>'));
+      }
+
+      if (type === 'drag-drop') {
+        const given = _ppkqArr(a) || [];
+        const corrects = _ppkqArr(q.answers) || [];
+        const sentences = _ppkqArr(q.sentences) || [];
+        const bank = Array.isArray(q.words) && q.words.length
+          ? '<div class="pq-bank"><strong>Parole:</strong> ' + q.words.map(_ppkqEsc).join(' · ') + '</div>' : '';
+        // Correttezza per spazio (anche in modalità "ordine libero" per riga)
+        const okArr = corrects.map((c, i) => !_ppkqEmpty(given[i]) && String(given[i]).toLowerCase() === String(c || '').toLowerCase());
+        if (q.unordered && sentences.length) {
+          let bi = 0;
+          sentences.forEach(st => {
+            const cnt = (String(st).match(/___/g) || []).length || 1;
+            const pool = corrects.slice(bi, bi + cnt).map(c => String(c || '').toLowerCase());
+            for (let j = bi; j < bi + cnt; j++) {
+              const g = _ppkqEmpty(given[j]) ? null : String(given[j]).toLowerCase();
+              const p = g == null ? -1 : pool.indexOf(g);
+              okArr[j] = p >= 0;
+              if (p >= 0) pool.splice(p, 1);
+            }
+            bi += cnt;
+          });
+        }
+        let bi = 0;
+        const fill = s => {
+          const parts = [];
+          const tok = String(s || '').replace(/___/g, () => {
+            const n = bi++;
+            parts.push(_ppkqChip(given[n], corrects[n] != null ? okArr[n] : null, q.unordered ? '' : (corrects[n] != null ? String(corrects[n]) : '')));
+            return '\u0000' + (parts.length - 1) + '\u0000';
+          });
+          return _ppkqRich(tok).replace(/\u0000(\d+)\u0000/g, (m, i) => parts[+i]);
+        };
+        const body = sentences.length
+          ? '<div class="pq-sentences">' + sentences.map(s => '<div class="pq-sent">' + fill(s) + '</div>').join('') + '</div>'
+          : '<div class="pq-text">' + given.map((g, i) => _ppkqChip(g, corrects[i] != null ? okArr[i] : null, corrects[i] != null ? String(corrects[i]) : '')).join(' ') + '</div>';
+        const unNote = q.unordered && okArr.some(x => !x) && corrects.length
+          ? '<div class="pq-note">Soluzione: ' + corrects.map(_ppkqEsc).join(' · ') + '</div>' : '';
+        return textHtml + hint + bank + body + unNote + (_ppkqEmpty(a) ? '<div class="pq-note">⚠️ Manca la soluzione.</div>' : '');
+      }
+
+      if (type === 'reorder') {
+        const given = _ppkqArr(a) || [];
+        const sentences = _ppkqArr(q.sentences) || [];
+        const rows = sentences.map((s, si) => {
+          const g = given[si];
+          const ok = !_ppkqEmpty(g) && String(g).trim().toLowerCase() === String(s || '').trim().toLowerCase();
+          return '<li>' + _ppkqChip(g, ok, s) + '</li>';
+        }).join('');
+        return textHtml + hint + '<ol class="pq-list">' + rows + '</ol>' + (_ppkqEmpty(a) ? '<div class="pq-note">⚠️ Manca la soluzione.</div>' : '');
+      }
+
+      if (type === 'categorization') {
+        const items = _ppkqArr(q.items) || [], cats = _ppkqArr(q.categories) || [], corr = _ppkqArr(q.answers) || [];
+        const arr = _ppkqArr(a) || [];
+        const rows = items.map((it, ii) => {
+          const g = arr[ii];
+          const placed = !_ppkqEmpty(g);
+          const gName = placed ? (cats[Number(g)] != null ? cats[Number(g)] : String(g)) : null;
+          const hasCorr = corr[ii] != null;
+          const ok = placed && hasCorr && Number(g) === Number(corr[ii]);
+          const cName = hasCorr && cats[Number(corr[ii])] != null ? cats[Number(corr[ii])] : '';
+          return '<tr><td class="pq-mleft">' + _ppkqEsc(it) + '</td><td class="pq-marrow">→</td><td>' +
+            (placed ? '<span class="pq-chip ' + (hasCorr ? (ok ? 'pq-ok' : 'pq-ko') : 'pq-neutral') + '">' + _ppkqEsc(gName) + (hasCorr ? (ok ? ' ✓' : ' ✗') : '') + '</span>'
+                    : '<span class="pq-chip pq-ko">⚠ manca</span>') +
+            (hasCorr && !ok && cName ? '<span class="pq-fix">→ ' + _ppkqEsc(cName) + '</span>' : '') + '</td></tr>';
+        }).join('');
+        const catList = cats.length ? '<div class="pq-bank"><strong>Categorie:</strong> ' + cats.map(_ppkqEsc).join(' · ') + '</div>' : '';
+        return textHtml + hint + catList +
+          '<table class="pq-match"><thead><tr><th>Elemento</th><th></th><th>Categoria corretta</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      }
+
+      if (type === 'free-response' || type === 'free') {
+        return textHtml + hint + '<div class="pq-note">✍️ Risposta aperta: la valuta l\'AI' +
+          (q.hint ? ' con i criteri qui sopra.' : '. <strong style="color:#b45309;">Senza criteri di correzione.</strong>') + '</div>';
+      }
+
+      // Tipo sconosciuto: testo + risposta così com'è
+      const raw = _ppkqEmpty(a) ? _PPKQ_NONE
+        : _ppkqEsc(Array.isArray(a) || typeof a === 'object' ? (_ppkqArr(a) || []).map(x => x == null ? '—' : x).join(' / ') : a);
+      return textHtml + hint + '<div class="pq-label">Risposta dell\'alunno</div><div class="pq-free">' + raw + '</div>';
+    }
+
+    // Blocco completo di una domanda (immagine + testo + risposta)
+    function _ppkQuestionBlock(q) {
+      if (!q || typeof q !== 'object') return '<div class="pq-note">Domanda non disponibile.</div>';
+      const img = q.image ? '<div class="pq-img"><img src="' + _ppkqEsc(q.image) + '" alt="Immagine della domanda"></div>' : (q.fotoRef ? _ppFotoHtml(q) : '');
+      const tts = q.ttsText ? '<div class="pq-bank"><strong>🔊 Testo letto:</strong> ' + _ppkqEsc(q.ttsText) + '</div>' : '';
+      if (q.type === 'listening') {
+        const inner = q.question || {};
+        let sub = q.subtype || inner.type;
+        if (!sub) {
+          if (inner.correct !== undefined) sub = 'multiple-choice';
+          else if (Array.isArray(inner.answers) && inner.answers.length) sub = 'cloze';
+          else if (Array.isArray(inner.left) && inner.left.length) sub = 'matching';
+          else sub = 'free-response';
+        }
+        const innerImg = inner.image && inner.image !== q.image ? '<div class="pq-img"><img src="' + _ppkqEsc(inner.image) + '" alt="Immagine della domanda"></div>' : '';
+        const intro = q.text && q.text !== inner.text ? '<div class="pq-text">' + _ppkqRich(q.text) + '</div>' : '';
+        return img + innerImg + '<div class="pq-listen">🎧 Esercizio di ascolto</div>' + tts + intro + _ppkqBody(inner, sub, _ppkAnswer(inner, sub));
+      }
+      return img + tts + _ppkqBody(q, q.type, _ppkAnswer(q, q.type));
+    }
+
+    const _PPKQ_CSS = `
+      .pq-card { border:1px solid #e5e0ff; border-left:5px solid #c4b5fd; border-radius:8px; margin:0 0 10px; break-inside:avoid; page-break-inside:avoid; background:#fff; overflow:hidden; }
+      .pq-head { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; padding:6px 10px; border-bottom:1px solid #ece9ff; }
+      .pq-num { font-weight:900; color:#6c47ff; font-size:13px; }
+      .pq-type { font-size:11px; color:#666; }
+      .pq-esito { font-weight:800; font-size:12px; margin-left:auto; }
+      .pq-pts { font-weight:800; font-size:12px; color:#1e1b4b; }
+      .pq-time { font-size:11px; color:#888; }
+      .pq-body { padding:8px 12px 10px; font-size:13px; line-height:1.5; color:#1e1b4b; }
+      .pq-img { margin:2px 0 8px; }
+      .pq-img img { max-width:100%; max-height:200px; border-radius:6px; border:1px solid #e5e0ff; }
+      .pq-text { margin:0 0 6px; }
+      .pq-filled { line-height:2; }
+      .pq-hint { font-size:12px; color:#4c2fc0; margin:0 0 6px; }
+      .pq-listen { display:inline-block; font-size:11px; font-weight:800; color:#5b21b6; background:#ede9fe; border-radius:10px; padding:1px 8px; margin:0 0 6px; }
+      .pq-opts { display:flex; flex-direction:column; gap:4px; margin-top:4px; }
+      .pq-opt { display:flex; align-items:center; gap:8px; border:1.5px solid #e5e7eb; border-radius:6px; padding:4px 8px; background:#fff; }
+      .pq-opt-ok { border-color:#059669; background:#ecfdf5; font-weight:700; }
+      .pq-opt-ko { border-color:#dc2626; background:#fef2f2; font-weight:700; }
+      .pq-opt-right { border-color:#059669; border-style:dashed; background:#f0fdf4; }
+      .pq-letter { flex:0 0 auto; width:20px; height:20px; border-radius:50%; background:#ede9fe; color:#5b21b6; font-size:11px; font-weight:800; display:inline-flex; align-items:center; justify-content:center; }
+      .pq-otext { flex:1; }
+      .pq-tag { font-size:10px; font-weight:800; border-radius:10px; padding:1px 8px; white-space:nowrap; }
+      .pq-tag-ok { background:#059669; color:#fff; }
+      .pq-tag-ko { background:#dc2626; color:#fff; }
+      .pq-tag-right { background:#d1fae5; color:#065f46; }
+      .pq-chip { display:inline-block; border-radius:5px; padding:0 6px; font-weight:700; border:1.5px solid; line-height:1.6; }
+      .pq-ok { color:#065f46; background:#d1fae5; border-color:#059669; }
+      .pq-ko { color:#991b1b; background:#fee2e2; border-color:#dc2626; }
+      .pq-neutral { color:#1e1b4b; background:#f5f3ff; border-color:#c4b5fd; }
+      .pq-fix { color:#065f46; font-weight:700; font-size:12px; margin-left:4px; }
+      .pq-icopts { color:#888; font-size:11px; margin-left:3px; }
+      .pq-none { color:#999; font-style:italic; }
+      .pq-note { font-size:12px; color:#666; font-style:italic; margin-top:4px; }
+      .pq-bank { font-size:12px; color:#444; background:#f8f7ff; border:1px dashed #c4b5fd; border-radius:6px; padding:3px 8px; margin:0 0 6px; }
+      .pq-match { border-collapse:collapse; width:auto; margin-top:4px; }
+      .pq-match th { background:#f5f3ff !important; color:#5b21b6 !important; font-size:11px; padding:3px 8px; text-align:left; white-space:nowrap; }
+      .pq-match td { padding:3px 8px; border-bottom:1px solid #f0edff; font-size:13px; vertical-align:middle; }
+      .pq-mleft { font-weight:600; }
+      .pq-marrow { color:#888; }
+      .pq-list { margin:4px 0 0 20px; padding:0; }
+      .pq-list li { margin:2px 0; }
+      .pq-sentences { display:flex; flex-direction:column; gap:4px; line-height:2; }
+      .pq-label { font-size:11px; font-weight:800; color:#5b21b6; text-transform:uppercase; letter-spacing:.3px; margin-top:4px; }
+      .pq-free { white-space:normal; background:#f8f7ff; border:1px solid #e5e0ff; border-radius:6px; padding:6px 9px; margin-top:2px; }
+      .pq-fb { font-size:12px; color:#4c1d95; background:#f5f3ff; border-top:1px solid #ece9ff; padding:6px 12px; font-style:italic; }
+      .pq-legend { font-size:11px; color:#555; margin:0 0 10px; display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; }
+      @media print { .pq-card { box-shadow:none; } }
+    `;
+
+    // ── Revisione bozze a tutto schermo (come LiveLearn → 🎯 Piani) ──────────
+    // A sinistra le bozze per classe e unit, a destra l'attività intera con le
+    // soluzioni attese in evidenza e i controlli automatici (_ppValidateQuestion)
+    // sulle domande già nel formato che riceve LiveLearn (_ppNormalizeQuestion).
+    // Approva, scarta e rigenera usano le stesse funzioni della scheda Scritto.
+    let _ppRevSel = null;
+    function _ppkSol(txt) {
+        return txt ? '<span class="pq-chip pq-ok">' + _ppkqEsc(txt) + ' ✓</span>' : '<span class="pq-chip pq-ko">⚠ manca la soluzione</span>';
+    }
+    // Soluzione attesa di una domanda, nel formato delle risposte degli alunni
+    function _ppkAnswer(q, type) {
+        if (type === 'multiple-choice') return q.correct != null && q.correct !== '' ? Number(q.correct) : undefined;
+        if (type === 'cloze' || type === 'fill-blanks') return _ppkqArr(q.answers) || [];
+        if (type === 'matching') return (_ppkqArr(q.left) || []).map((x, i) => i);
+        if (type === 'drag-drop') return _ppkqArr(q.answers) || [];
+        if (type === 'reorder') return _ppkqArr(q.sentences) || [];
+        if (type === 'categorization') return _ppkqArr(q.answers) || [];
+        return undefined;
+    }
+    function _ppRevQs(d) {
+        const qList = Array.isArray(d.activity) ? d.activity : (d.activity?.questions || []);
+        return qList.map(_ppNormalizeQuestion);
+    }
+    // Problemi per esercizio: controlli strutturali + domande ripetute nella stessa attività
+    function _ppRevIssues(qs) {
+        const seen = new Map();
+        return qs.map((q, i) => {
+            let issues = [];
+            try { issues = _ppValidateQuestion(q); } catch(e) { issues = ['controllo non riuscito: ' + e.message]; }
+            const t = String(q?.text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            if (t.length > 12) {
+                if (seen.has(t)) issues = issues.concat('uguale all\'esercizio ' + (seen.get(t) + 1));
+                else seen.set(t, i);
+            }
+            return issues;
+        });
+    }
+    function _ppRevOrdered() {
+        const unitNum = u => { const m = String(u || '').match(/\d+/); return m ? Number(m[0]) : 9999; };
+        return _ppDraftScritto.slice().sort((a, b) =>
+            String(a.classeNome || '').localeCompare(String(b.classeNome || ''), 'it', { numeric: true }) ||
+            unitNum(a.unit) - unitNum(b.unit) || String(a.unit || '').localeCompare(String(b.unit || ''), 'it') ||
+            String(a.studentName || '').localeCompare(String(b.studentName || ''), 'it'));
+    }
+    const _PP_REV_TYPES = { 'multiple-choice': '📋 Scelta multipla', 'cloze': '✏️ Completa', 'fill-blanks': '📝 Completa', 'matching': '🔗 Abbinamento',
+        'drag-drop': '🔀 Trascina le parole', 'reorder': '🔢 Riordina', 'categorization': '🗂️ Categorie', 'free-response': '💬 Risposta aperta', 'listening': '🎧 Ascolto' };
+    function _ppRevPfx(p) {
+        return p === 'REC' ? { label: 'Recupero', bg: '#fee2e2', col: '#991b1b' } : p === 'CON' ? { label: 'Consolidamento', bg: '#dcfce7', col: '#14532d' }
+            : { label: 'Approfondimento', bg: '#dbeafe', col: '#1e3a5f' };
+    }
+
+    function ppOpenReview(id) {
+        if (!_ppDraftScritto.length) { alert('Nessuna bozza da rivedere.'); return; }
+        if (!document.getElementById('ppRevCss')) {
+            const st = document.createElement('style');
+            st.id = 'ppRevCss';
+            st.textContent = _PPKQ_CSS + `
+              #ppRevOverlay { position:fixed; inset:0; z-index:10000; background:#f5f3ff; display:flex; flex-direction:column; font-family:inherit; }
+              #ppRevOverlay .rv-top { background:#fff; border-bottom:2px solid #e5e0ff; padding:12px 22px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+              #ppRevOverlay .rv-body { flex:1; min-height:0; display:grid; grid-template-columns:270px 1fr; }
+              #ppRevOverlay .rv-side { background:#fff; border-right:2px solid #e5e0ff; overflow-y:auto; padding:8px; }
+              #ppRevOverlay .rv-cls { font-size:11px; font-weight:800; color:#6b7280; letter-spacing:1px; text-transform:uppercase; padding:10px 8px 4px; }
+              #ppRevOverlay .rv-unit { font-size:12px; font-weight:700; color:#4c1d95; padding:6px 8px 2px; }
+              #ppRevOverlay .rv-pill { display:flex; align-items:center; gap:6px; padding:8px 10px; border-radius:10px; cursor:pointer; }
+              #ppRevOverlay .rv-pill:hover, #ppRevOverlay .rv-pill.on { background:#ede9fe; }
+              #ppRevOverlay .rv-name { flex:1; min-width:0; font-size:13px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#1e1b4b; }
+              #ppRevOverlay .rv-main { overflow-y:auto; padding:22px 28px 60px; }
+              #ppRevOverlay .rv-badge { font-size:11px; font-weight:700; padding:3px 10px; border-radius:20px; background:#f1f5f9; color:#334155; white-space:nowrap; }
+              #ppRevOverlay .rv-btn { font-size:13px; font-weight:700; padding:8px 14px; border-radius:8px; cursor:pointer; font-family:inherit; border:1.5px solid #c4b5fd; background:#fff; color:#6c47ff; }
+              #ppRevOverlay .pq-card { margin-bottom:12px; }
+              #ppRevOverlay .pq-body { font-size:15px; }
+              #ppRevOverlay .pq-issues { background:#fef2f2; border-bottom:1px solid #fecaca; color:#991b1b; font-size:12px; font-weight:700; padding:6px 12px; }
+              @media (max-width:760px) { #ppRevOverlay .rv-body { grid-template-columns:1fr; } #ppRevOverlay .rv-side { max-height:30vh; border-right:0; border-bottom:2px solid #e5e0ff; } }`;
+            document.head.appendChild(st);
+        }
+        let ov = document.getElementById('ppRevOverlay');
+        if (!ov) {
+            ov = document.createElement('div');
+            ov.id = 'ppRevOverlay';
+            ov.innerHTML = `<div class="rv-top">
+                <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;font-weight:900;color:#4c1d95;">🔍 Revisione bozze</span><span id="ppRevCount" class="rv-badge" style="background:#fef3c7;color:#92400e;"></span></div>
+                <button class="rv-btn" onclick="ppCloseReview()">✕ Chiudi</button>
+              </div>
+              <div class="rv-body"><div class="rv-side" id="ppRevSide"></div><div class="rv-main" id="ppRevMain"></div></div>`;
+            document.body.appendChild(ov);
+            if (!ppOpenReview._esc) {
+                ppOpenReview._esc = true;
+                document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.getElementById('ppRevOverlay')) ppCloseReview(); });
+            }
+        }
+        const list = _ppRevOrdered();
+        _ppRevSel = (id && list.some(d => d.id === id)) ? id : (list.find(d => d.id === _ppRevSel) || list[0]).id;
+        _ppRevRender();
+    }
+    function ppCloseReview() {
+        document.getElementById('ppRevOverlay')?.remove();
+        renderPianoPersPanel();
+    }
+    function ppReviewSelect(id) { _ppRevSel = id; _ppRevRender(); document.getElementById('ppRevMain')?.scrollTo(0, 0); }
+    function ppReviewStep(dir) {
+        const list = _ppRevOrdered(), i = list.findIndex(d => d.id === _ppRevSel);
+        const n = list[i + dir];
+        if (n) ppReviewSelect(n.id);
+    }
+    // Dopo approva/scarta/rigenera: resta sulla stessa bozza se c'è ancora, altrimenti la successiva
+    function _ppRevAfter(prevIdx) {
+        if (!document.getElementById('ppRevOverlay')) return;
+        const list = _ppRevOrdered();
+        if (!list.length) { ppCloseReview(); return; }
+        if (!list.some(d => d.id === _ppRevSel)) _ppRevSel = (list[Math.min(prevIdx, list.length - 1)] || list[0]).id;
+        _ppRevRender();
+    }
+
+    function _ppRevRender() {
+        const side = document.getElementById('ppRevSide'), main = document.getElementById('ppRevMain');
+        if (!side || !main) return;
+        const esc = x => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const list = _ppRevOrdered();
+        document.getElementById('ppRevCount').textContent = list.length + ' da approvare';
+        let html = '', cls = null, unit = null;
+        list.forEach(d => {
+            if (d.classeNome !== cls) { cls = d.classeNome; unit = null; html += `<div class="rv-cls">🏫 ${esc(cls || '(senza classe)')}</div>`; }
+            if (d.unit !== unit) { unit = d.unit; html += `<div class="rv-unit">📘 ${esc(unit || '(senza unit)')}</div>`; }
+            const pf = _ppRevPfx(d.prefix);
+            const nIss = _ppRevIssues(_ppRevQs(d)).filter(x => x.length).length;
+            html += `<div class="rv-pill${d.id === _ppRevSel ? ' on' : ''}" onclick="ppReviewSelect('${d.id}')">
+                <span class="rv-name">${esc(d.studentName)}</span>
+                <span title="${pf.label}" style="font-size:9px;font-weight:800;padding:1px 5px;border-radius:4px;background:${pf.bg};color:${pf.col};">${esc(d.prefix || '')}</span>
+                <span title="${nIss ? nIss + ' esercizi con possibili errori' : 'Nessun problema trovato dai controlli'}" style="font-size:11px;font-weight:800;color:${nIss ? '#b91c1c' : '#059669'};">${nIss ? '⚠️' + nIss : '✓'}</span>
+              </div>`;
+        });
+        side.innerHTML = html;
+
+        const d = list.find(x => x.id === _ppRevSel);
+        if (!d) { main.innerHTML = ''; return; }
+        const idx = list.indexOf(d), pf = _ppRevPfx(d.prefix), qs = _ppRevQs(d), iss = _ppRevIssues(qs);
+        const nBad = iss.filter(x => x.length).length;
+        const typeCount = {};
+        qs.forEach(q => { const k = _PP_REV_TYPES[q?.type] || q?.type; typeCount[k] = (typeCount[k] || 0) + 1; });
+        const badges = [
+            `<span class="rv-badge" style="background:${pf.bg};color:${pf.col};font-weight:800;">${pf.label} · ${esc(d.code)}</span>`,
+            `<span class="rv-badge">📘 ${esc(d.unit || '')}</span>`,
+            d.voto != null ? `<span class="rv-badge">voto ${esc(d.voto)}</span>` : '',
+            `<span class="rv-badge">${qs.length} esercizi</span>`,
+            d.source ? `<span class="rv-badge" title="Generata con">🤖 ${esc(_ppGenLabel(d.source))}</span>` : '',
+            d.versione ? `<span class="rv-badge" style="background:#ffedd5;color:#9a3412;" title="Nella verifica ha svolto la versione ${esc(d.versione)}">${esc(d.versione)}</span>` : '',
+            d.activity?.erroriCoperti ? `<span class="rv-badge" title="Errori della verifica ripresi nelle domande">🎯 errori ripresi ${d.activity.erroriCoperti.n}/${d.activity.erroriCoperti.tot}</span>` : '',
+            d.activity?.challenge ? `<span class="rv-badge" style="background:#fce7f3;color:#9d174d;">🏆 Sfida</span>` : ''
+        ].join(' ');
+        const types = Object.entries(typeCount).map(([k, n]) => `${esc(k)} ×${n}`).join(' · ');
+        const issBox = nBad
+            ? `<div style="background:#fef2f2;border:1.5px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:14px;color:#991b1b;font-size:13px;">
+                <div style="font-weight:800;margin-bottom:4px;">⚠️ Possibili errori in ${nBad} ${nBad === 1 ? 'esercizio' : 'esercizi'}</div>
+                ${iss.map((x, i) => x.length ? `<div>• <a href="#ppRevQ${i}" onclick="document.getElementById('ppRevQ${i}')?.scrollIntoView({behavior:'smooth',block:'center'});return false;" style="color:#991b1b;font-weight:700;">Esercizio ${i + 1}</a>: ${x.map(esc).join('; ')}</div>` : '').join('')}
+              </div>`
+            : `<div style="background:#ecfdf5;border:1.5px solid #86efac;border-radius:10px;padding:8px 14px;margin-bottom:14px;color:#065f46;font-size:13px;font-weight:700;">✓ I controlli automatici non hanno trovato problemi. Controlla comunque il senso delle frasi e le soluzioni in verde.</div>`;
+        const passage = d.activity?.passageText
+            ? `<div style="background:#fff;border:1.5px solid #f9a8d4;border-radius:10px;padding:12px 14px;margin-bottom:14px;"><div style="font-size:12px;font-weight:800;color:#9d174d;margin-bottom:4px;">📄 TESTO DI LETTURA${d.activity.challenge ? ' — SFIDA' : ''}</div><div style="font-size:15px;line-height:1.6;">${_ppkqRich(d.activity.passageText)}</div></div>` : '';
+        const cards = qs.map((q, i) => {
+            const bad = iss[i].length;
+            const tag = q?.tag ? ` · ${esc(q.tag)}` : '';
+            return `<div class="pq-card" id="ppRevQ${i}" style="border-left-color:${bad ? '#dc2626' : '#c4b5fd'};">
+                <div class="pq-head" style="background:${bad ? '#fef2f2' : '#f8f7ff'};">
+                  <span class="pq-num">Esercizio ${i + 1}</span>
+                  <span class="pq-type">${esc(_PP_REV_TYPES[q?.type] || q?.type || '')}${tag}</span>
+                  <span class="pq-esito" style="color:${bad ? '#b91c1c' : '#059669'};">${bad ? '⚠️ da controllare' : ''}</span>
+                  <span class="pq-pts">${q?.points || 1} pt</span>
+                </div>
+                ${bad ? `<div class="pq-issues">⚠️ ${iss[i].map(esc).join(' · ')}</div>` : ''}
+                <div class="pq-body">${(() => { try { return _ppkQuestionBlock(q); } catch(e) { return '<div class="pq-note">Anteprima non disponibile: ' + esc(e.message) + '</div>'; } })()}</div>
+              </div>`;
+        }).join('');
+        main.innerHTML = `
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+              <div style="min-width:0;">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;"><h2 style="font-size:21px;font-weight:800;margin:0;color:#1e1b4b;">${esc(d.studentName)}</h2>${badges}</div>
+                <div style="font-size:12px;color:#6b7280;">${esc(d.classeNome || '')} · creata ${new Date(d.createdAt).toLocaleString('it', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} · ${types}</div>
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button class="rv-btn" onclick="ppReviewStep(-1)" ${idx > 0 ? '' : 'disabled style="opacity:.4;"'} title="Bozza precedente">◀</button>
+                <button class="rv-btn" onclick="ppReviewStep(1)" ${idx < list.length - 1 ? '' : 'disabled style="opacity:.4;"'} title="Bozza successiva">▶</button>
+                <button class="rv-btn" onclick="ppReviewEdit('${d.id}')" title="Apri l'editor delle domande nella scheda Scritto">✏️ Modifica</button>
+                <button class="rv-btn" onclick="ppReviewRegen('${d.id}')" style="border-color:#fbbf24;color:#b45309;" title="Rigenera l'attività">↺ Rigenera</button>
+                <button class="rv-btn" onclick="ppReviewDiscard('${d.id}')" style="border-color:#fca5a5;color:#dc2626;">🗑 Scarta</button>
+                <button class="rv-btn" id="ppRevAppBtn" onclick="ppReviewApprove('${d.id}')" style="background:#059669;border-color:#059669;color:#fff;">✅ Approva e invia</button>
+              </div>
+            </div>
+            ${issBox}${passage}
+            <div class="pq-legend"><span><span class="pq-chip pq-ok">verde ✓</span> soluzione attesa (tutte le alternative accettate)</span><span><span class="pq-chip pq-ko">⚠ rosso</span> manca o da controllare</span></div>
+            ${cards || '<div style="color:#999;">Nessuna domanda.</div>'}`;
+    }
+
+    async function ppReviewApprove(id) {
+        const idx = _ppRevOrdered().findIndex(d => d.id === id);
+        const btn = document.getElementById('ppRevAppBtn');
+        if (btn) { btn.textContent = '⏳ Invio…'; btn.disabled = true; }
+        await ppApproveScritto(id);
+        _ppRevAfter(idx);
+    }
+    function ppReviewDiscard(id) {
+        const idx = _ppRevOrdered().findIndex(d => d.id === id);
+        ppDiscardScritto(id);
+        _ppRevAfter(idx);
+    }
+    async function ppReviewRegen(id) {
+        const idx = _ppRevOrdered().findIndex(d => d.id === id);
+        try { await ppRegenDraft(id); } finally { _ppRevAfter(idx); }
+    }
+    // Modifica: si chiude la revisione e si apre la bozza nell'editor della scheda Scritto
+    function ppReviewEdit(id) {
+        document.getElementById('ppRevOverlay')?.remove();
+        _ppDraftOpenId = id;
+        _ppDraftView[id] = 'edit';
+        renderPianoPersPanel().then(() => document.getElementById('ppDraftCard_' + id)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    }
+
     // Vista della bozza aperta: anteprima completa (default) o modifica domande.
     // Cambia solo la visibilita' (l'editor resta nella pagina): le modifiche
     // non salvate non si perdono passando da una vista all'altra.
@@ -34336,6 +34843,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                         </div>
                         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
                           <span style="background:${pfxBg};color:${pfxCol};border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;white-space:nowrap;">${pfxLabel}</span>
+                          <button onclick="event.stopPropagation();ppOpenReview('${d.id}')" title="Rivedi a schermo intero con soluzioni e controlli" style="background:#6c47ff;color:#fff;border:none;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">🔍 Rivedi</button>
                           <button id="ppDraftRegenBtn_${d.id}" onclick="event.stopPropagation();ppRegenDraft('${d.id}')" title="Rigenera l'attività con Haiku, Automatico o Claude Code (in quel caso la bozza viene sostituita quando importi il file di Claude). Se ha svolto la verifica DSA / PEI / PEI 2 viene adattata alla sua versione" style="background:#fff7ed;color:#c2410c;border:1.5px solid #fdba74;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">↺ Rigenera</button>
                         </div>
                       </div>
@@ -34367,7 +34875,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 _ppGroupByClass(_ppDraftScritto).forEach((list, classeNome) => {
                     draftCards += _ppClassGroupHeader(classeNome, list.length, 'scritto') + list.map(_draftCard).join('');
                 });
-                draftsHtml = `<div style="margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ IN ATTESA DI APPROVAZIONE (${_ppDraftScritto.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire la sua attività</span></div>${draftCards}</div>`;
+                draftsHtml = `<div style="margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ IN ATTESA DI APPROVAZIONE (${_ppDraftScritto.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire la sua attività</span></div>
+                  <button onclick="ppOpenReview()" title="Tutte le bozze a schermo intero, come in LiveLearn: esercizi completi, soluzioni in verde e possibili errori segnalati" style="width:100%;margin:2px 0 10px;padding:11px;border-radius:10px;border:none;background:#6c47ff;color:#fff;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;">🔍 Rivedi le bozze a schermo intero (${_ppDraftScritto.length})</button>${draftCards}</div>`;
             }
             const claudeBar = `<div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
                 <button onclick="ppAddStudentDialog()" title="Rimetti in coda un alunno (es. dopo aver scartato la sua bozza) e generane il piano" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1.5px solid #6c47ff;background:#fff;color:#6c47ff;cursor:pointer;font-weight:700;font-family:inherit;">➕ Piano per un alunno</button>
