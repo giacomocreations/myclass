@@ -33401,6 +33401,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
     async function ppApproveScritto(id) {
         const item = _ppDraftScritto.find(x => x.id === id);
         if (!item) return;
+        const old = item.replaces && _ppActiveScritto[item.replaces];
+        if (old && !confirm(`Questa bozza è la nuova versione del piano ${item.replaces}, già inviato a ${item.studentName}.\n\nApprovando, il vecchio piano sparisce da StudentApp (anche il messaggio in bacheca)${(old.attemptCount || 0) > 0 ? ', insieme ai tentativi già fatti' : ''}. Continuare?`)) return;
         const btn = document.getElementById('ppDraftAppBtn_' + id);
         if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
         const ok = await _ppApproveScrittoCore(item);
@@ -33452,6 +33454,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         _ppSavDraftScritto();
         _ppActiveScritto[item.code] = { studentSafe: item.studentSafe, stuCode: await _mcCodeOf(item.studentSafe), studentName: item.studentName, classeNome: item.classeNome, unit: item.unit, voto: item.voto, lastScore: null, attemptCount: 0, status: 'pending' };
         _ppSavActive();
+        // Nuova versione di un piano già inviato: prende il posto del vecchio
+        if (item.replaces && item.replaces !== item.code) await _ppRemoveReplaced(item.replaces, item);
         _ppDraftSel.delete(id);
         // Il piano è partito: la sua voce esce dalla coda approvazione
         _ppDeferredDropFor(item.studentSafe, item.unit, item.prefix === 'APP' ? null : ['scritto']);
@@ -33795,7 +33799,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         const item = _ppActiveScritto[code];
         if (!item) return;
         const scelta = await _ppChooseGenerator(`Rigenerare il piano per ${item.studentName}`, { allowClaude: false,
-            detail: `Viene creata una nuova bozza da approvare (poi puoi sostituirla con Claude Code da ↺ Rigenera). Il codice attuale (${code}) rimane valido su Firebase finché non viene rimosso manualmente.` });
+            detail: `Viene creata una nuova bozza da approvare (poi puoi sostituirla con Claude Code da ↺ Rigenera). Quando la approvi, sostituisce il piano attuale (${code}) in StudentApp.` });
         if (!scelta) return;
         _ppSetGenProvider(scelta);
 
@@ -33837,7 +33841,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         _ppDraftScritto.push({
             id: draftId, studentSafe: item.studentSafe, studentName: item.studentName,
             code: newCode, prefix, activity,
-            unit: item.unit, voto: item.voto, classeNome: item.classeNome,
+            unit: item.unit, voto: item.voto, classeNome: item.classeNome, replaces: code,
             createdAt: Date.now(), source: _ppGenProvider, ...(verInfo ? { versione: verInfo.label } : {})
         });
         _ppSavDraftScritto();
@@ -33977,6 +33981,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             ${btn(`🗑 Rimuovi selezionate${nSel ? ` (${nSel})` : ''}`, 'ppActRemoveSelected()', nSel ? 'border:1.5px solid #dc2626;background:#dc2626;color:#fff;' : 'border:1px solid #e5e7eb;background:#f9fafb;color:#9ca3af;', 'Rimuove le attività spuntate (anche da Firebase): gli alunni non le vedono più')}
             ${hasCompleted ? btn('🧹 Rimuovi completate', 'ppCleanupCompleted()', 'border:1px solid #d1d5db;background:#fff;color:#666;') : ''}
             ${btn('🗑 Rimuovi tutte', 'ppActRemoveAll()', 'border:1px solid #fca5a5;background:#fff;color:#dc2626;', 'Rimuove tutte le attività inviate')}
+            ${btn('🔍 Rivedi a schermo intero', "ppOpenReview(null,'sent')", 'border:1.5px solid #6c47ff;background:#6c47ff;color:#fff;margin-left:auto;', 'Tutti i piani inviati con esercizi e soluzioni; da lì puoi modificarli e reinviarli')}
           </div>`;
         const groupCb = (codes, key) => {
             const n = codes.filter(c => _ppActSel.has(c)).length;
@@ -34020,6 +34025,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                           <td style="padding:6px;text-align:center;">${(item.bestScore ?? item.lastScore) != null ? `<span style="font-weight:700;color:#059669;" title="${item.lastScore != null ? 'Ultimo: ' + item.lastScore + '%' : ''}">${item.bestScore ?? item.lastScore}%</span>` : '—'}</td>
                           <td style="padding:6px;text-align:center;color:#666;">${item.attemptCount > 0 ? item.attemptCount : '—'}</td>
                           <td style="padding:4px;text-align:right;white-space:nowrap;">
+                            <button onclick="ppOpenReview('${code}','sent')" title="Vedi il piano a schermo intero; da lì puoi modificarlo e reinviarlo" style="background:#f5f3ff;border:1px solid #c4b5fd;border-radius:6px;color:#6d28d9;cursor:pointer;font-size:12px;padding:2px 6px;">🔍</button>
                             <button onclick="ppShowPlanResults('${code}')" title="Vedi i tentativi: quante volte l'ha fatto e come" style="background:#f5f3ff;border:1px solid #c4b5fd;border-radius:6px;color:#6d28d9;cursor:pointer;font-size:12px;padding:2px 6px;">📊</button>
                             <button onclick="ppRegenActiveScritto('${code}')" title="Rigenera bozza" style="background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;color:#1d4ed8;cursor:pointer;font-size:12px;padding:2px 6px;">↺</button>
                             <button onclick="ppRemoveActivity('${code}')" title="Rimuovi questa attività" style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;color:#dc2626;cursor:pointer;font-size:12px;padding:2px 6px;">🗑</button>
@@ -34500,8 +34506,10 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             : { label: 'Approfondimento', bg: '#dbeafe', col: '#1e3a5f' };
     }
 
-    function ppOpenReview(id) {
-        if (!_ppDraftScritto.length) { alert('Nessuna bozza da rivedere.'); return; }
+    function ppOpenReview(id, mode) {
+        _ppRevMode = mode || 'draft';
+        if (_ppRevMode === 'draft' && !_ppDraftScritto.length) _ppRevMode = 'sent';
+        if (_ppRevMode === 'sent' && !Object.keys(_ppActiveScritto).length) { alert('Nessun piano da rivedere.'); return; }
         if (!document.getElementById('ppRevCss')) {
             const st = document.createElement('style');
             st.id = 'ppRevCss';
@@ -34529,7 +34537,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             ov = document.createElement('div');
             ov.id = 'ppRevOverlay';
             ov.innerHTML = `<div class="rv-top">
-                <div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;font-weight:900;color:#4c1d95;">🔍 Revisione bozze</span><span id="ppRevCount" class="rv-badge" style="background:#fef3c7;color:#92400e;"></span></div>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="font-size:18px;font-weight:900;color:#4c1d95;">🔍 Piani personalizzati</span><span id="ppRevTabs" style="display:flex;gap:6px;"></span></div>
                 <button class="rv-btn" onclick="ppCloseReview()">✕ Chiudi</button>
               </div>
               <div class="rv-body"><div class="rv-side" id="ppRevSide"></div><div class="rv-main" id="ppRevMain"></div></div>`;
@@ -34539,8 +34547,11 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.getElementById('ppRevOverlay')) ppCloseReview(); });
             }
         }
-        const list = _ppRevOrdered();
-        _ppRevSel = (id && list.some(d => d.id === id)) ? id : (list.find(d => d.id === _ppRevSel) || list[0]).id;
+        if (_ppRevMode === 'sent') _ppRevSelSent = (id && _ppActiveScritto[id]) ? id : (_ppActiveScritto[_ppRevSelSent] ? _ppRevSelSent : (_ppRevSentOrdered()[0] || [])[0]);
+        else {
+            const list = _ppRevOrdered();
+            _ppRevSel = (id && list.some(d => d.id === id)) ? id : (list.find(d => d.id === _ppRevSel) || list[0]).id;
+        }
         _ppRevRender();
     }
     function ppCloseReview() {
@@ -34549,6 +34560,11 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
     }
     function ppReviewSelect(id) { _ppRevSel = id; _ppRevRender(); document.getElementById('ppRevMain')?.scrollTo(0, 0); }
     function ppReviewStep(dir) {
+        if (_ppRevMode === 'sent') {
+            const sl = _ppRevSentOrdered(), si = sl.findIndex(([c]) => c === _ppRevSelSent);
+            if (sl[si + dir]) ppReviewSelectSent(sl[si + dir][0]);
+            return;
+        }
         const list = _ppRevOrdered(), i = list.findIndex(d => d.id === _ppRevSel);
         const n = list[i + dir];
         if (n) ppReviewSelect(n.id);
@@ -34557,7 +34573,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
     function _ppRevAfter(prevIdx) {
         if (!document.getElementById('ppRevOverlay')) return;
         const list = _ppRevOrdered();
-        if (!list.length) { ppCloseReview(); return; }
+        if (!list.length) { _ppRevRender(); return; }
         if (!list.some(d => d.id === _ppRevSel)) _ppRevSel = (list[Math.min(prevIdx, list.length - 1)] || list[0]).id;
         _ppRevRender();
     }
@@ -34566,9 +34582,10 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         const side = document.getElementById('ppRevSide'), main = document.getElementById('ppRevMain');
         if (!side || !main) return;
         const esc = x => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        _ppRevTabs();
+        if (_ppRevMode === 'sent') { _ppRevRenderSent(); return; }
         const list = _ppRevOrdered();
-        document.getElementById('ppRevCount').textContent = list.length + ' da approvare';
-        let html = '', cls = null, unit = null;
+        let html = list.length ? '' : '<div style="padding:16px 10px;color:#6b7280;font-size:13px;">Nessuna bozza da approvare.</div>', cls = null, unit = null;
         list.forEach(d => {
             if (d.classeNome !== cls) { cls = d.classeNome; unit = null; html += `<div class="rv-cls">🏫 ${esc(cls || '(senza classe)')}</div>`; }
             if (d.unit !== unit) { unit = d.unit; html += `<div class="rv-unit">📘 ${esc(unit || '(senza unit)')}</div>`; }
@@ -34577,15 +34594,15 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             html += `<div class="rv-pill${d.id === _ppRevSel ? ' on' : ''}" onclick="ppReviewSelect('${d.id}')">
                 <span class="rv-name">${esc(d.studentName)}</span>
                 <span title="${pf.label}" style="font-size:9px;font-weight:800;padding:1px 5px;border-radius:4px;background:${pf.bg};color:${pf.col};">${esc(d.prefix || '')}</span>
+                ${d.replaces ? `<span title="Nuova versione del piano ${esc(d.replaces)}, già inviato" style="font-size:11px;">🔁</span>` : ''}
                 <span title="${nIss ? nIss + ' esercizi con possibili errori' : 'Nessun problema trovato dai controlli'}" style="font-size:11px;font-weight:800;color:${nIss ? '#b91c1c' : '#059669'};">${nIss ? '⚠️' + nIss : '✓'}</span>
               </div>`;
         });
         side.innerHTML = html;
 
         const d = list.find(x => x.id === _ppRevSel);
-        if (!d) { main.innerHTML = ''; return; }
+        if (!d) { main.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#6b7280;">✅ Nessuna bozza da approvare.<br><br><button class="rv-btn" onclick="ppReviewMode(\'sent\')">📨 Vedi i piani inviati</button></div>'; return; }
         const idx = list.indexOf(d), pf = _ppRevPfx(d.prefix), qs = _ppRevQs(d), iss = _ppRevIssues(qs);
-        const nBad = iss.filter(x => x.length).length;
         const typeCount = {};
         qs.forEach(q => { const k = _PP_REV_TYPES[q?.type] || q?.type; typeCount[k] = (typeCount[k] || 0) + 1; });
         const badges = [
@@ -34599,28 +34616,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             d.activity?.challenge ? `<span class="rv-badge" style="background:#fce7f3;color:#9d174d;">🏆 Sfida</span>` : ''
         ].join(' ');
         const types = Object.entries(typeCount).map(([k, n]) => `${esc(k)} ×${n}`).join(' · ');
-        const issBox = nBad
-            ? `<div style="background:#fef2f2;border:1.5px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:14px;color:#991b1b;font-size:13px;">
-                <div style="font-weight:800;margin-bottom:4px;">⚠️ Possibili errori in ${nBad} ${nBad === 1 ? 'esercizio' : 'esercizi'}</div>
-                ${iss.map((x, i) => x.length ? `<div>• <a href="#ppRevQ${i}" onclick="document.getElementById('ppRevQ${i}')?.scrollIntoView({behavior:'smooth',block:'center'});return false;" style="color:#991b1b;font-weight:700;">Esercizio ${i + 1}</a>: ${x.map(esc).join('; ')}</div>` : '').join('')}
-              </div>`
-            : `<div style="background:#ecfdf5;border:1.5px solid #86efac;border-radius:10px;padding:8px 14px;margin-bottom:14px;color:#065f46;font-size:13px;font-weight:700;">✓ I controlli automatici non hanno trovato problemi. Controlla comunque il senso delle frasi e le soluzioni in verde.</div>`;
-        const passage = d.activity?.passageText
-            ? `<div style="background:#fff;border:1.5px solid #f9a8d4;border-radius:10px;padding:12px 14px;margin-bottom:14px;"><div style="font-size:12px;font-weight:800;color:#9d174d;margin-bottom:4px;">📄 TESTO DI LETTURA${d.activity.challenge ? ' — SFIDA' : ''}</div><div style="font-size:15px;line-height:1.6;">${_ppkqRich(d.activity.passageText)}</div></div>` : '';
-        const cards = qs.map((q, i) => {
-            const bad = iss[i].length;
-            const tag = q?.tag ? ` · ${esc(q.tag)}` : '';
-            return `<div class="pq-card" id="ppRevQ${i}" style="border-left-color:${bad ? '#dc2626' : '#c4b5fd'};">
-                <div class="pq-head" style="background:${bad ? '#fef2f2' : '#f8f7ff'};">
-                  <span class="pq-num">Esercizio ${i + 1}</span>
-                  <span class="pq-type">${esc(_PP_REV_TYPES[q?.type] || q?.type || '')}${tag}</span>
-                  <span class="pq-esito" style="color:${bad ? '#b91c1c' : '#059669'};">${bad ? '⚠️ da controllare' : ''}</span>
-                  <span class="pq-pts">${q?.points || 1} pt</span>
-                </div>
-                ${bad ? `<div class="pq-issues">⚠️ ${iss[i].map(esc).join(' · ')}</div>` : ''}
-                <div class="pq-body">${(() => { try { return _ppkQuestionBlock(q); } catch(e) { return '<div class="pq-note">Anteprima non disponibile: ' + esc(e.message) + '</div>'; } })()}</div>
-              </div>`;
-        }).join('');
+        const body = _ppRevBodyHtml(d.activity, qs, iss);
         main.innerHTML = `
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
               <div style="min-width:0;">
@@ -34636,16 +34632,58 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 <button class="rv-btn" id="ppRevAppBtn" onclick="ppReviewApprove('${d.id}')" style="background:#059669;border-color:#059669;color:#fff;">✅ Approva e invia</button>
               </div>
             </div>
-            ${issBox}${passage}
-            <div class="pq-legend"><span><span class="pq-chip pq-ok">verde ✓</span> soluzione attesa (tutte le alternative accettate)</span><span><span class="pq-chip pq-ko">⚠ rosso</span> manca o da controllare</span></div>
-            ${cards || '<div style="color:#999;">Nessuna domanda.</div>'}`;
+            ${d.replaces ? _ppRevReplBanner(d) : ''}${body}`;
+    }
+    // Avvisi, testo di lettura e tutti gli esercizi con la soluzione attesa (bozze e piani inviati)
+    function _ppRevBodyHtml(activity, qs, iss) {
+        const esc = x => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const nBad = iss.filter(x => x.length).length;
+        const issBox = nBad
+            ? `<div style="background:#fef2f2;border:1.5px solid #fca5a5;border-radius:10px;padding:10px 14px;margin-bottom:14px;color:#991b1b;font-size:13px;">
+                <div style="font-weight:800;margin-bottom:4px;">⚠️ Possibili errori in ${nBad} ${nBad === 1 ? 'esercizio' : 'esercizi'}</div>
+                ${iss.map((x, i) => x.length ? `<div>• <a href="#ppRevQ${i}" onclick="document.getElementById('ppRevQ${i}')?.scrollIntoView({behavior:'smooth',block:'center'});return false;" style="color:#991b1b;font-weight:700;">Esercizio ${i + 1}</a>: ${x.map(esc).join('; ')}</div>` : '').join('')}
+              </div>`
+            : `<div style="background:#ecfdf5;border:1.5px solid #86efac;border-radius:10px;padding:8px 14px;margin-bottom:14px;color:#065f46;font-size:13px;font-weight:700;">✓ I controlli automatici non hanno trovato problemi. Controlla comunque il senso delle frasi e le soluzioni in verde.</div>`;
+        const passage = activity?.passageText
+            ? `<div style="background:#fff;border:1.5px solid #f9a8d4;border-radius:10px;padding:12px 14px;margin-bottom:14px;"><div style="font-size:12px;font-weight:800;color:#9d174d;margin-bottom:4px;">📄 TESTO DI LETTURA${activity.challenge ? ' — SFIDA' : ''}</div><div style="font-size:15px;line-height:1.6;">${_ppkqRich(activity.passageText)}</div></div>` : '';
+        const cards = qs.map((q, i) => {
+            const bad = iss[i].length;
+            const tag = q?.tag ? ` · ${esc(q.tag)}` : '';
+            return `<div class="pq-card" id="ppRevQ${i}" style="border-left-color:${bad ? '#dc2626' : '#c4b5fd'};">
+                <div class="pq-head" style="background:${bad ? '#fef2f2' : '#f8f7ff'};">
+                  <span class="pq-num">Esercizio ${i + 1}</span>
+                  <span class="pq-type">${esc(_PP_REV_TYPES[q?.type] || q?.type || '')}${tag}</span>
+                  <span class="pq-esito" style="color:${bad ? '#b91c1c' : '#059669'};">${bad ? '⚠️ da controllare' : ''}</span>
+                  <span class="pq-pts">${q?.points || 1} pt</span>
+                </div>
+                ${bad ? `<div class="pq-issues">⚠️ ${iss[i].map(esc).join(' · ')}</div>` : ''}
+                <div class="pq-body">${(() => { try { return _ppkQuestionBlock(q); } catch(e) { return '<div class="pq-note">Anteprima non disponibile: ' + esc(e.message) + '</div>'; } })()}</div>
+              </div>`;
+        }).join('');
+        return issBox + passage +
+            '<div class="pq-legend"><span><span class="pq-chip pq-ok">verde ✓</span> soluzione attesa (tutte le alternative accettate)</span><span><span class="pq-chip pq-ko">⚠ rosso</span> manca o da controllare</span></div>' +
+            (cards || '<div style="color:#999;">Nessuna domanda.</div>');
+    }
+    // Bozza che è la nuova versione di un piano già inviato
+    function _ppRevReplBanner(d) {
+        const old = _ppActiveScritto[d.replaces];
+        const n = old ? Math.max(old.attemptCount || 0, 0) : 0;
+        return `<div style="background:#e0e7ff;border:1.5px solid #a5b4fc;border-radius:10px;padding:8px 14px;margin-bottom:14px;color:#3730a3;font-size:13px;">
+            🔁 <strong>Nuova versione del piano ${d.replaces}</strong>${old ? '' : ' (non è più tra gli inviati)'}: quando la approvi, il vecchio piano sparisce da StudentApp, insieme al suo messaggio in bacheca${n ? ` e ai ${n} tentativi già fatti` : ''}.
+          </div>`;
     }
 
     async function ppReviewApprove(id) {
         const idx = _ppRevOrdered().findIndex(d => d.id === id);
+        const d = _ppDraftScritto.find(x => x.id === id);
         const btn = document.getElementById('ppRevAppBtn');
         if (btn) { btn.textContent = '⏳ Invio…'; btn.disabled = true; }
         await ppApproveScritto(id);
+        // Nuova versione di un piano inviato: si mostra il piano appena inviato
+        if (d && d.replaces && _ppActiveScritto[d.code] && document.getElementById('ppRevOverlay')) {
+            _ppRevMode = 'sent'; _ppRevSelSent = d.code; _ppRevRender();
+            return;
+        }
         _ppRevAfter(idx);
     }
     function ppReviewDiscard(id) {
@@ -34663,6 +34701,176 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         _ppDraftOpenId = id;
         _ppDraftView[id] = 'edit';
         renderPianoPersPanel().then(() => document.getElementById('ppDraftCard_' + id)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    }
+
+    // ── Piani già inviati (scheda 📨 Inviati della revisione) ──
+    // Si vedono come le bozze, con l'attività letta da recovery_sessions. "Modifica e
+    // reinvia" e "Rigenera e reinvia" creano una bozza con replaces = codice inviato:
+    // all'approvazione il piano nuovo prende il posto del vecchio (_ppRemoveReplaced).
+    let _ppRevMode = 'draft', _ppRevSelSent = null;
+    const _ppRevSentCache = {};   // codice → piano letto da Firebase
+    function _ppRevSentOrdered() {
+        const unitNum = u => { const m = String(u || '').match(/\d+/); return m ? Number(m[0]) : 9999; };
+        return Object.entries(_ppActiveScritto).sort(([, a], [, b]) =>
+            String(a.classeNome || '').localeCompare(String(b.classeNome || ''), 'it', { numeric: true }) ||
+            unitNum(a.unit) - unitNum(b.unit) || String(a.unit || '').localeCompare(String(b.unit || ''), 'it') ||
+            String(a.studentName || '').localeCompare(String(b.studentName || ''), 'it'));
+    }
+    function _ppRevTabs() {
+        const el = document.getElementById('ppRevTabs');
+        if (!el) return;
+        const tab = (m, lbl) => `<button class="rv-btn" onclick="ppReviewMode('${m}')" style="padding:6px 12px;${_ppRevMode === m ? 'background:#6c47ff;color:#fff;border-color:#6c47ff;' : ''}">${lbl}</button>`;
+        el.innerHTML = tab('draft', `⏳ Da approvare (${_ppDraftScritto.length})`) + tab('sent', `📨 Inviati (${Object.keys(_ppActiveScritto).length})`);
+    }
+    function ppReviewMode(m) {
+        _ppRevMode = m;
+        if (m === 'sent' && !_ppActiveScritto[_ppRevSelSent]) _ppRevSelSent = (_ppRevSentOrdered()[0] || [])[0] || null;
+        if (m === 'draft' && !_ppDraftScritto.some(d => d.id === _ppRevSel)) _ppRevSel = (_ppRevOrdered()[0] || {}).id || null;
+        _ppRevRender();
+        document.getElementById('ppRevMain')?.scrollTo(0, 0);
+    }
+    function ppReviewSelectSent(code) { _ppRevSelSent = code; _ppRevRender(); document.getElementById('ppRevMain')?.scrollTo(0, 0); }
+    async function _ppRevLoadSent(code, force) {
+        const it = _ppActiveScritto[code];
+        if (!it) return null;
+        if (_ppRevSentCache[code] && !force) return _ppRevSentCache[code];
+        const key = it.stuCode || await _mcCodeOf(it.studentSafe) || it.studentSafe;
+        const rs = (await firebase.database().ref(`livelearn/recovery_sessions/${key}/${code}`).get()).val();
+        _ppRevSentCache[code] = rs || { _missing: true };
+        return _ppRevSentCache[code];
+    }
+    function _ppRevSentStats(it, rs) {
+        const atts = rs && rs.attempts ? Object.values(rs.attempts).filter(Boolean) : [];
+        const pcts = atts.map(a => a.pct).filter(x => typeof x === 'number');
+        const n = Math.max(rs?.attemptCount || 0, it.attemptCount || 0, atts.length);
+        const best = pcts.length ? Math.max(...pcts) : (rs?.bestScore ?? it.bestScore ?? rs?.lastScore ?? it.lastScore ?? null);
+        return { n, best };
+    }
+    function _ppRevRenderSent() {
+        const side = document.getElementById('ppRevSide'), main = document.getElementById('ppRevMain');
+        const esc = x => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const list = _ppRevSentOrdered();
+        let html = list.length ? '' : '<div style="padding:16px 10px;color:#6b7280;font-size:13px;">Nessun piano inviato.</div>', cls = null, unit = null;
+        list.forEach(([code, it]) => {
+            if (it.classeNome !== cls) { cls = it.classeNome; unit = null; html += `<div class="rv-cls">🏫 ${esc(cls || '(senza classe)')}</div>`; }
+            if (it.unit !== unit) { unit = it.unit; html += `<div class="rv-unit">📘 ${esc(unit || '(senza unit)')}</div>`; }
+            const pf = _ppRevPfx(code.slice(0, 3)), st = _ppRevSentStats(it, _ppRevSentCache[code]);
+            const repl = _ppDraftScritto.some(d => d.replaces === code);
+            html += `<div class="rv-pill${code === _ppRevSelSent ? ' on' : ''}" onclick="ppReviewSelectSent('${esc(code)}')">
+                <span class="rv-name">${esc(it.studentName)}</span>
+                <span title="${pf.label} · ${esc(code)}" style="font-size:9px;font-weight:800;padding:1px 5px;border-radius:4px;background:${pf.bg};color:${pf.col};">${esc(code.slice(0, 3))}</span>
+                ${repl ? '<span title="C\'è una nuova versione in bozza" style="font-size:11px;">🔁</span>' : ''}
+                <span title="${st.n ? 'Svolto ' + st.n + (st.n === 1 ? ' volta' : ' volte') + ', migliore' : 'Non ancora svolto'}" style="font-size:11px;font-weight:800;color:${st.n ? '#059669' : '#9ca3af'};">${st.n ? '⭐' + (st.best ?? '—') + '%' : '⏳'}</span>
+              </div>`;
+        });
+        side.innerHTML = html;
+        const code = _ppRevSelSent, it = _ppActiveScritto[code];
+        if (!it) { main.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#6b7280;">Nessun piano inviato.</div>'; return; }
+        const rs = _ppRevSentCache[code];
+        const pf = _ppRevPfx(code.slice(0, 3));
+        const head = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;"><h2 style="font-size:21px;font-weight:800;margin:0;color:#1e1b4b;">${esc(it.studentName)}</h2>
+            <span class="rv-badge" style="background:${pf.bg};color:${pf.col};font-weight:800;">${pf.label} · ${esc(code)}</span><span class="rv-badge">📘 ${esc(it.unit || '')}</span>${it.voto != null ? `<span class="rv-badge">voto ${esc(it.voto)}</span>` : ''}`;
+        if (!rs) {
+            main.innerHTML = head + '</div><div style="color:#6b7280;padding:20px 0;">⏳ Carico il piano da Firebase…</div>';
+            _ppRevLoadSent(code).then(() => { if (_ppRevMode === 'sent' && _ppRevSelSent === code) _ppRevRender(); })
+                .catch(e => { if (_ppRevSelSent === code) main.innerHTML = head + '</div><div style="color:#b91c1c;">Errore: ' + esc(e.message) + '</div>'; });
+            return;
+        }
+        if (rs._missing || !rs.activity) {
+            main.innerHTML = head + `</div><div style="background:#fef3c7;border-radius:10px;padding:12px 14px;color:#92400e;font-size:13px;margin-top:10px;">Il piano non è più su Firebase (rimosso dalla bacheca o da LiveLearn).
+                <button class="rv-btn" style="margin-left:8px;" onclick="ppReviewRemoveSent('${esc(code)}', true)">Toglilo dall'elenco</button></div>`;
+            return;
+        }
+        const qs = (_ppkqArr(rs.activity.questions) || []).map(_ppNormalizeQuestion), iss = _ppRevIssues(qs);
+        const st = _ppRevSentStats(it, rs);
+        const list2 = list.map(([c]) => c), idx = list2.indexOf(code);
+        const repl = _ppDraftScritto.find(d => d.replaces === code);
+        const sentAt = rs.createdAt ? new Date(rs.createdAt).toLocaleString('it', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+        main.innerHTML = `
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+              <div style="min-width:0;">${head}<span class="rv-badge">${qs.length} esercizi</span>
+                <span class="rv-badge" style="${st.n ? 'background:#ecfdf5;color:#047857;' : ''}">${st.n ? `✅ svolto ${st.n} ${st.n === 1 ? 'volta' : 'volte'} · migliore ${st.best ?? '—'}%` : '⏳ non ancora svolto'}</span></div>
+                <div style="font-size:12px;color:#6b7280;">${esc(it.classeNome || '')}${sentAt ? ' · inviato ' + sentAt : ''}</div>
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button class="rv-btn" onclick="ppReviewStep(-1)" ${idx > 0 ? '' : 'disabled style="opacity:.4;"'} title="Piano precedente">◀</button>
+                <button class="rv-btn" onclick="ppReviewStep(1)" ${idx < list2.length - 1 ? '' : 'disabled style="opacity:.4;"'} title="Piano successivo">▶</button>
+                ${st.n ? `<button class="rv-btn" onclick="ppShowPlanResults('${esc(code)}')" title="Tentativi dell'alunno, domanda per domanda">📊 Tentativi</button>` : ''}
+                <button class="rv-btn" onclick="ppReviewResend('${esc(code)}')" title="Crea una bozza uguale da modificare: quando la approvi sostituisce questo piano">✏️ Modifica e reinvia</button>
+                <button class="rv-btn" onclick="ppReviewRegenSent('${esc(code)}')" style="border-color:#fbbf24;color:#b45309;" title="Genera una nuova attività: quando la approvi sostituisce questo piano">↺ Rigenera e reinvia</button>
+                <button class="rv-btn" onclick="ppReviewRemoveSent('${esc(code)}')" style="border-color:#fca5a5;color:#dc2626;" title="Toglie il piano da StudentApp">🗑 Rimuovi</button>
+              </div>
+            </div>
+            ${repl ? `<div style="background:#e0e7ff;border:1.5px solid #a5b4fc;border-radius:10px;padding:8px 14px;margin-bottom:14px;color:#3730a3;font-size:13px;">🔁 C'è già una nuova versione in bozza (${esc(repl.code)}): quando la approvi sostituisce questo piano. <button class="rv-btn" style="margin-left:6px;padding:4px 10px;" onclick="ppReviewMode('draft');ppReviewSelect('${repl.id}')">Apri la bozza</button></div>`
+                   : `<div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:8px 14px;margin-bottom:14px;color:#4c1d95;font-size:12px;">Per cambiarlo: <strong>✏️ Modifica e reinvia</strong> o <strong>↺ Rigenera e reinvia</strong> creano una bozza; quando la approvi, la nuova versione sostituisce questa in StudentApp${st.n ? ' (i tentativi già fatti vengono tolti)' : ''}.</div>`}
+            ${_ppRevBodyHtml(rs.activity, qs, iss)}`;
+    }
+    // Bozza uguale al piano inviato, da modificare e approvare al suo posto
+    async function ppReviewResend(code) {
+        const it = _ppActiveScritto[code];
+        if (!it) return;
+        const ex = _ppDraftScritto.find(d => d.replaces === code);
+        if (ex) { ppReviewMode('draft'); ppReviewSelect(ex.id); return; }
+        let rs;
+        try { rs = await _ppRevLoadSent(code); } catch(e) { alert('Errore: ' + e.message); return; }
+        if (!rs || rs._missing || !rs.activity) { alert('Il piano non è più su Firebase.'); return; }
+        const prefix = code.startsWith('REC') ? 'REC' : code.startsWith('CON') ? 'CON' : 'APP';
+        const activity = JSON.parse(JSON.stringify(rs.activity));
+        activity.questions = (_ppkqArr(activity.questions) || []).filter(Boolean);
+        const id = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+        _ppDraftScritto.push({ id, studentSafe: it.studentSafe, studentName: it.studentName, code: _pianoGenCode(prefix), prefix, activity,
+            unit: it.unit, voto: it.voto, classeNome: it.classeNome, createdAt: Date.now(), replaces: code,
+            ...(it.tagBreakdown ? { tagBreakdown: it.tagBreakdown } : {}) });
+        _ppSavDraftScritto();
+        renderPianoPersPanel();
+        _ppRevMode = 'draft';
+        _ppRevSel = id;
+        _ppRevRender();
+    }
+    async function ppReviewRegenSent(code) {
+        const ex = _ppDraftScritto.find(d => d.replaces === code);
+        if (ex) {
+            // Esiste già la nuova versione: si rigenera quella
+            ppReviewMode('draft'); ppReviewSelect(ex.id);
+            return ppReviewRegen(ex.id);
+        }
+        await ppRegenActiveScritto(code);
+        const nd = _ppDraftScritto.find(d => d.replaces === code);
+        if (!document.getElementById('ppRevOverlay')) return;
+        if (nd) { _ppRevMode = 'draft'; _ppRevSel = nd.id; }
+        _ppRevRender();
+    }
+    async function ppReviewRemoveSent(code, noConfirm) {
+        if (noConfirm) { delete _ppActiveScritto[code]; _ppSavActive(); }
+        else await ppRemoveActivity(code);
+        if (!_ppActiveScritto[code]) delete _ppRevSentCache[code];
+        if (document.getElementById('ppRevOverlay')) { _ppRevSelSent = null; ppReviewMode('sent'); }
+    }
+    // Approvata la nuova versione: il piano vecchio sparisce da Firebase e dalla bacheca
+    async function _ppRemoveReplaced(oldCode, item) {
+        const old = _ppActiveScritto[oldCode] || {};
+        const k = old.stuCode || await _mcCodeOf(old.studentSafe || item.studentSafe) || old.studentSafe || item.studentSafe;
+        delete _ppActiveScritto[oldCode];
+        delete _ppRevSentCache[oldCode];
+        _ppSavActive();
+        if (!k) return;
+        try {
+            const db2 = firebase.database();
+            await db2.ref().update({
+                [`livelearn/recovery_sessions/${k}/${oldCode}`]: null,
+                [`livelearn/recovery_lookup/${oldCode}`]: null,
+                [`studentapp/personal_plan/${k}/${oldCode}`]: null,
+                [`livelearn/history_priv/${k}/sessions/${oldCode}`]: null
+            });
+            const classId = String(old.classeNome || item.classeNome || '').replace(/\s+/g, '_').toLowerCase();
+            if (classId) {
+                const ref = db2.ref('livelearn/board_priv/' + classId + '/' + k);
+                const msgs = (await ref.get()).val() || {};
+                const rm = {};
+                Object.entries(msgs).forEach(([key, m]) => { if (m && m.pianoCode === oldCode) rm[key] = null; });
+                if (Object.keys(rm).length) await ref.update(rm);
+            }
+        } catch(e) { console.warn('[Piano] Sostituzione: rimozione del piano vecchio parziale:', e.message); }
     }
 
     // Vista della bozza aperta: anteprima completa (default) o modifica domande.
@@ -34833,6 +35041,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                             <span style="font-size:16px;color:#B45309;user-select:none;">${isCollapsed ? '▶' : '▼'}</span>
                             <div style="font-size:14px;font-weight:700;color:#78350F;">${d.studentName}</div>
                             ${d.source ? `<span title="Generata con ${_ppGenLabel(d.source)}" style="background:${d.source === 'claude' ? '#f3e8ff' : d.source === 'auto' ? '#f3f4f6' : '#dbeafe'};color:${d.source === 'claude' ? '#7e22ce' : d.source === 'auto' ? '#4b5563' : '#1e40af'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">${d.source === 'claude' ? '🟣 Claude' : d.source === 'auto' ? '⚙️ Auto' : '🔵 Haiku 5.5'}</span>` : ''}
+                            ${d.replaces ? `<span title="Nuova versione: quando la approvi sostituisce il piano già inviato ${d.replaces}" style="background:#e0e7ff;color:#3730a3;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">🔁 sostituisce ${d.replaces}</span>` : ''}
                             ${d.activity?.erroriCoperti ? (() => { const c = d.activity.erroriCoperti, ok = c.n >= c.tot; return `<span title="Errori della verifica ripresi nelle domande del piano: ${c.n} su ${c.tot}" style="background:${ok ? '#dcfce7' : '#fef3c7'};color:${ok ? '#166534' : '#92400e'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">🎯 errori ripresi ${c.n} su ${c.tot}</span>`; })() : ''}
                             ${d.activity?.challenge ? `<span title="Include il blocco Sfida (lettura, caccia all'errore, scrittura guidata)" style="background:#fce7f3;color:#9d174d;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">🏆 Sfida</span>` : ''}
                             ${d.versione ? `<span title="Piano adattato: nella verifica ha svolto la versione ${d.versione}" style="background:${/PEI/.test(d.versione)?'#dbeafe':'#ffedd5'};color:${/PEI/.test(d.versione)?'#1e40af':'#9a3412'};border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700;">${/PEI/.test(d.versione)?'📘':'🔤'} ${d.versione}</span>`
