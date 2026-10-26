@@ -1087,7 +1087,7 @@ const CONFIG = {
     </div>
   </div>
   <!-- Teacher control bar (teacher mode only) -->
-  <div id="teacher-control-bar" style="display:none; background:white; border-top:1px solid #e8e5e0; padding:14px 24px; align-items:center; justify-content:space-between; flex-shrink:0;">
+  <div id="teacher-control-bar" style="display:none; position:sticky; bottom:0; z-index:10; background:white; border-top:1px solid #e8e5e0; padding:14px 24px; align-items:center; justify-content:space-between; flex-shrink:0;">
     <div class="flex-center gap-12">
       <span id="teacher-q-pill" style="background:#f0ede8;border-radius:20px;padding:5px 14px;font-size:13px;font-weight:600;color:#555;">Premi per iniziare</span>
       <div class="progress-bar" style="width:160px;margin-bottom:0;height:7px;"><div class="progress-fill" id="teacher-q-progress" style="width:0%"></div></div>
@@ -6506,6 +6506,7 @@ async function openLive(code, activityId, roster, silent) {
     db.ref('livelearn/control/' + code + '/audioTeacher').set(S.liveAudioTeacher).catch(() => {});
     updateTeacherControlBar();
   } else { ctrlBar.style.display = 'none'; }
+  _llUpdateLaunchAllBtn();
 
   // Show/hide close button based on session status
   const closeBtn = document.getElementById('btn-close-session');
@@ -6710,6 +6711,7 @@ function updateTeacherControlBar() {
   _hintDecorateBar();
   _tourDecorateBar();
   _audioDecorateBar();
+  _llUpdateLaunchAllBtn();
 }
 async function teacherNextQ() {
   if (S.liveTournament && await _tourBeforeNext()) return;
@@ -8158,11 +8160,8 @@ function renderLiveSidebar(responses) {
   const _openedBadge = document.getElementById('live-opened-badge');
   if (_openedBadge) _openedBadge.style.display = (S.liveOpened && S.liveMode !== 'teacher') ? 'inline-flex' : 'none';
   // FIX #2+3: mostra "Avvia tutti" solo se ci sono alunni in lobby
-  const _launchAllBtn = document.getElementById('btn-launch-all-lobby');
-  if (_launchAllBtn) {
-    const _hasLobby = entries.some(([,r]) => r && r.status === 'lobby');
-    _launchAllBtn.style.display = _hasLobby ? 'inline-flex' : 'none';
-  }
+  S._llHasLobby = entries.some(([,r]) => r && r.status === 'lobby');
+  _llUpdateLaunchAllBtn();
   // Aggiorna pulsante "Da valutare" — mostra totale studenti con FR pending
   const _pendBtn = document.getElementById('btn-next-pending');
   const _pendLbl = document.getElementById('pending-count-label');
@@ -8567,9 +8566,32 @@ async function _doLaunchStudent(key, displayName, chosenVer, chosenAlias, chosen
   }
 }
 
+// Pulsante "Avvia tutti" in alto. Nel Controllo docente (e nel torneo) gli
+// alunni non passano dalla lobby: aspettano la prima domanda, quindi finché
+// non è partita il pulsante c'è sempre e fa partire tutti insieme.
+function _llUpdateLaunchAllBtn() {
+  const btn = document.getElementById('btn-launch-all-lobby');
+  if (!btn) return;
+  const bar = document.getElementById('teacher-control-bar');
+  const teacherWaiting = S.liveMode === 'teacher' && bar && bar.style.display !== 'none' && S.teacherCurrentQ < 0;
+  if (teacherWaiting) {
+    btn.textContent = S.liveTournament ? '🏆 Avvia per tutti' : '▶ Avvia per tutti';
+    btn.title = S.liveTournament ? 'Crea il tabellone e fai partire il torneo per tutti gli alunni collegati' : 'Fai partire la prima domanda per tutti gli alunni collegati';
+  } else {
+    btn.textContent = '▶ Avvia tutti';
+    btn.title = 'Avvia tutti gli alunni in attesa (lobby)';
+  }
+  btn.style.display = (teacherWaiting || (S._llHasLobby && S.liveMode !== 'teacher')) ? 'inline-flex' : 'none';
+}
+
 // Avvia TUTTI gli alunni in lobby con un click
 async function launchAllLobby() {
   if (!db || !S.liveCode) return;
+  // Controllo docente / torneo: si parte con la prima domanda (nel torneo si crea il tabellone)
+  if (S.liveMode === 'teacher') {
+    if (S.teacherCurrentQ < 0) await teacherNextQ();
+    return;
+  }
   try {
     const snap = await db.ref('livelearn/responses/' + S.liveCode).get();
     const all = snap.val() || {};
