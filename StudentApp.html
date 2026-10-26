@@ -1775,6 +1775,26 @@ function _pianoAttempts(rs){
   return (Array.isArray(a) ? a : Object.values(a||{})).filter(Boolean)
     .sort((x,y)=>(x.n||0)-(y.n||0));
 }
+// Conta il tentativo migliore (a parità il più recente); la percentuale dei
+// tentativi la riallinea LiveLearn quando il docente corregge
+function _pianoBest(rs){
+  let best = null;
+  _pianoAttempts(rs).forEach(a=>{ if(typeof a.pct==='number' && (!best || a.pct>=best.pct)) best = a; });
+  return best;
+}
+function _pianoPct(rs, item){
+  const b = _pianoBest(rs);
+  if(b) return b.pct;
+  if(rs && rs.bestScore!=null) return rs.bestScore;
+  if(rs && rs.lastScore!=null) return rs.lastScore;
+  return item ? (item.bestScore!=null ? item.bestScore : item.lastScore) : null;
+}
+// Correzioni del docente in LiveLearn (punteggi, massimi, esclusioni) di un tentativo
+function _pianoEntry(att){
+  return { answers: _llFbArr(att.answers), aiScores: att.aiScores||{}, aiFeedbacks: att.aiFeedbacks||{},
+    manualScores: att.manualScores||{}, questionMaxOverrides: att.questionMaxOverrides||{}, excludedQuestions: att.excludedQuestions||{},
+    questionTimes: _llFbArr(att.questionTimes), joinedAt: att.startedAt || null, submittedAt: att.submittedAt || null };
+}
 function _pianiSvolti(){
   const out = [];
   const codes = new Set([...S.personalPlan.map(p=>p.code||p._key), ...Object.keys(S.recoverySessions||{})]);
@@ -1784,9 +1804,9 @@ function _pianiSvolti(){
     const item = S.personalPlan.find(p=>(p.code||p._key)===code) || {};
     if(item.type==='recovery_orale') return;
     const attempts = rs.attemptCount || item.attemptCount || 0;
-    const pct = rs.lastScore!=null ? rs.lastScore : item.lastScore;
+    const pct = _pianoPct(rs, item);
     if(!attempts || pct==null) return;
-    const last = _pianoAttempts(rs).pop() || {};
+    const last = _pianoBest(rs) || _pianoAttempts(rs).pop() || {};
     const type = item.type || (rs.prefix==='REC'?'recovery_scritto':rs.prefix==='CON'?'consolidamento':rs.prefix==='APP'?'approfondimento':'');
     out.push({
       sessionCode: code, _piano: true, _pianoType: type, mode: 'assigned',
@@ -1800,34 +1820,31 @@ function _pianiSvolti(){
   return out;
 }
 
-// PDF completo di un tentativo del piano (l'ultimo se n manca). Domande e
+// PDF completo di un tentativo del piano (il migliore se n manca). Domande e
 // risposte stanno gia' in recovery_sessions: l'attivita' e' copiata nel piano
 // e ogni tentativo salva risposte (in ordine originale), punteggi AI e tempi.
 function openPianoPdf(code, n){
   const rs = S.recoverySessions[code] || {};
   const attempts = _pianoAttempts(rs);
-  const att = n ? attempts.find(a=>Number(a.n)===n) : attempts[attempts.length-1];
+  const att = n ? attempts.find(a=>Number(a.n)===n) : (_pianoBest(rs) || attempts[attempts.length-1]);
   if(!att || !att.answers || !rs.activity){ alert('Dettaglio non disponibile per questo tentativo.'); return; }
   const sess = _pianiSvolti().find(s=>s.sessionCode===code) || {};
   // Copia: le immagini idratate non devono finire nei dati in memoria
   const questions = JSON.parse(JSON.stringify(_llFbArr(rs.activity.questions))).filter(Boolean);
   const imgIdx = _pdfImageIndex(rs.activity);
   _pdfHydrateImages(questions, imgIdx);
-  const entry = {
-    answers: _llFbArr(att.answers), aiScores: att.aiScores || {}, aiFeedbacks: att.aiFeedbacks || {},
-    questionTimes: _llFbArr(att.questionTimes), joinedAt: att.startedAt || null, submittedAt: att.submittedAt || null
-  };
+  const entry = _pianoEntry(att);
   const title = (sess.activityTitle || _pianoLabel(sess._pianoType)) + (attempts.length>1 ? ' — tentativo ' + (att.n||'') : '');
   _buildStudentPdfWindow(code, questions, entry, { activityTitle: title }, imgIdx);
 }
 
-// Dettaglio di un piano svolto: stessa schermata dei test, dati dall'ultimo tentativo
+// Dettaglio di un piano svolto: stessa schermata dei test, dati dal tentativo migliore
 function openPianoResult(code){
   const sess = _pianiSvolti().find(s=>s.sessionCode===code);
   if(!sess){ alert('Risultato non disponibile.'); return; }
   const rs = S.recoverySessions[code] || {};
   const attempts = _pianoAttempts(rs);
-  const last = attempts[attempts.length-1] || {};
+  const last = _pianoBest(rs) || attempts[attempts.length-1] || {};
   const p = sess.pct||0;
   document.getElementById('pdf-title').textContent = sess.activityTitle||'Risultati';
   document.getElementById('pdf-sub').textContent = _pianoLabel(sess._pianoType) + ' · ' + fmtDateTime(sess.ts);
@@ -1835,7 +1852,7 @@ function openPianoResult(code){
   const durSec = (last.submittedAt && last.startedAt) ? Math.round((last.submittedAt-last.startedAt)/1000) : 0;
   let html = `<div style="text-align:center;padding:20px 0 16px">
     <div style="font-size:48px;font-weight:700;color:${pctColor(p)}">${p}%</div>
-    <div style="font-size:13px;color:var(--muted);margin-top:4px">Ultimo tentativo${sess.attemptCount>1?' · '+sess.attemptCount+' tentativi':''}</div>
+    <div style="font-size:13px;color:var(--muted);margin-top:4px">${sess.attemptCount>1?'Tentativo migliore · '+sess.attemptCount+' tentativi':'Risultato'}</div>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
     <div style="background:#f5f4ff;border-radius:12px;padding:12px;text-align:center">
@@ -1848,10 +1865,10 @@ function openPianoResult(code){
     </div>
   </div>`;
 
-  // Risultati per area, ricalcolati dalle risposte dell'ultimo tentativo
+  // Risultati per area, ricalcolati dalle risposte del tentativo migliore
   const qs = rs.activity?.questions || [];
   if(qs.length && last.answers){
-    const entry = { answers: _llFbArr(last.answers), aiScores: last.aiScores||{} };
+    const entry = _pianoEntry(last);
     const agg = {};
     qs.forEach((q,i)=>{
       if(!q || !q.tag || !TAG_META[q.tag]) return;
@@ -1883,7 +1900,7 @@ function openPianoResult(code){
     attempts.forEach(a=>{
       const d = a.submittedAt ? fmtDate(new Date(a.submittedAt).toISOString().substring(0,10)) : '';
       html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px solid #f0eeff">
-        <span style="font-size:12px;color:var(--text);flex:1">Tentativo ${a.n||''}${d?' · '+d:''}</span>
+        <span style="font-size:12px;color:var(--text);flex:1">Tentativo ${a.n||''}${d?' · '+d:''}${a===last?' ⭐':''}</span>
         <span style="font-size:12px;font-weight:700;color:${pctColor(a.pct||0)}">${a.pct!=null?a.pct+'%':'—'}</span>
         ${a.answers?`<button onclick="openPianoPdf('${esc(code).replace(/'/g,'')}',${Number(a.n)||0})" style="background:#f5f4ff;color:var(--purple);border:none;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">📄 PDF</button>`:''}
       </div>`;
@@ -2148,7 +2165,7 @@ function renderPianoCard(){
   const renderActivityRow = (item) => {
     const rs = S.recoverySessions[item.code]||{};
     const attempts = rs.attemptCount||0;
-    const score = rs.lastScore!=null ? rs.lastScore : null;
+    const score = attempts ? _pianoPct(rs, null) : null;
     const status = rs.status||item.status||'pending';
     const c = _pianoColor(item.type);
 

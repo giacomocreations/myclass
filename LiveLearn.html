@@ -820,6 +820,7 @@ const CONFIG = {
       <div class="tab active" onclick="switchDashTab('activities', this)">📝 Attività</div>
       <div class="tab" onclick="switchDashTab('sessions', this)">📡 Sessioni</div>
       <div class="tab" onclick="switchDashTab('classes', this)">👥 Classi</div>
+      <div class="tab" onclick="switchDashTab('plans', this)">🎯 Piani</div>
     </div>
     <div id="tab-activities" class="tab-panel active">
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;">
@@ -890,6 +891,38 @@ const CONFIG = {
       <div id="codes-panel" style="display:none;background:white;border:1.5px solid #6c47ff;border-radius:14px;padding:18px;margin-bottom:16px;"></div>
       <div id="classes-grid" class="classes-grid"></div>
     </div>
+    <div id="tab-plans" class="tab-panel">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+        <p class="text-muted" style="font-size:13px;margin:0;flex:1;min-width:240px;">Piani personalizzati inviati da MyClass (recupero, consolidamento, approfondimento), per classe e unit. Apri un gruppo per vedere le risposte e correggere come nelle sessioni. Nel voto conta il <strong>tentativo migliore</strong>.</p>
+        <button class="btn btn-sm" onclick="renderPlansTab(true)">🔄 Aggiorna</button>
+      </div>
+      <div id="plans-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════
+     VIEW: PIANI PERSONALIZZATI (classe + unit)
+     ════════════════════ -->
+<div id="view-teacher-plans" class="view">
+  <div class="topbar">
+    <div class="logo">
+      <div class="logo-dot"></div> LiveLearn
+      <span class="badge" style="margin-left:10px;font-size:11px;background:#ede9ff;color:#4c1d95;">🎯 Piani</span>
+      <span id="pv-title" style="margin-left:8px;font-size:14px;font-weight:800;"></span>
+    </div>
+    <div class="flex gap-12 flex-center">
+      <button class="btn btn-sm" onclick="pvReload()" title="Rilegge i piani da Firebase">🔄 Ricarica</button>
+      <button class="btn btn-ghost btn-sm" onclick="pvBack()">← Dashboard</button>
+    </div>
+  </div>
+  <div class="live-layout">
+    <div class="live-sidebar">
+      <div class="live-sidebar-header">ALUNNI (<span id="pv-count">0</span>)</div>
+      <div class="live-sidebar-body" id="pv-student-list"></div>
+    </div>
+    <div></div>
+    <div class="live-main" id="pv-main"></div>
   </div>
 </div>
 
@@ -1845,6 +1878,19 @@ function _clearAutoResume() {
   } catch(e) {}
 })();
 
+// Link da MyClass al piano di un alunno: ?piano=REC-XXXX apre la scheda 🎯 Piani
+// dopo l'accesso docente (showView('teacher-dashboard') lo fa partire)
+(function _checkUrlPiano() {
+  try {
+    const piano = (new URLSearchParams(window.location.search).get('piano') || '').trim().toUpperCase();
+    if (!piano) return;
+    try { history.replaceState(null, '', window.location.pathname); } catch(e) {}
+    // (S esiste solo più sotto: si usa dopo l'attesa dell'identità)
+    const go = () => { S._pvDeep = piano; goTeacherLogin(); };
+    awaitAuth(8000).then(go, go);
+  } catch(e) {}
+})();
+
 // Pre-compila il codice sessione se passato come ?code=XXXX nell'URL (link da StudentApp AVVISO)
 // e il nome se passato come &name=... (link del piano personalizzato da StudentApp)
 (function _checkUrlCode() {
@@ -1996,6 +2042,7 @@ function showView(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   el.classList.add('active');
   if (id !== 'student-activity') closePassage();
+  if (id === 'teacher-dashboard' && S._pvDeep) { const c = S._pvDeep; S._pvDeep = null; setTimeout(() => _pvOpenDeep(c), 300); }
   // Inietta la toolbar rich-text nel builder del testo di riferimento (solo una volta)
   if (id === 'teacher-builder') {
     const barEl = document.getElementById('passage-richfmt-bar');
@@ -2098,6 +2145,7 @@ function switchDashTab(id, el) {
   el.classList.add('active');
   document.getElementById('tab-' + id).classList.add('active');
   if (id === 'classes') renderClassesTab();
+  if (id === 'plans') renderPlansTab();
 }
 
 // ── Firebase .get() con timeout ────────────────────────────
@@ -8877,6 +8925,7 @@ function _llEffectiveScore(qs, r) {
 // questi due campi, la rispettano senza logica dedicata. I valori precedenti
 // restano in excludedQuestions/{i} e vengono ripristinati al reinserimento.
 async function toggleExcludeQuestion(qi) {
+  if (_pvOn()) return _pvToggleExclude(qi);
   const studentKey = S.selectedStudent;
   if (!db || !studentKey || !S.liveCode) return;
   const ref = db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey);
@@ -8926,6 +8975,7 @@ async function toggleExcludeQuestion(qi) {
 // Motivo dell'esclusione di un esercizio (excludedQuestions/{i}/nota): lo legge
 // MyClass quando genera la valutazione e il feedback per StudentApp
 async function saveExcludeNote(qi) {
+  if (_pvOn()) return _pvSaveExclNote(qi);
   const studentKey = S.selectedStudent;
   if (!db || !studentKey || !S.liveCode) return;
   const el = document.getElementById('excl-note-' + qi);
@@ -11038,12 +11088,27 @@ async function studentEnterPlan(name, planCode, errEl) {
 // Scrive il risultato di un'attività piano su Firebase
 // det: dettaglio del tentativo (punti, risposte, tempi) → recovery_sessions/…/attempts/<n>,
 // così il docente vede quante volte l'ha fatto e come (prima restava solo l'ultimo punteggio).
-async function _writePlanResult(pct, det) {
+// Conta il tentativo MIGLIORE (bestScore, già con le correzioni del docente):
+// toHistory, il deposito in cronologia, parte solo se questo tentativo lo è.
+async function _writePlanResult(pct, det, toHistory) {
   if (!S._planCode || !S._planStuCode) return;
   const path = 'livelearn/recovery_sessions/' + S._planStuCode + '/' + S._planCode;
   try {
     const snap = await db.ref(path + '/attemptCount').get();
     const prev = (snap.val()||0);
+    let prevBest = null;
+    try {
+      const [bS, lS, aS] = await Promise.all(['bestScore', 'lastScore', 'attempts'].map(k => db.ref(path + '/' + k).get()));
+      prevBest = bS.val();
+      if (prevBest == null) {
+        const pcts = Object.values(aS.val() || {}).map(a => a && a.pct).filter(v => typeof v === 'number');
+        if (lS.val() != null) pcts.push(lS.val());
+        if (pcts.length) prevBest = Math.max(...pcts);
+      }
+    } catch(e) { console.warn('[PlanResult] migliore precedente non letto:', e.message); }
+    const isBest = prevBest == null || pct >= prevBest;
+    const best = isBest ? { bestScore: pct, bestAttempt: prev + 1 } : { bestScore: prevBest };
+    if (isBest && toHistory) toHistory();
     if (det) {
       // Scrittura separata: se le regole non la accettano, punteggio e conteggio si salvano comunque
       try {
@@ -11069,6 +11134,12 @@ async function _writePlanResult(pct, det) {
       lastAttemptAt: Date.now(),
       status:        'completed'
     });
+    // Migliore a parte: con regole Firebase vecchie (senza bestScore) non deve far
+    // fallire le scritture qui sopra. Se manca, MyClass e StudentApp lo ricavano dai tentativi.
+    try {
+      await db.ref(path).update(best);
+      await db.ref(ppPath).update({ bestScore: best.bestScore });
+    } catch(e) { console.warn('[PlanResult] migliore non salvato:', e.message); }
   } catch(e) { console.warn('[PlanResult] write failed:', e.message); }
 }
 
@@ -12448,7 +12519,8 @@ async function submitAnswers(auto) {
   S.aiScores = aiScores;
   S.aiFeedbacks = aiFeedbacks;
   // Salva dati storici per statistiche classe (Opzione A)
-  if (!S._retryLocal) _writeStudentHistory(finalScore, aiScores, questionTimes, submittedAt);
+  // (piano personalizzato: in cronologia va solo il tentativo migliore, vedi _writePlanResult)
+  if (!S._retryLocal && !S._planCode) _writeStudentHistory(finalScore, aiScores, questionTimes, submittedAt);
   // Piano Personalizzato: scrivi risultato se siamo in una sessione REC-/CON-/APP-
   if (S._planCode) {
     const _totalPlanPts = (S.activity.questions||[]).reduce((s,q)=>s+_qPts(q),0);
@@ -12456,7 +12528,7 @@ async function submitAnswers(auto) {
     if (_planPct !== null) _writePlanResult(_planPct, {
       score: finalScore, maxPts: _totalPlanPts, answers: payload.answers, aiScores: payload.aiScores, aiFeedbacks: payload.aiFeedbacks,
       questionTimes: payload.questionTimes, joinedAt: S.joinedAt, submittedAt
-    });
+    }, () => _writeStudentHistory(finalScore, aiScores, questionTimes, submittedAt));
   }
   showStudentDone();
 }
@@ -15336,6 +15408,7 @@ function switchDashTabById(id) {
   const panel = document.getElementById('tab-' + id);
   if (panel) panel.classList.add('active');
   if (id === 'classes') renderClassesTab();
+  if (id === 'plans') renderPlansTab();
 }
 
 
@@ -15658,11 +15731,515 @@ const _PDFQ_LEGEND = '<div class="pq-legend"><span><span class="pq-chip pq-ok">v
   '<span><span class="pq-fix">→ testo verde</span> = risposta corretta</span></div>';
 
 // ── Export PDF (print-to-PDF nativo) ───────────────────────────────────────
-async function exportStudentPDF(studentName) {
+// ══════════════════════════════════════════════════════════════
+// PIANI PERSONALIZZATI — scheda 🎯 Piani della dashboard docente
+// I piani (REC-/CON-/APP-) stanno in livelearn/recovery_sessions/<codice
+// alunno>/<piano>: l'attività copiata nel piano e ogni tentativo in
+// attempts/<n-1> (risposte in ordine originale, punteggi AI, tempi). Qui si
+// vedono per classe e unit con la schermata delle sessioni e si correggono
+// come le consegne: punteggio a mano, massimo, esclusioni, stessi campi nel
+// tentativo (manualScores, questionMaxOverrides, excludedQuestions).
+// Conta il tentativo MIGLIORE: bestScore nel piano e in personal_plan
+// (MyClass e StudentApp lo mostrano) e, se il piano è nella cronologia
+// dell'alunno, la sua voce diventa quella del migliore.
+// ══════════════════════════════════════════════════════════════
+S._pvData = null;      // { codice alunno: { piano: dati } }
+S._pvStudents = {};    // livelearn/students: codice → { name }
+S._pvGroupsCache = []; // [[classe, [[unit, [{stu, code}]]]]]
+S._pv = null;          // gruppo aperto: { classe, unit, items, stu, code, att }
+
+function _pvOn() {
+  const v = document.getElementById('view-teacher-plans');
+  return !!(S._pv && v && v.classList.contains('active'));
+}
+function _pvQs(rs) { return fbArr((rs && rs.activity && rs.activity.questions) || []); }
+// Tentativi in ordine, con k = chiave del nodo in attempts
+function _pvAttempts(rs) {
+  const a = rs && rs.attempts, out = [];
+  if (a && typeof a === 'object') Object.keys(a).forEach(k => { if (a[k]) out.push(Object.assign({ k: String(k) }, a[k])); });
+  return out.sort((x, y) => (x.n || 0) - (y.n || 0) || (x.submittedAt || 0) - (y.submittedAt || 0));
+}
+// Punteggio effettivo di un tentativo, con le correzioni del docente
+function _pvEff(qs, a) {
+  if (!a || !a.answers) return { score: a ? a.score : null, maxPts: a ? a.maxPts : null, pct: a ? a.pct : null };
+  const e = _llEffectiveScore(qs, a);
+  return { score: e.score, maxPts: e.maxPts, pct: e.maxPts > 0 ? Math.round(e.score / e.maxPts * 100) : 0 };
+}
+// Migliore: percentuale più alta, a parità il più recente
+function _pvBest(qs, atts) {
+  let best = null;
+  atts.forEach(a => { const e = _pvEff(qs, a); if (e.pct != null && (!best || e.pct >= best.pct)) best = Object.assign({ a }, e); });
+  return best;
+}
+// Percentuale che conta (migliore), anche per i piani con soli punteggi vecchi
+function _pvPct(rs) {
+  const b = _pvBest(_pvQs(rs), _pvAttempts(rs));
+  if (b) return b.pct;
+  return rs.bestScore != null ? rs.bestScore : (rs.lastScore != null ? rs.lastScore : null);
+}
+// Risposte aperte senza punteggio (AI o docente) in un tentativo
+function _pvPendingFR(qs, a) {
+  if (!a || !a.answers) return 0;
+  const ans = fbArr(a.answers), ai = a.aiScores || {}, ms = a.manualScores || {}, exc = a.excludedQuestions || {};
+  let n = 0;
+  qs.forEach((q, i) => {
+    if (!q) return;
+    const fr = q.type === 'free-response' || (q.type === 'listening' && (q.subtype || q.question?.type) === 'free-response');
+    if (fr && ans[i] != null && String(ans[i]).trim() && ai[i] == null && ms[i] == null && !exc[i]) n++;
+  });
+  return n;
+}
+function _pvPending(rs) {
+  const qs = _pvQs(rs);
+  return _pvAttempts(rs).reduce((s, a) => s + _pvPendingFR(qs, a), 0);
+}
+function _pvName(stu, rs) {
+  return (rs && rs.studentName) || (S._pvStudents[stu] && S._pvStudents[stu].name) || stu;
+}
+function _pvPrefix(code, rs) {
+  const p = (rs && rs.prefix) || String(code).slice(0, 3).toUpperCase();
+  return { REC: { label: 'Recupero', bg: '#fee2e2', col: '#991b1b' }, CON: { label: 'Consolidamento', bg: '#dcfce7', col: '#14532d' },
+           APP: { label: 'Approfondimento', bg: '#dbeafe', col: '#1e3a5f' } }[p] || { label: p, bg: '#f1f5f9', col: '#334155' };
+}
+
+async function _pvLoad() {
+  const [all, stud] = await Promise.all([
+    _fbGet(db.ref('livelearn/recovery_sessions'), 30000).then(s => s.val() || {}),
+    _fbGet(db.ref('livelearn/students'), 15000).then(s => s.val() || {}).catch(() => ({}))
+  ]);
+  S._pvData = all;
+  S._pvStudents = stud;
+}
+function _pvGroups() {
+  const byC = new Map();
+  Object.entries(S._pvData || {}).forEach(([stu, plans]) => {
+    Object.entries(plans || {}).forEach(([code, rs]) => {
+      if (!rs || !rs.activity) return;
+      const c = rs.classeNome || '(senza classe)', u = rs.unit || '(senza unit)';
+      if (!byC.has(c)) byC.set(c, new Map());
+      const byU = byC.get(c);
+      if (!byU.has(u)) byU.set(u, []);
+      byU.get(u).push({ stu, code });
+    });
+  });
+  const unitNum = u => { const m = String(u).match(/\d+/); return m ? Number(m[0]) : 9999; };
+  return [...byC.entries()].sort((a, b) => a[0].localeCompare(b[0], 'it', { numeric: true }))
+    .map(([c, byU]) => [c, [...byU.entries()].sort((a, b) => unitNum(a[0]) - unitNum(b[0]) || a[0].localeCompare(b[0], 'it'))]);
+}
+function _pvStats(items) {
+  let done = 0, pend = 0, sum = 0, nPct = 0;
+  items.forEach(({ stu, code }) => {
+    const rs = S._pvData[stu][code];
+    if ((rs.attemptCount || 0) > 0 || _pvAttempts(rs).length) done++;
+    pend += _pvPending(rs);
+    const p = _pvPct(rs);
+    if (p != null) { sum += p; nPct++; }
+  });
+  return { n: items.length, done, pend, avg: nPct ? Math.round(sum / nPct) : null };
+}
+
+async function renderPlansTab(force) {
+  const el = document.getElementById('plans-list');
+  if (!el || !db) return;
+  if (!S._pvData || force) {
+    el.innerHTML = '<p class="text-muted" style="padding:12px;">⏳ Carico i piani…</p>';
+    try { await _pvLoad(); }
+    catch(e) { el.innerHTML = '<div class="alert alert-danger">⚠️ Impossibile caricare i piani — ' + esc(e.message || String(e)) + '</div>'; return; }
+  }
+  const groups = S._pvGroupsCache = _pvGroups();
+  if (!groups.length) {
+    el.innerHTML = '<div class="empty-state"><div class="es-icon">🎯</div><p>Nessun piano personalizzato.</p>' +
+      '<p class="text-muted mt-8">Si generano e si inviano da MyClass → Agente → Piani personalizzati.</p></div>';
+    return;
+  }
+  let open = [];
+  try { open = JSON.parse(localStorage.getItem('ll_pv_open') || '[]'); } catch(e) {}
+  const pill = (txt, bg, col) => '<span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:10px;background:' + bg + ';color:' + col + ';">' + txt + '</span>';
+  el.innerHTML = groups.map(([classe, units], ci) => {
+    const st = _pvStats(units.flatMap(([, items]) => items));
+    return '<details data-k="' + esc(classe) + '" ' + (open.includes(classe) ? 'open' : '') + ' ontoggle="_pvToggleOpen(this.dataset.k,this.open)" ' +
+        'style="background:white;border:1.5px solid var(--border);border-radius:12px;margin-bottom:10px;">' +
+      '<summary style="padding:12px 16px;cursor:pointer;font-weight:800;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">🏫 ' + esc(classe) +
+        '<span class="text-muted" style="font-size:12px;font-weight:600;">' + st.n + ' piani · ' + st.done + ' svolti</span>' +
+        (st.pend ? pill('📝 ' + st.pend + ' da valutare', '#fef3c7', '#92400e') : '') + '</summary>' +
+      '<div style="padding:0 12px 12px;">' + units.map(([unit, items], ui) => {
+        const u = _pvStats(items);
+        return '<div onclick="openPlansGroup(' + ci + ',' + ui + ')" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;margin-top:6px;border:1px solid var(--border);border-radius:10px;cursor:pointer;" ' +
+            'onmouseover="this.style.background=\'var(--primary-light)\'" onmouseout="this.style.background=\'\'">' +
+          '<span style="font-weight:700;">📘 ' + esc(unit) + '</span>' +
+          '<span class="text-muted" style="font-size:12px;">' + u.n + (u.n === 1 ? ' alunno' : ' alunni') + ' · ' + u.done + ' svolti</span>' +
+          (u.avg != null ? pill('⭐ media ' + u.avg + '%', '#ecfdf5', '#047857') : '') +
+          (u.pend ? pill('📝 ' + u.pend + ' da valutare', '#fef3c7', '#92400e') : '') +
+          '<span style="margin-left:auto;font-weight:800;color:var(--primary);font-size:13px;">Apri →</span></div>';
+      }).join('') + '</div></details>';
+  }).join('');
+}
+function _pvToggleOpen(k, isOpen) {
+  let open = [];
+  try { open = JSON.parse(localStorage.getItem('ll_pv_open') || '[]'); } catch(e) {}
+  open = open.filter(x => x !== k);
+  if (isOpen) open.push(k);
+  try { localStorage.setItem('ll_pv_open', JSON.stringify(open)); } catch(e) {}
+}
+
+function openPlansGroup(ci, ui, selCode) {
+  const g = S._pvGroupsCache[ci];
+  if (!g || !g[1][ui]) return;
+  const [classe, units] = g, [unit, items] = units[ui];
+  S._pv = { classe, unit, items, stu: null, code: null, att: null };
+  document.getElementById('pv-title').textContent = classe + ' · ' + unit;
+  showView('teacher-plans');
+  const sorted = _pvSortedItems();
+  const first = sorted.find(it => it.code === selCode) || sorted.find(it => _pvAttempts(S._pvData[it.stu][it.code]).length) || sorted[0];
+  _pvRenderList();
+  if (first) pvSelect(first.stu, first.code);
+  _pvSyncGroup();
+}
+function _pvSortedItems() {
+  return S._pv.items.slice().sort((a, b) => _pvName(a.stu, S._pvData[a.stu][a.code]).localeCompare(_pvName(b.stu, S._pvData[b.stu][b.code]), 'it'));
+}
+// Aprendo un gruppo si allineano migliore, punteggi corretti e cronologia di tutti i piani svolti
+async function _pvSyncGroup() {
+  const pv = S._pv;
+  let changed = false;
+  for (const { stu, code } of pv.items) {
+    const rs = S._pvData[stu] && S._pvData[stu][code];
+    if (!rs || !_pvAttempts(rs).length) continue;
+    try { if (await _pvSync(stu, code, rs)) changed = true; }
+    catch(e) { console.warn('[Piani] allineamento', code, e.message); }
+  }
+  if (changed && S._pv === pv && _pvOn()) _pvRenderList();
+}
+
+function _pvRenderList() {
+  const list = document.getElementById('pv-student-list');
+  if (!list || !S._pv) return;
+  const items = _pvSortedItems();
+  document.getElementById('pv-count').textContent = items.length;
+  list.innerHTML = items.map(({ stu, code }) => {
+    const rs = S._pvData[stu][code], atts = _pvAttempts(rs), pf = _pvPrefix(code, rs);
+    const done = atts.length || (rs.attemptCount || 0) > 0;
+    const pct = _pvPct(rs), pend = _pvPending(rs);
+    const n = Math.max(rs.attemptCount || 0, atts.length);
+    const active = S._pv.stu === stu && S._pv.code === code;
+    return '<div class="student-pill' + (active ? ' active' : '') + '" data-s="' + esc(stu) + '" data-c="' + esc(code) + '" onclick="pvSelect(this.dataset.s,this.dataset.c)"' + (done ? '' : ' style="opacity:0.55;"') + '>' +
+      '<div class="flex-center gap-8" style="flex:1;min-width:0;">' +
+        '<span class="sdot' + (done ? '' : ' absent') + '"></span>' +
+        '<span class="student-pill-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(_pvName(stu, rs)) + '</span>' +
+        '<span title="' + esc(pf.label + ' · ' + code) + '" style="font-size:9px;font-weight:800;padding:1px 5px;border-radius:4px;background:' + pf.bg + ';color:' + pf.col + ';flex-shrink:0;">' + esc(String(code).slice(0, 3)) + '</span>' +
+        (pend ? '<span title="Risposte aperte da valutare" style="font-size:10px;flex-shrink:0;">📝' + pend + '</span>' : '') +
+      '</div>' +
+      '<span class="student-pill-count" title="' + (n > 1 ? 'Migliore di ' + n + ' tentativi' : '') + '">' + (pct != null ? '⭐ ' + pct + '%' : '—') + (n > 1 ? ' ×' + n : '') + '</span>' +
+    '</div>';
+  }).join('') || '<p class="text-muted" style="font-size:13px;padding:12px;">Nessun piano.</p>';
+}
+
+function pvSelect(stu, code) {
+  if (!S._pv) return;
+  if (S._pv.stu !== stu || S._pv.code !== code) S._pv.att = null;
+  S._pv.stu = stu; S._pv.code = code;
+  _pvRenderList();
+  _pvRenderMain();
+}
+function pvSelectAttempt(k) {
+  if (!S._pv) return;
+  S._pv.att = k;
+  _pvRenderMain();
+}
+function _pvCur() {
+  const pv = S._pv;
+  if (!pv || !pv.stu) return null;
+  const rs = S._pvData[pv.stu] && S._pvData[pv.stu][pv.code];
+  if (!rs) return null;
+  const atts = _pvAttempts(rs);
+  return { rs, qs: _pvQs(rs), atts, a: atts.find(x => x.k === pv.att) || null };
+}
+
+function _pvRenderMain() {
+  const main = document.getElementById('pv-main');
+  const c = _pvCur();
+  if (!main) return;
+  if (!c) { main.innerHTML = '<div class="empty-state"><div class="es-icon">🎯</div><p>Scegli un alunno.</p></div>'; return; }
+  const { rs, qs, atts } = c, code = S._pv.code, pf = _pvPrefix(code, rs), name = _pvName(S._pv.stu, rs);
+  const head = '<h2 style="font-size:20px;font-weight:700;">' + esc(name) + '</h2>' +
+    '<span class="badge" style="background:' + pf.bg + ';color:' + pf.col + ';font-weight:800;">' + esc(pf.label) + ' · ' + esc(code) + '</span>';
+  const oldN = Math.max(0, (rs.attemptCount || 0) - atts.length);
+  const oldNote = oldN ? '<div style="font-size:12px;color:#92400e;background:#fef3c7;border-radius:8px;padding:6px 10px;margin-bottom:12px;">' +
+    oldN + (oldN === 1 ? ' tentativo fatto' : ' tentativi fatti') + ' prima che LiveLearn salvasse le risposte: ne resta solo il punteggio' +
+    (rs.lastScore != null && !atts.length ? ' (ultimo: ' + rs.lastScore + '%)' : '') + ', non si può correggere.</div>' : '';
+  if (!atts.length) {
+    main.innerHTML = '<div class="flex-center gap-12" style="flex-wrap:wrap;margin-bottom:20px;">' + head + '</div>' + oldNote +
+      (oldN ? '' : '<div class="empty-state"><div class="es-icon">⏳</div><p>Non l\'ha ancora svolto.</p></div>');
+    return;
+  }
+  const best = _pvBest(qs, atts);
+  const a = c.a || (best && best.a) || atts[atts.length - 1];
+  S._pv.att = a.k;
+  const e = _pvEff(qs, a);
+  const fmtDt = ts => ts ? new Date(ts).toLocaleString('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  const durMin = a.startedAt && a.submittedAt && a.submittedAt > a.startedAt ? Math.max(1, Math.round((a.submittedAt - a.startedAt) / 60000)) : null;
+  const pctBg = p => p >= 60 ? 'var(--success)' : p >= 40 ? '#f59e0b' : 'var(--danger)';
+  const chips = atts.length > 1 ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">' + atts.map(x => {
+      const ex = _pvEff(qs, x), isBest = best && best.a.k === x.k;
+      return '<button class="btn btn-sm' + (x.k === a.k ? ' btn-primary' : '') + '" onclick="pvSelectAttempt(\'' + esc(x.k) + '\')">' +
+        'Tentativo ' + (x.n || '') + ' · ' + (ex.pct != null ? ex.pct + '%' : '—') + (isBest ? ' ⭐' : '') + '</button>';
+    }).join('') + '</div>' : '';
+  const bestNote = '<div style="font-size:12px;color:#065f46;background:#ecfdf5;border-radius:8px;padding:6px 10px;margin-bottom:12px;">⭐ Nel voto conta il tentativo migliore: <strong>' +
+    (best ? best.pct + '%' : '—') + '</strong>' + (atts.length > 1 && best ? ' (tentativo ' + (best.a.n || '') + ')' : '') +
+    '. Le correzioni valgono per il tentativo che stai guardando; se cambia il migliore, si aggiornano MyClass, StudentApp e la cronologia.</div>';
+  const ans = fbArr(a.answers || []), times = fbArr(a.questionTimes || []), ms = a.manualScores || {}, ai = a.aiScores || {},
+        fb = a.aiFeedbacks || {}, qmo = a.questionMaxOverrides || {}, exc = a.excludedQuestions || {};
+  const cards = a.answers
+    ? qs.map((q, i) => q ? renderAnswerCard(q, i, ans[i], times[i], ms[i], ai[i], fb[i], qmo[i] != null ? Number(qmo[i]) : null,
+        { excluded: !!exc[i], excludedNote: (exc[i] && exc[i].nota) || '', canExclude: true }) : '').join('')
+    : '<div class="empty-state"><p>Di questo tentativo c\'è solo il punteggio.</p></div>';
+  const answered = ans.filter(x => x != null && x !== '').length;
+  main.innerHTML =
+    '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">' +
+      '<div class="flex-center gap-12" style="flex-wrap:wrap;">' + head +
+        '<span class="badge badge-blue">' + answered + '/' + qs.length + ' risposte</span>' +
+        (e.score != null ? '<span class="badge badge-gray">' + e.score + '/' + e.maxPts + ' pt</span>' : '') +
+        (e.pct != null ? '<span class="badge" style="background:' + pctBg(e.pct) + ';color:#fff;font-weight:800;">📊 ' + e.pct + '%</span>' : '') +
+        (a.submittedAt ? '<span class="badge badge-gray">📅 ' + fmtDt(a.submittedAt) + '</span>' : '') +
+        (durMin ? '<span class="badge badge-gray">⏱ ' + durMin + ' min</span>' : '') +
+      '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+        '<button class="btn btn-sm btn-ghost" onclick="pvReloadPlan()" title="Rilegge questo piano da Firebase">🔄</button>' +
+        (a.answers ? '<button class="btn btn-sm btn-primary" onclick="pvExportPDF()">⬇ PDF</button>' : '') +
+      '</div>' +
+    '</div>' + bestNote + oldNote + chips +
+    '<div id="teacher-answer-cards">' + cards + '</div>';
+}
+
+function pvBack() {
+  S._pv = null;
+  showView('teacher-dashboard');
+  switchDashTabById('plans');
+  renderPlansTab();
+}
+async function pvReload() {
+  if (!S._pv) return;
+  const { classe, unit, stu, code } = S._pv;
+  try { await _pvLoad(); } catch(e) { alert('Errore: ' + e.message); return; }
+  S._pvGroupsCache = _pvGroups();
+  const ci = S._pvGroupsCache.findIndex(g => g[0] === classe);
+  const ui = ci < 0 ? -1 : S._pvGroupsCache[ci][1].findIndex(u => u[0] === unit);
+  if (ui < 0) { pvBack(); return; }
+  const att = S._pv.att;
+  openPlansGroup(ci, ui, code);
+  if (S._pv.stu === stu && S._pv.code === code && att) pvSelectAttempt(att);
+}
+// Rilegge il piano aperto, riallinea migliore e cronologia, ridisegna
+async function pvReloadPlan() {
+  const pv = S._pv;
+  if (!pv || !pv.stu) return;
+  const { stu, code } = pv;
+  const rs = (await db.ref('livelearn/recovery_sessions/' + stu + '/' + code).get()).val();
+  if (!rs) { alert('Il piano non c\'è più su Firebase (forse è stato rimosso da MyClass).'); return; }
+  S._pvData[stu] = S._pvData[stu] || {};
+  S._pvData[stu][code] = rs;
+  try { await _pvSync(stu, code, rs); } catch(e) { console.warn('[Piani] allineamento:', e.message); }
+  if (S._pv !== pv) return;
+  _pvRenderList();
+  _pvRenderMain();
+}
+
+// ── Allineamento di un piano: punteggi corretti dei tentativi, migliore e ultimo,
+// personal_plan (StudentApp) e voce della cronologia, se c'è. true = cambiato qualcosa
+async function _pvSync(stu, code, rs) {
+  const base = 'livelearn/recovery_sessions/' + stu + '/' + code;
+  if (!rs) rs = (await db.ref(base).get()).val();
+  if (!rs) return false;
+  const qs = _pvQs(rs), atts = _pvAttempts(rs), upd = {};
+  atts.forEach(a => {
+    if (!a.answers) return;
+    const e = _pvEff(qs, a);
+    ['score', 'maxPts', 'pct'].forEach(f => {
+      if (a[f] !== e[f]) { upd['attempts/' + a.k + '/' + f] = e[f]; a[f] = e[f]; if (rs.attempts && rs.attempts[a.k]) rs.attempts[a.k][f] = e[f]; }
+    });
+  });
+  let best = null;
+  atts.forEach(a => { if (a.pct != null && (!best || a.pct >= best.pct)) best = a; });
+  const last = atts[atts.length - 1];
+  if (best && rs.bestScore !== best.pct) upd.bestScore = rs.bestScore = best.pct;
+  if (best && rs.bestAttempt !== (best.n || null)) upd.bestAttempt = rs.bestAttempt = best.n || null;
+  if (last && last.pct != null && rs.lastScore !== last.pct) upd.lastScore = rs.lastScore = last.pct;
+  const changed = Object.keys(upd).length > 0;
+  if (changed) {
+    await db.ref(base).update(upd);
+    // StudentApp legge il punteggio del piano da qui (solo se il piano c'è ancora)
+    if ('bestScore' in upd || 'lastScore' in upd) {
+      try {
+        const ppRef = db.ref('studentapp/personal_plan/' + stu + '/' + code);
+        if ((await ppRef.child('status').get()).exists()) {
+          const pp = {};
+          if (best) pp.bestScore = best.pct;
+          if (last && last.pct != null) pp.lastScore = last.pct;
+          await ppRef.update(pp);
+        }
+      } catch(e) { console.warn('[Piani] personal_plan:', code, e.message); }
+    }
+  }
+  // Cronologia: se il piano c'è, la voce è quella del tentativo migliore, con le correzioni
+  if (best && best.answers) {
+    try {
+      const hp = 'livelearn/history_priv/' + stu + '/sessions/' + code;
+      const cur = (await db.ref(hp).get()).val();
+      if (cur) {
+        const entry = _buildHistoryEntry({
+          questions: qs, answers: fbArr(best.answers), aiScores: best.aiScores || null,
+          manualScores: best.manualScores || null, questionMaxOverrides: best.questionMaxOverrides || null,
+          questionTimes: fbArr(best.questionTimes || []), finalScore: best.score,
+          submittedAt: best.submittedAt || cur.ts || null, sessionCode: code,
+          activityTitle: cur.activityTitle || (rs.activity && rs.activity.title) || rs.unit || '', mode: cur.mode || 'test'
+        });
+        if (cur.respKey) entry.respKey = cur.respKey;
+        if (cur.pct !== entry.pct || cur.score !== entry.score || cur.maxPts !== entry.maxPts || cur.ts !== entry.ts) {
+          await db.ref(hp).set(entry);
+          await _llRecomputeSummaryAt('livelearn/history_priv/' + stu, null);
+          _llAgentPing();
+          return true;
+        }
+      }
+    } catch(e) { console.warn('[Piani] cronologia:', code, e.message); }
+  }
+  return changed;
+}
+
+// ── Correzioni del docente sul tentativo aperto (stessa logica delle consegne) ──
+function _pvAttRef() {
+  return db.ref('livelearn/recovery_sessions/' + S._pv.stu + '/' + S._pv.code + '/attempts/' + S._pv.att);
+}
+async function _pvSaveScore(qi, origPts) {
+  const input = document.getElementById('score-override-' + qi), maxInput = document.getElementById('score-max-override-' + qi);
+  if (!input || !S._pv.att) return;
+  const btn = document.getElementById('score-override-btn-' + qi);
+  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+  let newMax = maxInput ? parseFloat(maxInput.value) : NaN;
+  if (isNaN(newMax) || newMax <= 0) newMax = origPts;
+  newMax = Math.round(newMax * 100) / 100;
+  let val = parseFloat(input.value);
+  if (isNaN(val) || val < 0) val = 0;
+  if (val > newMax) val = newMax;
+  try {
+    const updates = { ['manualScores/' + qi]: val };
+    if (newMax !== origPts) updates['questionMaxOverrides/' + qi] = newMax;
+    await _pvAttRef().update(updates);
+    await pvReloadPlan();
+  } catch(e) {
+    alert('Errore: ' + e.message);
+    if (btn) { btn.textContent = 'Salva'; btn.disabled = false; }
+  }
+}
+async function _pvToggleExclude(qi) {
+  const c = _pvCur();
+  if (!c || !c.a) return;
+  const ref = _pvAttRef();
+  try {
+    const a = (await ref.get()).val() || {};
+    const exc = a.excludedQuestions || {}, qmo = a.questionMaxOverrides || {}, ms = a.manualScores || {};
+    const updates = {};
+    if (exc[qi]) {
+      updates['questionMaxOverrides/' + qi] = exc[qi].prevMax != null ? exc[qi].prevMax : null;
+      updates['manualScores/' + qi] = exc[qi].prevManual != null ? exc[qi].prevManual : null;
+      updates['excludedQuestions/' + qi] = null;
+    } else {
+      const restanti = c.qs.filter((q, i) => q && i !== qi && !exc[i] && (qmo[i] != null ? Number(qmo[i]) : _qPts(q)) > 0).length;
+      if (!restanti) { alert('Non puoi escludere tutti gli esercizi: almeno uno deve restare nella valutazione.'); return; }
+      const nota = prompt('Togliere l\'esercizio ' + (qi + 1) + ' dalla valutazione di questo tentativo?\n\nNon conterà né nel punteggio né nel totale. Puoi reinserirlo in qualunque momento.\n\nPerché lo escludi? (facoltativo, si può scrivere anche dopo)', '');
+      if (nota === null) return;
+      updates['excludedQuestions/' + qi] = {
+        prevMax: qmo[qi] != null ? qmo[qi] : null, prevManual: ms[qi] != null ? ms[qi] : null, at: Date.now(),
+        ...(nota.trim() ? { nota: nota.trim().slice(0, 500) } : {})
+      };
+      updates['questionMaxOverrides/' + qi] = 0;
+      updates['manualScores/' + qi] = 0;
+    }
+    await ref.update(updates);
+    await pvReloadPlan();
+  } catch(e) { alert('Errore: ' + e.message); }
+}
+async function _pvSaveExclNote(qi) {
+  const el = document.getElementById('excl-note-' + qi), btn = document.getElementById('excl-note-btn-' + qi);
+  if (!el || !S._pv.att) return;
+  const ref = _pvAttRef().child('excludedQuestions/' + qi);
+  try {
+    if (!(await ref.get()).exists()) { alert('L\'esercizio non è più escluso.'); return; }
+    await ref.child('nota').set(el.value.trim().slice(0, 500) || null);
+    if (S._pvData[S._pv.stu]?.[S._pv.code]?.attempts?.[S._pv.att]?.excludedQuestions?.[qi])
+      S._pvData[S._pv.stu][S._pv.code].attempts[S._pv.att].excludedQuestions[qi].nota = el.value.trim().slice(0, 500);
+    if (btn) { btn.textContent = '✓ Salvata'; setTimeout(() => { if (btn) btn.textContent = 'Salva nota'; }, 1800); }
+  } catch(e) { alert('Errore: ' + e.message); }
+}
+async function _pvAIScore(qi) {
+  const c = _pvCur();
+  if (!c || !c.a) return;
+  const btn = document.getElementById('ai-score-btn-' + qi);
+  const geminiKey = localStorage.getItem('gemini_api_key');
+  const passageText = c.rs.activity?.passageText || null;
+  if (!geminiKey && !passageText && _AI_PROVIDER === 'gemini') {
+    alert('Nessuna chiave Gemini configurata. Aggiungila in Impostazioni → Gemini API Key.');
+    return;
+  }
+  const q = c.qs[qi], ans = fbArr(c.a.answers || [])[qi];
+  if (!q || !ans) return;
+  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+  try {
+    const result = await _scoreFreeResponse(q, ans, geminiKey || 'ollama-local', passageText);
+    await _pvAttRef().update({ ['aiScores/' + qi]: result.score, ['aiFeedbacks/' + qi]: result.feedback });
+    await pvReloadPlan();
+  } catch(e) {
+    if (btn) { btn.textContent = '🤖 AI'; btn.disabled = false; }
+    alert('Errore AI: ' + e.message);
+  }
+}
+function _pvQuestionDetail(i) {
+  const c = _pvCur();
+  if (!c || !c.a) return;
+  openQuestionDetail(i, {
+    mode: 'teacher', questions: c.qs, answers: c.a.answers || [], aiScores: c.a.aiScores || {},
+    manualScores: c.a.manualScores || {}, aiFeedbacks: c.a.aiFeedbacks || {}
+  });
+}
+function pvExportPDF() {
+  const c = _pvCur();
+  if (!c || !c.a || !c.a.answers) return;
+  const pf = _pvPrefix(S._pv.code, c.rs), a = c.a;
+  exportStudentPDF(_pvName(S._pv.stu, c.rs), {
+    questions: c.qs, code: S._pv.code,
+    title: pf.label + ' — ' + (c.rs.unit || c.rs.activity?.title || '') + (c.atts.length > 1 ? ' — tentativo ' + (a.n || '') : ''),
+    entry: {
+      name: _pvName(S._pv.stu, c.rs), answers: a.answers, questionTimes: a.questionTimes || [], aiScores: a.aiScores || {},
+      aiFeedbacks: a.aiFeedbacks || {}, manualScores: a.manualScores || {}, questionMaxOverrides: a.questionMaxOverrides || {},
+      excludedQuestions: a.excludedQuestions || {}, joinedAt: a.startedAt || null, submittedAt: a.submittedAt || null
+    }
+  });
+}
+
+// Link da MyClass: LiveLearn.html?piano=<codice> apre il piano (dopo l'accesso docente)
+async function _pvOpenDeep(code) {
+  if (!code || !db) return;
+  switchDashTabById('plans');
+  await renderPlansTab();
+  const groups = S._pvGroupsCache || [];
+  for (let ci = 0; ci < groups.length; ci++) {
+    const units = groups[ci][1];
+    for (let ui = 0; ui < units.length; ui++) {
+      if (units[ui][1].some(it => it.code === code)) { openPlansGroup(ci, ui, code); return; }
+    }
+  }
+  alert('Piano ' + code + ' non trovato: forse è stato rimosso da MyClass.');
+}
+
+// pv (facoltativo): tentativo di un piano personalizzato { entry, questions, title, code }
+async function exportStudentPDF(studentName, pv) {
+  let entry, questions;
+  if (pv) { entry = pv.entry; questions = pv.questions; }
+  else {
   // Fetch all responses and find this student by display name
   const allSnap = await db.ref('livelearn/responses/' + S.liveCode).get();
   const allData = allSnap.val() || {};
-  const entry = Object.values(allData).find(r => (r.name || '') === studentName);
+  entry = Object.values(allData).find(r => (r.name || '') === studentName);
   if (!entry) { alert('Dati non trovati per: ' + studentName); return; }
 
   // Chiave safe dell'entry per il lookup versione
@@ -15670,7 +16247,8 @@ async function exportStudentPDF(studentName) {
     || (studentName || '').replace(/[.#$\[\]\/]/g, '_');
   // Versione registrata nella risposta (FILA B/C, DSA, PEI, Training…): senza,
   // le risposte venivano lette sulle domande di un'altra versione.
-  const questions  = getStudentAssignedQuestions(studentKeyPDF, studentName, entry.aliasOf, entry.studentVersion, null, entry.answers);
+  questions  = getStudentAssignedQuestions(studentKeyPDF, studentName, entry.aliasOf, entry.studentVersion, null, entry.answers);
+  }
   const _fbToArr=v=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'){const ks=Object.keys(v).map(Number).filter(k=>!isNaN(k));return ks.length?Array.from({length:Math.max(...ks)+1},(_,i)=>v[i]!==undefined?v[i]:null):[]}return[];};
   const answers    = _fbToArr(entry.answers);
   const qTimes     = _fbToArr(entry.questionTimes);
@@ -15695,8 +16273,8 @@ async function exportStudentPDF(studentName) {
   const totalTime  = (submitted && joinedAt) ? Math.round((submitted - joinedAt)/1000) : null;
   const fmtSecs    = s => s==null?'—': s>=60?Math.floor(s/60)+'m '+(s%60)+'s':s+'s';
   const fmtDt      = ts => ts ? new Date(ts).toLocaleString('it-IT') : '—';
-  const actTitle   = S.liveActivity?.title || 'Attività';
-  const sessionCode = S.liveCode || '';
+  const actTitle   = pv ? pv.title : (S.liveActivity?.title || 'Attività');
+  const sessionCode = pv ? pv.code : (S.liveCode || '');
 
   // Build answer rows HTML
   const typeIcons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','drag-drop':'🔀','reorder':'🔢','categorization':'🗂️'};
@@ -16247,6 +16825,7 @@ async function saveRecoveryScoreFromDetailModal(qi, maxPts) {
 
 // ── Teacher score override (punteggio + eventuale riscalaggio max) ─────────
 async function saveScoreOverride(qi, origPts) {
+  if (_pvOn()) return _pvSaveScore(qi, origPts);
   const studentKey = S.selectedStudent;
   if (!studentKey || !S.liveCode) return;
   const input    = document.getElementById('score-override-'     + qi);
@@ -16310,6 +16889,7 @@ async function saveScoreOverride(qi, origPts) {
 
 // ── Valutazione AI lato docente — singola domanda ─────────────────────────
 async function teacherAIScoreQuestion(qi, maxPts) {
+  if (_pvOn()) return _pvAIScore(qi);
   const studentKey = S.selectedStudent;
   if (!studentKey || !S.liveCode) return;
   const btn = document.getElementById('ai-score-btn-' + qi);
@@ -22368,6 +22948,7 @@ function _qdUpdateView() {
 
 // Helper chiamati dai click sulle card
 function openQuestionDetailTeacher(i) {
+  if (_pvOn()) return _pvQuestionDetail(i);
   if (!S.selectedStudent || !S.liveCode) return;
   db.ref('livelearn/responses/' + S.liveCode + '/' + S.selectedStudent).get().then(snap => {
     const r = snap.val() || {};

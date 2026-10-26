@@ -30579,7 +30579,10 @@ ${blocchiPerAlunno}`;
             <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;">
               <div><div style="font-size:16px;font-weight:800;color:#4c1d95;">📊 ${esc(item.studentName)} — ${esc(code)}</div>
               <div style="font-size:12px;color:#6b7280;">${esc(item.unit || '')}</div></div>
-              <button onclick="document.getElementById('ppResOverlay')?.remove()" style="border:none;background:#f3f4f6;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:14px;">✕</button>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <a href="./LiveLearn.html?piano=${encodeURIComponent(code)}" target="_blank" title="Vedi le risposte e correggi (punteggi, esclusioni) in LiveLearn → 🎯 Piani" style="font-size:12px;font-weight:700;color:#6d28d9;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px;padding:6px 10px;text-decoration:none;">✏️ Correggi in LiveLearn</a>
+                <button onclick="document.getElementById('ppResOverlay')?.remove()" style="border:none;background:#f3f4f6;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:14px;">✕</button>
+              </div>
             </div>
             <div id="ppResBody" style="font-size:13px;color:#555;">⏳ Carico i tentativi…</div>
           </div>`;
@@ -34001,7 +34004,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                       <th style="padding:6px;text-align:left;font-size:11px;color:#555;">Studente</th>
                       <th style="padding:6px;text-align:left;font-size:11px;color:#555;">Codice</th>
                       <th style="padding:6px;text-align:center;font-size:11px;color:#555;">Stato</th>
-                      <th style="padding:6px;text-align:center;font-size:11px;color:#555;">Ultimo</th>
+                      <th style="padding:6px;text-align:center;font-size:11px;color:#555;" title="Tentativo migliore: è quello che conta">Migliore</th>
                       <th style="padding:6px;text-align:center;font-size:11px;color:#555;">Tentativi</th>
                       <th></th>
                     </tr></thead><tbody>${list.map(([code, item]) => {
@@ -34014,7 +34017,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                           <td style="padding:6px;font-weight:600;">${esc(item.studentName)}</td>
                           <td style="padding:6px;"><a href="${pianoUrl}" target="_blank" title="Apri StudentApp per ${esc(item.studentName)}" style="text-decoration:none;"><span style="background:${pfxBg};color:${pfxCol};border-radius:4px;padding:1px 6px;font-size:11px;font-weight:700;">${code}</span></a></td>
                           <td style="padding:6px;text-align:center;">${statusIcon}</td>
-                          <td style="padding:6px;text-align:center;">${item.lastScore != null ? `<span style="font-weight:700;color:#059669;">${item.lastScore}%</span>` : '—'}</td>
+                          <td style="padding:6px;text-align:center;">${(item.bestScore ?? item.lastScore) != null ? `<span style="font-weight:700;color:#059669;" title="${item.lastScore != null ? 'Ultimo: ' + item.lastScore + '%' : ''}">${item.bestScore ?? item.lastScore}%</span>` : '—'}</td>
                           <td style="padding:6px;text-align:center;color:#666;">${item.attemptCount > 0 ? item.attemptCount : '—'}</td>
                           <td style="padding:4px;text-align:right;white-space:nowrap;">
                             <button onclick="ppShowPlanResults('${code}')" title="Vedi i tentativi: quante volte l'ha fatto e come" style="background:#f5f3ff;border:1px solid #c4b5fd;border-radius:6px;color:#6d28d9;cursor:pointer;font-size:12px;padding:2px 6px;">📊</button>
@@ -34470,7 +34473,12 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     try {
                         // stuCode = assetto nuovo; studentSafe resta per le voci gia' in localStorage prima della migrazione
                         const v = (await db2.ref('livelearn/recovery_sessions/' + (item.stuCode || item.studentSafe) + '/' + code).get()).val();
-                        if (v) { item.lastScore = v.lastScore; item.attemptCount = v.attemptCount || 0; item.status = v.status || 'pending'; }
+                        if (v) {
+                            item.lastScore = v.lastScore; item.attemptCount = v.attemptCount || 0; item.status = v.status || 'pending';
+                            // Conta il tentativo migliore (con le correzioni fatte in LiveLearn → 🎯 Piani)
+                            const pcts = Object.values(v.attempts || {}).map(a => a && a.pct).filter(x => typeof x === 'number');
+                            item.bestScore = pcts.length ? Math.max(...pcts) : (v.bestScore != null ? v.bestScore : v.lastScore);
+                        }
                     } catch(e) {}
                 }));
                 _ppSavActive();
