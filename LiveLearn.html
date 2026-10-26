@@ -4500,6 +4500,7 @@ async function addQuestion() {
     const words = v('qf-dd-words').split('\n').map(s=>s.trim()).filter(Boolean);
     const answers = v('qf-answers').split('\n').map(s=>s.trim()).filter(Boolean);
     if (!sentences.length || !words.length || !answers.length) return alert('Compila frasi, parole e risposte.');
+    if (!_ddBlankCheck(text, sentences, answers)) return;
     q = { type, text, sentences, words, answers, points: parseFloat(v('qf-points'))||10 };
     if (document.getElementById('qf-dd-unordered')?.checked) q.unordered = true;
 
@@ -5509,6 +5510,19 @@ async function saveEditQ(i) {
 }
 
 // Called when user changes type in the edit form — preserves text values
+// Drag & Drop: gli spazi ___ devono stare nelle frasi, uno per ogni risposta
+function _ddBlankCheck(text, sentences, answers) {
+  const n = sentences.reduce((t, s) => t + (String(s).match(/_{3,}/g) || []).length, 0);
+  if (!n && /_{3,}/.test(text || '')) {
+    alert('Gli spazi ___ sono nell\'Istruzione: nel Drag & Drop vanno nel riquadro «Frasi con spazi», una frase per riga.\n\nL\'Istruzione è solo la consegna (es. "Drag the correct word into each gap.").');
+    return false;
+  }
+  if (n !== answers.length) {
+    return confirm('Nelle frasi ci sono ' + n + ' spazi ___ ma ' + answers.length + ' risposte: ogni spazio vuole la sua risposta, in ordine.\n\nSalvare lo stesso?');
+  }
+  return true;
+}
+
 function changeEditQType() {
   const i = S.editingQIndex;
   if (i < 0) return;
@@ -5544,6 +5558,22 @@ function changeEditQType() {
     const subAnswers = readField('qf-answers');
     if (subText) preserved.text = subText;
     if (subAnswers) preserved.answers = subAnswers;
+  }
+
+  // Drag & Drop: gli spazi ___ stanno nel riquadro "Frasi", l'Istruzione è solo la consegna.
+  // Da Fill in the Blanks / Cloze la frase con gli spazi era nel testo: si sposta lì,
+  // e le parole da trascinare partono dalle risposte (prima alternativa di ognuna).
+  const _blank = /_{3,}/;
+  if (newType === 'drag-drop' && !preserved.sentences.trim() && _blank.test(preserved.text)) {
+    const lines = preserved.text.split('\n').map(s => s.trim()).filter(Boolean);
+    preserved.sentences = lines.filter(l => _blank.test(l)).join('\n');
+    preserved.text = lines.filter(l => !_blank.test(l)).join(' ') || 'Drag the correct word into each gap.';
+    // nel Drag & Drop ogni spazio ha una sola parola giusta: delle alternative a|b resta la prima
+    preserved.answers = preserved.answers.split('\n').map(a => a.split('|')[0].trim()).filter(Boolean).join('\n');
+    if (!preserved.words.trim()) preserved.words = preserved.answers;
+  } else if ((newType === 'fill-blanks' || newType === 'cloze') && preserved.sentences.trim() && !_blank.test(preserved.text)) {
+    // e al contrario: le frasi tornano nel testo, sotto la consegna
+    preserved.text = [preserved.text.trim(), preserved.sentences.trim()].filter(Boolean).join('\n');
   }
 
   // Build a synthetic question object with preserved values to pre-fill the new form
@@ -5837,6 +5867,7 @@ async function buildQFromCurrentForm(type) {
     const words = v('qf-dd-words').split('\n').map(s=>s.trim()).filter(Boolean);
     const answers = v('qf-answers').split('\n').map(s=>s.trim()).filter(Boolean);
     if (!sentences.length || !words.length || !answers.length) return alert('Compila frasi, parole e risposte.'), null;
+    if (!_ddBlankCheck(text, sentences, answers)) return null;
     q = { type, text, sentences, words, answers, points: pts };
     if (document.getElementById('qf-dd-unordered')?.checked) q.unordered = true;
   } else if (type === 'fill-blanks') {
