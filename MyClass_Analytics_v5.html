@@ -33517,6 +33517,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         if (btn) { btn.disabled = true; btn.textContent = '⏳ Rigenero…'; }
         try {
             const { activity, verInfo } = await _ppRegenDraftCore(d, stu);
+            // Attività nuova: la copia aperta in LiveLearn è superata, non deve sovrascriverla
+            if (d.llEditAt) { _ppLLStop(id); delete d.llEditAt; delete d.llMergedAt; _ppSavDraftScritto(); }
             _ppDraftOpenId = id;
             await renderPianoPersPanel();
             alert(verInfo
@@ -34711,6 +34713,18 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         if (_ppLLWatched[id]) { _ppLLWatched[id](); delete _ppLLWatched[id]; }
         try { firebase.database().ref('livelearn/planDrafts/' + id).remove().catch(() => {}); } catch(e) {}
     }
+    // Copie in planDrafts di bozze che qui non ci sono più (approvate, scartate o
+    // sostituite altrove): con nomi e domande dell'alunno, non devono restare in
+    // Firebase. Solo quelle di più di un giorno, per non toccare una modifica in corso.
+    async function _ppLLCleanup() {
+        try {
+            const db2 = firebase.database();
+            const v = (await db2.ref('livelearn/planDrafts').get()).val() || {};
+            const ids = new Set(_ppDraftScritto.map(d => d.id)), rm = {};
+            Object.entries(v).forEach(([id, x]) => { if (!ids.has(id) && (!x || !x.sentAt || Date.now() - x.sentAt > 86400000)) rm[id] = null; });
+            if (Object.keys(rm).length) await db2.ref('livelearn/planDrafts').update(rm);
+        } catch(e) { console.warn('[Piano] pulizia planDrafts:', e.message); }
+    }
     async function _ppLLMerge(id, savedAt) {
         const d = _ppDraftScritto.find(x => x.id === id);
         if (!d) { _ppLLStop(id); return; }
@@ -34997,6 +35011,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         }
         // Bozze aperte nell'editor di LiveLearn: si riprendono le modifiche salvate là
         _ppDraftScritto.forEach(d => { if (d.llEditAt) _ppLLWatch(d.id); });
+        if (!renderPianoPersPanel._llClean) { renderPianoPersPanel._llClean = true; _ppLLCleanup(); }
         // ── Tab 0: Scritto ───────────────────────────────────────────────
         if (_ppTabActive === 0) {
             const el = document.getElementById('ppBody0');

@@ -10,7 +10,10 @@ Le letture sono le stesse di prima. Le scritture sono ristrette:
   l'avviso di quota AI esaurita, le richieste AI, il risultato dei piani di recupero,
   i segni di "letto", i propri messaggi privati, accessi, notifiche e l'autovalutazione degli obiettivi;
 - lezioni, attività, sessioni, controllo live, bacheca di classe, inbox, agentDone e codici dei piani
-  li scrive solo l'account docente.
+  li scrive solo l'account docente;
+- `planDrafts` (bozze dei piani aperte nell'editor di LiveLearn, con nome dell'alunno e domande)
+  lo legge e lo scrive solo l'account docente; MyClass toglie ogni copia quando la bozza viene
+  approvata, scartata o rigenerata.
 
 Dopo la pubblicazione conviene una prova veloce con un alunno tester (LiveLearn → Classi → ➕ Tester):
 pubblicare una lezione da MyClass, avviare una sessione in LiveLearn, entrare e consegnare dal tester,
