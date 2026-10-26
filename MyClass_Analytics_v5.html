@@ -33456,6 +33456,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         _ppSavActive();
         // Nuova versione di un piano già inviato: prende il posto del vecchio
         if (item.replaces && item.replaces !== item.code) await _ppRemoveReplaced(item.replaces, item);
+        if (item.llEditAt) _ppLLStop(id);
         _ppDraftSel.delete(id);
         // Il piano è partito: la sua voce esce dalla coda approvazione
         _ppDeferredDropFor(item.studentSafe, item.unit, item.prefix === 'APP' ? null : ['scritto']);
@@ -33700,6 +33701,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         _ppDraftScritto = _ppDraftScritto.filter(x => x.id !== id);
         _ppDraftSel.delete(id);
         _ppSavDraftScritto();
+        if (d && d.llEditAt) _ppLLStop(id);
         if (d) _ppDeferredDropFor(d.studentSafe, d.unit, d.prefix === 'APP' ? null : ['scritto']);
         renderPianoPersPanel();
     }
@@ -34626,13 +34628,13 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
                 <button class="rv-btn" onclick="ppReviewStep(-1)" ${idx > 0 ? '' : 'disabled style="opacity:.4;"'} title="Bozza precedente">◀</button>
                 <button class="rv-btn" onclick="ppReviewStep(1)" ${idx < list.length - 1 ? '' : 'disabled style="opacity:.4;"'} title="Bozza successiva">▶</button>
-                <button class="rv-btn" onclick="ppReviewEdit('${d.id}')" title="Apri l'editor delle domande nella scheda Scritto">✏️ Modifica</button>
+                <button class="rv-btn" onclick="ppReviewEditLL('${d.id}')" style="background:#6c47ff;border-color:#6c47ff;color:#fff;" title="Apri la bozza nell'editor di LiveLearn, come un test: quando salvi lì, qui si aggiorna da sola">✏️ Modifica in LiveLearn</button>
                 <button class="rv-btn" onclick="ppReviewRegen('${d.id}')" style="border-color:#fbbf24;color:#b45309;" title="Rigenera l'attività">↺ Rigenera</button>
                 <button class="rv-btn" onclick="ppReviewDiscard('${d.id}')" style="border-color:#fca5a5;color:#dc2626;">🗑 Scarta</button>
                 <button class="rv-btn" id="ppRevAppBtn" onclick="ppReviewApprove('${d.id}')" style="background:#059669;border-color:#059669;color:#fff;">✅ Approva e invia</button>
               </div>
             </div>
-            ${d.replaces ? _ppRevReplBanner(d) : ''}${body}`;
+            ${d.llEditAt ? _ppRevLLBanner(d) : ''}${d.replaces ? _ppRevReplBanner(d) : ''}${body}`;
     }
     // Avvisi, testo di lettura e tutti gli esercizi con la soluzione attesa (bozze e piani inviati)
     function _ppRevBodyHtml(activity, qs, iss) {
@@ -34664,6 +34666,80 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             '<div class="pq-legend"><span><span class="pq-chip pq-ok">verde ✓</span> soluzione attesa (tutte le alternative accettate)</span><span><span class="pq-chip pq-ko">⚠ rosso</span> manca o da controllare</span></div>' +
             (cards || '<div style="color:#999;">Nessuna domanda.</div>');
     }
+    // ── Bozza nell'editor di LiveLearn ──
+    // La bozza va in livelearn/planDrafts/<id> (solo docente) e si apre LiveLearn
+    // (?bozza=<id>) con l'editor dei test. Quando lì si salva (savedAt), qui la
+    // bozza si aggiorna da sola (_ppLLWatch) e la revisione si ridisegna.
+    const _ppLLWatched = {};
+    async function ppReviewEditLL(id) {
+        const d = _ppDraftScritto.find(x => x.id === id);
+        if (!d) return;
+        // text è il testo della domanda: il campo question (stringa) lo ripeterebbe e,
+        // non toccato dall'editor di LiveLearn, al ritorno coprirebbe le modifiche
+        const qs = _ppRevQs(d).map(q => { const c = JSON.parse(JSON.stringify(q)); if (c.type !== 'listening' && typeof c.question === 'string') delete c.question; return c; });
+        const src = Array.isArray(d.activity) ? {} : (d.activity || {});
+        const activity = _ppFirebaseSafe({ ...src, questions: qs });
+        const win = window.open('about:blank', '_blank');   // aperta subito: dopo un await il browser la bloccherebbe
+        try {
+            await firebase.database().ref('livelearn/planDrafts/' + id).set({
+                activity, studentName: d.studentName || '', code: d.code || '', prefix: d.prefix || '',
+                unit: d.unit || '', classeNome: d.classeNome || '', sentAt: Date.now()
+            });
+        } catch(e) {
+            if (win) win.close();
+            alert('Non riesco a passare la bozza a LiveLearn: ' + e.message +
+                (/permission/i.test(e.message) ? '\n\nRipubblica le regole di Firebase (firebase/database.rules.json): serve il nodo planDrafts.' : ''));
+            return;
+        }
+        d.llEditAt = Date.now();
+        d.llMergedAt = null;
+        _ppSavDraftScritto();
+        const url = './LiveLearn.html?bozza=' + encodeURIComponent(id);
+        if (win) win.location.href = url; else window.open(url, '_blank');
+        _ppLLWatch(id);
+        if (document.getElementById('ppRevOverlay')) _ppRevRender();
+    }
+    function _ppLLWatch(id) {
+        if (_ppLLWatched[id]) return;
+        let ref;
+        try { ref = firebase.database().ref('livelearn/planDrafts/' + id + '/savedAt'); } catch(e) { return; }
+        const h = ref.on('value', snap => { const t = snap.val(); if (t) _ppLLMerge(id, t).catch(e => console.warn('[Piano] modifiche da LiveLearn:', e.message)); });
+        _ppLLWatched[id] = () => ref.off('value', h);
+    }
+    // Ferma l'ascolto e toglie la copia in Firebase (bozza approvata o scartata)
+    function _ppLLStop(id) {
+        if (_ppLLWatched[id]) { _ppLLWatched[id](); delete _ppLLWatched[id]; }
+        try { firebase.database().ref('livelearn/planDrafts/' + id).remove().catch(() => {}); } catch(e) {}
+    }
+    async function _ppLLMerge(id, savedAt) {
+        const d = _ppDraftScritto.find(x => x.id === id);
+        if (!d) { _ppLLStop(id); return; }
+        if (d.llMergedAt && d.llMergedAt >= savedAt) return;
+        const v = (await firebase.database().ref('livelearn/planDrafts/' + id + '/activity').get()).val();
+        if (!v) return;
+        const oldQs = (Array.isArray(d.activity) ? d.activity : d.activity?.questions) || [];
+        const newQs = (_ppkqArr(v.questions) || []).filter(Boolean).map((q, i) => {
+            // Foto della verifica (PEI): l'editor di LiveLearn non le conosce, restano dalla bozza
+            const o = oldQs[i];
+            return (o && o.fotoRef && !q.fotoRef && !q.image && o.type === q.type) ? { ...q, fotoRef: o.fotoRef, ...(o.foto ? { foto: o.foto } : {}) } : q;
+        });
+        const base = Array.isArray(d.activity) ? {} : { ...(d.activity || {}) };
+        if (!v.passageText) delete base.passageText;
+        d.activity = { ...base, ...v, questions: newQs };
+        d.llMergedAt = savedAt;
+        _ppSavDraftScritto();
+        renderPianoPersPanel();
+        if (document.getElementById('ppRevOverlay')) _ppRevRender();
+    }
+    function _ppRevLLBanner(d) {
+        const t = d.llMergedAt ? new Date(d.llMergedAt).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : '';
+        return `<div style="background:#ede9fe;border:1.5px solid #c4b5fd;border-radius:10px;padding:8px 14px;margin-bottom:14px;color:#4c1d95;font-size:13px;">
+            ✏️ <strong>Aperta nell'editor di LiveLearn.</strong> Quando lì premi <strong>💾 Salva nel piano</strong>, qui la bozza si aggiorna da sola.
+            ${t ? `<span style="color:#065f46;font-weight:800;"> ✅ Modifiche ricevute alle ${t}.</span>` : ''}
+            <button class="rv-btn" style="margin-left:6px;padding:3px 10px;font-size:12px;" onclick="ppReviewEditLL('${d.id}')" title="Riapre la bozza in LiveLearn">↗ Riapri in LiveLearn</button>
+          </div>`;
+    }
+
     // Bozza che è la nuova versione di un piano già inviato
     function _ppRevReplBanner(d) {
         const old = _ppActiveScritto[d.replaces];
@@ -34919,6 +34995,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             tab0Btn.style.background = (_ppTabActive === 0) ? '#6c47ff' : (draftCount > 0 ? '#fef9c3' : '#f0eeff');
             tab0Btn.style.color = (_ppTabActive === 0) ? '#fff' : (draftCount > 0 ? '#92400e' : '#6c47ff');
         }
+        // Bozze aperte nell'editor di LiveLearn: si riprendono le modifiche salvate là
+        _ppDraftScritto.forEach(d => { if (d.llEditAt) _ppLLWatch(d.id); });
         // ── Tab 0: Scritto ───────────────────────────────────────────────
         if (_ppTabActive === 0) {
             const el = document.getElementById('ppBody0');
@@ -35052,6 +35130,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                         </div>
                         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
                           <span style="background:${pfxBg};color:${pfxCol};border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;white-space:nowrap;">${pfxLabel}</span>
+                          <button onclick="event.stopPropagation();ppReviewEditLL('${d.id}')" title="Modifica nell'editor di LiveLearn, come un test: quando salvi lì, la bozza si aggiorna da sola" style="background:#fff;color:#6c47ff;border:1.5px solid #6c47ff;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">✏️ LiveLearn</button>
                           <button onclick="event.stopPropagation();ppOpenReview('${d.id}')" title="Rivedi a schermo intero con soluzioni e controlli" style="background:#6c47ff;color:#fff;border:none;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">🔍 Rivedi</button>
                           <button id="ppDraftRegenBtn_${d.id}" onclick="event.stopPropagation();ppRegenDraft('${d.id}')" title="Rigenera l'attività con Haiku, Automatico o Claude Code (in quel caso la bozza viene sostituita quando importi il file di Claude). Se ha svolto la verifica DSA / PEI / PEI 2 viene adattata alla sua versione" style="background:#fff7ed;color:#c2410c;border:1.5px solid #fdba74;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">↺ Rigenera</button>
                         </div>

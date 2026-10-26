@@ -381,6 +381,7 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--primary); 
 .q-type-btn:hover { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
 .q-type-btn.selected { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
 .q-type-btn.wide { grid-column: span 2; }
+#view-teacher-builder.pd-mode #builder-meta-row, #view-teacher-builder.pd-mode #builder-revision-row, #view-teacher-builder.pd-mode #versions-panel { display: none !important; }
 .add-form-container { border-top: 2px solid var(--border); padding-top: 14px; }
 
 /* SETTINGS */
@@ -941,11 +942,12 @@ const CONFIG = {
     </div>
   </div>
   <div class="content-wide">
+    <div id="builder-plan-banner" style="display:none;background:#ede9fe;border:2px solid #8b5cf6;border-radius:12px;padding:12px 16px;margin-bottom:14px;color:#4c1d95;font-size:13px;line-height:1.5;"></div>
     <div class="form-group mb-16">
       <input type="text" id="activity-title" class="builder-title-input" placeholder="Titolo dell'attività (es. Quiz Past Simple – 2E)" style="font-size:22px; width:100%;">
     </div>
     <!-- CLASS + TOPIC ROW -->
-    <div style="display:flex; gap:14px; margin-bottom:14px; flex-wrap:wrap; align-items:flex-start; background:white; border:1.5px solid var(--border); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow);">
+    <div id="builder-meta-row" style="display:flex; gap:14px; margin-bottom:14px; flex-wrap:wrap; align-items:flex-start; background:white; border:1.5px solid var(--border); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow);">
       <div style="flex-shrink:0;">
         <label style="font-size:12px; font-weight:800; color:var(--text); margin-bottom:8px; display:block; letter-spacing:0.2px;">🏫 CLASSE/I</label>
         <div id="class-chips" style="display:flex; gap:6px; flex-wrap:wrap;">
@@ -961,7 +963,7 @@ const CONFIG = {
         <p style="font-size:11px; color:var(--muted); margin-top:5px;">Usato per raggruppare le attività nel menu. Puoi scriverlo o generarlo con AI.</p>
       </div>
     </div>
-    <div class="form-group mb-16" style="background:#f0f9ff;border:1.5px solid #7dd3fc;border-radius:12px;padding:14px 16px;">
+    <div id="builder-revision-row" class="form-group mb-16" style="background:#f0f9ff;border:1.5px solid #7dd3fc;border-radius:12px;padding:14px 16px;">
       <label style="font-size:12px;font-weight:800;color:#0369a1;letter-spacing:0.4px;display:flex;align-items:center;gap:6px;">
         📖 SCHEDA DI RIPASSO IN LOBBY <span style="font-weight:400;color:#0284c7;font-size:11px;">(opzionale — se vuota, verrà generata automaticamente dall'AI al lancio)</span>
       </label>
@@ -1878,15 +1880,18 @@ function _clearAutoResume() {
   } catch(e) {}
 })();
 
-// Link da MyClass al piano di un alunno: ?piano=REC-XXXX apre la scheda 🎯 Piani
-// dopo l'accesso docente (showView('teacher-dashboard') lo fa partire)
+// Link da MyClass al piano di un alunno: ?piano=REC-XXXX apre la scheda 🎯 Piani,
+// ?bozza=<id> apre la bozza di un piano nell'editor (_pdOpen), dopo l'accesso
+// docente (showView('teacher-dashboard') li fa partire)
 (function _checkUrlPiano() {
   try {
-    const piano = (new URLSearchParams(window.location.search).get('piano') || '').trim().toUpperCase();
-    if (!piano) return;
+    const params = new URLSearchParams(window.location.search);
+    const piano = (params.get('piano') || '').trim().toUpperCase();
+    const bozza = (params.get('bozza') || '').trim();
+    if (!piano && !bozza) return;
     try { history.replaceState(null, '', window.location.pathname); } catch(e) {}
     // (S esiste solo più sotto: si usa dopo l'attesa dell'identità)
-    const go = () => { S._pvDeep = piano; goTeacherLogin(); };
+    const go = () => { if (piano) S._pvDeep = piano; if (bozza) S._pdDeep = bozza; goTeacherLogin(); };
     awaitAuth(8000).then(go, go);
   } catch(e) {}
 })();
@@ -2043,6 +2048,7 @@ function showView(id) {
   el.classList.add('active');
   if (id !== 'student-activity') closePassage();
   if (id === 'teacher-dashboard' && S._pvDeep) { const c = S._pvDeep; S._pvDeep = null; setTimeout(() => _pvOpenDeep(c), 300); }
+  if (id === 'teacher-dashboard' && S._pdDeep) { const c = S._pdDeep; S._pdDeep = null; setTimeout(() => _pdOpen(c), 300); }
   // Inietta la toolbar rich-text nel builder del testo di riferimento (solo una volta)
   if (id === 'teacher-builder') {
     const barEl = document.getElementById('passage-richfmt-bar');
@@ -3445,6 +3451,7 @@ function selectMode(mode) {
 }
 
 function openBuilder() {
+  _pdReset();
   S.questions = [];
   S.editingId = null;
   S.currentQType = null;
@@ -3477,6 +3484,7 @@ function openBuilder() {
 }
 
 async function editActivity(id) {
+  _pdReset();
   const a = _actHydrate(await _actGet(id));
   // R1: decodifica lettere → nomi interni. Senza legenda l'editor non si apre:
   // salvando si perderebbero le versioni differenziate.
@@ -5899,6 +5907,7 @@ async function _saveActivitySilent() {
 }
 
 async function saveActivity() {
+  if (S._planDraftId) return _pdSave();
   const title = document.getElementById('activity-title').value.trim();
   if (!title) return alert('Dai un titolo all\'attività');
   if (S.questions.length === 0) return alert('Aggiungi almeno una domanda');
@@ -5969,6 +5978,80 @@ async function saveActivity() {
     reset();
     console.error('saveActivity:', err);
     alert('❌ ' + err.message + '\n\nVerifica:\n1. Connessione internet attiva\n2. Firebase Console → Realtime Database → Regole → .read e .write = true → Pubblica');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// BOZZA DI UN PIANO PERSONALIZZATO NELL'EDITOR (link da MyClass ?bozza=<id>)
+// MyClass mette la bozza in livelearn/planDrafts/<id> e apre questa pagina:
+// l'attività si modifica con l'editor dei test e 💾 la rimanda lì (savedAt),
+// da dove MyClass la riprende da solo. Non diventa un'attività del docente.
+// ══════════════════════════════════════════════════════════════
+S._planDraftId = null;
+S._planDraftMeta = null;
+function _pdReset() {
+  S._planDraftId = null;
+  S._planDraftMeta = null;
+  const v = document.getElementById('view-teacher-builder');
+  if (v) v.classList.remove('pd-mode');
+  const b = document.getElementById('builder-plan-banner');
+  if (b) b.style.display = 'none';
+  const btn = document.getElementById('btn-save-activity');
+  if (btn) btn.textContent = '💾 Salva attività';
+}
+async function _pdOpen(id) {
+  if (!db || !id) return;
+  let v;
+  try { v = (await _fbGet(db.ref('livelearn/planDrafts/' + id), 15000)).val(); }
+  catch(e) {
+    alert('Non riesco a leggere la bozza del piano: ' + e.message +
+      (/permission/i.test(e.message) ? '\n\nRipubblica le regole di Firebase (firebase/database.rules.json): serve il nodo planDrafts.' : ''));
+    return;
+  }
+  if (!v || !v.activity) { alert('Bozza del piano non trovata: riaprila da MyClass (Revisione → ✏️ Modifica in LiveLearn).'); return; }
+  openBuilder();
+  S._planDraftId = id;
+  S._planDraftMeta = v;
+  S.questions = fbArr(v.activity.questions || []).filter(Boolean);
+  document.getElementById('activity-title').value = v.activity.title || ('Piano ' + (v.code || ''));
+  const passEl = document.getElementById('activity-passage');
+  if (passEl) { passEl.value = v.activity.passageText || ''; _updatePassageCharCount(); }
+  document.getElementById('view-teacher-builder').classList.add('pd-mode');
+  document.getElementById('btn-save-activity').textContent = '💾 Salva nel piano';
+  renderQList();
+  _pdBanner();
+}
+function _pdBanner(savedAt) {
+  const b = document.getElementById('builder-plan-banner'), v = S._planDraftMeta;
+  if (!b || !v) return;
+  const lbl = { REC: 'Recupero', CON: 'Consolidamento', APP: 'Approfondimento' }[v.prefix] || 'Piano';
+  b.innerHTML = '🎯 <strong>Bozza del piano di ' + esc(v.studentName || '') + '</strong> · ' + esc(lbl) + ' · ' + esc(v.unit || '') + ' · ' + esc(v.code || '') + '<br>' +
+    'Modifica le domande come in un test. <strong>💾 Salva nel piano</strong> rimanda le modifiche alla bozza in MyClass, che si aggiorna da sola: ' +
+    'poi la approvi da lì. Non viene creata un\'attività nuova tra le tue.' +
+    (savedAt ? '<div style="margin-top:6px;font-weight:800;color:#065f46;">✅ Salvato alle ' + new Date(savedAt).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) + ': la bozza in MyClass è aggiornata.</div>' : '');
+  b.style.display = 'block';
+}
+async function _pdSave() {
+  if (!S.questions.length) return alert('Aggiungi almeno una domanda');
+  const btn = document.getElementById('btn-save-activity');
+  if (btn) { btn.textContent = '⏳ Salvataggio…'; btn.disabled = true; }
+  const a = Object.assign({}, S._planDraftMeta.activity, { questions: JSON.parse(JSON.stringify(S.questions)) });
+  const title = document.getElementById('activity-title').value.trim();
+  if (title) a.title = title;
+  const pass = (document.getElementById('activity-passage')?.value || '').trim();
+  if (pass) a.passageText = pass; else delete a.passageText;
+  const savedAt = Date.now();
+  try {
+    await db.ref('livelearn/planDrafts/' + S._planDraftId).update({ activity: JSON.parse(JSON.stringify(a)), savedAt });
+    S._planDraftMeta.activity = a;
+    _pdBanner(savedAt);
+    if (btn) { btn.textContent = '✅ Salvato!'; btn.style.background = 'var(--success)'; btn.style.borderColor = 'var(--success)'; }
+    setTimeout(() => { if (btn && S._planDraftId) { btn.textContent = '💾 Salva nel piano'; btn.style.background = ''; btn.style.borderColor = ''; } }, 1500);
+  } catch(e) {
+    if (btn) btn.textContent = '💾 Salva nel piano';
+    alert('❌ Salvataggio non riuscito: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
