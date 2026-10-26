@@ -1663,6 +1663,10 @@ const CONFIG = {
       <input type="checkbox" id="launch-tournament" style="margin-top:2px;">
       <span><strong>🏆 Modalità torneo</strong><br><span class="text-muted" style="font-size:12px;">Tabellone a eliminazione tra gli alunni collegati. Le domande vengono divise in turni (se l'attività è divisa in livelli, si giocano gli ultimi, così la finale è sempre il livello più difficile): in ogni turno tutte le coppie rispondono insieme, ognuno dal suo PC, e passa chi fa più punti (a parità, chi è stato più veloce). Il tabellone si apre col pulsante 🏆 da proiettare sulla LIM. Le domande non vengono mescolate e tutti svolgono la versione originale; se l'attività ha più domande per livello, a ogni torneo ne vengono pescate di nuove.</span></span>
     </label>
+    <label id="tournament-pairs-options" style="display:none;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;padding:10px 14px;background:#fffbeb;border:1.5px dashed #f59e0b;border-radius:10px;margin:-6px 0 14px 24px;">
+      <input type="checkbox" id="launch-tourPairs" style="margin-top:2px;">
+      <span><strong>🔀 Domande diverse per ogni coppia</strong><br><span class="text-muted" style="font-size:12px;">Solo con la modalità torneo e un'attività divisa in livelli. I due alunni di una sfida hanno le stesse domande, ma ogni sfida ne ha di diverse (così i vicini non si copiano). Se in un livello le domande non bastano per tutte le sfide, alcune coppie hanno le stesse: prima di iniziare ti dico quante.</span></span>
+    </label>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px;background:#f9f8f6;border-radius:10px;margin-bottom:14px;">
       <div class="form-group" style="margin-bottom:0;">
@@ -5010,7 +5014,7 @@ function _audioTeacherStop() {
   if (b) b.textContent = '🔊 Ascolta';
 }
 function _audioTeacherPlay() {
-  const cur = S.teacherCurrentQ, a = _audioOfQ(S.liveActivity?.questions?.[cur]);
+  const cur = S.teacherCurrentQ, a = _audioOfQ(_liveCurQ());
   const b = document.getElementById('btn-audio-play');
   if (S._tAudioQ === cur) { _audioTeacherStop(); return; }   // secondo clic = stop
   _audioTeacherStop();
@@ -5031,14 +5035,15 @@ async function _audioTeacherToggle() {
 function _audioDecorateBar() {
   const t = document.getElementById('btn-audio-toggle'), b = document.getElementById('btn-audio-play');
   if (!t || !b) return;
-  t.style.display = (S.liveActivity?.questions || []).some(q => _audioOfQ(q)) ? '' : 'none';   // niente audio nell'attività
+  // niente audio nell'attività, o domande diverse per ogni coppia (ognuno ascolta la sua)
+  t.style.display = !S.liveTourPairs && (S.liveActivity?.questions || []).some(q => _audioOfQ(q)) ? '' : 'none';
   t.textContent = S.liveAudioTeacher ? '🔇 Audio: solo prof' : '🔈 Audio: alunni';
   t.title = S.liveAudioTeacher ? 'Gli alunni non sentono l\'audio: lo fai partire tu con 🔊. Clic per ridarlo agli alunni.'
                                : 'Gli alunni ascoltano dal loro dispositivo. Clic per togliere l\'audio agli alunni e farlo partire solo tu.';
   t.style.background = S.liveAudioTeacher ? '#e0f2fe' : '';
   const cur = S.teacherCurrentQ;
   if (S._tAudioQ != null && S._tAudioQ !== cur) _audioTeacherStop();   // cambiata domanda
-  b.style.display = cur >= 0 && _audioOfQ(S.liveActivity?.questions?.[cur]) ? 'inline-flex' : 'none';
+  b.style.display = cur >= 0 && !S.liveTourPairs && _audioOfQ(_liveCurQ()) ? 'inline-flex' : 'none';
 }
 
 // ── Quick audio upload (directly from question list) ──────
@@ -5981,6 +5986,8 @@ function selectLaunchMode(mode) {
   if (assignedOpts) assignedOpts.style.display = mode === 'assigned' ? 'block' : 'none';
   const tourOpts = document.getElementById('tournament-options');
   if (tourOpts) tourOpts.style.display = mode === 'teacher' ? 'flex' : 'none';
+  const tourPairsOpts = document.getElementById('tournament-pairs-options');
+  if (tourPairsOpts) tourPairsOpts.style.display = mode === 'teacher' ? 'flex' : 'none';
   _renderAssignGrid();
 }
 
@@ -6110,6 +6117,7 @@ async function confirmStartSession() {
   const timer = parseInt(document.getElementById('launch-timer').value) || 0;
   // Torneo: i turni sono blocchi di domande consecutive, quindi niente mescolamento
   const tournament = mode === 'teacher' && !!document.getElementById('launch-tournament')?.checked;
+  let tourPairs = tournament && !!document.getElementById('launch-tourPairs')?.checked;
   const shuffleQ = document.getElementById('launch-shuffleQ').checked && !tournament;
   const shuffleOpts = document.getElementById('launch-shuffleOpts').checked;
   const noListening = !!document.getElementById('launch-noListening')?.checked;
@@ -6156,12 +6164,22 @@ async function confirmStartSession() {
       }
     });
   }
+  // Domande diverse per ogni coppia: servono i livelli (campo "round" su ogni domanda)
+  if (tourPairs) {
+    let _tpQs = [];
+    try { _tpQs = fbArr(_actHydrate(await _actGet(S.pendingActivityId))?.questions); } catch(e) {}
+    if (!_tpQs.length || !_tpQs.every(q => q && typeof q.round === 'number')) {
+      alert('🔀 Domande diverse per ogni coppia: questa attività non è divisa in livelli, quindi tutte le coppie avranno le stesse domande.');
+      tourPairs = false;
+    }
+  }
   // Torneo su un'attività con più domande per livello: si pescano adesso, uguali per tutti
+  // (con domande diverse per ogni coppia restano tutte: le serie si fanno col tabellone)
   // Fuori dal torneo: "🎲 Domande da pescare" (solo se nessun alunno ha una versione differenziata,
   // perché le versioni hanno domande diverse e non si potrebbero pescare le stesse)
   const pickN = tournament ? 0 : (parseInt(document.getElementById('launch-pickN')?.value) || 0);
   let tourPick = null;
-  if (tournament || pickN > 0) {
+  if ((tournament && !tourPairs) || pickN > 0) {
     try { tourPick = _tourPick(fbArr(_actHydrate(await _actGet(S.pendingActivityId))?.questions), pickN || undefined); }
     catch(e) { console.warn('[sessione] estrazione domande non riuscita, si usano tutte:', e.message); }
   }
@@ -6180,6 +6198,7 @@ async function confirmStartSession() {
     if (_isAssigned && document.getElementById('launch-repeatable')?.checked) sessionPayload.repeatable = true;
     if (noListening) sessionPayload.noListening = true;
     if (tournament) sessionPayload.tournament = true;
+    if (tourPairs) sessionPayload.tourPairs = true;
     if (tourPick && !tournament && Object.keys(studentVersions).length) {
       alert('🎲 Hai assegnato versioni differenziate: le domande da pescare non si possono usare insieme alle versioni, quindi gli alunni avranno tutte le domande.');
       tourPick = null;
@@ -6452,6 +6471,7 @@ async function openLive(code, activityId, roster, silent) {
   if (_nlBadge) _nlBadge.style.display = sess.noListening ? '' : 'none';
   S.liveMode = sess.mode || 'test';
   S.liveTournament = S.liveMode === 'teacher' && !!sess.tournament;
+  S.liveTourPairs = S.liveTournament && !!sess.tourPairs;
   S.liveTimer = sess.timer || 0;
   S.liveStudentVersions = sess.studentVersions || {};
   S.liveStudentModes = sess.studentModes || {};
@@ -6503,6 +6523,8 @@ async function openLive(code, activityId, roster, silent) {
       await db.ref('livelearn/control/' + code).set({ currentQ: -1 });
     if (S.liveTournament) S._tourAutoInt = setInterval(_tourAutoCheck, 1000);
     try { S.liveAudioTeacher = localStorage.getItem('ll_audio_teacher') === '1'; } catch(e) { S.liveAudioTeacher = false; }
+    // Domande diverse per ogni coppia: ognuno ascolta la sua dal proprio dispositivo
+    if (S.liveTourPairs) S.liveAudioTeacher = false;
     db.ref('livelearn/control/' + code + '/audioTeacher').set(S.liveAudioTeacher).catch(() => {});
     updateTeacherControlBar();
   } else { ctrlBar.style.display = 'none'; }
@@ -6699,8 +6721,20 @@ function showCodeScreen() {
 function hideCodeScreen() {
   showView('teacher-live');
 }
+// Domande da far scorrere nel Controllo docente (torneo con domande per coppia: i posti dei turni)
+function _tqTotal() {
+  const t = S._tour;
+  if (S.liveTournament && t && t.pq) return t.ranges[t.ranges.length - 1][1] + 1;
+  return S.liveActivity?.questions?.length || 0;
+}
+// Domanda mostrata adesso (torneo con domande per coppia: quella di una delle sfide)
+function _liveCurQ() {
+  const cur = S.teacherCurrentQ, qs = S.liveActivity?.questions || [], t = S._tour;
+  if (S.liveTournament && t && t.pq) return qs[_tourQ(t, _hintPlayers()[0] || '', cur)] || null;
+  return qs[cur] || null;
+}
 function updateTeacherControlBar() {
-  const total = S.liveActivity?.questions?.length || 0;
+  const total = _tqTotal();
   const cur = S.teacherCurrentQ;
   const pill = document.getElementById('teacher-q-pill');
   const prog = document.getElementById('teacher-q-progress');
@@ -6715,7 +6749,7 @@ function updateTeacherControlBar() {
 }
 async function teacherNextQ() {
   if (S.liveTournament && await _tourBeforeNext()) return;
-  const total = S.liveActivity?.questions?.length || 0;
+  const total = _tqTotal();
   if (S.teacherCurrentQ >= total-1) {
     await db.ref('livelearn/control/'+S.liveCode+'/currentQ').set(999);
     await _closeSessionAndWipeKeys(S.liveCode);
@@ -6723,7 +6757,14 @@ async function teacherNextQ() {
   }
   S.teacherCurrentQ++; S._qStartAt = Date.now(); await db.ref('livelearn/control/'+S.liveCode+'/currentQ').set(S.teacherCurrentQ); updateTeacherControlBar();
   // Torneo: domande mostrate, per non contare quelle mai arrivate (_tourFixSession)
-  if (S.liveTournament) db.ref('livelearn/control/' + S.liveCode + '/shown/' + S.teacherCurrentQ).set(true).catch(() => {});
+  if (S.liveTournament) {
+    const t = S._tour, cur = S.teacherCurrentQ, upd = {};
+    if (t && t.pq) {
+      const r = t.ranges.findIndex(x => x && cur >= x[0] && cur <= x[1]);
+      (t.pq[r] || []).forEach(g => { const i = g[cur - t.ranges[r][0]]; if (i != null) upd[i] = true; });
+    } else upd[cur] = true;
+    db.ref('livelearn/control/' + S.liveCode + '/shown').update(upd).catch(() => {});
+  }
 }
 async function teacherPrevQ() {
   if (S.teacherCurrentQ <= 0) return;
@@ -6807,7 +6848,63 @@ function _tourPick(qs, total) {
   return out;
 }
 
-function _tourBuild(keys, names, nQ) {
+// ── Domande diverse per ogni coppia (session.tourPairs) ──
+// I turni non sono più blocchi di domande dell'attività ma "posti" numerati da 0
+// (t.ranges): il docente fa avanzare il posto (currentQ) e ogni sfida vede la sua
+// domanda, t.pq[turno][posizione della sfida][posto nel turno] = indice della domanda.
+// Un livello per turno (gli ultimi, come sempre), roundPick domande a turno. Ogni
+// livello si divide in serie di domande diverse, senza la stessa faccenda (pickKey)
+// due volte nella serie: una serie per sfida finché bastano, poi si ripetono.
+// Chi non gioca il turno (eliminato, entrato dopo) si allena con la prima serie.
+function _tourPairsBuild(nR, first) {
+  const qs = S.liveActivity?.questions || [];
+  if (!qs.length || !qs.every(q => q && typeof q.round === 'number')) return null;
+  const levels = [...new Set(qs.map(q => q.round))].sort((a, b) => a - b);
+  if (levels.length < nR) return null;
+  const key = i => qs[i].pickKey || ('#' + i);
+  const ranges = [], pq = [], sets = [];
+  let s = 0;
+  levels.slice(levels.length - nR).forEach((lv, r) => {
+    const pool = qs.map((q, i) => i).filter(i => qs[i].round === lv);
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    const n = Math.min(pool.length, qs[pool[0]].roundPick || pool.length);
+    const pos = Math.pow(2, nR - r - 1);
+    // posizioni con una vera sfida (al primo turno chi passa da solo non ne ha bisogno)
+    const duel = r === 0 ? first.map(m => !!m.b) : new Array(pos).fill(true);
+    const need = Math.max(1, duel.filter(Boolean).length);
+    const groups = [];
+    let left = pool;
+    while (groups.length < need && left.length >= n) {
+      const g = [], here = new Set();
+      left.forEach(i => { if (g.length < n && !here.has(key(i))) { g.push(i); here.add(key(i)); } });
+      left.forEach(i => { if (g.length < n && !g.includes(i)) g.push(i); });
+      left = left.filter(i => !g.includes(i));
+      groups.push(g.sort((a, b) => a - b));
+    }
+    // prima le sfide, poi chi passa da solo; le serie si ripetono a giro
+    const row = new Array(pos);
+    let c = 0;
+    duel.forEach((d, p) => { if (d) row[p] = groups[c++ % groups.length]; });
+    for (let p = 0; p < pos; p++) if (!row[p]) row[p] = groups[c++ % groups.length];
+    pq.push(row);
+    sets.push(groups.length);
+    ranges.push([s, s + n - 1]);
+    s += n;
+  });
+  return { ranges, pq, sets };
+}
+// Indice della domanda che vede l'alunno key al posto slot (senza domande per coppia: slot)
+function _tourQ(t, key, slot) {
+  if (!t || !t.pq) return slot;
+  const r = t.ranges.findIndex(x => x && slot >= x[0] && slot <= x[1]);
+  if (r < 0) return -1;
+  const p = (t.rounds[r] || []).findIndex(m => m && (m.a === key || m.b === key));
+  const row = t.pq[r] || [];
+  const i = (row[p < 0 ? 0 : p] || row[0] || [])[slot - t.ranges[r][0]];
+  return i == null ? -1 : i;
+}
+
+function _tourBuild(keys, names, nQ, pairs) {
   const nR = Math.max(1, Math.ceil(Math.log2(keys.length)));
   const byes = Math.pow(2, nR) - keys.length;
   const p = keys.slice();
@@ -6819,6 +6916,11 @@ function _tourBuild(keys, names, nQ) {
   for (let i = byes; i < p.length; i += 2) duel.push({ a: p[i], b: p[i + 1] });
   const first = [];
   while (solo.length || duel.length) { if (duel.length) first.push(duel.shift()); if (solo.length) first.push(solo.shift()); }
+  if (pairs) {
+    const P = _tourPairsBuild(nR, first);
+    if (!P) return null;
+    return { names, ranges: P.ranges, pq: P.pq, sets: P.sets, rounds: [first], cur: 0, closed: -1, champ: '' };
+  }
   return { names, ranges: _tourRanges(nQ, nR), rounds: [first], cur: 0, closed: -1, champ: '' };
 }
 
@@ -6830,6 +6932,7 @@ function _tourNormalize(t) {
   t.cur = t.cur || 0;
   t.closed = t.closed == null ? -1 : t.closed;
   t.champ = t.champ || '';
+  if (t.pq) t.pq = fbArr(t.pq).map(row => fbArr(row).map(g => fbArr(g)));
   return t;
 }
 
@@ -6861,12 +6964,26 @@ function _tourSave() {
 // (stessi campi: PDF, MyClass e StudentApp li rispettano già), con la nota.
 const _TOUR_NOTA_NONGIOCATA = 'Domanda non giocata nel torneo (livello saltato o torneo finito prima).';
 const _TOUR_NOTA_ALLENAMENTO = 'Turno che l\'alunno non giocava (eliminato o fuori tabellone) e senza risposta: era solo allenamento.';
+// Domande diverse per ogni coppia: quelle delle altre sfide non si mostrano nei
+// resoconti (hide nell'esclusione), altrimenti ogni alunno avrebbe decine di righe vuote
+const _TOUR_NOTA_ALTRA = 'Domanda di un\'altra coppia nel torneo.';
 const _TOUR_FIX_V = 3;
 function _tourExclMap(t, nQ, key, answers, shown) {
   const out = {};
   if (!t || !t.ranges || !t.ranges.length) return out;
   const roundOf = i => t.ranges.findIndex(r => r && i >= r[0] && i <= r[1]);
   const plays = r => (t.rounds[r] || []).some(m => m && (m.a === key || m.b === key));
+  if (t.pq) {
+    const mine = new Map(); // domande di questo alunno → turno
+    t.ranges.forEach(([s, e], r) => { for (let x = s; x <= e; x++) { const i = _tourQ(t, key, x); if (i >= 0) mine.set(i, r); } });
+    for (let i = 0; i < nQ; i++) {
+      if (answers[i] != null) continue;
+      if (!mine.has(i)) out[i] = _TOUR_NOTA_ALTRA;
+      else if (!shown(i)) out[i] = _TOUR_NOTA_NONGIOCATA;
+      else if (!plays(mine.get(i))) out[i] = _TOUR_NOTA_ALLENAMENTO;
+    }
+    return out;
+  }
   for (let i = 0; i < nQ; i++) {
     const r = roundOf(i);
     // Fuori dai turni il docente non mostra mai la domanda: un'eventuale
@@ -6882,6 +6999,7 @@ function _tourExclFields(map, at) {
   const f = { excludedQuestions: {}, questionMaxOverrides: {}, manualScores: {}, tourFix: _TOUR_FIX_V };
   Object.keys(map).forEach(i => {
     f.excludedQuestions[i] = { prevMax: null, prevManual: null, at: at || Date.now(), tour: true, nota: map[i] };
+    if (map[i] === _TOUR_NOTA_ALTRA) f.excludedQuestions[i].hide = true;
     f.questionMaxOverrides[i] = 0;
     f.manualScores[i] = 0;
   });
@@ -6931,6 +7049,7 @@ async function _tourFixSession(code) {
             upd['manualScores/' + i] = 0;
           } else if (cur.tour && cur.nota !== want[i]) {
             upd['excludedQuestions/' + i + '/nota'] = want[i];
+            upd['excludedQuestions/' + i + '/hide'] = want[i] === _TOUR_NOTA_ALTRA || null;
           }
         } else if (cur && cur.tour) {
           // Tolta per sbaglio con la regola di prima: torna a contare
@@ -6952,12 +7071,13 @@ async function _tourFixSession(code) {
 }
 
 // Punti di un alunno nelle domande del turno r; ms = tempo speso sulle risposte giuste
-function _tourScore(resp, r, t) {
+function _tourScore(resp, r, t, key) {
   if (!resp || resp.removed) return { pts: -1, ms: 0 };
   const qs = S.liveActivity?.questions || [], ans = fbArr(resp.answers), times = fbArr(resp.tourMs), hints = fbArr(resp.tourHint);
   const [s, e] = t.ranges[r];
   let pts = 0, ms = 0;
-  for (let i = s; i <= e; i++) {
+  for (let x = s; x <= e; x++) {
+    const i = _tourQ(t, key, x);
     if (!qs[i] || ans[i] == null) continue;
     let got = 0;
     try { got = _earnedFrom(evaluateAnswer(qs[i], ans[i])); } catch(err) {}
@@ -6971,7 +7091,7 @@ function _tourScore(resp, r, t) {
 function _tourDecide(m, r, t, resp) {
   if (!m.b) return m.a;
   if (!m.a) return m.b;
-  const A = _tourScore(resp[m.a], r, t), B = _tourScore(resp[m.b], r, t);
+  const A = _tourScore(resp[m.a], r, t, m.a), B = _tourScore(resp[m.b], r, t, m.b);
   m.sa = Math.max(0, A.pts); m.sb = Math.max(0, B.pts);
   if (A.pts !== B.pts) return A.pts > B.pts ? m.a : m.b;
   m.tie = true;
@@ -7006,11 +7126,18 @@ async function _tourBeforeNext() {
     const keys = Object.keys(resp).filter(k => resp[k] && !resp[k].removed);
     if (keys.length < 2) { alert('🏆 Servono almeno 2 alunni collegati per iniziare il torneo.'); return true; }
     const nR = Math.ceil(Math.log2(keys.length));
-    if (nQ < nR) { alert('🏆 Con ' + keys.length + ' alunni servono ' + nR + ' turni, cioè almeno ' + nR + ' domande: l\'attività ne ha ' + nQ + '.'); return true; }
+    if (!S.liveTourPairs && nQ < nR) { alert('🏆 Con ' + keys.length + ' alunni servono ' + nR + ' turni, cioè almeno ' + nR + ' domande: l\'attività ne ha ' + nQ + '.'); return true; }
     const names = {};
     keys.forEach(k => { names[k] = resp[k].name || k; });
-    const t = _tourBuild(keys, names, nQ);
-    const plan = t.ranges.map(([s, e], r) => '• ' + _tourRoundName(r, nR) + ': domande ' + (s + 1) + (e > s ? '–' + (e + 1) : '')).join('\n');
+    const t = _tourBuild(keys, names, nQ, S.liveTourPairs);
+    if (!t) { alert('🏆 Con ' + keys.length + ' alunni servono ' + nR + ' turni, cioè ' + nR + ' livelli di domande: l\'attività ne ha meno.'); return true; }
+    const plan = t.pq
+      ? t.ranges.map(([s, e], r) => {
+          const duels = r === 0 ? t.rounds[0].filter(m => m.b).length : Math.pow(2, nR - r - 1);
+          return '• ' + _tourRoundName(r, nR) + ': ' + (e - s + 1) + ' domande, ' + duels + (duels === 1 ? ' sfida' : ' sfide') +
+            (t.sets[r] >= duels ? (duels > 1 ? ' — tutte diverse' : '') : ' — ' + t.sets[r] + ' serie di domande: alcune coppie hanno le stesse');
+        }).join('\n')
+      : t.ranges.map(([s, e], r) => '• ' + _tourRoundName(r, nR) + ': domande ' + (s + 1) + (e > s ? '–' + (e + 1) : '')).join('\n');
     if (!confirm('🏆 Torneo con ' + keys.length + ' alunni, ' + nR + ' turni:\n\n' + plan + '\n\nChi entra da adesso gioca fuori tabellone. Iniziare?')) return true;
     S._tour = t;
     await _tourSave();
@@ -7065,9 +7192,9 @@ function _tourAutoCheck() {
   if (S._revealQ === cur) { if (Date.now() - (S._revealAt || 0) > _TOUR_REVEAL_MS) go(0); return; }
   const pl = _hintPlayers(), resp = S._liveResp || {};
   if (!pl.length) return;
-  const allDone = pl.every(k => _hintAnswered(resp[k], cur));
+  const allDone = pl.every(k => _hintAnswered(resp[k], cur, k));
   const timeUp = S.liveTimer > 0 && Date.now() - (S._qStartAt || Date.now()) > (S.liveTimer + 1.5) * 1000;
-  const q = S.liveActivity?.questions?.[cur];
+  const q = _liveCurQ();
   let ready;
   if (q && q.lockedHint) {
     if (allDone && S._hintOpenQ !== cur) { _hintUnlock(); return; }
@@ -7102,21 +7229,23 @@ function _tourQuestionPlain(q) {
   return String(t).replace(/\*\*|\*/g, '').replace(/\[\/?(red|blue|green|orange|purple|big)\]/gi, '').replace(/_{3,}/g, '____').trim();
 }
 function _tourRevealHTML(cur) {
-  const q = S.liveActivity?.questions?.[cur], t = S._tour, resp = S._liveResp || {};
-  if (!q || !t) return '';
+  const qs = S.liveActivity?.questions || [], q = qs[cur], t = S._tour, resp = S._liveResp || {};
+  if (!t || (!q && !t.pq)) return '';
   const pl = [];
   (t.rounds[t.cur] || []).forEach(m => [m.a, m.b].forEach(k => { if (k) pl.push(k); }));
   const ok = [], ko = [];
   pl.forEach(k => {
-    const a = fbArr(resp[k]?.answers)[cur];
+    const i = _tourQ(t, k, cur), a = fbArr(resp[k]?.answers)[i];
     let good = false;
-    try { good = a != null && _earnedFrom(evaluateAnswer(q, a)) > 0; } catch(e) {}
-    (good ? ok : ko).push(esc(t.names[k] || k) + (good && fbArr(resp[k]?.tourHint)[cur] ? ' (½)' : ''));
+    try { good = a != null && !!qs[i] && _earnedFrom(evaluateAnswer(qs[i], a)) > 0; } catch(e) {}
+    (good ? ok : ko).push(esc(t.names[k] || k) + (good && fbArr(resp[k]?.tourHint)[i] ? ' (½)' : ''));
   });
-  const lines = _tourQuestionPlain(q).split('\n').filter(x => x.trim() && !/^[_\s]+$/.test(x));
-  return '<div class="tour-reveal">' +
-    '<div class="tr-q">' + lines.map(esc).join('<br>') + '</div>' +
-    '<div class="tr-a">✅ ' + esc(_tourAnswerText(q) || '—') + '</div>' +
+  // Domande diverse per ogni coppia: la soluzione la vede ognuno sul suo schermo
+  const head = t.pq
+    ? '<div class="tr-q" style="font-weight:800;">🔀 Ogni coppia aveva la sua domanda: la soluzione è sullo schermo di ognuno</div>'
+    : '<div class="tr-q">' + _tourQuestionPlain(q).split('\n').filter(x => x.trim() && !/^[_\s]+$/.test(x)).map(esc).join('<br>') + '</div>' +
+      '<div class="tr-a">✅ ' + esc(_tourAnswerText(q) || '—') + '</div>';
+  return '<div class="tour-reveal">' + head +
     '<div class="tr-who"><span class="ok">Giusto (' + ok.length + '): ' + (ok.join(', ') || '—') + '</span>' +
     (ko.length ? '<span class="ko">Sbagliato o senza risposta (' + ko.length + '): ' + ko.join(', ') + '</span>' : '') + '</div></div>';
 }
@@ -7180,8 +7309,8 @@ function _tourRenderBoard() {
       if (!m) { cards += '<div class="tour-m empty"><div class="tour-p">&nbsp;</div><div class="tour-p">&nbsp;</div></div>'; continue; }
       let sa = m.sa, sb = m.sb;
       if (live && r === t.cur && m.a && m.b) {
-        sa = Math.max(0, _tourScore(resp[m.a], r, t).pts);
-        sb = Math.max(0, _tourScore(resp[m.b], r, t).pts);
+        sa = Math.max(0, _tourScore(resp[m.a], r, t, m.a).pts);
+        sb = Math.max(0, _tourScore(resp[m.b], r, t, m.b).pts);
       }
       const row = (k, sc) => '<div class="tour-p' + (m.w ? (m.w === k ? ' win' : ' lose') : '') + '"><span>' + nm(k) +
         (m.w === k && m.tie ? ' ⏱' : '') + '</span><b>' + (sc == null ? '' : sc) + '</b></div>';
@@ -7192,11 +7321,11 @@ function _tourRenderBoard() {
   cols += '<div class="tour-champ"><div class="tc-cup">🏆</div><div class="tc-name">' + (t.champ ? nm(t.champ) : '') + '</div></div>';
   const [s, e] = t.ranges[t.cur];
   const sub = t.champ ? 'Torneo concluso!'
-    : _tourRoundName(t.cur, nR) + ' · domande ' + (s + 1) + (e > s ? '–' + (e + 1) : '') + (live ? ' · in corso' : ' · turno chiuso');
+    : _tourRoundName(t.cur, nR) + (t.pq ? ' · ' + (e - s + 1) + ' domande, diverse per ogni coppia' : ' · domande ' + (s + 1) + (e > s ? '–' + (e + 1) : '')) + (live ? ' · in corso' : ' · turno chiuso');
   const btnNext = document.getElementById('btn-next-tq');
   let extra = '';
   if (live && S.teacherCurrentQ >= s && S.teacherCurrentQ <= e) {
-    const pl = _hintPlayers(), done = pl.filter(k => _hintAnswered(resp[k], S.teacherCurrentQ)).length;
+    const pl = _hintPlayers(), done = pl.filter(k => _hintAnswered(resp[k], S.teacherCurrentQ, k)).length;
     extra = ' · ✍️ risposte ' + done + '/' + pl.length + (S._hintOpenQ === S.teacherCurrentQ ? ' · 💡 aiuto sbloccato' : '') +
       (S.liveTimer > 0 ? ' · <span id="tour-clock"></span>' : '');
   }
@@ -7228,10 +7357,10 @@ function _tourTick() {
 // scrivendo control/<codice>/hintQ = indice domanda. L'alunno che lo usa lo
 // segna in tourHint: nel torneo quella risposta vale mezzo punto.
 // ══════════════════════════════════════════════════════════════
-function _hintAnswered(resp, i) {
+function _hintAnswered(resp, i, key) {
   if (!resp) return false;
   // Torneo: conta solo chi ha inviato (✓ Invia risposta, clic su un'opzione o tempo scaduto)
-  if (S.liveTournament) return fbArr(resp.tourDone)[i] === true;
+  if (S.liveTournament) return fbArr(resp.tourDone)[_tourQ(S._tour, key, i)] === true;
   const a = fbArr(resp.answers)[i];
   if (a == null) return false;
   if (typeof a === 'object') return fbArr(a).some(x => String(x == null ? '' : x).trim() !== '');
@@ -7249,10 +7378,10 @@ function _hintPlayers() {
   return Object.keys(resp).filter(k => resp[k] && !resp[k].removed);
 }
 function _hintAutoCheck(responses) {
-  const cur = S.teacherCurrentQ, q = S.liveActivity?.questions?.[cur];
+  const cur = S.teacherCurrentQ, q = _liveCurQ();
   if (!q || !q.lockedHint || S._hintOpenQ === cur || !S.liveIsActive) return;
   const pl = _hintPlayers();
-  if (pl.length && pl.every(k => _hintAnswered(responses[k], cur))) _hintUnlock();
+  if (pl.length && pl.every(k => _hintAnswered(responses[k], cur, k))) _hintUnlock();
 }
 function _hintUnlock() {
   const cur = S.teacherCurrentQ;
@@ -7265,7 +7394,7 @@ function _hintUnlock() {
 function _hintDecorateBar() {
   const btn = document.getElementById('btn-hint-unlock');
   if (!btn) return;
-  const cur = S.teacherCurrentQ, q = S.liveActivity?.questions?.[cur];
+  const cur = S.teacherCurrentQ, q = _liveCurQ();
   btn.style.display = S.liveMode === 'teacher' && q && q.lockedHint && S._hintOpenQ !== cur ? 'inline-flex' : 'none';
 }
 
@@ -7274,7 +7403,7 @@ function _lockedHintHTML(q, i) {
   if (!q.lockedHint || S.sessionMode !== 'teacher') return '';
   let inner;
   if (S._tourHint && S._tourHint[i]) inner = '<p style="font-size:16px;font-weight:800;color:#4c2fc0;letter-spacing:1px;margin:0;">💡 ' + esc(q.lockedHint) + '</p>';
-  else if (S._hintOpenQ === i && !S._timeUp) inner = '<button type="button" class="btn btn-sm" onclick="_useLockedHint(' + i + ')">💡 Mostra l\'aiuto' + (S.sessionTournament ? ' (la risposta varrà ½ punto)' : '') + '</button>';
+  else if (S._hintOpenQ === _tqSlot(i) && !S._timeUp) inner = '<button type="button" class="btn btn-sm" onclick="_useLockedHint(' + i + ')">💡 Mostra l\'aiuto' + (S.sessionTournament ? ' (la risposta varrà ½ punto)' : '') + '</button>';
   else inner = '<button type="button" class="btn btn-sm" disabled>🔒 Aiuto: si sblocca quando tutti hanno provato a rispondere</button>';
   return '<div id="lh-box" style="margin:16px 0 0;">' + inner + '</div>';
 }
@@ -7283,7 +7412,7 @@ function _lhRefresh() {
   if (box && q) box.outerHTML = _lockedHintHTML(q, S.qIndex);
 }
 function _useLockedHint(i) {
-  if (S._hintOpenQ !== i || S._timeUp) return;
+  if (S._hintOpenQ !== _tqSlot(i) || S._timeUp) return;
   S._tourHint = S._tourHint || {};
   S._tourHint[i] = true;
   // Chi aveva già inviato può correggere e inviare di nuovo
@@ -7669,7 +7798,7 @@ function _tourRevealListen() {
 }
 function _tourStudentReveal() {
   const i = S.qIndex;
-  if (!S.sessionTournament || S._revealOpenQ !== i || !S.activity) return;
+  if (!S.sessionTournament || S._revealOpenQ !== _tqSlot(i) || !S.activity) return;
   const q = S.activity.questions[i], fb = document.getElementById('s-feedback-area');
   if (!q || !fb) return;
   if (S.answers[i] == null) saveCurrentAnswer();
@@ -7715,6 +7844,8 @@ function _tourStudentRender(raw) {
   }
   el.className = cls;
   el.innerHTML = txt;
+  // Domande diverse per ogni coppia: col tabellone nuovo può cambiare la propria domanda
+  if (S.sessionTourPairs && S._tqRef) _tqApply();
 }
 
 // Tempo di risposta per lo spareggio: dalla comparsa della domanda all'ultima modifica della risposta
@@ -9527,7 +9658,8 @@ function renderStudentResultsTeacher(name, response) {
   // finale dello studente cancellerebbe gli interventi del docente)
   const excludedRST = response.excludedQuestions || {};
   const canExcludeRST = !!submitted && !response.aiScoringPending;
-  const cardsHtml = questions.map((q, i) => renderAnswerCard(q, i, answers[i], questionTimes[i], manualScoresRST[i], aiScoresRST[i], aiFeedbacksRST[i], qMaxOverridesRST[i] != null ? Number(qMaxOverridesRST[i]) : null, { excluded: !!excludedRST[i], excludedNote: (excludedRST[i] && excludedRST[i].nota) || '', canExclude: canExcludeRST })).join('');
+  // (le domande delle altre coppie del torneo non si mostrano: hide)
+  const cardsHtml = questions.map((q, i) => (excludedRST[i] && excludedRST[i].hide) ? '' : renderAnswerCard(q, i, answers[i], questionTimes[i], manualScoresRST[i], aiScoresRST[i], aiFeedbacksRST[i], qMaxOverridesRST[i] != null ? Number(qMaxOverridesRST[i]) : null, { excluded: !!excludedRST[i], excludedNote: (excludedRST[i] && excludedRST[i].nota) || '', canExclude: canExcludeRST })).join('');
 
   // Recovery panel
   const recStatus = response.status || '';
@@ -10427,6 +10559,8 @@ async function studentEnter() {
   S.studentName = studentName; S.sessionCode = code; S.activity = _sessFilterActivity(_actHydrate(aSnap.val()), session);
   S.sessionMode = _llModeFor(session, [_aliasNow, studentName]);
   S.sessionTournament = S.sessionMode === 'teacher' && !!session.tournament;
+  S.sessionTourPairs = S.sessionTournament && !!session.tourPairs;
+  S._slotOf = null;
   _trLoadPermission(session.classId, [_aliasNow, studentName, name],
     cSnap_roster && cSnap_roster.val() ? (cSnap_roster.val().traduzioni || {}) : null);
   S._tourMs = null; S._tourAns = null; S._tourShownAt = 0; S._tourHint = null; S._tourDone = null; S._hintOpenQ = null;
@@ -11381,26 +11515,46 @@ function showSessionClosed() {
 
 function listenForTeacherAdvance() {
   const ref = db.ref('livelearn/control/' + S.sessionCode + '/currentQ');
-  let lastQ = -1;
+  S._tqRef = ref; S._ctlQ = null; S._tqLast = -1; S._tqEnded = false;
   if (S.sessionTournament) { _tourStudentListen(); _tourRevealListen(); }
   _hintStudentListen();
   _audioStudentListen();
   ref.on('value', snap => {
     if (S.removed) { try { ref.off('value'); } catch(e) {} return; }
-    const q = snap.val();
-    if (q === null || q === undefined || q < 0) return;
-    if (q >= S.activity.questions.length || q === 999) {
-      ref.off('value'); submitAnswers(true); return;
-    }
-    if (q === lastQ) return;
-    lastQ = q; S.qIndex = q; S._tourShownAt = Date.now();
-    if (S.sessionTournament) (S._tourSeen = S._tourSeen || new Set()).add(q);
-    const fbArea = document.getElementById('s-feedback-area');
-    if (fbArea) fbArea.innerHTML = '';
-    renderQuestion(); showView('student-activity');
-    _tourSendUI();
-    _tourStudentReveal();
+    S._ctlQ = snap.val();
+    _tqApply();
   });
+}
+// Domanda scelta dal docente (control/currentQ). Torneo con domande diverse per
+// ogni coppia: currentQ è il posto nel turno e la domanda è quella della propria
+// sfida (_tourQ), quindi si aspetta il tabellone e si ricontrolla quando cambia.
+function _tqApply() {
+  const q = S._ctlQ;
+  if (q === null || q === undefined || q < 0 || S._tqEnded) return;
+  if (q >= S.activity.questions.length || q === 999) {
+    S._tqEnded = true;
+    try { S._tqRef.off('value'); } catch(e) {}
+    submitAnswers(true); return;
+  }
+  let i = q;
+  if (S.sessionTourPairs) {
+    if (!S._tourT || !S._tourT.pq) return;
+    i = _tourQ(S._tourT, S.safeName, q);
+    if (i < 0) return;
+  }
+  if (i === S._tqLast) return;
+  S._tqLast = i; S.qIndex = i; S._tourShownAt = Date.now();
+  (S._slotOf = S._slotOf || {})[i] = q;
+  if (S.sessionTournament) (S._tourSeen = S._tourSeen || new Set()).add(i);
+  const fbArea = document.getElementById('s-feedback-area');
+  if (fbArea) fbArea.innerHTML = '';
+  renderQuestion(); showView('student-activity');
+  _tourSendUI();
+  _tourStudentReveal();
+}
+// Valore di control/currentQ (e quindi di hintQ e revealQ) per la domanda i
+function _tqSlot(i) {
+  return S._slotOf && S._slotOf[i] != null ? S._slotOf[i] : i;
 }
 
 function showErr(el, msg) { el.textContent = msg; el.style.display = 'block'; }
@@ -15569,6 +15723,7 @@ async function exportStudentPDF(studentName) {
   }
 
   const rowsHtml = questions.map((q, i) => {
+    if (((entry.excludedQuestions || {})[i] || {}).hide) return ''; // domanda di un'altra coppia del torneo
     const a   = answers[i];
     const res = evalResult(q, a, i);
     return _pdfQuestionCard(q, a, {
@@ -16393,6 +16548,7 @@ async function exportAllPDFCorretto() {
 
     // Righe domande
     const rowsHtml = questions.map((q, i) => {
+      if (((entry.excludedQuestions || {})[i] || {}).hide) return ''; // domanda di un'altra coppia del torneo
       const a   = answers[i];
       const ms  = manualScores[i] != null ? Number(manualScores[i]) : null;
       const as_ = aiScores[i]     != null ? Number(aiScores[i])     : null;
