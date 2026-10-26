@@ -7129,7 +7129,11 @@ const _TOUR_NOTA_ALLENAMENTO = 'Turno che l\'alunno non giocava (eliminato o fuo
 // Domande diverse per ogni coppia: quelle delle altre sfide non si mostrano nei
 // resoconti (hide nell'esclusione), altrimenti ogni alunno avrebbe decine di righe vuote
 const _TOUR_NOTA_ALTRA = 'Domanda di un\'altra coppia nel torneo.';
-const _TOUR_FIX_V = 3;
+// Livelli saltati (con pochi alunni si giocano solo gli ultimi, _tourRanges): domande
+// mai mostrate a nessuno, nascoste anche loro nei resoconti
+const _TOUR_NOTA_SALTATA = 'Livello del torneo non giocato: con questo numero di alunni si parte dai livelli successivi.';
+const _tourNotaHide = n => n === _TOUR_NOTA_ALTRA || n === _TOUR_NOTA_SALTATA;
+const _TOUR_FIX_V = 4;
 function _tourExclMap(t, nQ, key, answers, shown) {
   const out = {};
   if (!t || !t.ranges || !t.ranges.length) return out;
@@ -7150,7 +7154,7 @@ function _tourExclMap(t, nQ, key, answers, shown) {
     const r = roundOf(i);
     // Fuori dai turni il docente non mostra mai la domanda: un'eventuale
     // risposta è un clic prima dell'inizio del torneo e non conta
-    if (r < 0) { out[i] = _TOUR_NOTA_NONGIOCATA; continue; }
+    if (r < 0) { out[i] = _TOUR_NOTA_SALTATA; continue; }
     if (answers[i] != null) continue;
     if (!shown(i)) out[i] = _TOUR_NOTA_NONGIOCATA;
     else if (!plays(r)) out[i] = _TOUR_NOTA_ALLENAMENTO;
@@ -7161,7 +7165,7 @@ function _tourExclFields(map, at) {
   const f = { excludedQuestions: {}, questionMaxOverrides: {}, manualScores: {}, tourFix: _TOUR_FIX_V };
   Object.keys(map).forEach(i => {
     f.excludedQuestions[i] = { prevMax: null, prevManual: null, at: at || Date.now(), tour: true, nota: map[i] };
-    if (map[i] === _TOUR_NOTA_ALTRA) f.excludedQuestions[i].hide = true;
+    if (_tourNotaHide(map[i])) f.excludedQuestions[i].hide = true;
     f.questionMaxOverrides[i] = 0;
     f.manualScores[i] = 0;
   });
@@ -7211,7 +7215,7 @@ async function _tourFixSession(code) {
             upd['manualScores/' + i] = 0;
           } else if (cur.tour && cur.nota !== want[i]) {
             upd['excludedQuestions/' + i + '/nota'] = want[i];
-            upd['excludedQuestions/' + i + '/hide'] = want[i] === _TOUR_NOTA_ALTRA || null;
+            upd['excludedQuestions/' + i + '/hide'] = _tourNotaHide(want[i]) || null;
           }
         } else if (cur && cur.tour) {
           // Tolta per sbaglio con la regola di prima: torna a contare
