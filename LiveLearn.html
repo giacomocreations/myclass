@@ -17819,6 +17819,9 @@ function importFromFile(event) {
   event.target.value = '';
 }
 
+function _chiaveNome(intero) {
+  return String(intero || '').trim().replace(/\s+/g, ' ').toUpperCase().replace(/[.#$\[\]\/]/g, '_');
+}
 async function processMyClassData(parsed) {
   if (!parsed.classi || !Array.isArray(parsed.classi)) {
     showImportResult('danger', '⚠️ Il file non sembra un backup valido di MyClass Analytics.');
@@ -17832,6 +17835,17 @@ async function processMyClassData(parsed) {
     const studenti = classe.studenti.map(s => `${s.cognome} ${s.nome}`.trim()).filter(Boolean);
     const id = classe.nome.replace(/\s+/g, '_').toLowerCase();
     classesData[id] = { nome: classe.nome, studenti, updatedAt: Date.now() };
+    // Il solo nome di battesimo, a parte: in `studenti` cognome e nome diventano
+    // una stringa sola e chi la legge (English Town: saluti degli NPC, targhette
+    // sopra i compagni) non puo' sapere dove finisce un cognome composto.
+    // ⚠️ La chiave e' _chiaveNome() della stringa di `studenti`: English Town usa
+    // la stessa funzione (chiaveNome), se la si cambia va cambiata in tutti e due.
+    const battesimo = {};
+    classe.studenti.forEach(s => {
+      const pieno = `${s.cognome} ${s.nome}`.trim(), nome = String(s.nome || '').trim();
+      if (pieno && nome) battesimo[_chiaveNome(pieno)] = nome;
+    });
+    if (Object.keys(battesimo).length) classesData[id].battesimo = battesimo;
   }
   const count = Object.keys(classesData).length;
   if (count === 0) {
