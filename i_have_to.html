@@ -586,13 +586,13 @@
         <div class="activity-head head-c"><span><span class="act-badge">C</span> Sign Race 🚦</span><span class="act-time"><span class="pc-only">⏱ 8 min · coppia</span><span class="lim-only">⏱ 10 min · 2 squadre</span></span></div>
         <div class="activity-body">
           <div class="act-text pc-only">
-            Gara a coppie! A turno uno pesca un cartello e decide <b>da solo</b>: è un obbligo, un divieto o non è necessario?<br>
-            Poi dice la regola ad alta voce: <em>"You mustn't smoke here!"</em> · <em>"You have to wear a helmet!"</em> · <em>"You don't have to pay!"</em><br>
-            Scelta giusta = +1 punto. Il compagno controlla che la frase sia giusta. Poi tocca all'altro.
+            Gara a coppie! Prima decidete chi è <b>Student A</b> e chi è <b>Student B</b>.<br>
+            🎲 Uno <b>pesca</b> il cartello e lo legge ad alta voce; 🚦 l'altro <b>decide il semaforo</b>: è un obbligo, un divieto o non è necessario? Poi dice la regola: <em>"You mustn't smoke here!"</em> · <em>"You have to wear a helmet!"</em> · <em>"You don't have to pay!"</em><br>
+            Scelta giusta = +1 punto a chi decide. Chi ha pescato controlla che la frase sia giusta. Poi vi scambiate: pesca B e decide A.
           </div>
           <div class="lim-note lim-only">📺 <b>In classe:</b> due squadre. La squadra di turno guarda il cartello, si consulta 10 secondi e un portavoce dice la regola ad alta voce: <em>"You mustn't…"</em> / <em>"You have to…"</em> / <em>"You don't have to…"</em>. Toccate la sua scelta: giusta = +1 punto. Frase completa e corretta = +1 punto extra (tocca il punteggio).</div>
           <div class="mime-score">
-            <div class="team turn" id="team-0"><div class="tn"><span class="pc-only">Student A</span><span class="lim-only">Team 1</span></div><div class="tp" id="pts-0">0</div><div class="tr" id="tr-0">🚦 tocca a te</div></div>
+            <div class="team turn" id="team-0"><div class="tn"><span class="pc-only">Student A</span><span class="lim-only">Team 1</span></div><div class="tp" id="pts-0">0</div><div class="tr" id="tr-0"></div></div>
             <div class="team" id="team-1"><div class="tn"><span class="pc-only">Student B</span><span class="lim-only">Team 2</span></div><div class="tp" id="pts-1">0</div><div class="tr" id="tr-1"></div></div>
           </div>
           <div class="mime-card" id="sign-card"></div>
@@ -1034,8 +1034,11 @@ const SIGNS = [
 const SIGN_KINDS = [
   { k:'ob', l:'✅ must / have to' }, { k:'pr', l:"⛔ mustn't" }, { k:'nn', l:"🆓 don't have to" },
 ];
+// turn = chi pesca. In coppia (Sala PC) decide il semaforo l'altro e il punto va a lui;
+// in classe la squadra di turno pesca e decide.
 let race = { turn: 0, pts: [0, 0], deck: [], card: null, picked: null };
 function raceTeamName(i) { return isLim() ? `Team ${i + 1}` : `Student ${'AB'[i]}`; }
+function raceDecider() { return isLim() ? race.turn : 1 - race.turn; }
 function drawSign() {
   if (!race.deck.length) race.deck = shuffle(SIGNS.map((_, i) => i));
   race.card = SIGNS[race.deck.pop()]; race.picked = null;
@@ -1044,19 +1047,21 @@ function drawSign() {
 }
 function renderRace() {
   [0, 1].forEach(i => {
-    document.getElementById('team-' + i).classList.toggle('turn', race.turn === i);
+    document.getElementById('team-' + i).classList.toggle('turn', raceDecider() === i);
     document.getElementById('pts-' + i).textContent = race.pts[i];
-    document.getElementById('tr-' + i).textContent = race.turn === i ? '🚦 tocca a te' : '';
+    document.getElementById('tr-' + i).textContent = isLim() ? (race.turn === i ? '🚦 tocca a te' : '')
+      : (race.turn === i ? '🎲 pesca' : '🚦 decide il semaforo');
   });
   const card = document.getElementById('sign-card'), btns = document.getElementById('sign-btns');
-  const who = raceTeamName(race.turn);
+  const who = raceTeamName(race.turn), dec = raceTeamName(raceDecider());
   if (!race.card) {
-    card.innerHTML = `<div class="me">🚦</div><div class="ms">Tocca a <b>${who}</b>: pesca un cartello!</div>`;
-    btns.innerHTML = `<button class="btn-main" onclick="drawSign()">🎲 Pesca un cartello</button>`;
+    card.innerHTML = `<div class="me">🚦</div><div class="ms">Tocca a <b>${who}</b>: pesca un cartello!` +
+      (isLim() ? '' : `<br>Poi <b>${dec}</b> decide il semaforo.`) + `</div>`;
+    btns.innerHTML = `<button class="btn-main" onclick="drawSign()">🎲 ${isLim() ? 'Pesca' : who + ': pesca'} un cartello</button>`;
     return;
   }
   card.innerHTML = `<div class="me">${race.card.i}</div><div class="mt">${race.card.s}</div>` +
-    (race.picked === null ? `<div class="ms"><b>${who}</b>: obbligo, divieto o non è necessario? Di' la regola: <em>"You…"</em></div>` : '');
+    (race.picked === null ? `<div class="ms">${isLim() ? '' : `<b>${who}</b> legge il cartello ad alta voce. `}<b>${dec}</b>: obbligo, divieto o non è necessario? Di' la regola: <em>"You…"</em></div>` : '');
   if (race.picked === null) {
     btns.innerHTML = `<div class="sign-btns" style="width:100%">${SIGN_KINDS.map(o => `<button class="sign-btn k-${o.k}" onclick="pickSign('${o.k}')">${o.l}</button>`).join('')}</div>`;
     return;
@@ -1064,13 +1069,13 @@ function renderRace() {
   btns.innerHTML = `<div class="sign-btns" style="width:100%;margin-bottom:10px">${SIGN_KINDS.map(o => {
       const cls = o.k === race.card.k ? ' picked-ok' : o.k === race.picked ? ' picked-ko' : '';
       return `<button class="sign-btn k-${o.k}${cls}" disabled>${o.l}</button>`;
-    }).join('')}</div><button class="btn-main" onclick="nextRaceTurn()">➡️ Turno di ${raceTeamName(1 - race.turn)}</button>`;
+    }).join('')}</div><button class="btn-main" onclick="nextRaceTurn()">➡️ ${isLim() ? 'Turno di ' + raceTeamName(1 - race.turn) : 'Ora pesca ' + raceTeamName(1 - race.turn)}</button>`;
 }
 function pickSign(k) {
   if (!race.card || race.picked !== null) return;
   race.picked = k;
   const right = k === race.card.k;
-  if (right) race.pts[race.turn]++;
+  if (right) race.pts[raceDecider()]++;
   const rb = document.getElementById('sign-report');
   rb.innerHTML = (right ? '🎉 <b>Right!</b> ' : '❌ <b>Not quite!</b> ') +
     `La regola è: <span class="s1">"${race.card.r}"</span>` +
