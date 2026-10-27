@@ -14187,10 +14187,19 @@ function buildQuestionHTML(q, i) {
     const items = q.items || [];
     // Inizializza stato: placed[itemIdx] = catIdx|null
     S['catState_' + i] = { placed: new Array(items.length).fill(null) };
-    const poolHTML = items.map((item, ii) =>
+    // Le parole nell'attività sono di solito scritte già divise per categoria:
+    // si mostrano mescolate (ordine fisso per la domanda, ridisegnando non cambia).
+    // Ogni chip resta legato al suo indice originale, che è quello salvato.
+    let order = S['catOrder_' + i];
+    if (!Array.isArray(order) || order.length !== items.length) {
+      order = items.map((_, ii) => ii);
+      for (let x = order.length - 1; x > 0; x--) { const j = Math.floor(Math.random() * (x + 1)); [order[x], order[j]] = [order[j], order[x]]; }
+      S['catOrder_' + i] = order;
+    }
+    const poolHTML = order.map(ii =>
       `<span class="cat-chip" id="catchip-${i}-${ii}" draggable="true"
         ondragstart="catDragStart(event,${i},${ii})"
-        onclick="catChipClick(${i},${ii})">${esc(item)}</span>`
+        onclick="catChipClick(${i},${ii})">${esc(items[ii])}</span>`
     ).join('');
     const colsHTML = cats.map((cat, ci) =>
       `<div class="cat-col">
