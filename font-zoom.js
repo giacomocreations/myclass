@@ -2,6 +2,9 @@
 //  English Drills — A− / A+ per ingrandire il testo delle attività
 //  Lo zoom vale per il contenuto della pagina, NON per i pulsanti A−/A+:
 //  così restano fermi nello stesso punto e si può cliccare di seguito.
+//  Lo zoom va sul <body> (i pulsanti stanno fuori, in <html>): così si
+//  somma a quello che la pagina mette già sui suoi elementi (es. la
+//  Modalità LIM ingrandisce .container a 1.22) invece di sostituirlo.
 //  La scelta resta su questo computer (vale per tutte le attività).
 // ═══════════════════════════════════════════════════════════════
 (function () {
@@ -14,13 +17,8 @@
 
   var box, lbl;
 
-  function zoomEl(el) {
-    if (el.nodeType !== 1 || el === box || /^(SCRIPT|STYLE|LINK|TEMPLATE|NOSCRIPT)$/.test(el.tagName)) return;
-    el.style.zoom = z === 1 ? '' : String(z);
-  }
-
   function apply() {
-    [].forEach.call(document.body.children, zoomEl);
+    document.body.style.zoom = z === 1 ? '' : String(z);
     lbl.textContent = Math.round(z * 100) + '%';
   }
 
@@ -55,12 +53,7 @@
     box.querySelector('.dz-minus').addEventListener('click', function () { step(-1); });
     box.querySelector('.dz-plus').addEventListener('click', function () { step(1); });
     lbl.addEventListener('click', function () { step(0); });
-    document.body.appendChild(box);
-
-    // Anche gli elementi aggiunti dopo (popup, overlay…) seguono lo zoom
-    new MutationObserver(function (list) {
-      list.forEach(function (m) { [].forEach.call(m.addedNodes, zoomEl); });
-    }).observe(document.body, { childList: true });
+    document.documentElement.appendChild(box);
 
     apply();
   }
