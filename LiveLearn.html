@@ -1126,6 +1126,7 @@ const CONFIG = {
       <span id="ll-model-badge-live" style="display:inline-flex;align-items:center;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:#f0fdf4;color:#065f46;border:1.5px solid #86efac;cursor:pointer;" onclick="openApiKeyModal()" title="Modello AI attivo — clicca per cambiare">🤖 —</span>
       <button class="btn btn-sm" onclick="openApiKeyModal()" title="Cambia chiave API Gemini">🔑 API Key</button>
       <button class="btn btn-sm" id="btn-relay-toggle" onclick="toggleTeacherRelay()" title="Relay AI Locale: quando attivo, le richieste AI degli STUDENTI vengono inoltrate via Firebase al tuo Ollama locale. Non influenza le tue generazioni di versioni (sempre dirette)." style="transition:all 0.2s;">🤖 AI Locale</button>
+      <button class="btn btn-sm" id="btn-sess-excl" onclick="editSessionExclusions()" style="display:none;" title="Togli una o più domande dalla valutazione di tutti gli alunni di questa sessione">🚫 Escludi domande</button>
       <button class="btn btn-danger btn-sm" id="btn-close-session" onclick="closeSession()" style="display:none;">Chiudi sessione</button>
       <button class="btn btn-sm" id="btn-convert-to-exercise" onclick="convertSessionToExercise(S.liveCode)" style="display:none;" title="Converte questa sessione in Esercitazione: gli studenti la vedranno nella tab Esercitazioni, l'agente non genererà una valutazione formale">🎮 Converti in Esercitazione</button>
       <button class="btn btn-ghost btn-sm" onclick="goBackFromLive()">← Dashboard</button>
@@ -6600,7 +6601,7 @@ async function openLive(code, activityId, roster, silent) {
   S.liveRoster = roster || [];
   S.teacherCurrentQ = -1;
   _tourCloseBoard(); S._tour = null; S._liveResp = null; S.liveTournament = false; S._hintOpenQ = null; S._revealQ = null;
-  _solClose(); S._solShown = null;
+  _solClose(); S._solShown = null; S.liveSessExcl = {};
   if (S._tourAutoInt) { clearInterval(S._tourAutoInt); S._tourAutoInt = null; }
   S._tourAdvancing = false;
   S._rosterDebugLogged = {};
@@ -6658,6 +6659,7 @@ async function openLive(code, activityId, roster, silent) {
   S.liveActivity = _sessFilterActivity(S.liveActivity, sess);
   _pollUpdateButton();
   S.liveNoListening = !!sess.noListening;
+  S.liveSessExcl = sess.excludedQs || {};
   const _nlBadge = document.getElementById('live-nolistening-badge');
   if (_nlBadge) _nlBadge.style.display = sess.noListening ? '' : 'none';
   S.liveMode = sess.mode || 'test';
@@ -6729,6 +6731,7 @@ async function openLive(code, activityId, roster, silent) {
   if (showCodeBtn) showCodeBtn.style.display = isActive ? 'inline-flex' : 'none';
   // Pulsante converti: visibile solo per sessioni chiuse e di tipo test
   if (convertBtn) convertBtn.style.display = (!isActive && S.liveMode === 'test') ? 'inline-flex' : 'none';
+  _sessExclButton();
 
   // ── Forced submit retroattivo per sessioni chiuse ─────────────────────────
   // Se la sessione è già chiusa (es. chiusa dal dashboard via forceCloseSession
@@ -6776,6 +6779,7 @@ async function openLive(code, activityId, roster, silent) {
     S._liveResp = responses;
     if (S.liveTournament) { _tourRenderBoardSoon(); _tourAutoCheck(); }
     if (S.liveMode === 'teacher') { _hintAutoCheck(responses); _solRenderSoon(); }
+    _sessExclCheck(code, responses);
     if (!document.getElementById('modal-polls').classList.contains('hidden')) { try { _pollRender(); } catch(e) {} }
     try {
       renderLiveSidebar(responses);
@@ -9317,6 +9321,8 @@ async function toggleExcludeQuestion(qi) {
       updates['questionMaxOverrides/' + qi] = prev.prevMax != null ? prev.prevMax : null;
       updates['manualScores/' + qi]         = prev.prevManual != null ? prev.prevManual : null;
       updates['excludedQuestions/' + qi]    = null;
+      // Esclusa per tutta la sessione: per questo alunno resta reinserita
+      if (prev.sess) updates['sessExclOff/' + qi] = true;
     } else {
       const qs0 = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion, null, resp.answers);
       const restanti = qs0.filter((q, i) => i !== qi && !exc[i] && (qmo[i] != null ? Number(qmo[i]) : _qPts(q)) > 0).length;
@@ -9346,6 +9352,106 @@ async function toggleExcludeQuestion(qi) {
   } catch(e) {
     alert('Errore: ' + e.message);
   }
+}
+
+// ── Escludi domande per tutta la sessione ─────────────────────────────────
+// sessions/<codice>/excludedQs = { q5: {at, nota} } (domanda 6; chiavi con la
+// "q" perché Firebase non trasformi l'oggetto in array). Su ogni alunno che ha
+// consegnato si scrive la stessa esclusione di "🚫 Escludi" (con sess: true);
+// chi consegna dopo la riceve appena arriva la consegna, perché la consegna
+// riscrive il record. Togliendo un numero dall'elenco la domanda si rimette.
+function _sessExclIdx() {
+  return Object.keys(S.liveSessExcl || {}).map(k => Number(k.slice(1))).filter(Number.isInteger).sort((a, b) => a - b);
+}
+function _sessExclButton() {
+  const btn = document.getElementById('btn-sess-excl');
+  if (!btn) return;
+  btn.style.display = S.liveActivity?.questions?.length && !S.liveTournament ? 'inline-flex' : 'none';
+  const idx = _sessExclIdx();
+  btn.textContent = idx.length ? '🚫 Escluse: ' + idx.map(i => i + 1).join(', ') : '🚫 Escludi domande';
+}
+async function editSessionExclusions() {
+  const qs = S.liveActivity?.questions || [], n = qs.length;
+  if (!db || !S.liveCode || !n) return;
+  const txt = prompt('Domande da togliere dalla valutazione di TUTTI gli alunni di questa sessione.\n\n' +
+    'Scrivi i numeri separati da virgola (es. 6, 26). Per rimetterne una cancellala dall\'elenco; lascia vuoto per rimetterle tutte.\n\n' +
+    'La sessione ha ' + n + ' domande.', _sessExclIdx().map(i => i + 1).join(', '));
+  if (txt === null) return;
+  const nums = (txt.match(/\d+/g) || []).map(Number);
+  const bad = nums.filter(x => x < 1 || x > n);
+  if (bad.length) { alert('Non esiste la domanda ' + bad.join(', ') + ': la sessione ha ' + n + ' domande.'); return; }
+  const want = [...new Set(nums.map(x => x - 1))].sort((a, b) => a - b);
+  if (!qs.some((q, i) => !want.includes(i) && _qPts(q) > 0)) { alert('Non puoi escludere tutte le domande: almeno una deve restare nella valutazione.'); return; }
+  const prev = S.liveSessExcl || {}, next = {};
+  const added = want.filter(i => !prev['q' + i]);
+  let nota = '';
+  if (added.length) {
+    nota = prompt('Perché togli ' + (added.length === 1 ? 'la domanda ' : 'le domande ') + added.map(i => i + 1).join(', ') + '? (facoltativo)\n\n' +
+      'La nota non la vedono gli alunni: la usa la valutazione di MyClass per il feedback in StudentApp.', '');
+    if (nota === null) return;
+    nota = nota.trim().slice(0, 500);
+  }
+  want.forEach(i => { next['q' + i] = prev['q' + i] || Object.assign({ at: Date.now() }, nota ? { nota } : {}); });
+  try { await db.ref('livelearn/sessions/' + S.liveCode + '/excludedQs').set(want.length ? next : null); }
+  catch(e) { alert('Errore: ' + e.message); return; }
+  S.liveSessExcl = next;
+  _sessExclButton();
+  const tot = await _sessExclApply(S.liveCode);
+  alert((want.length ? '🚫 Domande escluse per tutta la sessione: ' + want.map(i => i + 1).join(', ') : '↩ Nessuna domanda esclusa per tutta la sessione.') +
+    '\n\nAggiornati ' + tot + (tot === 1 ? ' alunno che ha' : ' alunni che hanno') + ' già consegnato' +
+    (want.length ? '; chi consegna dopo le avrà escluse appena consegna (con questa sessione aperta qui).' : '.'));
+}
+// Modifiche da scrivere sul record di un alunno, null se è già a posto
+function _sessExclUpdates(r, want) {
+  const exc = fbArr(r.excludedQuestions), qmo = fbArr(r.questionMaxOverrides), ms = fbArr(r.manualScores), off = fbArr(r.sessExclOff);
+  const upd = {}, nq = fbArr(r.answers).length;
+  Object.keys(want || {}).forEach(key => {
+    const i = Number(key.slice(1));
+    if (!Number.isInteger(i) || exc[i] || off[i]) return;
+    upd['excludedQuestions/' + i] = Object.assign({
+      prevMax: qmo[i] != null ? qmo[i] : null, prevManual: ms[i] != null ? ms[i] : null, at: Date.now(), sess: true
+    }, want[key] && want[key].nota ? { nota: want[key].nota } : {});
+    upd['questionMaxOverrides/' + i] = 0;
+    upd['manualScores/' + i] = 0;
+  });
+  exc.forEach((e, i) => {
+    if (!e || !e.sess || (want || {})['q' + i]) return;
+    upd['questionMaxOverrides/' + i] = e.prevMax != null ? e.prevMax : null;
+    upd['manualScores/' + i] = e.prevManual != null ? e.prevManual : null;
+    upd['excludedQuestions/' + i] = null;
+  });
+  return Object.keys(upd).length ? upd : null;
+}
+function _sessExclReady(r) { return r && !r.removed && r.submittedAt && !r.aiScoringPending; }
+// Applica l'elenco a tutti quelli che hanno consegnato; ritorna quanti ne ha aggiornati
+async function _sessExclApply(code) {
+  if (S._sessExclBusy) { S._sessExclAgain = true; return 0; }
+  S._sessExclBusy = true;
+  let done = 0;
+  try {
+    const all = (await _fbGet(db.ref('livelearn/responses/' + code), 8000)).val() || {};
+    for (const [k, r] of Object.entries(all)) {
+      if (code !== S.liveCode) break;
+      if (!_sessExclReady(r)) continue;
+      const upd = _sessExclUpdates(r, S.liveSessExcl);
+      if (!upd) continue;
+      const ref = db.ref('livelearn/responses/' + code + '/' + k);
+      await ref.update(upd);
+      const r2 = (await ref.get()).val() || {};
+      const qs = getStudentAssignedQuestions(k, r2.name || k, r2.aliasOf, r2.studentVersion, null, r2.answers);
+      await ref.child('score').set(_llEffectiveScore(qs, r2).score);
+      done++;
+    }
+  } catch(e) { console.warn('[Escludi sessione]', e.message); }
+  finally { S._sessExclBusy = false; }
+  if (S._sessExclAgain) { S._sessExclAgain = false; setTimeout(() => _sessExclApply(code), 500); }
+  return done;
+}
+// Dal listener delle risposte: nuove consegne senza le esclusioni della sessione
+function _sessExclCheck(code, responses) {
+  if (!_sessExclIdx().length || S._sessExclTimer) return;
+  if (!Object.values(responses || {}).some(r => _sessExclReady(r) && _sessExclUpdates(r, S.liveSessExcl))) return;
+  S._sessExclTimer = setTimeout(() => { S._sessExclTimer = null; if (code === S.liveCode) _sessExclApply(code); }, 1500);
 }
 
 // Motivo dell'esclusione di un esercizio (excludedQuestions/{i}/nota): lo legge
