@@ -700,8 +700,18 @@ textarea.qe-ce::placeholder, input.qe-ce::placeholder { color: var(--muted); opa
 
 /* ── Controllo docente: pagina Soluzioni (docente, per la LIM) ── */
 #sol-overlay { position:fixed; inset:0; z-index:3000; background:#1e1b4b; color:white; display:flex; flex-direction:column; padding:18px 22px; font-family:'Nunito',sans-serif; overflow:auto; }
-#sol-overlay .sol-body { flex:1; display:flex; flex-direction:column; gap:16px; max-width:1100px; width:100%; margin:0 auto; }
-#sol-overlay .sol-q { font-size:calc(22px * var(--tf, 1)); font-weight:700; line-height:1.5; background:rgba(255,255,255,.08); border-radius:14px; padding:16px 20px; }
+#sol-overlay .sol-main { flex:1; width:100%; max-width:1100px; margin:0 auto; }
+#sol-overlay .sol-main.has-pass { max-width:1600px; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr); gap:18px; align-items:start; }
+@media (max-width: 900px) { #sol-overlay .sol-main.has-pass { grid-template-columns:1fr; } }
+#sol-overlay .sol-pass { background:#fffdf5; color:#1f2937; border-radius:16px; padding:18px 22px; font-size:calc(17px * var(--tf, 1)); line-height:1.7; max-height:calc(100vh - 110px); overflow:auto; position:sticky; top:0; }
+#sol-overlay .sol-pass .h { font-size:13px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:#92400e; margin-bottom:6px; }
+#sol-overlay .sol-body { display:flex; flex-direction:column; gap:16px; }
+#sol-overlay .sol-live { display:flex; flex-direction:column; gap:16px; }
+#sol-overlay .sol-card { zoom:var(--tf, 1); color:var(--text, #1f2937); }
+#sol-overlay .sol-card .question-card { animation:none; pointer-events:none; box-shadow:none; }
+#sol-overlay .sol-card .blank-input.sol-filled { background:#d1fae5; border-color:#10b981; color:#065f46; }
+#sol-overlay .sol-card .dd-blank.sol-filled { background:#d1fae5; border-color:#10b981; color:#065f46; font-weight:800; padding:2px 10px; }
+#sol-overlay .sol-card .ic-opt.sol-filled { background:#d1fae5; border-color:#10b981; color:#065f46; }
 #sol-overlay .sol-opts { display:flex; flex-direction:column; gap:8px; }
 #sol-overlay .sol-opt { display:flex; align-items:center; gap:12px; font-size:calc(19px * var(--tf, 1)); font-weight:700; background:rgba(255,255,255,.08); border:2px solid rgba(255,255,255,.15); border-radius:12px; padding:8px 14px; }
 #sol-overlay .sol-opt.ok { background:rgba(16,185,129,.35); border-color:#10b981; }
@@ -7627,47 +7637,100 @@ function _solStats(cur) {
   });
   return st;
 }
+// Scheda della domanda come la vedono gli alunni (consegna, frasi, banca parole,
+// immagine…), solo da guardare: senza id né clic. buildQuestionHTML prepara lo
+// stato dei trascinamenti in S: si rimette com'era (anteprima del docente).
+function _solCardHTML(q, i) {
+  const before = new Set(Object.keys(S)), keep = {};
+  before.forEach(k => { if (/^(matchShuffle|ddState|roState|catState)_|^(shuffledRight|matchLeftSel)$/.test(k)) keep[k] = S[k]; });
+  let h = '';
+  try { h = buildQuestionHTML(q, i); } catch(e) { console.warn('[soluzioni] scheda domanda:', e.message); }
+  Object.keys(S).forEach(k => { if (!before.has(k)) delete S[k]; });
+  Object.assign(S, keep);
+  return h.replace(/\son[a-z]+="[^"]*"/gi, '').replace(/\sdraggable="true"/g, '').replace(/\sid="[^"]*"/g, '');
+}
+// Soluzione dentro la scheda: opzione giusta in verde, spazi completati
+function _solFillCard(el, q) {
+  const { kind, inner } = _qKind(q);
+  if (kind === 'multiple-choice') {
+    const ci = _mcCorrectIdx(inner);
+    el.querySelectorAll('.option-btn').forEach((b, bi) => { if (bi === ci) b.classList.add('correct'); });
+    return;
+  }
+  const ans = fbArr(inner.answers);
+  if (kind === 'drag-drop') {
+    el.querySelectorAll('.dd-blank').forEach((b, bi) => { if (ans[bi] != null) { b.textContent = ans[bi]; b.classList.add('sol-filled'); } });
+    return;
+  }
+  if (kind !== 'cloze' && kind !== 'fill-blanks') return;
+  el.querySelectorAll('.blank-input').forEach((inp, bi) => {
+    if (ans[bi] == null) return;
+    const alts = _clozeFormatAlternatives(ans[bi]).split(' / '), g = inp.closest('.ic-group');
+    if (g) {
+      const n = alts.map(_normClozeAnswer);
+      g.querySelectorAll('.ic-opt').forEach(b => { if (n.includes(_normClozeAnswer(b.dataset.val))) b.classList.add('selected', 'sol-filled'); });
+      return;
+    }
+    inp.value = alts.join(' / ');
+    inp.classList.add('sol-filled');
+    inp.style.width = Math.max(4, inp.value.length + 2) + 'ch';
+  });
+}
 function _solRender() {
   if (!S._solOpen) return;
   const cur = S.teacherCurrentQ, q = _liveCurQ();
   if (S.liveMode !== 'teacher' || S.liveTournament || cur < 0 || !q) { _solClose(); return; }
   let ov = document.getElementById('sol-overlay');
   if (!ov) { ov = document.createElement('div'); ov.id = 'sol-overlay'; document.body.appendChild(ov); }
-  ov.style.setProperty('--tf', _TOUR_FS[S._tourFsI]);
   const sol = _solHTML(q), shown = !!sol && S._revealQ === cur, st = _solStats(cur);
   const { kind, inner } = _qKind(q);
-  const lines = _tourQuestionPlain(q).split('\n').filter(x => x.trim() && !/^[_\s]+$/.test(x));
-  let body = '<div class="sol-q">' + (lines.map(esc).join('<br>') || '&nbsp;') + '</div>';
-  if (kind === 'multiple-choice') {
+  // Parte che segue le risposte in diretta
+  let live = '';
+  if (shown && kind === 'multiple-choice') {
     const ci = _mcCorrectIdx(inner);
-    body += '<div class="sol-opts">' + _mcOpts(inner).map((o, oi) => {
+    live += '<div class="sol-opts">' + _mcOpts(inner).map((o, oi) => {
       const n = st.mc[_normClozeAnswer(o)] || 0;
-      return '<div class="sol-opt' + (shown && oi === ci ? ' ok' : '') + '"><span class="lt">' + String.fromCharCode(65 + oi) + '</span>' +
-        '<span class="tx">' + esc(o) + (shown && oi === ci ? ' ✅' : '') + '</span>' +
-        (shown ? '<span class="n">' + n + (n === 1 ? ' alunno' : ' alunni') + '</span>' : '') + '</div>';
+      return '<div class="sol-opt' + (oi === ci ? ' ok' : '') + '"><span class="lt">' + String.fromCharCode(65 + oi) + '</span>' +
+        '<span class="tx">' + esc(o) + (oi === ci ? ' ✅' : '') + '</span><span class="n">' + n + (n === 1 ? ' alunno' : ' alunni') + '</span></div>';
     }).join('') + '</div>';
   }
   if (shown) {
-    if (kind !== 'multiple-choice') body += '<div class="sol-a"><div class="h">✅ Soluzione</div>' + sol + '</div>';
-    body += '<div class="sol-stats"><span class="sol-stat">✅ Giusto: ' + st.ok + '</span>' +
+    if (kind !== 'multiple-choice') live += '<div class="sol-a"><div class="h">✅ Soluzione</div>' + sol + '</div>';
+    live += '<div class="sol-stats"><span class="sol-stat">✅ Giusto: ' + st.ok + '</span>' +
       (st.part ? '<span class="sol-stat">🔶 In parte: ' + st.part + '</span>' : '') +
       '<span class="sol-stat">❌ Sbagliato: ' + st.ko + '</span>' +
       (st.none ? '<span class="sol-stat">⏳ Senza risposta: ' + st.none + '</span>' : '') + '</div>';
   } else {
-    body += '<div class="sol-stats"><span class="sol-stat">✍️ Risposte: ' + (st.tot - st.none) + '/' + st.tot + '</span>' +
+    live += '<div class="sol-stats"><span class="sol-stat">✍️ Risposte: ' + (st.tot - st.none) + '/' + st.tot + '</span>' +
       (S.liveTimer > 0 ? '<span class="sol-stat" id="sol-clock"></span>' : '') + '</div>' +
       '<div class="sol-wait">' + (sol ? 'La soluzione compare qui e sugli schermi degli alunni quando premi “👁 Mostra la soluzione”.'
         : 'Domanda senza soluzione da mostrare (sondaggio o risposta aperta).') + '</div>';
   }
-  const btnNext = document.getElementById('btn-next-tq');
+  // Le risposte arrivano di continuo: se domanda, soluzione e grandezza del testo
+  // sono le stesse si aggiorna solo la parte in diretta (il testo resta dov'era scorso)
+  const key = cur + '|' + shown + '|' + S._tourFsI;
+  const liveEl = ov.querySelector('.sol-live'), btnNext = document.getElementById('btn-next-tq');
+  if (ov.dataset.key === key && liveEl) {
+    liveEl.innerHTML = live;
+    const nb = ov.querySelector('.sol-next');
+    if (nb && btnNext) nb.textContent = btnNext.textContent;
+    _solTick(); return;
+  }
+  ov.dataset.key = key;
+  ov.style.setProperty('--tf', _TOUR_FS[S._tourFsI]);
+  const passage = S.liveActivity?.passageText || '';
   ov.innerHTML = '<div class="tour-head"><div><h2>📺 ' + esc(S.liveActivity?.title || 'Soluzioni') + '</h2>' +
     '<div class="tour-sub">Domanda ' + (cur + 1) + ' di ' + _tqTotal() + (shown ? ' · soluzione' : '') + '</div></div>' +
     '<div class="flex gap-8"><button class="btn" onclick="_tourFont(-1)" title="Testo più piccolo">A−</button>' +
     '<span style="align-self:center;font-weight:800;min-width:46px;text-align:center;">' + Math.round(_TOUR_FS[S._tourFsI] * 100) + '%</span>' +
     '<button class="btn" onclick="_tourFont(1)" title="Testo più grande">A+</button>' +
-    '<button class="btn btn-primary" onclick="teacherNextQ()">' + esc(btnNext ? btnNext.textContent : '▶') + '</button>' +
+    '<button class="btn btn-primary sol-next" onclick="teacherNextQ()">' + esc(btnNext ? btnNext.textContent : '▶') + '</button>' +
     '<button class="btn" onclick="_solClose()">✕ Nascondi</button></div></div>' +
-    '<div class="sol-body">' + body + '</div>';
+    '<div class="sol-main' + (passage ? ' has-pass' : '') + '">' +
+      (passage ? '<div class="sol-pass"><div class="h">📖 Testo di riferimento</div>' + richText(passage) + '</div>' : '') +
+      '<div class="sol-body"><div class="sol-card">' + _solCardHTML(q, cur) + '</div><div class="sol-live">' + live + '</div></div>' +
+    '</div>';
+  if (shown) _solFillCard(ov.querySelector('.sol-card'), q);
   _solTick();
 }
 function _solTick() {
@@ -11916,6 +11979,9 @@ function listenForTeacherAdvance() {
 function _tqApply() {
   const q = S._ctlQ;
   if (q === null || q === undefined || q < 0 || S._tqEnded) return;
+  // La domanda la cambia il docente: senza "Avanti" la risposta mostrata (es. testo
+  // libero) si salva qui, prima di passare alla domanda dopo o di consegnare
+  if (S._tqLast >= 0) { try { saveCurrentAnswer(); } catch(e) {} }
   if (q >= S.activity.questions.length || q === 999) {
     S._tqEnded = true;
     try { S._tqRef.off('value'); } catch(e) {}
@@ -13825,7 +13891,7 @@ function buildQuestionHTML(q, i) {
   if (q.type === 'free-response') {
     return `<div class="question-card">${qLabel}${qImg}<div class="q-text">${richText(q.text)}</div>
       ${q.hint ? `<p class="text-muted mb-16">💡 ${esc(q.hint)}</p>` : ''}
-      <textarea id="free-ans" rows="6" placeholder="Scrivi qui la tua risposta…" style="width:100%;"></textarea></div>`;
+      <textarea id="free-ans" rows="6" placeholder="Scrivi qui la tua risposta…" style="width:100%;" oninput="_freeAnsInput(this)"></textarea></div>`;
   }
   if (q.type === 'listening') {
     const audioPlayer = q.audioData
@@ -13961,7 +14027,7 @@ function buildQuestionHTML(q, i) {
     } else {
       qPart = (inner.text ? '<div class="q-text">' + richText(inner.text) + '</div>' : '') +
         (inner.hint ? '<p class="text-muted mb-16">💡 ' + esc(inner.hint) + '</p>' : '') +
-        '<textarea id="free-ans" rows="4" placeholder="Scrivi la tua risposta…" style="width:100%;"></textarea>';
+        '<textarea id="free-ans" rows="4" placeholder="Scrivi la tua risposta…" style="width:100%;" oninput="_freeAnsInput(this)"></textarea>';
     }
     return `<div class="question-card">${qLabel}${qImg}${audio}${qPart}</div>`;
   }
@@ -14664,6 +14730,13 @@ function recordQuestionTime(i) {
   }
 }
 
+// Risposta libera: si salva mentre l'alunno scrive, come gli spazi da completare
+// (nel Controllo docente non c'è "Avanti" che la salvi). Solo nella schermata
+// dell'attività: il recupero disegna la stessa casella e salva per conto suo.
+function _freeAnsInput(el) {
+  if (!el || !el.closest('#s-question-area')) return;
+  saveCurrentAnswer(); pushProgress(); updateNavButtons();
+}
 function saveCurrentAnswer() {
   const q = S.activity.questions[S.qIndex];
   const sub = q.subtype || q.question?.type || '';
