@@ -21104,7 +21104,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         // Ridisegna il contenuto del tab aperto
         try {
             if (nome === 'argo'  && typeof renderArgoDayPanel === 'function') renderArgoDayPanel();
-            if (nome === 'task'  && typeof agentRenderPanel   === 'function') agentRenderPanel();
+            if (nome === 'task'  && typeof agentRenderPanel   === 'function') { agentProponiParalleleOra(); agentRenderPanel(); }
             if (nome === 'piano' && typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
         } catch(e) {}
     };
@@ -22026,9 +22026,29 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
         return { prima, dopo };
     }
 
+    // Esito dell'ultimo controllo, mostrato in cima alla coda task: dice perché
+    // una lezione senza piano non ha proposte.
+    let _agentParallelaDiag = null;
+
+    /** Controllo per il giorno target dell'agente (domani; nella notte, oggi) */
+    function agentProponiParalleleOra() {
+        try {
+            const d = new Date();
+            if (d.getHours() >= 8) d.setDate(d.getDate() + 1);
+            const n = agentProponiParallele(d.toISOString().split('T')[0]);
+            if (n) console.log(`[Agente] 👥 ${n} lezioni senza piano: proposta la lezione della classe parallela`);
+            return n;
+        } catch(e) {
+            console.warn('[Agente] proposte classe parallela:', e.message);
+            return 0;
+        }
+    }
+
     function agentProponiParallele(dateStr) {
         const h = new Date().getHours();
-        if (h < AGENT_PARALLELA_ORA && h >= 8) return 0;
+        if (h < AGENT_PARALLELA_ORA && h >= 8) { _agentParallelaDiag = null; return 0; }
+        const diag = { data: dateStr, at: new Date().toISOString(), lezioni: 0, senzaPiano: 0, proposte: 0, motivi: [] };
+        _agentParallelaDiag = diag;
         const oggi = new Date().toISOString().split('T')[0];
         // Proposte rimaste senza scelta per giorni già passati: non servono più
         agentTasks.forEach(t => {
@@ -22039,6 +22059,7 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
         if (GIORNI_SOSPESI.has(dateStr)) return 0;
         const dow = new Date(dateStr + 'T12:00:00').getDay();
         let nuove = 0;
+        const perche = (classe, ora, motivo) => diag.motivi.push({ classe: classe.nome, ora, motivo });
         (data.classi || []).forEach(classe => {
             if (classe.pianificazione?.giorniSaltati?.[dateStr]) return;
             const piano = classe.pianificazione?.piano || [];
@@ -22046,11 +22067,22 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
                 const sid = slotId(dateStr, s.ora);
                 const lz = piano.find(p => lzMatchesSlot(p, { id: sid, data: dateStr, ora: s.ora }))
                         || { data: dateStr, ora: s.ora };
-                if (_pdHasContent(lz.pianoDettagliato)) return;      // il piano c'è già
+                diag.lezioni++;
+                if (_pdHasPianoA(lz.pianoDettagliato)) return;       // il piano c'è già
+                diag.senzaPiano++;
                 const tid = `parallela_${classe.nome.replace(/\s+/g,'_')}_${sid}`;
                 const existing = agentTasks.find(t => t.id === tid);
-                if (existing && (existing.status !== 'ready' || Object.keys(existing.scelte || {}).length)) return;
+                if (existing && (existing.status !== 'ready' || Object.keys(existing.scelte || {}).length)) {
+                    if (existing.status === 'dismissed') perche(classe, s.ora, 'proposta rimossa da te');
+                    else diag.proposte++;
+                    return;
+                }
+                const par = _classiParallele(classe);
+                if (!_annoClasse(classe.nome)) { perche(classe, s.ora, `dal nome "${classe.nome}" non si capisce l'anno`); return; }
+                if (!par.length) { perche(classe, s.ora, 'nessuna classe parallela (stesso anno) in MyClass'); return; }
                 const { prima, dopo } = _lezioniParalleleVicine(classe, lz);
+                if (!prima && !dopo) { perche(classe, s.ora, `nessuna lezione con piano in ${par.map(c => c.nome).join(', ')}`); return; }
+                diag.proposte++;
                 const opz = (lato, v) => v && {
                     lato, classe: v.cl.nome, slotId: lzId(v.lz), data: v.lz.data, ora: v.lz.ora || '1',
                     svolta: v.lz.stato === 'svolta',
@@ -22141,6 +22173,22 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
         if (typeof _mcToast === 'function') _mcToast(`✅ ${task.classe}: Piano ${quale} preso dalla ${origine}`);
     }
     window.agentApplicaParallela = agentApplicaParallela;
+
+    /** Riquadro in cima alla coda task: lezioni di domani senza piano e senza proposta */
+    function _agentParallelaDiagHtml() {
+        const d = _agentParallelaDiag;
+        if (!d) return '';
+        const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+        const gg = new Date(d.data + 'T12:00:00');
+        const lbl = ['dom','lun','mar','mer','gio','ven','sab'][gg.getDay()] + ' ' + gg.getDate() + '/' + (gg.getMonth() + 1);
+        return `<div style="margin-bottom:10px;padding:10px 12px;background:#f8f9ff;border:1.5px solid #c5cae9;border-radius:10px;font-size:12px;color:#444;">
+            <strong style="color:#3949ab;">👥 Classi parallele, ${lbl}:</strong>
+            ${!d.lezioni ? 'nessuna lezione in orario.'
+              : !d.senzaPiano ? `tutte le ${d.lezioni} lezioni hanno già il piano.`
+              : `${d.senzaPiano} lezion${d.senzaPiano === 1 ? 'e' : 'i'} senza piano, ${d.proposte} con proposta qui sotto.`}
+            ${d.motivi.map(m => `<div style="margin-top:4px;">• <strong>${esc(m.classe)}</strong> ${parseInt(m.ora) || 1}ª ora: ${esc(m.motivo)}</div>`).join('')}
+        </div>`;
+    }
 
     /** Corpo della card "Piano dalla classe parallela" nella coda task */
     function _agentParallelaBody(task) {
@@ -23227,6 +23275,11 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
         // check periodico può saltare le letture finché non cambia qualcosa.
         if (!_fbSkip) await _agentFpMark();
 
+        // ── 0. Dalle 19:00: lezioni di domani ancora senza piano → proposta
+        //       della lezione vicina della classe parallela. Prima di tutto il
+        //       resto: non usa l'AI e non deve aspettare Calendar e piani AI.
+        agentProponiParalleleOra();
+
         try {
             // ── 1. Controlla Google Calendar ─────────────────────────────
             if (!AGENT_DO_CALENDAR) {
@@ -23404,17 +23457,6 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
                         }
                     }
                 }
-            }
-
-            // ── 2b. Dalle 19:00: lezioni di domani ancora senza piano → ──
-            //       proposta della lezione vicina della classe parallela
-            try {
-                const _d = new Date();
-                if (_d.getHours() >= 8) _d.setDate(_d.getDate() + 1);
-                const _np = agentProponiParallele(_d.toISOString().split('T')[0]);
-                if (_np) console.log(`[Agente] 👥 ${_np} lezioni senza piano: proposta la lezione della classe parallela`);
-            } catch(e) {
-                console.warn('[Agente] proposte classe parallela:', e.message);
             }
 
             // ── 3. Valutazioni scritte ──────────────────────────────────────
@@ -24743,8 +24785,9 @@ ${sectionInstr}`;
             t.status === 'dismissed' && t.isRecupero && t.dismissReason
         );
 
+        const parDiag = _agentParallelaDiagHtml();
         if (sorted.length === 0) {
-            list.innerHTML = `<div class="agent-empty-state">
+            list.innerHTML = parDiag + `<div class="agent-empty-state">
                 <div class="agent-empty-icon">🤖</div>
                 <div style="font-size:15px;font-weight:600;color:#888;">Nessun task in coda</div>
                 <div style="font-size:12px;margin-top:6px;">L'agente si attiva automaticamente alle <strong>${agentAutoTimeToday()}</strong></div>
@@ -24766,7 +24809,7 @@ ${sectionInstr}`;
             try { localStorage.setItem('agent_collapsed_tasks', JSON.stringify([...collapsedSet])); } catch(e) {}
         }
 
-        list.innerHTML = sorted.map(task => {
+        list.innerHTML = parDiag + sorted.map(task => {
             const tl = typeLabels[task.type] || { icon:'📄', label: task.type };
             const sl = statusLabels[task.status] || task.status;
             const pill = `<span class="agent-status-pill ${task.status}">${sl}</span>`;
