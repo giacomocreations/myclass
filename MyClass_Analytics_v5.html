@@ -21982,6 +21982,201 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
         return creati;
     }
 
+    // ── Piano dalla classe parallela ──────────────────────────────────────
+    // Dalle 19:00, per le lezioni di domani ancora senza piano, l'agente propone
+    // la lezione più vicina di una classe parallela (stesso anno: 2C ↔ 2D):
+    // quella subito prima e quella subito dopo nel tempo. Il docente sceglie
+    // quale usare come Piano A e/o come Piano B. Nessuna chiamata AI.
+    const AGENT_PARALLELA_ORA = 19;
+
+    function _annoClasse(nome) {
+        const m = String(nome || '').match(/([1-5])\s*[A-Z]/i);
+        return m ? m[1] : null;
+    }
+    function _classiParallele(classe) {
+        const anno = _annoClasse(classe?.nome);
+        if (!anno) return [];
+        return (data.classi || []).filter(c => c !== classe && _annoClasse(c.nome) === anno);
+    }
+    /** Il piano ha un Piano A vero e proprio (non solo il Piano B) */
+    function _pdHasPianoA(pd) {
+        return !!(pd && (pd.obiettivi || pd.fase1 || pd.fase2 || pd.fase3));
+    }
+    /** Copia del Piano A da riusare in un'altra classe: senza Piano B né fasi salvate del LIVE */
+    function _pdCopiaPianoA(pd) {
+        const c = JSON.parse(JSON.stringify(pd || {}));
+        delete c.pianoB; delete c.fasiPrimaDelLive;
+        return c;
+    }
+
+    /** Lezioni con piano delle classi parallele più vicine a lz: { prima, dopo } */
+    function _lezioniParalleleVicine(classe, lz) {
+        const key = (d, o) => d + '_' + String(parseInt(o) || 1).padStart(2, '0');
+        const kT = key(lz.data, lz.ora);
+        let prima = null, dopo = null;
+        _classiParallele(classe).forEach(cl => {
+            const saltati = cl.pianificazione?.giorniSaltati || {};
+            (cl.pianificazione?.piano || []).forEach(p => {
+                if (!p.data || saltati[p.data] || !_pdHasPianoA(p.pianoDettagliato)) return;
+                const k = key(p.data, p.ora);
+                if (k < kT) { if (!prima || k > prima.k) prima = { cl, lz: p, k }; }
+                else if (!dopo || k < dopo.k) dopo = { cl, lz: p, k };
+            });
+        });
+        return { prima, dopo };
+    }
+
+    function agentProponiParallele(dateStr) {
+        const h = new Date().getHours();
+        if (h < AGENT_PARALLELA_ORA && h >= 8) return 0;
+        const oggi = new Date().toISOString().split('T')[0];
+        // Proposte rimaste senza scelta per giorni già passati: non servono più
+        agentTasks.forEach(t => {
+            if (t.type === 'pianoparallela' && t.status === 'ready' && (t.data || '') < oggi) {
+                t.status = 'dismissed'; t.dismissedAt = new Date().toISOString();
+            }
+        });
+        if (GIORNI_SOSPESI.has(dateStr)) return 0;
+        const dow = new Date(dateStr + 'T12:00:00').getDay();
+        let nuove = 0;
+        (data.classi || []).forEach(classe => {
+            if (classe.pianificazione?.giorniSaltati?.[dateStr]) return;
+            const piano = classe.pianificazione?.piano || [];
+            (classe.pianificazione?.orario || []).filter(s => s.giornoNum === dow).forEach(s => {
+                const sid = slotId(dateStr, s.ora);
+                const lz = piano.find(p => lzMatchesSlot(p, { id: sid, data: dateStr, ora: s.ora }))
+                        || { data: dateStr, ora: s.ora };
+                if (_pdHasContent(lz.pianoDettagliato)) return;      // il piano c'è già
+                const tid = `parallela_${classe.nome.replace(/\s+/g,'_')}_${sid}`;
+                const existing = agentTasks.find(t => t.id === tid);
+                if (existing && (existing.status !== 'ready' || Object.keys(existing.scelte || {}).length)) return;
+                const { prima, dopo } = _lezioniParalleleVicine(classe, lz);
+                const opz = (lato, v) => v && {
+                    lato, classe: v.cl.nome, slotId: lzId(v.lz), data: v.lz.data, ora: v.lz.ora || '1',
+                    svolta: v.lz.stato === 'svolta',
+                    lezione: {
+                        titolo: v.lz.titolo || '', descrizione: v.lz.descrizione || '', unit: v.lz.unit || '',
+                        pagine: v.lz.pagine || '', compiti: v.lz.compiti || '', tipo: _tipoArr(v.lz.tipo || [])
+                    },
+                    pd: _pdCopiaPianoA(v.lz.pianoDettagliato)
+                };
+                const opzioni = [opz('prima', prima), opz('dopo', dopo)].filter(Boolean);
+                if (!opzioni.length) return;
+                if (existing) { existing.opzioni = opzioni; return; }   // aggiorna una proposta non ancora usata
+                agentTasks.push({
+                    id: tid, type: 'pianoparallela', classe: classe.nome, slotId: sid,
+                    data: dateStr, ora: s.ora,
+                    lessonTitle: lz.titolo || lz.descrizione || `${s.ora}ª ora (da definire)`,
+                    opzioni, scelte: {}, status: 'ready',
+                    createdAt: new Date().toISOString(), generatedAt: new Date().toISOString()
+                });
+                nuove++;
+                console.log(`[Agente] 👥 ${classe.nome} ${sid}: senza piano — proposte ${opzioni.map(o => o.lato + ' (' + o.classe + ' ' + o.data + ')').join(', ')}`);
+            });
+        });
+        agentSaveTasks(agentTasks);
+        return nuove;
+    }
+
+    /** Usa la lezione proposta (lato 'prima'|'dopo') come Piano 'A' o 'B' */
+    function agentApplicaParallela(taskId, lato, quale) {
+        const task = agentTasks.find(t => t.id === taskId);
+        const op = task?.opzioni?.find(o => o.lato === lato);
+        if (!op) return;
+        const classe = (data.classi || []).find(c => c.nome === task.classe);
+        if (!classe) { alert('Classe non trovata.'); return; }
+        if (!classe.pianificazione) classe.pianificazione = {};
+        if (!classe.pianificazione.piano) classe.pianificazione.piano = [];
+        const piano = classe.pianificazione.piano;
+        let lz = piano.find(p => lzId(p) === task.slotId);
+        // Il piano dettagliato più recente della lezione d'origine, se c'è ancora
+        const srcCl = (data.classi || []).find(c => c.nome === op.classe);
+        const srcLz = (srcCl?.pianificazione?.piano || []).find(p => lzId(p) === op.slotId);
+        const src = _pdHasPianoA(srcLz?.pianoDettagliato) ? _pdCopiaPianoA(srcLz.pianoDettagliato) : _pdCopiaPianoA(op.pd);
+        const pd = lz?.pianoDettagliato;
+        const origine = `${op.classe} del ${op.data.split('-').reverse().slice(0, 2).join('/')}`;
+
+        if (quale === 'A') {
+            if (_pdHasPianoA(pd) && !confirm(`La lezione ha già un Piano A. Lo sostituisco con quello della ${origine}?`)) return;
+            if (!lz) { lz = { data: task.data, ora: task.ora, titolo: '', descrizione: '', compiti: '', stato: 'pianificata' }; piano.push(lz); }
+            // Lezione senza argomento o in bozza: prende anche titolo e contenuti di quella scelta
+            const daRiempire = lz.bozza === true || (!String(lz.titolo || '').trim() && !String(lz.descrizione || '').trim());
+            if (daRiempire) {
+                const l = op.lezione || {};
+                Object.assign(lz, {
+                    titolo: srcLz?.titolo ?? l.titolo ?? '', descrizione: srcLz?.descrizione ?? l.descrizione ?? '',
+                    unit: srcLz?.unit ?? l.unit ?? '', pagine: srcLz?.pagine ?? l.pagine ?? '',
+                    tipo: _tipoArr(srcLz?.tipo ?? l.tipo ?? [])
+                });
+                if (_regolaCompiti(classe, lz).assegna && !String(lz.compiti || '').trim()) lz.compiti = srcLz?.compiti ?? l.compiti ?? '';
+                if (lz.stato !== 'svolta') lz.stato = 'pianificata';
+                delete lz.vuota; delete lz.creataAuto;
+                if (lz.bozza) { delete lz.bozza; delete lz.bozzaDal; lz.validataAt = new Date().toISOString(); }
+                if (lz.titolo || lz.descrizione) task.lessonTitle = lz.titolo || lz.descrizione;
+            }
+            lz.pianoDettagliato = { ...src, pianoB: pd?.pianoB || null };
+        } else {
+            const pbOld = pd?.pianoB;
+            if (pbOld && (pbOld.titolo || pbOld.fase1 || pbOld.fase2 || pbOld.fase3) &&
+                !confirm(`La lezione ha già un Piano B. Lo sostituisco con quello della ${origine}?`)) return;
+            if (!lz) { lz = { data: task.data, ora: task.ora, titolo: '', descrizione: '', compiti: '', stato: 'pianificata' }; piano.push(lz); }
+            const tit = srcLz?.titolo || op.lezione?.titolo || 'Lezione';
+            lz.pianoDettagliato = {
+                ...(pd || { durata: src.durata || durataEffettivaLz(classe, lz) }),
+                pianoB: { titolo: `${tit} (come ${origine})`, durata: src.durata || 50,
+                          fase1: src.fase1 || '', fase2: src.fase2 || '', fase3: src.fase3 || '' }
+            };
+        }
+        task.scelte = { ...(task.scelte || {}), [quale]: lato };
+        task.status = 'approved';
+        task.approvedAt = new Date().toISOString();
+        saveData();
+        agentSaveTasks(agentTasks);
+        agentBadgeUpdate();
+        agentRenderPanel();
+        try {
+            if (!document.getElementById('tabProssime')?.classList.contains('hidden')) renderLezFuture();
+            if (typeof renderDayPanel === 'function') renderDayPanel();
+        } catch(e) {}
+        if (typeof _mcToast === 'function') _mcToast(`✅ ${task.classe}: Piano ${quale} preso dalla ${origine}`);
+    }
+    window.agentApplicaParallela = agentApplicaParallela;
+
+    /** Corpo della card "Piano dalla classe parallela" nella coda task */
+    function _agentParallelaBody(task) {
+        const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const GG = ['dom','lun','mar','mer','gio','ven','sab'];
+        const dLbl = (iso, ora) => {
+            const d = new Date(iso + 'T12:00:00');
+            return `${GG[d.getDay()]} ${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}, ${parseInt(ora) || 1}ª ora`;
+        };
+        const scelte = task.scelte || {};
+        const card = op => {
+            const l = op.lezione || {}, pd = op.pd || {};
+            const fasi = [['Avvio', pd.fase1], ['Attività principale', pd.fase2], ['Chiusura', pd.fase3]]
+                .filter(([, t]) => String(t || '').trim())
+                .map(([n, t]) => `<div style="margin-top:6px;"><strong>${n}</strong><div style="white-space:pre-wrap;">${esc(t)}</div></div>`).join('');
+            const usato = ['A', 'B'].filter(q => scelte[q] === op.lato)
+                .map(q => `<span style="font-size:11px;background:${q === 'A' ? '#e8f5e9' : '#fce4ec'};color:${q === 'A' ? '#1b5e20' : '#880e4f'};border-radius:8px;padding:1px 8px;font-weight:700;margin-left:6px;">✔ Piano ${q}</span>`).join('');
+            return `<div style="border:1px solid #c5cae9;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f8f9ff;">
+                <div style="font-size:11px;font-weight:700;color:#3949ab;letter-spacing:.04em;">${op.lato === 'prima' ? '⏪ LEZIONE PRIMA' : '⏩ LEZIONE DOPO'} · ${esc(op.classe)} · ${dLbl(op.data, op.ora)}${op.svolta ? ' · svolta' : ''}${usato}</div>
+                <div style="font-weight:700;margin:4px 0 2px;">${esc(l.titolo || l.descrizione || 'Lezione')}</div>
+                <div style="font-size:11px;color:#777;">${[l.unit, pd.durata ? pd.durata + ' min' : '', l.pagine ? 'pag. ' + l.pagine : ''].filter(Boolean).map(esc).join(' · ')}</div>
+                ${pd.obiettivi ? `<div style="font-size:12px;color:#444;margin-top:4px;"><strong>Obiettivi:</strong> ${esc(pd.obiettivi)}</div>` : ''}
+                ${fasi ? `<details style="margin-top:6px;font-size:12px;color:#444;"><summary style="cursor:pointer;color:#3949ab;font-weight:600;">Fasi della lezione</summary>${fasi}</details>` : ''}
+                <div class="agent-task-actions" style="margin-top:8px;">
+                    <button class="agent-btn-approve" onclick="agentApplicaParallela('${task.id}','${op.lato}','A')">📋 Usa come Piano A</button>
+                    <button class="agent-btn-edit" onclick="agentApplicaParallela('${task.id}','${op.lato}','B')">⚡ Usa come Piano B</button>
+                </div>
+            </div>`;
+        };
+        return `<div style="font-size:12px;color:#555;margin-bottom:8px;">Per ${dLbl(task.data, task.ora)} non c'è ancora il piano. Puoi riusare la lezione più vicina della classe parallela: scegli quale usare come Piano A e/o come Piano B.</div>
+            ${(task.opzioni || []).map(card).join('')}
+            <div class="agent-task-actions">
+                <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+            </div>`;
+    }
+
     async function agentTaskPiano(task) {
         task.status = 'processing'; agentRenderPanel();
 
@@ -22507,7 +22702,7 @@ ${blocco.regole}`;
 
         const taskTxt = sd.taskGiorno.length
             ? sd.taskGiorno.map(t => {
-                const lbl2 = { piano:'Piano lezione', cdc:'Analisi CdC', glo:'Report GLO', valscritta:'Valutazione scritta', valorale:'Valutazione orale' }[t.type] || t.type;
+                const lbl2 = { piano:'Piano lezione', pianoparallela:'Piano dalla classe parallela', cdc:'Analisi CdC', glo:'Report GLO', valscritta:'Valutazione scritta', valorale:'Valutazione orale' }[t.type] || t.type;
                 const stato = { ready:'pronto da approvare', approved:'approvato', pending:'in coda', processing:'in elaborazione', error:'errore' }[t.status] || t.status;
                 return `  • ${lbl2} ${t.classe||''} ${t.lessonTitle ? '"'+t.lessonTitle+'"' : ''}: ${stato}`;
               }).join('\n')
@@ -22519,7 +22714,7 @@ ${blocco.regole}`;
 
         const oggiTxt = sd.taskOggi.length
             ? sd.taskOggi.map(t => {
-                const lbl2  = { piano:'Piano lezione', cdc:'Analisi CdC', glo:'Report GLO', valscritta:'Valutazione scritta', valorale:'Valutazione orale', analisididattica:'Analisi didattica' }[t.type] || t.type;
+                const lbl2  = { piano:'Piano lezione', pianoparallela:'Piano dalla classe parallela', cdc:'Analisi CdC', glo:'Report GLO', valscritta:'Valutazione scritta', valorale:'Valutazione orale', analisididattica:'Analisi didattica' }[t.type] || t.type;
                 const stato = t.status === 'approved' ? 'approvato' : 'pronto da approvare';
                 return `  • ${lbl2} ${t.classe||''} ${t.lessonTitle ? '"'+t.lessonTitle+'"' : ''}: ${stato}`;
               }).join('\n')
@@ -22882,7 +23077,7 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
         if (s.taskGiorno?.length) {
             html += `<div class="briefing-section-label">🤖 Task agente per questa giornata</div><div class="briefing-struct">`;
             s.taskGiorno.forEach(t => {
-                const lbl2  = { piano:'Piano', cdc:'CdC', glo:'GLO', valscritta:'Val.Scritta', valorale:'Val.Orale' }[t.type] || t.type;
+                const lbl2  = { piano:'Piano', pianoparallela:'Piano parallela', cdc:'CdC', glo:'GLO', valscritta:'Val.Scritta', valorale:'Val.Orale' }[t.type] || t.type;
                 const stato = { ready:'✅ pronto', approved:'✔ approvato', pending:'⏳ in coda', processing:'⚙️ elaborazione', error:'❌ errore' }[t.status] || t.status;
                 html += `<div class="briefing-struct-row">${stato} <strong>${lbl2}</strong> ${t.classe||''} ${t.lessonTitle?`<em>"${t.lessonTitle}"</em>`:''}</div>`;
             });
@@ -22916,7 +23111,7 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
         if (s.taskOggi?.length) {
             html += `<div class="briefing-section-label" style="color:#2e7d32;">✅ Generato oggi dall'agente</div><div class="briefing-struct" style="border-color:#e8f5e9;">`;
             s.taskOggi.forEach(t => {
-                const lbl2  = { piano:'Piano', cdc:'CdC', glo:'GLO', valscritta:'Val.Scritta', valorale:'Val.Orale', analisididattica:'Analisi didattica' }[t.type] || t.type;
+                const lbl2  = { piano:'Piano', pianoparallela:'Piano parallela', cdc:'CdC', glo:'GLO', valscritta:'Val.Scritta', valorale:'Val.Orale', analisididattica:'Analisi didattica' }[t.type] || t.type;
                 const statoIc = t.status === 'approved' ? '✔' : '📋';
                 const statoLbl = t.status === 'approved' ? 'approvato' : 'pronto, da approvare';
                 const ora = t.generatedAt ? new Date(t.generatedAt).toLocaleTimeString('it',{hour:'2-digit',minute:'2-digit'}) : '';
@@ -23211,6 +23406,17 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
                 }
             }
 
+            // ── 2b. Dalle 19:00: lezioni di domani ancora senza piano → ──
+            //       proposta della lezione vicina della classe parallela
+            try {
+                const _d = new Date();
+                if (_d.getHours() >= 8) _d.setDate(_d.getDate() + 1);
+                const _np = agentProponiParallele(_d.toISOString().split('T')[0]);
+                if (_np) console.log(`[Agente] 👥 ${_np} lezioni senza piano: proposta la lezione della classe parallela`);
+            } catch(e) {
+                console.warn('[Agente] proposte classe parallela:', e.message);
+            }
+
             // ── 3. Valutazioni scritte ──────────────────────────────────────
             if (AGENT_DO_SCRITTE && !_fbSkip) {
                 await agentCheckLiveSessions();
@@ -23388,7 +23594,12 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
             const [isoDate] = task.slotId.split('_');
             const lz = piano.find(p => lzId(p) === task.slotId || (!p.ora && p.data === isoDate));
             if (!lz) { alert('Lezione non trovata nel piano.'); return; }
-            lz.pianoDettagliato = task.pianoData || JSON.parse(task.content);
+            // Il piano può essere già arrivato da una classe parallela: non
+            // sovrascriverlo senza chiedere e tenere l'eventuale Piano B
+            const prec = lz.pianoDettagliato;
+            if (_pdHasPianoA(prec) && !confirm(`"${task.lessonTitle}" — ${task.classe} ha già un Piano A. Lo sostituisco con quello generato dall'agente?`)) return;
+            const nuovo = task.pianoData || JSON.parse(task.content);
+            lz.pianoDettagliato = (prec?.pianoB && !nuovo.pianoB) ? { ...nuovo, pianoB: prec.pianoB } : nuovo;
             saveData();
             task.status = 'approved'; task.approvedAt = new Date().toISOString();
             alert(`✅ Piano dettagliato salvato per "${task.lessonTitle}" — ${task.classe}!`);
@@ -23890,7 +24101,7 @@ ${sectionInstr}`;
         } else if (task.type === 'valscritta' && task.soloAlunno) {
             // Task di un solo alunno: non c'è un evento da cui si ricrei, si elimina
             agentTasks = agentTasks.filter(t => t.id !== taskId);
-        } else if (['cdc','glo','piano','valscritta'].includes(task.type)) {
+        } else if (['cdc','glo','piano','pianoparallela','valscritta'].includes(task.type)) {
             // Per i task legati al Calendar/piano: NON eliminare, solo nascondere.
             // Se eliminati, il prossimo agentRun troverebbe l'evento Calendar ancora
             // presente e ricreerebbe il task da capo (rigenerazione indesiderata).
@@ -23942,7 +24153,7 @@ ${sectionInstr}`;
         // I task cdc/glo/piano/valscritta approvati vengono marcati 'dismissed' invece di
         // essere eliminati — così agentRun non li rigenera al prossimo avvio.
         // I task valorale approvati vengono anch'essi dismissed per bloccare il re-match audio.
-        const DISMISS_ON_APPROVE = ['cdc','glo','piano','valscritta','valorale'];
+        const DISMISS_ON_APPROVE = ['cdc','glo','piano','pianoparallela','valscritta','valorale'];
         agentTasks.forEach(t => {
             if (t.status === 'approved' && DISMISS_ON_APPROVE.includes(t.type)) {
                 t.status = 'dismissed';
@@ -24492,7 +24703,8 @@ ${sectionInstr}`;
             cdc:              { icon: '🏫', label: 'Analisi Consiglio di Classe' },
             glo:              { icon: '👤', label: 'Report GLO (PEI)' },
             piano:            { icon: '📋', label: 'Piano Dettagliato Lezione' },
-            valscritta:       { icon: '✍️', label: 'Valutazione Verifica Scritta' },
+            pianoparallela:   { icon: '👥', label: 'Piano dalla classe parallela' },
+            valscritta:      { icon: '✍️', label: 'Valutazione Verifica Scritta' },
             valorale:         { icon: '🎤', label: 'Valutazione Verifica Orale' },
             valdialogo:       { icon: '🗣️', label: 'Valutazione Dialogo (coppia/trio)' },
             analisididattica: { icon: '🧑‍🏫', label: 'Analisi Didattica Studente' },
@@ -24605,7 +24817,9 @@ ${sectionInstr}`;
 
             let body = '';
             if (task.status === 'ready' || task.status === 'approved') {
-                if (task.type === 'valdialogo') {
+                if (task.type === 'pianoparallela') {
+                    body = _agentParallelaBody(task);
+                } else if (task.type === 'valdialogo') {
                     // Una sezione per ogni alunno del dialogo (voto + 3 testi editabili)
                     const mkDlgSection = (label, fieldKey, idx, minH) => {
                         const val  = (task.results[idx][fieldKey]||'').replace(/</g,'&lt;');
