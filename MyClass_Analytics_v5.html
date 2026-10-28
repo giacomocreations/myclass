@@ -2408,6 +2408,8 @@
                                 <div id="barAzioniFuture" style="display:none;align-items:center;gap:6px;">
                                         <span id="lblSelFuture" style="font-size:12px;color:#667eea;font-weight:700;"></span>
                                         <button onclick="copiaSelezionate()" style="padding:4px 12px;border-radius:16px;border:2px solid #667eea;background:white;color:#667eea;cursor:pointer;font-size:12px;font-weight:700;">📋 Copia</button>
+                                        <button onclick="moveSelezionate('prev')" title="Sposta tutte le selezionate indietro di una lezione" style="padding:4px 10px;border-radius:16px;border:2px solid #667eea;background:white;color:#667eea;cursor:pointer;font-size:12px;font-weight:700;">↑</button>
+                                        <button onclick="moveSelezionate('next')" title="Sposta tutte le selezionate avanti di una lezione" style="padding:4px 10px;border-radius:16px;border:2px solid #667eea;background:white;color:#667eea;cursor:pointer;font-size:12px;font-weight:700;">↓</button>
                                         <button onclick="resetSelezionate()" style="padding:4px 12px;border-radius:16px;border:2px solid #e57373;background:white;color:#e57373;cursor:pointer;font-size:12px;font-weight:700;">🔄 Reset</button>
                                         <button onclick="deselezionaTutte()" style="padding:4px 10px;border-radius:16px;border:1px solid #ccc;background:white;color:#999;cursor:pointer;font-size:12px;">✕</button>
                                     </div>
@@ -12068,8 +12070,8 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         <button onclick="showArgoTextModal('${slot.id}', false)" style="padding:4px 10px;border-radius:12px;border:1.5px solid #00897b;background:white;color:#00897b;cursor:pointer;font-size:12px;font-weight:700;" title="Genera testo da copiare su Argo">📋 Argo</button>
                         ${activity.pianoDettagliato?`<button data-gendesc="${slot.id}" onclick="generaDescDaCard('${slot.id}')" style="padding:4px 10px;border-radius:12px;border:1.5px solid #9c27b0;background:white;color:#9c27b0;cursor:pointer;font-size:12px;font-weight:700;" title="Dal piano dettagliato genera la descrizione breve per Argo e quella più dettagliata per la StudentApp">✨ Descrizioni dal piano</button>`:''}
                         <button class="btn-copy" onclick="copySingleLesson('${slot.id}')" title="Copia questa lezione negli appunti">📋 Copia</button>
-                        ${!isSvolta?`<button class="btn-swap" onclick="swapLesson('${slot.id}','prev')" title="Scambia con lezione precedente">↑</button>
-                        <button class="btn-swap" onclick="swapLesson('${slot.id}','next')" title="Scambia con lezione successiva">↓</button>
+                        ${!isSvolta?`<button class="btn-swap" onclick="frecciaLezione('${slot.id}','prev')" title="Scambia con lezione precedente (con più lezioni selezionate: sposta indietro tutte le selezionate)">↑</button>
+                        <button class="btn-swap" onclick="frecciaLezione('${slot.id}','next')" title="Scambia con lezione successiva (con più lezioni selezionate: sposta avanti tutte le selezionate)">↓</button>
                         <button class="btn-mark" onclick="markAsSvolta('${slot.id}')">✅ Svolta</button>
                         <button class="btn-reset" onclick="resetLessonCard('${slot.id}')">🗑️ Reset</button>
                         ${(()=>{ const t=(activity.titolo||'').toLowerCase(); const tipo=_tipoArr(activity.tipo||[]); const isV=tipo.includes('verifica_scritta')||tipo.includes('verifica_orale')||/verifica|test|interroga/i.test(t); return isV?`<button data-publish="${slot.id}" onclick="publishFutureLesson('${slot.id}')" style="padding:4px 10px;border-radius:12px;border:1.5px solid #6c47ff;background:white;color:#6c47ff;cursor:pointer;font-size:12px;font-weight:700;" title="Pubblica questa verifica/interrogazione nella StudentApp">📡 Pubblica</button>`:''; })()}
@@ -16469,6 +16471,67 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             renderLezFuture();
         }
 
+        // Freccia ↑/↓ della card: se la lezione fa parte di una selezione di più
+        // lezioni si spostano tutte le selezionate, altrimenti solo questa.
+        function frecciaLezione(slotIdStr, direction) {
+            if (selectedForCopy.size > 1 && selectedForCopy.has(slotIdStr)) moveSelezionate(direction);
+            else swapLesson(slotIdStr, direction);
+        }
+
+        // Sposta di una lezione (avanti 'next' o indietro 'prev') tutte le lezioni
+        // selezionate. Le lezioni non selezionate scavalcate prendono il posto
+        // lasciato libero; si saltano i giorni di assenza/festività e non si
+        // toccano le lezioni svolte. Piano dettagliato e materiali seguono la lezione.
+        function moveSelezionate(direction) {
+            const classe = data.classi[currentClass];
+            const orario = classe?.pianificazione?.orario || [];
+            if (!orario.length || !selectedForCopy.size) return;
+            const todayStr = new Date().toISOString().split('T')[0];
+            const saltati = classe.pianificazione.giorniSaltati || {};
+            const slots = getLessonDates(orario, _annoInizio(), _annoFine())
+                .filter(s => s.data >= todayStr && !saltati[s.data]);
+            const piano = classe.pianificazione.piano || [];
+            // I segnaposto vuoti contano come ore libere
+            const at = slots.map(s => piano.find(p => lzMatchesSlot(p, s) && !_isLezioneVuota(p)) || null);
+            const scelte = new Set(slots.map((s, i) => selectedForCopy.has(s.id) && at[i] && at[i].stato !== 'svolta' ? at[i] : null).filter(Boolean));
+            if (!scelte.size) { alert('Nessuna delle lezioni selezionate si può spostare (sono svolte o già passate).'); return; }
+
+            // Ogni selezionata si scambia con la vicina: partendo dal fondo per
+            // "avanti" e dall'inizio per "indietro", così un blocco si sposta intero.
+            const step = direction === 'prev' ? -1 : 1;
+            const arr = at.slice();
+            const idxs = arr.map((lz, i) => scelte.has(lz) ? i : -1).filter(i => i >= 0);
+            for (const i of (step > 0 ? idxs.reverse() : idxs)) {
+                const j = i + step;
+                if (j < 0 || j >= arr.length) {
+                    alert(step > 0 ? 'Non ci sono ore libere dopo l\'ultima lezione selezionata.' : 'Prima della prima lezione selezionata non ci sono altre ore (da oggi in poi).');
+                    return;
+                }
+                if (arr[j] && arr[j].stato === 'svolta') { alert('Sulla strada c\'è una lezione già svolta: le lezioni selezionate non possono scavalcarla.'); return; }
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+
+            _rimuoviLezioniVuote(classe, todayStr);
+            const nuoviId = [];
+            arr.forEach((lz, k) => {
+                if (!lz) return;
+                if (lz !== at[k]) Object.assign(lz, { data: slots[k].data, ora: slots[k].ora, modified: true });
+                if (scelte.has(lz)) nuoviId.push(slots[k].id);
+            });
+
+            selectedForCopy = new Set(nuoviId);
+            saveData();
+            autoCreaLezioniVuote(); // ricrea i segnaposto negli slot rimasti liberi
+            if (!document.getElementById('tabLezSvolte').classList.contains('hidden')) renderLezSvolte();
+            if (!document.getElementById('tabProssime').classList.contains('hidden')) renderLezFuture();
+            // La selezione resta sulle lezioni spostate, per poterle spostare ancora
+            selectedForCopy.forEach(id => {
+                const cb = document.getElementById('chk_' + id);
+                if (cb) { cb.checked = true; cb.closest('.lesson-card')?.classList.add('selected-copy'); }
+            });
+            _aggiornaBarreAzioni();
+        }
+
         function shiftLessonsUp(fromId) {
             const classe = data.classi[currentClass];
             const orario = classe.pianificazione?.orario || [];
@@ -16552,15 +16615,26 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 return;
             }
 
-            // Slot del giorno saltato nel calendario
-            const fromIdx = allSlots.findIndex(s => s.data === isoDate);
-            if (fromIdx < 0) { alert('Giorno non trovato nel calendario lezioni di questa classe.'); return; }
+            if (!allSlots.some(s => s.data === isoDate)) { alert('Giorno non trovato nel calendario lezioni di questa classe.'); return; }
 
-            // Il nuovo primo slot disponibile è allSlots[fromIdx+1] (uno in avanti)
-            const firstFreeIdx = fromIdx + 1;
-            const neededSlots = firstFreeIdx + toShift.length;
-            if (neededSlots > allSlots.length) {
-                alert(`Non ci sono abbastanza slot disponibili fino a giugno 2026 per spostare tutte le ${toShift.length} lezioni.`);
+            // Posti in cui una lezione può stare: niente giorni già saltati e niente
+            // ore occupate da lezioni svolte (quelle restano dove sono).
+            const saltati = classe.pianificazione.giorniSaltati || {};
+            const svolte  = new Set(piano.filter(p => p.stato === 'svolta').map(lzId));
+            const vecchi  = allSlots.filter(s => !saltati[s.data] && !svolte.has(s.id));
+            const nuovi   = vecchi.filter(s => s.data !== isoDate);
+            // Ogni lezione passa al posto successivo: quella all'n-esimo posto (contando
+            // anche il giorno saltato) va all'n-esimo posto senza quel giorno. Così gli
+            // spazi liberi restano tali e nessuna lezione finisce su un giorno saltato.
+            let prev = vecchi.findIndex(s => s.data >= isoDate) - 1;
+            const posti = toShift.map(p => {
+                let i = vecchi.findIndex(s => s.id === lzId(p));
+                if (i <= prev) i = prev + 1;        // lezione fuori orario o su un giorno già saltato
+                prev = i;
+                return i;
+            });
+            if (prev >= nuovi.length) {
+                alert(`Non ci sono abbastanza slot disponibili fino alla fine dell'anno per spostare tutte le ${toShift.length} lezioni.`);
                 return;
             }
 
@@ -16568,10 +16642,10 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             const dateFmt = String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
             const tipo = confirm(`Segna il ${dateFmt} come assenza (OK) o festività (Annulla)?\n\n${toShift.length} lezioni slitteranno di uno slot in avanti.`) ? 'assenza' : 'festività';
 
-            // Sposta le lezioni: ciascuna va nello slot successivo a partire da firstFreeIdx
-            classe.pianificazione.piano = piano.filter(p => !toShift.find(s => lzId(s) === lzId(p)));
+            // Sposta le lezioni: ciascuna va al posto successivo libero
+            classe.pianificazione.piano = piano.filter(p => !toShift.includes(p));
             toShift.forEach((act, i) => {
-                const newSlot = allSlots[firstFreeIdx + i];
+                const newSlot = nuovi[posti[i]];
                 classe.pianificazione.piano.push({ ...act, data: newSlot.data, ora: newSlot.ora, modified: true });
             });
 
