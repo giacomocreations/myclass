@@ -1852,7 +1852,7 @@
 
                 <div class="section" style="background:#e8f5e9;border:1.5px solid #66bb6a;border-radius:12px;padding:16px;">
                     <h3 style="margin-bottom:8px;color:#1b5e20;">⏰ Auto-LIVE in base all’orario</h3>
-                    <p style="font-size:13px;color:#2e7d32;margin-bottom:10px;">Quando attivo, apre automaticamente la LIVE 2 minuti prima dell’inizio di ogni lezione pianificata.</p>
+                    <p style="font-size:13px;color:#2e7d32;margin-bottom:10px;">Attivo di default: con MyClass aperto in una scheda, all’inizio di ogni lezione in orario apre la LIVE. Se la lezione non ha il piano dettagliato parte con il piano standard da 80 minuti (warm up 10, attività principale 55, chiusura 15), da riscrivere in diretta.</p>
                     <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:8px;">
                       <div id="autoLiveToggle" onclick="toggleAutoLive()"
                         style="width:44px;height:24px;border-radius:12px;background:#ccc;position:relative;cursor:pointer;transition:background .25s;flex-shrink:0;">
@@ -16692,6 +16692,19 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         // ================================================================
         // MODALITÀ LIVE — Fase 2: implementazione completa
         // ================================================================
+        // Piano standard del LIVE per una lezione senza piano dettagliato: 80 minuti
+        // nelle tre fasi solite (avvio breve, attività principale, chiusura).
+        const LIVE_STD_FASI = { fase1: 10, fase2: 55, fase3: 15 };
+        function _pianoStandardLive() {
+            return {
+                durata: LIVE_STD_FASI.fase1 + LIVE_STD_FASI.fase2 + LIVE_STD_FASI.fase3,
+                fase1: `- Saluto, appello e warm up (${LIVE_STD_FASI.fase1} min)`,
+                fase2: `- Attività principale (${LIVE_STD_FASI.fase2} min)`,
+                fase3: `- Consolidamento e chiusura, compiti (${LIVE_STD_FASI.fase3} min)`,
+                pianoStandard: true
+            };
+        }
+
         function apriLive(classeIdx, slotId) {
             // ── Debug handler visibile ───────────────────────────────────────
             function lvDebugErr(msg, err) {
@@ -16708,9 +16721,23 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             }
             try {
             const classe = data.classi[classeIdx];
-            const [isoDate] = slotId.split('_');
-            const lz = (classe?.pianificazione?.piano||[]).find(p => p._testId===slotId || lzId(p)===slotId || (!p.ora && p.data===isoDate));
-            if (!lz?.pianoDettagliato) { alert('Crea prima il piano dettagliato per questa lezione.'); return; }
+            const [isoDate, oraSlot] = slotId.split('_');
+            let lz = (classe?.pianificazione?.piano||[]).find(p => p._testId===slotId || lzId(p)===slotId || (!p.ora && p.data===isoDate));
+            if (!classe) { alert('Classe non trovata.'); return; }
+            // Senza piano (o senza lezione) il LIVE parte lo stesso con il piano
+            // standard: le fasi si riscrivono in diretta con quello che si è fatto.
+            if (!lz) {
+                if (!classe.pianificazione) classe.pianificazione = {};
+                if (!classe.pianificazione.piano) classe.pianificazione.piano = [];
+                lz = { data: isoDate, ora: oraSlot || '1', titolo: '', descrizione: '', compiti: '', stato: 'pianificata' };
+                classe.pianificazione.piano.push(lz);
+            }
+            const _pdPrima = lz.pianoDettagliato;
+            if (!_pdPrima || !String((_pdPrima.fase1||'') + (_pdPrima.fase2||'') + (_pdPrima.fase3||'')).trim()) {
+                lz.pianoDettagliato = { ...(_pdPrima || {}), ..._pianoStandardLive() };
+                delete lz.vuota; delete lz.creataAuto;
+                saveData();
+            }
 
             // Se LIVE già aperto per questo slot, solo mostrarlo
             const existingOverlay = document.getElementById('myclass-live-overlay');
@@ -36049,12 +36076,13 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         if (knob) knob.style.left = '3px';
         if (lbl) lbl.textContent = 'Auto-LIVE disattivato';
         if (sts) sts.textContent = '';
-        localStorage.removeItem('myclass_autolive');
+        localStorage.setItem('myclass_autolive', '0');
       }
     }
 
     function startAutoLive() {
-      if (localStorage.getItem('myclass_autolive') === '1') {
+      // Attivo di default: si spegne solo se il docente lo disattiva
+      if (localStorage.getItem('myclass_autolive') !== '0') {
         _autoLiveEnabled = true;
         const tog = document.getElementById('autoLiveToggle');
         const knob = document.getElementById('autoLiveKnob');
@@ -36076,6 +36104,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
 
     function checkAutoLiveNow() {
       if (!_autoLiveEnabled || !data || !data.classi) return;
+      // Scheda in pausa (MyClass aperto in un'altra): il LIVE parte in quella attiva
+      if (window._tabBlocked) return;
       const now = new Date();
       // FIX: usa data locale invece di UTC (toISOString dà UTC e potrebbe dare il giorno sbagliato di notte)
       const yy = now.getFullYear(), mo = now.getMonth()+1, dd = now.getDate();
@@ -36083,23 +36113,20 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
       if (localStorage.getItem('_al_day') !== today) { _autoLiveNotified.clear(); localStorage.setItem('_al_day', today); }
       const minutiNow = now.getHours() * 60 + now.getMinutes();
       let nextInfo = null;
-      let senzaPiano = []; // lezioni in finestra ma senza pianoDettagliato
+      let senzaOrario = 0; // ore di oggi senza ora d'inizio nell'orario: non possono partire da sole
       data.classi.forEach((classe, ci) => {
         const orario = classe.pianificazione?.orario || [];
         const piano  = classe.pianificazione?.piano  || [];
+        if (classe.pianificazione?.giorniSaltati?.[today]) return;   // assenza/festività
+        senzaOrario += orario.filter(s => s.giornoNum === now.getDay() && !s.oraInizio).length;
         orario.filter(s => s.giornoNum === now.getDay() && s.oraInizio).forEach(slot => {
           const [sh, sm] = slot.oraInizio.split(':').map(Number);
           if (isNaN(sh) || isNaN(sm)) return;
           const diff = (sh * 60 + sm) - minutiNow;
-          // FIX: finestra ampliata da -3 a +10 min (era solo 1.5-2.5 = 1 minuto esatto!)
-          // Copre: tab in background, browser throttling, pagina aperta in ritardo
-          if (diff < -3 || diff > 10) return;
-          const lz = piano.find(p => p.data === today && String(p.ora) === String(slot.ora));
-          if (!lz || !lz.pianoDettagliato) {
-            // Lezione in finestra ma senza piano dettagliato → segnala nell'UI
-            senzaPiano.push(classe.nome + ' ' + slot.oraInizio + (lz ? ' (no piano)' : ' (no lezione)'));
-            return;
-          }
+          // Da 10 min prima a 15 min dopo l'inizio: copre tab in background
+          // (timer rallentati dal browser) e pagina aperta a lezione iniziata.
+          // Anche senza piano: il LIVE parte con il piano standard da 80 minuti.
+          if (diff < -15 || diff > 10) return;
           const key = ci + '_' + today + '_' + slot.ora;
           if (_autoLiveNotified.has(key)) return;
           _autoLiveNotified.add(key);
@@ -36110,10 +36137,10 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
           const [sh, sm] = slot.oraInizio.split(':').map(Number);
           if (isNaN(sh)||isNaN(sm)) return;
           const diff = (sh*60+sm) - minutiNow;
-          if (diff < -3) return;
+          if (diff < -15) return;
           const lz2 = piano.find(p => p.data===today && String(p.ora)===String(slot.ora));
-          if (!lz2 || !lz2.pianoDettagliato) return;
-          if (!nextInfo || diff < nextInfo.diff) nextInfo = {diff, nome:classe.nome, ora:slot.oraInizio};
+          const std = !lz2?.pianoDettagliato ? ' · senza piano: LIVE standard 80 min' : '';
+          if (!nextInfo || diff < nextInfo.diff) nextInfo = {diff, nome:classe.nome, ora:slot.oraInizio, std};
         });
       });
       // Aggiorna status UI con prossima lezione
@@ -36123,12 +36150,11 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
           const diffStr = nextInfo.diff >= 0
             ? (nextInfo.diff === 0 ? 'adesso' : 'tra ' + nextInfo.diff + ' min')
             : Math.abs(nextInfo.diff) + ' min fa';
-          sts.textContent = '⏱ Prossima: ' + nextInfo.nome + ' ore ' + nextInfo.ora + ' (' + diffStr + ')';
-        } else if (senzaPiano.length) {
-          sts.textContent = '⚠️ Lezioni in orario senza piano: ' + senzaPiano.join(', ');
+          sts.textContent = '⏱ Prossima: ' + nextInfo.nome + ' ore ' + nextInfo.ora + ' (' + diffStr + ')' + nextInfo.std;
         } else {
-          sts.textContent = '⏱ Controllo ogni 30 s — nessuna lezione pianificata con piano oggi';
+          sts.textContent = '⏱ Controllo ogni 30 s — nessun\'altra lezione oggi';
         }
+        if (senzaOrario) sts.textContent += ' · ⚠️ ' + senzaOrario + ' ore di oggi senza ora d\'inizio nell\'orario: lì il LIVE non parte da solo';
       }
     }
 
