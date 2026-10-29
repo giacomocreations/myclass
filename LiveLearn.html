@@ -3418,6 +3418,7 @@ function renderActivitiesGrouped(actArr, activeFilter) {
           <button class="btn btn-sm" onclick="editActivity('${safeId}')" title="Modifica attività">✏️</button>
           <button class="btn btn-sm" onclick="updateActivityFromFile('${safeId}')" title="Aggiorna da file JSON: sostituisce solo le versioni presenti nel file (PEI, DSA, Fila B…), senza cancellare e ricreare l'attività">🔄 Aggiorna</button>
           <button class="btn btn-sm" onclick="duplicateActivity('${safeId}')" title="Duplica attività">⧉ Duplica</button>
+          <button class="btn btn-sm" onclick="onePointPerAnswer('${safeId}')" title="Un punto per risposta: ogni esercizio vale tanti punti quante sono le sue risposte (3 spazi = 3 punti). Ricalcola anche le prove già svolte">🔢</button>
           <button class="btn btn-sm" style="color:#e53e3e;border-color:transparent;" onclick="deleteActivity('${safeId}')" title="Elimina attività">🗑</button>
         </div>
       </div>`;
@@ -3628,6 +3629,123 @@ async function duplicateActivity(id) {
   const _vkCopyRef = db.ref('livelearn/activities').push();
   _vkEncodePayload(copy, _vkHasVersions(copy) ? await _vkEnsure(_vkCopyRef.key) : null);
   await _actSet(_vkCopyRef, copy);
+  loadDashboard();
+}
+
+// ── Un punto per risposta ──────────────────────────────────────────────────
+// Un esercizio con più spazi (coppie, parole, frasi) da 1 punto dà punteggi
+// come 0,33 a chi ne indovina uno su tre. Qui ogni esercizio vale tanti punti
+// quante sono le sue risposte, in tutte le versioni (scelta multipla, risposte
+// aperte e sondaggi restano come sono). Le prove già svolte si ricalcolano:
+// i punteggi messi dal docente o dall'AI passano alla nuova scala, il
+// punteggio della consegna e le cronologie degli alunni si riscrivono.
+function _qAnswerCount(q) {
+  if (!q || _qIsPoll(q)) return 0;
+  const { kind, inner } = _qKind(q);
+  const n = x => fbArr(x || []).length;
+  if (kind === 'cloze' || kind === 'fill-blanks' || kind === 'drag-drop' || kind === 'categorization') return n(inner.answers);
+  if (kind === 'matching') return n(inner.left);
+  if (kind === 'reorder') return n(inner.sentences);
+  return 0;
+}
+// I punti di prima restano nell'attività (onePoint.prev) e ogni sessione
+// ricalcolata si segna (onePointAt): se il giro si interrompe, un altro clic
+// riprende dalle sessioni mancanti senza riportare due volte i punteggi.
+async function onePointPerAnswer(id) {
+  if (!db || !id) return;
+  let act;
+  try { act = await _actGet(id, 15000); } catch(e) { return alert('⚠️ Attività non caricata: ' + e.message); }
+  if (!act) return alert('Attività non trovata.');
+  const title = act.title || 'Attività';
+  // Nuovi punti, scritti solo dove cambiano
+  const next = JSON.parse(JSON.stringify(act)), upd = {}, prev = {};
+  const each = (qs, base) => {
+    if (!qs || typeof qs !== 'object') return;
+    Object.keys(qs).forEach(k => {
+      const q = qs[k], n = _qAnswerCount(q);
+      if (n > 0 && _qPts(q) !== n) { prev[base.replace(/\//g, '|') + '|' + k] = _qPts(q); q.points = n; upd[base + '/' + k + '/points'] = n; }
+    });
+  };
+  each(next.questions, 'questions');
+  Object.keys(next.versions || {}).forEach(v => each(next.versions[v], 'versions/' + v));
+  const nEx = Object.keys(prev).length;
+  // Già convertita: restano solo le sessioni di prima non ancora ricalcolate
+  const op = !nEx && act.onePoint && act.onePoint.at ? act.onePoint : nEx ? { at: Date.now(), prev } : null;
+  if (!op) return alert('✅ «' + title + '» è già a posto: ogni esercizio vale un punto per risposta.');
+
+  let sessions;
+  try {
+    sessions = Object.entries((await _fbGet(db.ref('livelearn/sessions'), 20000)).val() || {})
+      .filter(([, x]) => x && x.activityId === id && (x.createdAt || 0) < op.at && x.onePointAt !== op.at);
+  } catch(e) { return alert('⚠️ Sessioni non lette: ' + e.message); }
+  if (!nEx && !sessions.length) return alert('✅ «' + title + '» è già a posto: ogni esercizio vale un punto per risposta.');
+  if (!confirm('🔢 Un punto per risposta — «' + title + '»\n\n' +
+    (nEx ? nEx + ' esercizi (contando tutte le versioni) varranno tanti punti quante sono le loro risposte: 3 spazi da completare = 3 punti. ' +
+      'Scelta multipla e risposte aperte non cambiano.\n\n' : 'I punti sono già cambiati, ma il ricalcolo delle prove si era interrotto.\n\n') +
+    (sessions.length ? 'Si ricalcola' + (sessions.length === 1 ? '' : 'no') + ' ' + (nEx ? 'anche ' : '') + (sessions.length === 1 ? 'la sessione già svolta' : 'le ' + sessions.length + ' sessioni già svolte') + ' con questa attività: punteggi delle consegne, punteggi che hai messo tu (riportati sulla nuova scala) e cronologie degli alunni.\n\n' +
+      'Gli esercizi con più risposte peseranno di più, quindi anche le percentuali di quelle prove possono cambiare. I voti già registrati in MyClass non cambiano.\n\n' : '') +
+    'Continuare?')) return;
+
+  _llToast('🔢 Aggiorno i punti di «' + title + '»…', 'info', 6000);
+  if (nEx) {
+    try {
+      upd.onePoint = op;
+      await db.ref('livelearn/activities/' + id).update(upd);
+      next.onePoint = op;
+      _actCacheSet(id, next);
+      await _actIdxPut(id, next);
+    } catch(e) { return alert('⚠️ Punti non salvati: ' + e.message); }
+  }
+  // L'attività com'era prima, dai punti salvati
+  const before = JSON.parse(JSON.stringify(next));
+  Object.keys(op.prev || {}).forEach(path => {
+    const parts = path.split('|');
+    let q = before;
+    parts.forEach(p => { q = q && q[p]; });
+    if (!q || typeof q !== 'object') return;
+    q.points = op.prev[path];
+  });
+
+  let nResp = 0, nFail = 0;
+  for (const [code, sess] of sessions) {
+    try {
+      const resp = (await _fbGet(db.ref('livelearn/responses/' + code), 20000)).val() || {};
+      const ctxOf = a => ({ activity: _sessFilterActivity(a, sess), studentVersions: sess.studentVersions || {}, roster: [], classId: sess.classId || null });
+      const oldCtx = ctxOf(before), newCtx = ctxOf(next);
+      for (const [k, r] of Object.entries(resp)) {
+        if (!r || r.removed) continue;
+        const oq = getStudentAssignedQuestions(k, r.name || k, r.aliasOf, r.studentVersion, oldCtx, r.answers);
+        const nq = getStudentAssignedQuestions(k, r.name || k, r.aliasOf, r.studentVersion, newCtx, r.answers);
+        const qmo = r.questionMaxOverrides || {}, ch = {};
+        // Punteggi del docente e dell'AI: stessa parte del massimo, sulla nuova scala
+        // (un esercizio escluso o con il massimo fissato dal docente resta com'è)
+        ['manualScores', 'aiScores'].forEach(f => {
+          if (!r[f]) return;
+          const m = Object.assign({}, r[f]);
+          let mod = false;
+          Object.keys(m).forEach(i => {
+            const o = _qPts(oq[i]), n = _qPts(nq[i]);
+            if (m[i] == null || qmo[i] != null || !oq[i] || !nq[i] || o <= 0 || o === n) return;
+            m[i] = Math.round(Number(m[i]) * n / o * 100) / 100;
+            mod = true;
+          });
+          if (mod) { ch[f] = m; r[f] = m; }
+        });
+        if (r.submittedAt) {
+          const sc = _llEffectiveScore(nq, r).score;
+          if (sc !== r.score) { ch.score = sc; r.score = sc; }
+        }
+        if (Object.keys(ch).length) { await db.ref('livelearn/responses/' + code + '/' + k).update(ch); nResp++; }
+      }
+      // Cronologie degli alunni con i nuovi punti (riscritte solo se cambiano)
+      if (sess.classId) await _llSyncSessionHistories(code, { ctx: newCtx, sess, responses: resp, autoAlias: false });
+      await db.ref('livelearn/sessions/' + code + '/onePointAt').set(op.at);
+    } catch(e) { nFail++; console.warn('[Un punto per risposta] sessione', code, e.message); }
+  }
+  _llAgentPing();
+  alert('✅ «' + title + '»: ogni esercizio vale un punto per risposta.' +
+    (sessions.length ? '\nSessioni già svolte ricalcolate: ' + (sessions.length - nFail) + ' su ' + sessions.length + ' (consegne con punteggio cambiato: ' + nResp + ').' : '') +
+    (nFail ? '\n⚠️ ' + nFail + ' sessioni non aggiornate (rete lenta?): premi di nuovo 🔢 per finire.' : ''));
   loadDashboard();
 }
 
