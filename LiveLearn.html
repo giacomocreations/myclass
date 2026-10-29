@@ -717,9 +717,19 @@ textarea.qe-ce::placeholder, input.qe-ce::placeholder { color: var(--muted); opa
 #sol-overlay .sol-card { zoom:var(--tf, 1); color:var(--text, #1f2937); }
 #sol-overlay .sol-card .question-card { animation:none; pointer-events:none; box-shadow:none; }
 #sol-overlay .sol-card audio, #sol-overlay .sol-card .audio-player, #sol-overlay .sol-card .ll-teacher-audio-note { display:none !important; }
-#sol-overlay .sol-card .blank-input.sol-filled { background:#d1fae5; border-color:#10b981; color:#065f46; }
-#sol-overlay .sol-card .dd-blank.sol-filled { background:#d1fae5; border-color:#10b981; color:#065f46; font-weight:800; padding:2px 10px; }
-#sol-overlay .sol-card .ic-opt.sol-filled { background:#d1fae5; border-color:#10b981; color:#065f46; }
+/* Soluzione dentro la domanda (schermo dell'alunno e pagina Soluzioni): la risposta
+   giusta sopra in verde, quella dell'alunno resta dov'è, verde se giusta, rossa se sbagliata */
+.sol-slot { display:inline-flex; flex-direction:column; align-items:center; gap:3px; vertical-align:bottom; line-height:1.2; }
+.sol-above { display:inline-block; font-size:15px; font-weight:900; color:#065f46; background:var(--success-light); border:2px solid var(--success); border-radius:8px; padding:1px 8px; line-height:1.35; white-space:nowrap; }
+.sol-above.sol-line { display:block; white-space:normal; margin-bottom:6px; padding:4px 12px; }
+.sol-above.sol-block { display:block; width:fit-content; margin:0 auto 4px; font-size:12px; }
+.sol-ok { background:var(--success-light) !important; border-color:var(--success) !important; color:#065f46 !important; -webkit-text-fill-color:#065f46; opacity:1 !important; }
+.sol-ko { background:var(--danger-light) !important; border-color:var(--danger) !important; color:#7f1d1d !important; -webkit-text-fill-color:#7f1d1d; opacity:1 !important; }
+.sol-empty { background:white !important; border-color:var(--success) !important; border-style:dashed !important; }
+.sol-given { border:2px solid; border-radius:8px; padding:1px 8px; font-weight:800; }
+.sol-pair { margin-left:auto; padding-left:12px; display:inline-flex; align-items:center; gap:6px; }
+.sol-marked .match-item, .sol-marked .cat-chip, .sol-marked .cat-placed-chip, .sol-marked .cat-col-header,
+.sol-marked .cat-drop-zone, .sol-marked .cat-zone, .sol-marked .ro-chip, .sol-marked .dd-chip, .sol-marked .dd-blank { pointer-events:none; }
 #sol-overlay .sol-opts { display:flex; flex-direction:column; gap:8px; }
 #sol-overlay .sol-opt { display:flex; align-items:center; gap:12px; font-size:calc(19px * var(--tf, 1)); font-weight:700; background:rgba(255,255,255,.08); border:2px solid rgba(255,255,255,.15); border-radius:12px; padding:8px 14px; }
 #sol-overlay .sol-opt.ok { background:rgba(16,185,129,.35); border-color:#10b981; }
@@ -7712,32 +7722,131 @@ function _solCardHTML(q, i) {
   Object.assign(S, keep);
   return h.replace(/\son[a-z]+="[^"]*"/gi, '').replace(/\sdraggable="true"/g, '').replace(/\sid="[^"]*"/g, '');
 }
-// Soluzione dentro la scheda: opzione giusta in verde, spazi completati
-function _solFillCard(el, q) {
+// Soluzione dentro la domanda: sopra ogni spazio la risposta giusta in verde,
+// sotto resta quello che ha risposto l'alunno (verde se giusto, rosso se sbagliato).
+// Senza a (pagina Soluzioni del docente) ci sono solo le risposte giuste.
+// false = la domanda non ha parti da segnare: la soluzione si scrive sotto.
+const _SOL_IN_CARD = ['multiple-choice', 'cloze', 'fill-blanks', 'drag-drop', 'matching', 'reorder', 'categorization'];
+function _solMarkCard(root, q, a) {
+  const card = root && root.querySelector('.question-card');
   const { kind, inner } = _qKind(q);
+  if (!card || _qIsPoll(q) || !_SOL_IN_CARD.includes(kind)) return false;
+  if (card.dataset.solMarked) return true;
+  const teacher = a === undefined;
+  const arr = Array.isArray(a) ? a : a && typeof a === 'object' ? fbArr(a) : typeof a === 'string' && a.trim() ? [a] : [];
+  const above = t => '<span class="sol-above">' + esc(t) + '</span>';
+  // Spazio nel testo: giusto → verde; sbagliato o vuoto → rosso con la soluzione sopra
+  const slot = (el, ok, sol) => {
+    el.classList.add(teacher ? 'sol-empty' : ok ? 'sol-ok' : 'sol-ko');
+    if (ok && !teacher) return;
+    // Spazio vuoto della pagina Soluzioni: largo quanto la parola sopra
+    if (teacher && el.tagName === 'INPUT') el.style.width = Math.max(4, sol.length + 2) + 'ch';
+    const w = document.createElement('span');
+    w.className = 'sol-slot';
+    w.innerHTML = above(sol);
+    el.parentNode.insertBefore(w, el);
+    w.appendChild(el);
+  };
+  let done = false;
   if (kind === 'multiple-choice') {
-    const ci = _mcCorrectIdx(inner);
-    el.querySelectorAll('.option-btn').forEach((b, bi) => { if (bi === ci) b.classList.add('correct'); });
-    return;
+    const ci = _mcCorrectIdx(inner), ai = teacher ? null : _mcIndexOf(inner, a);
+    card.querySelectorAll('.option-btn').forEach((b, bi) => { if (bi === ci) b.classList.add('correct'); else if (bi === ai) b.classList.add('wrong'); });
+    done = ci != null;
+  } else if (kind === 'cloze' || kind === 'fill-blanks') {
+    const ans = fbArr(inner.answers);
+    card.querySelectorAll('.blank-input').forEach((inp, bi) => {
+      if (ans[bi] == null) return;
+      done = true;
+      const m = _clozeAnswerMatches(arr[bi], ans[bi]), g = inp.closest('.ic-group');
+      if (g) {
+        // Scelta tra opzioni: la giusta in verde, quella scelta per sbaglio in rosso
+        const n = m.alternatives.map(_normClozeAnswer);
+        g.querySelectorAll('.ic-opt').forEach(b => {
+          if (n.includes(_normClozeAnswer(b.dataset.val))) b.classList.add('sol-ok');
+          else if (!teacher && b.classList.contains('selected')) b.classList.add('sol-ko');
+        });
+        return;
+      }
+      slot(inp, m.ok, m.alternatives.join(' / '));
+    });
+  } else if (kind === 'drag-drop') {
+    const res = _solDDBlanks(fbArr(inner.answers), arr, fbArr(inner.sentences), inner.unordered);
+    card.querySelectorAll('.dd-blank').forEach((b, bi) => {
+      if (!res[bi]) return;
+      done = true;
+      slot(b, res[bi].ok, res[bi].sol);
+    });
+  } else if (kind === 'matching') {
+    const right = fbArr(inner.right), norm = s => String(s == null ? '' : s).trim().toLowerCase();
+    card.querySelectorAll('.matching-area > div:first-child .match-item').forEach((el, li) => {
+      if (right[li] == null) return;
+      done = true;
+      // Indice nella colonna B oppure (versioni importate) il testo scelto
+      const c = arr[li];
+      const given = c == null || c === '' ? '' : typeof c === 'number' || /^\d+$/.test(String(c).trim()) ? (right[Number(c)] || '') : String(c);
+      const ok = !!given && norm(given) === norm(right[li]);
+      const p = document.createElement('span');
+      p.className = 'sol-pair';
+      p.innerHTML = '→ ' + (teacher ? above(right[li]) : '<span class="sol-slot">' + (ok ? '' : above(right[li])) +
+        '<span class="sol-given ' + (ok ? 'sol-ok' : 'sol-ko') + '">' + esc(given || '—') + '</span></span>');
+      el.appendChild(p);
+    });
+  } else if (kind === 'reorder') {
+    const sents = fbArr(inner.sentences), norm = s => String(s == null ? '' : s).trim().toLowerCase();
+    card.querySelectorAll('.ro-drop-zone').forEach((z, si) => {
+      if (sents[si] == null) return;
+      done = true;
+      const ok = !teacher && !!arr[si] && norm(arr[si]) === norm(sents[si]);
+      z.classList.add(teacher ? 'sol-empty' : ok ? 'sol-ok' : 'sol-ko');
+      if (!ok) z.insertAdjacentHTML('beforebegin', '<div class="sol-above sol-line">' + esc(sents[si]) + '</div>');
+    });
+  } else if (kind === 'categorization') {
+    const cats = fbArr(inner.categories), corr = fbArr(inner.answers), items = fbArr(inner.items);
+    const zones = card.querySelectorAll('.cat-drop-zone, .cat-zone');
+    items.forEach((t, ii) => {
+      if (corr[ii] == null) return;
+      if (teacher) {
+        // Pagina Soluzioni: ogni parola nella sua colonna
+        const z = zones[Number(corr[ii])];
+        if (z) { z.insertAdjacentHTML('beforeend', '<div class="cat-placed-chip sol-ok">' + esc(t) + '</div>'); done = true; }
+        return;
+      }
+      const ok = arr[ii] != null && Number(arr[ii]) === Number(corr[ii]);
+      // La parola dove l'ha messa l'alunno, oppure ancora tra quelle da sistemare
+      const el = card.querySelector('.cat-placed-chip[data-item-idx="' + ii + '"]') || card.querySelector('.cat-pool [id$="-' + ii + '"]');
+      if (!el) return;
+      done = true;
+      el.classList.remove('placed');
+      el.classList.add(ok ? 'sol-ok' : 'sol-ko');
+      if (!ok) el.insertAdjacentHTML('afterbegin', '<span class="sol-above sol-block">→ ' + esc(cats[Number(corr[ii])] || '') + '</span>');
+    });
+    if (teacher) card.querySelectorAll('.cat-pool, .cat-zone-placeholder').forEach(el => { el.style.display = 'none'; });
   }
-  const ans = fbArr(inner.answers);
-  if (kind === 'drag-drop') {
-    el.querySelectorAll('.dd-blank').forEach((b, bi) => { if (ans[bi] != null) { b.textContent = ans[bi]; b.classList.add('sol-filled'); } });
-    return;
-  }
-  if (kind !== 'cloze' && kind !== 'fill-blanks') return;
-  el.querySelectorAll('.blank-input').forEach((inp, bi) => {
-    if (ans[bi] == null) return;
-    const alts = _clozeFormatAlternatives(ans[bi]).split(' / '), g = inp.closest('.ic-group');
-    if (g) {
-      const n = alts.map(_normClozeAnswer);
-      g.querySelectorAll('.ic-opt').forEach(b => { if (n.includes(_normClozeAnswer(b.dataset.val))) b.classList.add('selected', 'sol-filled'); });
-      return;
-    }
-    inp.value = alts.join(' / ');
-    inp.classList.add('sol-filled');
-    inp.style.width = Math.max(4, inp.value.length + 2) + 'ch';
+  card.dataset.solMarked = '1';
+  card.classList.add('sol-marked');
+  return done;
+}
+// Trascina le parole: per ogni spazio se è giusto e la parola da mostrare sopra.
+// Come _evalDragDrop: per posizione, oppure (unordered) come insieme in ogni frase.
+function _solDDBlanks(corrects, given, sentences, unordered) {
+  const low = x => String(x == null ? '' : x).toLowerCase();
+  const res = corrects.map((c, i) => ({ ok: !!given[i] && low(given[i]) === low(c), sol: String(c == null ? '' : c) }));
+  if (!unordered || !sentences.length) return res;
+  let start = 0;
+  sentences.forEach(s => {
+    const n = (String(s).match(/___/g) || []).length || 1, idx = [];
+    for (let i = start; i < start + n && i < corrects.length; i++) idx.push(i);
+    const pool = idx.map(i => corrects[i]);
+    idx.forEach(i => {
+      const k = given[i] ? pool.findIndex(c => low(c) === low(given[i])) : -1;
+      res[i].ok = k >= 0;
+      if (k >= 0) pool.splice(k, 1);
+    });
+    // Agli spazi sbagliati le parole giuste rimaste
+    idx.forEach(i => { if (!res[i].ok && pool.length) res[i].sol = String(pool.shift()); });
+    start += n;
   });
+  return res;
 }
 function _solRender() {
   if (!S._solOpen) return;
@@ -7758,7 +7867,8 @@ function _solRender() {
     }).join('') + '</div>';
   }
   if (shown) {
-    if (kind !== 'multiple-choice') live += '<div class="sol-a"><div class="h">✅ Soluzione</div>' + sol + '</div>';
+    // La soluzione è già nella domanda; qui solo se non c'è dove metterla
+    if (!_SOL_IN_CARD.includes(kind)) live += '<div class="sol-a"><div class="h">✅ Soluzione</div>' + sol + '</div>';
     live += '<div class="sol-stats"><span class="sol-stat">✅ Giusto: ' + st.ok + '</span>' +
       (st.part ? '<span class="sol-stat">🔶 In parte: ' + st.part + '</span>' : '') +
       '<span class="sol-stat">❌ Sbagliato: ' + st.ko + '</span>' +
@@ -7795,7 +7905,7 @@ function _solRender() {
       (passage ? '<div class="sol-pass"><div class="h">📖 Testo di riferimento</div>' + richText(passage) + '</div>' : '') +
       '<div class="sol-body"><div class="sol-card">' + _solCardHTML(q, cur) + '</div><div class="sol-live">' + live + '</div></div>' +
     '</div>';
-  if (shown) _solFillCard(ov.querySelector('.sol-card'), q);
+  if (shown) _solMarkCard(ov.querySelector('.sol-card'), q);
   _solTick();
 }
 // Chi non ha ancora risposto (nome del registro se associato), in ordine alfabetico
@@ -8289,13 +8399,8 @@ function _solStudentReveal(q, i, fb) {
   try { r = evaluateAnswer(q, a); } catch(e) {}
   const given = !(a == null || a === '' || (typeof a === 'object' && !fbArr(a).some(x => String(x == null ? '' : x).trim() !== '')));
   _tourLockInputs();
-  const { kind, inner } = _qKind(q);
-  if (kind === 'multiple-choice') {
-    const ci = _mcCorrectIdx(inner), ai = _mcIndexOf(inner, a);
-    document.querySelectorAll('#s-question-area .option-btn').forEach((b, bi) => {
-      if (bi === ci) b.classList.add('correct'); else if (bi === ai) b.classList.add('wrong');
-    });
-  }
+  // La soluzione sopra le risposte dell'alunno; sotto solo se non c'è dove metterla
+  const inCard = _solMarkCard(document.getElementById('s-question-area'), q, a == null ? null : a);
   const part = !!(r && !r.correct && r.partial && r.earnedPoints > 0);
   const cls = r && r.correct ? 'correct' : part ? 'partial' : 'wrong';
   const title = !given ? 'Nessuna risposta' : r && r.correct ? 'Giusto!'
@@ -8304,7 +8409,7 @@ function _solStudentReveal(q, i, fb) {
     (part ? 'background:var(--warning-light);border:2px solid var(--warning);' : '') + '">' +
     '<div style="font-size:32px;">' + (r && r.correct ? '✅' : part ? '🔶' : '❌') + '</div>' +
     '<div style="font-size:17px;font-weight:800;">' + title + '</div>' +
-    '<div style="font-size:15px;margin-top:8px;line-height:1.6;">Soluzione: ' + sol + '</div>' +
+    (inCard ? '' : '<div style="font-size:15px;margin-top:8px;line-height:1.6;">Soluzione: ' + sol + '</div>') +
     '<div style="font-size:12px;margin-top:8px;opacity:.7;">Aspetta la prossima domanda…</div></div>';
   pushProgress();
 }
