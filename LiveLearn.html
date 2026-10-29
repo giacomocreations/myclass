@@ -732,6 +732,9 @@ textarea.qe-ce::placeholder, input.qe-ce::placeholder { color: var(--muted); opa
 #sol-overlay .sol-wait { font-size:calc(17px * var(--tf, 1)); font-weight:700; opacity:.75; text-align:center; padding:10px; }
 #sol-overlay .sol-stats { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
 #sol-overlay .sol-stat { background:rgba(255,255,255,.1); border-radius:12px; padding:8px 16px; font-size:calc(18px * var(--tf, 1)); font-weight:800; }
+#sol-overlay .sol-none { text-align:center; }
+#sol-overlay .sol-none .h { font-size:calc(13px * var(--tf, 1)); font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:#fcd34d; margin-bottom:6px; }
+#sol-overlay .sol-none-n { display:inline-block; background:rgba(252,211,77,.15); border:1.5px solid rgba(252,211,77,.5); border-radius:10px; padding:4px 12px; margin:3px; font-size:calc(16px * var(--tf, 1)); font-weight:700; }
 </style>
 </head>
 <body class="notranslate" translate="no">
@@ -7675,11 +7678,11 @@ function _solRenderSoon() {
 }
 // Esito di ogni alunno sulla domanda cur, valutato sulla sua versione
 function _solStats(cur) {
-  const resp = S._liveResp || {}, st = { ok: 0, part: 0, ko: 0, none: 0, tot: 0, mc: {} };
+  const resp = S._liveResp || {}, st = { ok: 0, part: 0, ko: 0, none: 0, tot: 0, mc: {}, noneNames: [] };
   _hintPlayers().forEach(k => {
     const r = resp[k];
     st.tot++;
-    if (!_hintAnswered(r, cur, k)) { st.none++; return; }
+    if (!_hintAnswered(r, cur, k)) { st.none++; st.noneNames.push((r && (r.aliasOf || r.name)) || k); return; }
     const sq = getStudentAssignedQuestions(k, r.name, r.aliasOf, r.studentVersion, null, r.answers)[cur];
     const a = fbArr(r.answers)[cur];
     let ev = null;
@@ -7759,10 +7762,10 @@ function _solRender() {
     live += '<div class="sol-stats"><span class="sol-stat">✅ Giusto: ' + st.ok + '</span>' +
       (st.part ? '<span class="sol-stat">🔶 In parte: ' + st.part + '</span>' : '') +
       '<span class="sol-stat">❌ Sbagliato: ' + st.ko + '</span>' +
-      (st.none ? '<span class="sol-stat">⏳ Senza risposta: ' + st.none + '</span>' : '') + '</div>';
+      (st.none ? '<span class="sol-stat">⏳ Senza risposta: ' + st.none + '</span>' : '') + '</div>' + _solNoneHTML(st);
   } else {
     live += '<div class="sol-stats"><span class="sol-stat">✍️ Risposte: ' + (st.tot - st.none) + '/' + st.tot + '</span>' +
-      (S.liveTimer > 0 ? '<span class="sol-stat" id="sol-clock"></span>' : '') + '</div>' +
+      (S.liveTimer > 0 ? '<span class="sol-stat" id="sol-clock"></span>' : '') + '</div>' + _solNoneHTML(st) +
       '<div class="sol-wait">' + (sol ? 'La soluzione compare qui e sugli schermi degli alunni quando premi “👁 Mostra la soluzione”.'
         : 'Domanda senza soluzione da mostrare (sondaggio o risposta aperta).') + '</div>';
   }
@@ -7794,6 +7797,13 @@ function _solRender() {
     '</div>';
   if (shown) _solFillCard(ov.querySelector('.sol-card'), q);
   _solTick();
+}
+// Chi non ha ancora risposto (nome del registro se associato), in ordine alfabetico
+function _solNoneHTML(st) {
+  if (!st.noneNames.length) return '';
+  const nomi = st.noneNames.map(n => String(n).trim()).sort((a, b) => a.localeCompare(b, 'it'));
+  return '<div class="sol-none"><div class="h">⏳ Non hanno ancora risposto (' + nomi.length + ')</div>' +
+    nomi.map(n => '<span class="sol-none-n">' + esc(n) + '</span>').join('') + '</div>';
 }
 function _solTick() {
   const el = document.getElementById('sol-clock');
@@ -9270,6 +9280,44 @@ function _llAutoStartLobby(responses) {
   });
 }
 
+// Stesso alunno entrato due volte con nomi diversi: in keepKey vanno le
+// risposte che gli mancano, prese da fromKey (con i punteggi del docente/AI).
+// Solo se le due versioni sono uguali, altrimenti le domande non corrispondono.
+async function _llMergeInto(code, keepKey, fromKey) {
+  const base = 'livelearn/responses/' + code + '/';
+  const [a, b] = (await Promise.all([db.ref(base + keepKey).get(), db.ref(base + fromKey).get()])).map(x => x.val() || {});
+  if ((a.studentVersion || 'originale') !== (b.studentVersion || 'originale')) return 0;
+  const vuota = v => v == null || (typeof v === 'string' && !v.trim()) ||
+    (typeof v === 'object' && !fbArr(v).some(x => x != null && String(x).trim() !== ''));
+  const ansA = fbArr(a.answers), upd = {};
+  let n = 0;
+  fbArr(b.answers).forEach((v, i) => {
+    if (vuota(v) || !vuota(ansA[i])) return;
+    upd['answers/' + i] = v; n++;
+    ['manualScores', 'aiScores', 'aiFeedbacks'].forEach(f => { const x = (b[f] || {})[i]; if (x != null) upd[f + '/' + i] = x; });
+  });
+  // L'alunno sta lavorando dall'altro ingresso: quel dispositivo continua qui
+  if (b.uid && (b.uidAt || 0) > (a.uidAt || 0)) { upd.uid = b.uid; upd.uidAt = b.uidAt; }
+  if (!Object.keys(upd).length) return 0;
+  upd.mergedFrom = fromKey; upd.mergedAt = Date.now();
+  await db.ref(base + keepKey).update(upd);
+  return n;
+}
+// Punteggio dell'alunno ricalcolato dalle risposte (docente > AI > correzione automatica)
+async function _llRecalcScore(code, key) {
+  const ref = db.ref('livelearn/responses/' + code + '/' + key);
+  const r = (await ref.get()).val() || {};
+  const qs = getStudentAssignedQuestions(key, r.name || key, r.aliasOf, r.studentVersion, null, r.answers);
+  const ans = fbArr(r.answers), ms = r.manualScores || {}, as = r.aiScores || {};
+  let tot = 0;
+  qs.forEach((q, i) => {
+    if (ms[i] != null) tot += Number(ms[i]);
+    else if (as[i] != null) tot += Number(as[i]);
+    else tot += _earnedFrom(evaluateAnswer(q, ans[i]));
+  });
+  await ref.child('score').set(Math.round(tot * 100) / 100);
+}
+
 async function confirmRegularize(key) {
   const host = document.getElementById('modal-regularize');
   key = key || (host && host.dataset.pendingKey) || '';
@@ -9281,8 +9329,8 @@ async function confirmRegularize(key) {
   try { taken = JSON.parse((host && host.dataset.taken) || '{}'); } catch(e) {}
   const replaced = (chosenName && taken[chosenName]) || [];
   if (replaced.length && !confirm('"' + chosenName + '" è già presente nella sessione con un altro ingresso.\n\n' +
-      'L\'ingresso precedente verrà tolto dalla sessione (le sue risposte non contano più) e al suo posto vale quello di "' +
-      ((host && host.dataset.name) || key) + '".\n\nContinuare?')) return;
+      'I due ingressi diventano uno: vale quello di "' + ((host && host.dataset.name) || key) + '" e le risposte che gli mancano ' +
+      'vengono prese dall\'altro, che viene tolto dalla sessione.\n\nContinuare?')) return;
   const btn = document.getElementById('regularize-confirm-btn');
   if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
   const ref = db.ref('livelearn/responses/' + S.liveCode + '/' + key);
@@ -9291,7 +9339,10 @@ async function confirmRegularize(key) {
     const prevAlias = before.aliasOf || null;
     // Ingresso precedente con lo stesso nome: rimozione "soft" come il ✕
     // della lista (il record resta, la pagina eventualmente aperta si chiude)
+    let unite = 0;
     for (const k of replaced) {
+      try { unite += await _llMergeInto(S.liveCode, key, k); }
+      catch(eM) { console.warn('[Associa] unione risposte:', eM.message); }
       await db.ref('livelearn/responses/' + S.liveCode + '/' + k).update({
         removed: true, removedAt: Date.now(), removedBy: 'teacher', status: 'removed', replacedBy: key
       });
@@ -9301,6 +9352,16 @@ async function confirmRegularize(key) {
       aliasOf: chosenName,
       regularizedAt: remove ? null : Date.now()
     });
+    // Se l'alunno rientra con il nome del registro torna su questo ingresso
+    // (studentEnter legge sessions/<codice>/aliasKeys) invece di crearne un doppione
+    try {
+      const _sk = n => String(n).replace(/[.#$\[\]/]/g, '_');
+      const ak = {};
+      if (prevAlias && _sk(prevAlias) !== key) ak[_sk(prevAlias)] = null;
+      if (chosenName && _sk(chosenName) !== key) ak[_sk(chosenName)] = key;
+      if (Object.keys(ak).length) await db.ref('livelearn/sessions/' + S.liveCode + '/aliasKeys').update(ak);
+    } catch(eA) { console.warn('[Associa] rimando per il rientro:', eA.message); }
+    if (unite) { try { await _llRecalcScore(S.liveCode, key); } catch(eR) { console.warn('[Associa] punteggio:', eR.message); } }
     // Era in attesa per il nome non riconosciuto: ora può partire
     if (!remove) {
       try { await _llStartAfterAlias(key, before); }
@@ -11140,12 +11201,25 @@ async function studentEnter() {
   } catch(e) { recognized = true; }
   // Record dell'alunno (rientro, consegna, espulsione, associazione al registro).
   // Si legge qui perché il nome associato dal docente decide versione e modalità.
-  const safeName = studentName.replace(/[.#$\[\]/]/g, '_');
-  let existingResp = null;
-  try {
-    const respSnap = await db.ref('livelearn/responses/' + code + '/' + safeName).get();
-    existingResp = respSnap.val();
-  } catch(e) { console.warn('Pre-check responses failed:', e.message); }
+  let safeName = studentName.replace(/[.#$\[\]/]/g, '_');
+  // Il docente l'aveva associato a questo nome da un ingresso con il nome scritto
+  // male: rientrando con il nome giusto torna su quell'ingresso, non ne crea un altro
+  const _aliasKey = session.aliasKeys && session.aliasKeys[safeName];
+  if (_aliasKey && _aliasKey !== safeName) safeName = _aliasKey;
+  // Senza questa lettura non si sa se l'alunno sta rientrando: prima, se falliva
+  // (connessione lenta, accesso non ancora pronto), si creava un record nuovo
+  // sopra quello vecchio e le risposte date fin lì sparivano.
+  let existingResp = null, _preOk = false;
+  for (let _t = 0; _t < 2 && !_preOk; _t++) {
+    try {
+      existingResp = (await _fbGet(db.ref('livelearn/responses/' + code + '/' + safeName), 6000)).val();
+      _preOk = true;
+    } catch(e) {
+      console.warn('Pre-check responses failed:', e.message);
+      if (_t === 0) await awaitAuth(5000);
+    }
+  }
+  if (!_preOk) return showErr(errEl, '⚠️ Connessione lenta: non riesco a leggere i tuoi dati. Aspetta qualche secondo e premi di nuovo "Entra" (le risposte già date non si perdono).');
   const _aliasNow = (existingResp && existingResp.aliasOf) || null;
   // guestOk: il docente l'ha fatto entrare lo stesso, senza associarlo
   S._needsAlias = rosterLen > 0 && !recognized && !_aliasNow && !(existingResp && existingResp.guestOk);
@@ -11389,6 +11463,8 @@ async function studentEnter() {
     // senza che nulla venga salvato. Meglio fermarsi e chiamare il docente.
     if (_isPermDenied(e)) { S.removed = true; showStudentLocked(); return; }
   }
+
+  _studentTabClaim(code, safeName);
 
   // ── Listener di espulsione: se il docente setta removed:true, mostra schermata
   // e blocca tutte le scritture future tramite il flag S.removed ────────────
@@ -12056,15 +12132,35 @@ function _isPermDenied(e) {
   return s.indexOf('permission') >= 0 || s.indexOf('permesso') >= 0;
 }
 
-function showStudentLocked() {
+// Una sola scheda per alunno e sessione: se l'alunno rientra in un'altra scheda
+// dello stesso browser (es. dopo essere uscito), quella vecchia rimasta aperta
+// smette di scrivere — altrimenti potrebbe riscrivere risposte superate.
+const _STU_TAB = 't' + Math.random().toString(36).slice(2, 10);
+function _studentTabClaim(code, key) {
+  const k = 'll_tab_' + code + '_' + key;
+  try { localStorage.setItem(k, _STU_TAB); } catch(e) {}
+  if (S._tabWatch) window.removeEventListener('storage', S._tabWatch);
+  S._tabWatch = ev => {
+    if (ev.key !== k || !ev.newValue || ev.newValue === _STU_TAB || S.removed) return;
+    S.removed = true;
+    if (S.timerInterval) { clearInterval(S.timerInterval); S.timerInterval = null; }
+    showStudentLocked('altraScheda');
+  };
+  window.addEventListener('storage', S._tabWatch);
+}
+
+function showStudentLocked(motivo) {
   if (S.timerInterval) { clearInterval(S.timerInterval); S.timerInterval = null; }
   const html = '<div class="view active" style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;">' +
     '<div style="max-width:520px;background:white;border-radius:20px;border:2px solid #f59e0b;padding:36px;text-align:center;box-shadow:0 10px 40px rgba(245,158,11,0.2);">' +
     '<div style="font-size:64px;margin-bottom:12px;">🔒</div>' +
-    '<h2 style="color:#b45309;margin-bottom:12px;font-size:22px;">Questo nome è già in uso su un altro dispositivo</h2>' +
-    '<p style="color:#475569;font-size:15px;line-height:1.5;margin-bottom:20px;">Le tue risposte non verrebbero salvate, quindi la prova è ferma qui.</p>' +
-    '<p style="color:#64748b;font-size:13px;line-height:1.5;margin-bottom:24px;">Se hai cambiato computer, alza la mano: il/la docente ti sblocca in un secondo dalla lista della classe. Se invece hai scritto il nome di un compagno, correggilo e rientra.</p>' +
-    '<button class="btn btn-primary" onclick="location.reload()">🔄 Torna alla schermata iniziale</button>' +
+    (motivo === 'altraScheda'
+      ? '<h2 style="color:#b45309;margin-bottom:12px;font-size:22px;">La prova è aperta in un\'altra scheda</h2>' +
+        '<p style="color:#475569;font-size:15px;line-height:1.5;margin-bottom:24px;">Continua dall\'altra scheda: questa è ferma, così le tue risposte non si sovrascrivono. Puoi chiuderla.</p>'
+      : '<h2 style="color:#b45309;margin-bottom:12px;font-size:22px;">Questo nome è già in uso su un altro dispositivo</h2>' +
+        '<p style="color:#475569;font-size:15px;line-height:1.5;margin-bottom:20px;">Le tue risposte non verrebbero salvate, quindi la prova è ferma qui.</p>' +
+        '<p style="color:#64748b;font-size:13px;line-height:1.5;margin-bottom:24px;">Se hai cambiato computer, alza la mano: il/la docente ti sblocca in un secondo dalla lista della classe. Se invece hai scritto il nome di un compagno, correggilo e rientra.</p>' +
+        '<button class="btn btn-primary" onclick="location.reload()">🔄 Torna alla schermata iniziale</button>') +
     '</div></div>';
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   let host = document.getElementById('student-locked-view');
@@ -13337,6 +13433,9 @@ function _pushProgressFlush() {
       })
       .catch(e => {
         S._pushInFlight = false;
+        // Rifiutata dalle regole (il nome è passato a un altro dispositivo): ritentare
+        // non serve e l'alunno continuerebbe senza che niente venga salvato
+        if (_isPermDenied(e)) { S._pushPending = null; S.removed = true; showStudentLocked(); return; }
         S._pushAttempts++;
         const delay = Math.min(30000, 1000 * Math.pow(2, S._pushAttempts)); // 2s, 4s, 8s... max 30s
         console.warn('pushProgress error (retry in ' + delay + 'ms):', e.message);
