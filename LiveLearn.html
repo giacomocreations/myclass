@@ -709,6 +709,7 @@ textarea.qe-ce::placeholder, input.qe-ce::placeholder { color: var(--muted); opa
 #sol-overlay .sol-live { display:flex; flex-direction:column; gap:16px; }
 #sol-overlay .sol-card { zoom:var(--tf, 1); color:var(--text, #1f2937); }
 #sol-overlay .sol-card .question-card { animation:none; pointer-events:none; box-shadow:none; }
+#sol-overlay .sol-card audio, #sol-overlay .sol-card .audio-player, #sol-overlay .sol-card .ll-teacher-audio-note { display:none !important; }
 #sol-overlay .sol-card .blank-input.sol-filled { background:#d1fae5; border-color:#10b981; color:#065f46; }
 #sol-overlay .sol-card .dd-blank.sol-filled { background:#d1fae5; border-color:#10b981; color:#065f46; font-weight:800; padding:2px 10px; }
 #sol-overlay .sol-card .ic-opt.sol-filled { background:#d1fae5; border-color:#10b981; color:#065f46; }
@@ -5092,22 +5093,24 @@ function _audioOfQ(q) {
   if (q.type === 'listening' && q.audioData) return { mp3: q.audioData };
   return q.ttsText ? { tts: q.ttsText, rate: q.ttsRate || 1 } : null;
 }
+// Testo dei pulsanti audio del docente: nella barra e nella pagina Soluzioni
+function _audioBtnText(t) {
+  ['btn-audio-play', 'sol-audio-btn'].forEach(id => { const b = document.getElementById(id); if (b) b.textContent = t; });
+}
 function _audioTeacherStop() {
   if (S._tAudio) { try { S._tAudio.pause(); } catch(e) {} S._tAudio = null; }
   _ttsStop();
   S._tAudioQ = null;
-  const b = document.getElementById('btn-audio-play');
-  if (b) b.textContent = '🔊 Ascolta';
+  _audioBtnText('🔊 Ascolta');
 }
 function _audioTeacherPlay() {
   const cur = S.teacherCurrentQ, a = _audioOfQ(_liveCurQ());
-  const b = document.getElementById('btn-audio-play');
   if (S._tAudioQ === cur) { _audioTeacherStop(); return; }   // secondo clic = stop
   _audioTeacherStop();
   if (!a) return;
   S._tAudioQ = cur;
-  if (b) b.textContent = '⏹ Stop';
-  const done = () => { if (S._tAudioQ === cur) { S._tAudioQ = null; if (b) b.textContent = '🔊 Ascolta di nuovo'; } };
+  _audioBtnText('⏹ Stop');
+  const done = () => { if (S._tAudioQ === cur) { S._tAudioQ = null; _audioBtnText('🔊 Ascolta di nuovo'); } };
   if (a.mp3) { S._tAudio = new Audio(a.mp3); S._tAudio.onended = done; S._tAudio.play().catch(done); }
   else _ttsSpeak(a.tts, a.rate, done);
 }
@@ -7728,6 +7731,8 @@ function _solRender() {
     '<div class="flex gap-8"><button class="btn" onclick="_tourFont(-1)" title="Testo più piccolo">A−</button>' +
     '<span style="align-self:center;font-weight:800;min-width:46px;text-align:center;">' + Math.round(_TOUR_FS[S._tourFsI] * 100) + '%</span>' +
     '<button class="btn" onclick="_tourFont(1)" title="Testo più grande">A+</button>' +
+    (_audioOfQ(q) ? '<button class="btn" id="sol-audio-btn" onclick="_audioTeacherPlay()" title="Fa partire l\'audio della domanda da questo PC (secondo clic: stop)">' +
+      (S._tAudioQ === cur ? '⏹ Stop' : '🔊 Ascolta') + '</button>' : '') +
     '<button class="btn btn-primary sol-next" onclick="teacherNextQ()">' + esc(btnNext ? btnNext.textContent : '▶') + '</button>' +
     '<button class="btn" onclick="_solClose()">✕ Nascondi</button></div></div>' +
     '<div class="sol-main' + (passage ? ' has-pass' : '') + '">' +
