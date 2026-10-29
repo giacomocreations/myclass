@@ -6743,9 +6743,11 @@ async function openLive(code, activityId, roster, silent) {
   const ctrlBar = document.getElementById('teacher-control-bar');
   if (S.liveMode === 'teacher' && isActive) {
     ctrlBar.style.display = 'flex';
-    // Torneo già avviato (pagina ricaricata): si riprende da dove era, senza azzerare il tabellone
-    if (!(S.liveTournament && await _tourRestore(code)))
-      await db.ref('livelearn/control/' + code).set({ currentQ: -1 });
+    // Sessione già avviata (rientro dalla dashboard o pagina ricaricata): si riprende
+    // da dove era, senza chiudere la domanda sugli schermi degli alunni né azzerare
+    // soluzioni, aiuti o il tabellone del torneo
+    const _ripresa = S.liveTournament ? await _tourRestore(code) : await _liveRestoreControl(code);
+    if (_ripresa === false) await db.ref('livelearn/control/' + code).set({ currentQ: -1 });
     if (S.liveTournament) S._tourAutoInt = setInterval(_tourAutoCheck, 1000);
     try { S.liveAudioTeacher = localStorage.getItem('ll_audio_teacher') === '1'; } catch(e) { S.liveAudioTeacher = false; }
     // Domande diverse per ogni coppia: ognuno ascolta la sua dal proprio dispositivo
@@ -7171,6 +7173,23 @@ function _tourNormalize(t) {
   t.champ = t.champ || '';
   if (t.pq) t.pq = fbArr(t.pq).map(row => fbArr(row).map(g => fbArr(g)));
   return t;
+}
+
+// Controllo docente (senza torneo) già avviato: domanda in corso, soluzione e
+// aiuto aperti, soluzioni già mostrate. false = sessione da far partire;
+// null = stato non letto (rete): non si tocca niente.
+async function _liveRestoreControl(code) {
+  try {
+    const c = (await _fbGet(db.ref('livelearn/control/' + code), 6000)).val();
+    if (!c || !(c.currentQ >= 0) || c.currentQ >= 999) return false;
+    S.teacherCurrentQ = c.currentQ;
+    S._hintOpenQ = c.hintQ == null ? null : c.hintQ;
+    S._revealQ = c.revealQ == null ? null : c.revealQ;
+    S._solShown = new Set(Object.keys(c.solShown || {}).map(Number));
+    if (S._revealQ != null) S._solShown.add(S._revealQ);
+    S._qStartAt = Date.now();
+    return true;
+  } catch(e) { console.warn('[controllo] ripresa della sessione non riuscita:', e.message); return null; }
 }
 
 async function _tourRestore(code) {
@@ -7620,6 +7639,8 @@ function _solNeedsReveal() {
 async function _solReveal(cur) {
   S._revealQ = cur;
   (S._solShown = S._solShown || new Set()).add(cur);
+  // Anche su Firebase: rientrando nella sessione le soluzioni già mostrate restano tali
+  db.ref('livelearn/control/' + S.liveCode + '/solShown/' + cur).set(true).catch(() => {});
   try { await db.ref('livelearn/control/' + S.liveCode + '/revealQ').set(cur); }
   catch(e) { console.warn('[soluzioni] soluzione non inviata agli alunni:', e.message); }
   _solOpen();
@@ -10813,6 +10834,8 @@ async function closeSession() {
 }
 
 function goBackFromLive() {
+  // La sessione resta aperta per gli alunni: si chiude solo la pagina Soluzioni
+  _solClose();
   if (S.liveListener) { S.liveListener(); S.liveListener = null; }
   if (S.liveWatchdog) { clearInterval(S.liveWatchdog); S.liveWatchdog = null; }
   loadDashboard();
