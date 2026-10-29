@@ -1144,7 +1144,10 @@ const CONFIG = {
     <div class="live-sidebar">
       <div class="live-sidebar-header" style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
         <span>STUDENTI (<span id="live-count">0</span>)</span>
+        <span style="display:flex;gap:4px;align-items:center;">
         <button id="btn-next-pending" onclick="jumpToNextPending()" title="Salta allo studente successivo con risposte libere da valutare" style="display:none;font-size:9px;background:#f59e0b;color:#fff;border:0;border-radius:6px;padding:2px 7px;font-weight:800;cursor:pointer;white-space:nowrap;letter-spacing:0.2px;">📝 <span id="pending-count-label">0</span> da valutare</button>
+        <button id="btn-ai-all-session" onclick="teacherAIScoreSession()" title="Valuta con l'AI le risposte libere ancora da correggere di tutti gli alunni della sessione" style="display:none;font-size:9px;background:#6c47ff;color:#fff;border:0;border-radius:6px;padding:2px 7px;font-weight:800;cursor:pointer;white-space:nowrap;letter-spacing:0.2px;">🤖 Valuta tutte</button>
+        </span>
       </div>
       <div class="live-sidebar-body" id="live-student-list"></div>
     </div>
@@ -8782,6 +8785,7 @@ function renderLiveSidebar(responses) {
   const _pendTotal = (window._pendingFRKeys || []).length;
   if (_pendBtn) _pendBtn.style.display = _pendTotal > 0 ? 'inline-block' : 'none';
   if (_pendLbl) _pendLbl.textContent = _pendTotal;
+  _aiAllBtnUpdate();
 
   // Event delegation: un singolo handler sulla sidebar. Usa _pillKeyMap
   // (Map globale popolata in fase di render) per risolvere l'id della pillola
@@ -17500,70 +17504,132 @@ async function teacherAIScoreQuestion(qi, maxPts) {
 }
 
 // ── Valutazione AI lato docente — tutte le FR pending dello studente ───────
-async function teacherAIScoreAll() {
-  const studentKey = S.selectedStudent;
-  if (!studentKey || !S.liveCode) return;
+// Risposte libere di un alunno ancora senza punteggio (né AI né del docente).
+// soloChiuse: solo quelle che l'alunno non può più cambiare — tutte se ha
+// consegnato; nel Controllo docente in corso quelle delle domande già passate
+// o con la soluzione mostrata.
+function _frPendingIdxs(resp, questions, soloChiuse) {
+  const answers = fbArr(resp.answers), ms = resp.manualScores || {}, as = resp.aiScores || {};
+  const consegnato = !!resp.submittedAt || resp.status === 'submitted' || resp.status === 'recovery_done';
+  const chiusa = i => !soloChiuse || consegnato ||
+    (S.liveMode === 'teacher' && !S.liveTournament && (i < S.teacherCurrentQ || !!(S._solShown && S._solShown.has(i))));
+  const out = [];
+  questions.forEach((q, i) => {
+    const isFR = q.type === 'free-response' || (q.type === 'listening' && (q.subtype || q.question?.type) === 'free-response');
+    if (isFR && answers[i] && String(answers[i]).trim() && ms[i] == null && as[i] == null && chiusa(i)) out.push(i);
+  });
+  return out;
+}
+
+// Valuta con l'AI le risposte libere ancora senza punteggio di un alunno e ne
+// aggiorna il punteggio. Restituisce { n: valutate, pending: da valutare, resp }.
+async function _aiScoreStudentFR(studentKey, soloChiuse) {
+  const ref = db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey);
+  const resp = (await ref.get()).val() || {};
+  if (resp.removed) return { n: 0, pending: 0, resp };
+  // Domande della versione assegnata (fila_b/c/ecc.), non sempre l'originale
+  const questions = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion, null, resp.answers);
+  const answers = fbArr(resp.answers);
+  const pendingIdxs = _frPendingIdxs(resp, questions, soloChiuse);
+  if (!pendingIdxs.length) return { n: 0, pending: 0, resp };
   const geminiKey = localStorage.getItem('gemini_api_key');
   const passageText = S.liveActivity?.passageText || null;
   const scoreKey = geminiKey || 'ollama-local';
+  const newScores = {};
+  const newFeedbacks = {};
+  let lastErr = null;
+  // Valutazione parallela — _scoreFreeResponse gestisce passage → Anthropic fallback
+  await Promise.all(pendingIdxs.map(async i => {
+    try {
+      const result = await _scoreFreeResponse(questions[i], answers[i], scoreKey, passageText);
+      if (result) { newScores[i] = result.score; newFeedbacks[i] = result.feedback; }
+    } catch(e) { lastErr = e; console.warn('AI score q' + i + ':', e.message); }
+  }));
+  if (!Object.keys(newScores).length) throw new Error(lastErr?.message || 'Nessun risultato AI ricevuto — controlla chiave Gemini/Anthropic o quota');
+  // Scrittura batch su Firebase
+  const updates = {};
+  Object.entries(newScores).forEach(([i, s]) => { updates['aiScores/' + i] = s; });
+  Object.entries(newFeedbacks).forEach(([i, f]) => { updates['aiFeedbacks/' + i] = f; });
+  await ref.update(updates);
+  // Ricalcola punteggio totale
+  const resp2 = (await ref.get()).val() || {};
+  const ms2 = resp2.manualScores || {};
+  const as2 = resp2.aiScores || {};
+  const ans2 = fbArr(resp2.answers);
+  let total = 0;
+  questions.forEach((q2, i) => {
+    if (ms2[i] != null) total += Number(ms2[i]);
+    else if (as2[i] != null) total += Number(as2[i]);
+    else { const rr = evaluateAnswer(q2, ans2[i]); total += _earnedFrom(rr); }
+  });
+  total = Math.round(total * 100) / 100;
+  await ref.child('score').set(total);
+  resp2.score = total;
+  return { n: Object.keys(newScores).length, pending: pendingIdxs.length, resp: resp2 };
+}
+
+async function teacherAIScoreAll() {
+  const studentKey = S.selectedStudent;
+  if (!studentKey || !S.liveCode) return;
   const btn = document.getElementById('btn-teacher-ai-all');
   if (btn) { btn.textContent = '⏳ Valutazione…'; btn.disabled = true; }
   try {
-    const snap = await db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey).get();
-    const resp = snap.val() || {};
-    // FIX: usa le domande della versione assegnata (fila_b/c/ecc.) non sempre l'originale
-    const questions = getStudentAssignedQuestions(studentKey, resp.name || studentKey, resp.aliasOf, resp.studentVersion, null, resp.answers);
-    const answers = fbArr(resp.answers);
-    const msExist = resp.manualScores || {};
-    const asExist = resp.aiScores || {};
-    // Trova tutte le FR senza punteggio
-    const pendingIdxs = [];
-    questions.forEach((q, i) => {
-      const isFR = q.type === 'free-response' || (q.type === 'listening' && (q.subtype || q.question?.type) === 'free-response');
-      if (isFR && answers[i] && msExist[i] == null && asExist[i] == null) pendingIdxs.push(i);
-    });
-    if (!pendingIdxs.length) {
+    const r = await _aiScoreStudentFR(studentKey, false);
+    if (!r.pending) {
       if (btn) { btn.textContent = '✓ Nessuna pending'; setTimeout(() => { if (btn) { btn.textContent = '🤖 Valuta con AI (0)'; btn.disabled = false; } }, 1500); }
       return;
     }
-    const newScores = {};
-    const newFeedbacks = {};
-    // Valutazione parallela — _scoreFreeResponse gestisce passage → Anthropic fallback
-    await Promise.all(pendingIdxs.map(async i => {
-      try {
-        const result = await _scoreFreeResponse(questions[i], answers[i], scoreKey, passageText);
-        if (result) { newScores[i] = result.score; newFeedbacks[i] = result.feedback; }
-      } catch(e) { console.warn('AI score q' + i + ':', e.message); }
-    }));
-    if (!Object.keys(newScores).length) throw new Error('Nessun risultato AI ricevuto — controlla chiave Gemini/Anthropic o quota');
-    // Scrittura batch su Firebase
-    const updates = {};
-    Object.entries(newScores).forEach(([i, s]) => { updates['aiScores/' + i] = s; });
-    Object.entries(newFeedbacks).forEach(([i, f]) => { updates['aiFeedbacks/' + i] = f; });
-    await db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey).update(updates);
-    // Ricalcola punteggio totale
-    const snap2 = await db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey).get();
-    const resp2 = snap2.val() || {};
-    const ms2 = resp2.manualScores || {};
-    const as2 = resp2.aiScores || {};
-    const ans2 = fbArr(resp2.answers);
-    let total = 0;
-    questions.forEach((q2, i) => {
-      if (ms2[i] != null) total += Number(ms2[i]);
-      else if (as2[i] != null) total += Number(as2[i]);
-      else { const rr = evaluateAnswer(q2, ans2[i]); total += _earnedFrom(rr); }
-    });
-    total = Math.round(total * 100) / 100;
-    await db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey + '/score').set(total);
-    renderStudentResultsTeacher(resp2.name || studentKey, resp2);
-    _refreshPendingForStudent(studentKey, resp2);
-    const n = Object.keys(newScores).length;
-    if (btn) { btn.textContent = '✓ ' + n + ' valutate'; btn.style.background = 'var(--success)'; btn.style.color = '#fff'; setTimeout(() => { if (btn) { btn.textContent = '🤖 Valuta con AI'; btn.style.background = ''; btn.style.color = ''; btn.disabled = false; } }, 2500); }
+    renderStudentResultsTeacher(r.resp.name || studentKey, r.resp);
+    _refreshPendingForStudent(studentKey, r.resp);
+    if (btn) { btn.textContent = '✓ ' + r.n + ' valutate'; btn.style.background = 'var(--success)'; btn.style.color = '#fff'; setTimeout(() => { if (btn) { btn.textContent = '🤖 Valuta con AI'; btn.style.background = ''; btn.style.color = ''; btn.disabled = false; } }, 2500); }
   } catch(e) {
     console.error('teacherAIScoreAll error:', e);
     if (btn) { btn.textContent = '❌ Errore'; btn.disabled = false; setTimeout(() => { if (btn) btn.textContent = '🤖 Valuta con AI'; }, 2000); }
     alert('Errore AI: ' + e.message);
   }
+}
+
+// 🤖 Valuta tutte: le risposte libere ancora senza punteggio di TUTTI gli alunni
+// della sessione, un alunno dopo l'altro. Solo le risposte che l'alunno non
+// può più cambiare (consegnate, o nel Controllo docente domande già passate).
+async function teacherAIScoreSession() {
+  if (!S.liveCode) return;
+  const btn = document.getElementById('btn-ai-all-session');
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ …'; }
+  let valutate = 0, alunni = 0;
+  const errori = [];
+  try {
+    const all = (await db.ref('livelearn/responses/' + S.liveCode).get()).val() || {};
+    const keys = Object.keys(all).filter(k => all[k] && !all[k].removed);
+    for (const [n, k] of keys.entries()) {
+      if (btn) btn.textContent = '⏳ ' + (n + 1) + '/' + keys.length;
+      try {
+        const r = await _aiScoreStudentFR(k, true);
+        if (!r.n) continue;
+        valutate += r.n; alunni++;
+        if (r.resp.submittedAt) _refreshPendingForStudent(k, r.resp);   // badge 📝 della barra laterale
+        if (S.selectedStudent === k) renderStudentResultsTeacher(r.resp.name || k, r.resp);
+      } catch(e) {
+        errori.push((all[k].name || k) + ': ' + e.message);
+        // Chiave non valida o credito finito: inutile continuare con gli altri
+        if (/401|429|chiave|credito|quota/i.test(e.message)) break;
+      }
+    }
+  } catch(e) { errori.push(e.message); }
+  if (btn) { btn.disabled = false; btn.textContent = label || '🤖 Valuta tutte'; }
+  alert((valutate ? '✅ ' + valutate + ' risposte libere valutate (' + alunni + (alunni === 1 ? ' alunno' : ' alunni') + ').'
+                  : 'Nessuna risposta libera da valutare.')
+    + (errori.length ? '\n\nNon riuscite:\n' + errori.slice(0, 8).join('\n') : '')
+    + (S.liveMode === 'teacher' && !S.liveTournament ? '\n\nNel Controllo docente si valutano le domande già passate: quelle in corso le valuti quando vai avanti.' : ''));
+}
+// Il pulsante compare se l'attività ha risposte libere
+function _aiAllBtnUpdate() {
+  const b = document.getElementById('btn-ai-all-session');
+  if (!b) return;
+  const has = (S.liveActivity?.questions || []).some(q => q.type === 'free-response' ||
+    (q.type === 'listening' && (q.subtype || q.question?.type) === 'free-response'));
+  b.style.display = has ? 'inline-block' : 'none';
 }
 
 
