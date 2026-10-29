@@ -420,6 +420,13 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--primary); 
 
 /* STUDENT ACTIVITY */
 .student-content { flex: 1; padding: 24px; max-width: 720px; margin: 0 auto; width: 100%; }
+/* A− / A+ della schermata delle domande (come nelle attività di English Drills) */
+#s-zoom { position:fixed; right:14px; bottom:14px; z-index:2500; display:flex; align-items:center; gap:2px; padding:3px 4px; background:rgba(20,20,30,.82); border:1px solid rgba(255,255,255,.18); border-radius:20px; box-shadow:0 4px 16px rgba(0,0,0,.35); font:700 13px/1 -apple-system,"Segoe UI",system-ui,sans-serif; color:#fff; user-select:none; -webkit-user-select:none; }
+#s-zoom button { border:none; background:transparent; color:#fff; cursor:pointer; font:inherit; font-weight:800; padding:6px 10px; border-radius:14px; line-height:1; }
+#s-zoom button:hover { background:rgba(255,255,255,.14); }
+#s-zoom .sz-plus { font-size:18px; }
+#s-zoom .sz-lbl { font-size:12px; font-weight:600; opacity:.75; width:46px; padding:6px 0; text-align:center; font-variant-numeric:tabular-nums; }
+@media print { #s-zoom { display:none !important; } }
 .progress-bar { height: 10px; background: var(--primary-light); border-radius: 10px; margin-bottom: 20px; overflow: hidden; }
 .progress-fill { height: 100%; background: linear-gradient(90deg, var(--primary), #a78bfa); border-radius: 10px; transition: width 0.4s ease; }
 .question-card { background: white; border-radius: 20px; border: 2.5px solid var(--border); padding: 32px; box-shadow: var(--shadow-md); animation: slideUp 0.25s ease; }
@@ -1255,6 +1262,11 @@ const CONFIG = {
       <button class="btn btn-success" id="btn-review" onclick="goToReview()" style="display:none;">📋 Rivedi prima di consegnare</button>
       <button class="btn btn-primary" id="btn-submit" onclick="submitAnswers()" style="display:none;">✓ Consegna</button>
     </div>
+  </div>
+  <div id="s-zoom">
+    <button type="button" class="sz-minus" onclick="sZoom(-1)" title="Riduci il testo">A−</button>
+    <button type="button" class="sz-lbl" id="s-zoom-lbl" onclick="sZoom(0)" title="Torna al 100%">100%</button>
+    <button type="button" class="sz-plus" onclick="sZoom(1)" title="Ingrandisci il testo">A+</button>
   </div>
 </div>
 
@@ -5057,6 +5069,23 @@ function toggleTTSStudent(btn) {
     btn.style.background = '';
   });
 }
+
+// ── A− / A+ nella schermata delle domande ─────────────────────────────────
+// Ingrandisce domande e risposte (non la barra in alto né i pulsanti A−/A+,
+// che restano fermi). La scelta resta su questo dispositivo.
+let _sZoom = (() => { try { const v = parseFloat(localStorage.getItem('ll_student_zoom')); return v >= 0.8 && v <= 2 ? v : 1; } catch(e) { return 1; } })();
+function _sZoomApply() {
+  const c = document.querySelector('#view-student-activity .student-content');
+  if (c) c.style.zoom = _sZoom === 1 ? '' : String(_sZoom);
+  const l = document.getElementById('s-zoom-lbl');
+  if (l) l.textContent = Math.round(_sZoom * 100) + '%';
+}
+function sZoom(dir) {
+  _sZoom = dir === 0 ? 1 : Math.min(2, Math.max(0.8, Math.round((_sZoom + dir * 0.1) * 10) / 10));
+  try { localStorage.setItem('ll_student_zoom', String(_sZoom)); } catch(e) {}
+  _sZoomApply();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _sZoomApply); else _sZoomApply();
 
 // ── Audio delle scene e "audio solo dal prof" (10/2026) ──────────────────
 // Una domanda di qualsiasi tipo può avere ttsText (es. il dialogo di una scena):
