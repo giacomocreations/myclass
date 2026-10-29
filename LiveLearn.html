@@ -8914,9 +8914,10 @@ async function regularizeStudent(key, displayName) {
   // Nomi gia' occupati da un altro ingresso (es. l'alunno era entrato col nome
   // giusto, si e' bloccato ed e' rientrato con un nome sbagliato): si possono
   // scegliere lo stesso, l'ingresso precedente viene tolto dalla sessione.
+  // Vale anche per il nome già associato a questo ingresso: l'alunno può essere
+  // rientrato con il nome giusto creando un secondo ingresso da unire a questo.
   const taken = {};
   roster.forEach(n => {
-    if (available.includes(n)) return;
     const keys = others.filter(([, r]) => normFn(r.aliasOf || r.name) === normFn(n)).map(([k]) => k);
     if (keys.length) taken[n] = keys;
   });
@@ -8934,8 +8935,9 @@ async function regularizeStudent(key, displayName) {
     if (sugg) preselect = sugg;
   }
 
-  const optHtml = n => '<option value="' + esc(n) + '"' + (n === preselect ? ' selected' : '') + '>' + esc(n) + '</option>';
-  const takenNames = Object.keys(taken);
+  const optHtml = n => '<option value="' + esc(n) + '"' + (n === preselect ? ' selected' : '') + '>' + esc(n) +
+    (taken[n] ? ' (unisce l\'altro ingresso con questo nome)' : '') + '</option>';
+  const takenNames = Object.keys(taken).filter(n => !available.includes(n));
   const opts = (currentAlias ? '<option value="__none__">— Rimuovi associazione —</option>' : '') +
     available.map(optHtml).join('') +
     (takenNames.length
