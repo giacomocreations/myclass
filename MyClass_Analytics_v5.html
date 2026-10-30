@@ -1657,7 +1657,8 @@
                     <button onclick="archivioVisualizza()" title="Visualizza archivio anno precedente (sola lettura)">📚 Archivio</button>
                     <button onclick="showSearch()">🔍 Cerca</button>
                     <button onclick="showComparison()">📈 Confronta</button>
-                    <button onclick="showSettings()">⚙️ Config AI</button>
+                    <button onclick="showSettings('ai')">⚙️ Config AI</button>
+                    <button onclick="showSettings('live')" title="Griglie di valutazione orale, LIVE di test e Auto-LIVE">🎤 LIVE e griglie</button>
                     <button onclick="apriCalendarioScolastico()" title="Imposta inizio/fine anno scolastico e vacanze">📅 Calendario</button>
                     <button onclick="showImportArgo()">📊 Import Prospetto</button>
                     <button onclick="showImportSchede()">📝 Import Schede</button>
@@ -1682,10 +1683,17 @@
             <!-- SETTINGS VIEW -->
             <div id="settingsView" class="hidden">
                 <div class="section-header">
-                    <h2>⚙️ Configurazione Gemini AI</h2>
+                    <h2>⚙️ Impostazioni</h2>
                     <button class="back-btn" onclick="showDashboard()">← Dashboard</button>
                 </div>
-                
+
+                <div class="agent-tabs" id="settingsTabs">
+                    <button class="agent-tab active" data-tab="ai" onclick="settingsSwitchTab('ai')">🤖 Configurazione AI</button>
+                    <button class="agent-tab" data-tab="live" onclick="settingsSwitchTab('live')">🎤 LIVE e griglie orali</button>
+                    <button class="agent-tab" data-tab="altro" onclick="settingsSwitchTab('altro')">☁️ Drive e Argo</button>
+                </div>
+
+                <div class="settings-pane" id="settingsPane-ai">
                 <div class="gemini-info">
                     <h3>🚀 Come ottenere la API Key GRATUITA</h3>
                     <ol>
@@ -1781,7 +1789,9 @@
                     
                     <div id="testResult" style="margin-top: 15px;"></div>
                 </div>
-                
+                </div><!-- /pane ai -->
+
+                <div class="settings-pane" id="settingsPane-altro" style="display:none;">
                 <div class="section" style="margin-top:16px;">
                     <h3 style="margin-bottom:12px;color:#2c3e50;">☁️ Sincronizzazione Google Drive</h3>
                     <div id="driveStatusBox" style="padding:12px;border-radius:10px;background:#f8f9ff;border:1px solid #e8eaf6;margin-bottom:14px;font-size:13px;">
@@ -1806,6 +1816,14 @@
                     <div id="driveLastSave" style="font-size:11px;color:#aaa;margin-top:8px;display:none;"></div>
                 </div>
 
+                <div class="section">
+                    <h3 style="margin-bottom: 15px; color: #2c3e50;">📋 Codici Argo</h3>
+                    <p style="color: #666; margin-bottom: 15px;">La gestione dei codici Argo (NHC, NdM, ecc.) si trova nella pagina Import.</p>
+                    <button class="btn-primary" onclick="showImportArgo()">📥 Vai a Import Argo</button>
+                </div>
+                </div><!-- /pane altro -->
+
+                <div class="settings-pane" id="settingsPane-live" style="display:none;">
                 <div class="section" id="griglieSection" style="margin-top:16px;">
                     <h3 style="margin-bottom:12px;color:#2c3e50;">📊 Griglie di valutazione orale</h3>
                     <p style="font-size:13px;color:#666;margin-bottom:14px;">Crea griglie con macroaree da usare in modalità LIVE.</p>
@@ -1862,12 +1880,7 @@
                     </label>
                     <div id="autoLiveStatus" style="font-size:12px;color:#555;min-height:18px;"></div>
                 </div>
-
-                <div class="section">
-                    <h3 style="margin-bottom: 15px; color: #2c3e50;">📋 Codici Argo</h3>
-                    <p style="color: #666; margin-bottom: 15px;">La gestione dei codici Argo (NHC, NdM, ecc.) si trova nella pagina Import.</p>
-                    <button class="btn-primary" onclick="showImportArgo()">📥 Vai a Import Argo</button>
-                </div>
+                </div><!-- /pane live -->
             </div>
             
             <!-- ════ AGENTE VIEW ════ -->
@@ -4707,9 +4720,22 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             finally { const idx=classe.pianificazione.piano.indexOf(slotFake); if(idx>=0) classe.pianificazione.piano.splice(idx,1); }
         }
 
-        function showSettings() {
+        // Impostazioni divise in schede: AI, LIVE e griglie orali, Drive e Argo
+        const SETTINGS_TABS = ['ai', 'live', 'altro'];
+        function settingsSwitchTab(nome) {
+            if (!SETTINGS_TABS.includes(nome)) nome = 'ai';
+            SETTINGS_TABS.forEach(t => {
+                const pane = document.getElementById('settingsPane-' + t);
+                if (pane) pane.style.display = (t === nome) ? '' : 'none';
+            });
+            document.querySelectorAll('#settingsTabs .agent-tab').forEach(b =>
+                b.classList.toggle('active', b.dataset.tab === nome));
+        }
+
+        function showSettings(tab) {
             hideAllViews();
             document.getElementById('settingsView').classList.remove('hidden');
+            settingsSwitchTab(tab || 'ai');
             renderArgoCodesTable();
             renderGriglieSettings();
             _populateTestLive();
@@ -11733,6 +11759,9 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         unit: lz.unit||existing.unit||'', tipo: lz.tipo||'normal',
                         stato: 'pianificata', aiGenerated: false, modified: false
                     });
+                    // La descrizione per la StudentApp della lezione sostituita non vale più
+                    if (lz.descrizioneStudent) existing.descrizioneStudent = lz.descrizioneStudent;
+                    else delete existing.descrizioneStudent;
                 } else {
                     const nuova = {
                         data: dataLz, ora: oraLz, titolo: lz.titolo,
@@ -11741,6 +11770,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         tipo: lz.tipo||'normal', stato: 'pianificata',
                         aiGenerated: false, modified: false
                     };
+                    if (lz.descrizioneStudent) nuova.descrizioneStudent = lz.descrizioneStudent;
                     classe.pianificazione.piano.push(nuova);
                     pianoMap[lzId(nuova)] = nuova;
                 }
@@ -16194,6 +16224,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             lessonClipboard = [{
                 titolo:           lz.titolo          || '',
                 descrizione:      lz.descrizione     || '',
+                descrizioneStudent: lz.descrizioneStudent || '',
                 compiti:          lz.compiti         || '',
                 pagine:           lz.pagine          || '',
                 unit:             lz.unit            || '',
@@ -16277,6 +16308,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                         copiati.push({
                             titolo:          lz.titolo          || '',
                             descrizione:     lz.descrizione     || '',
+                            descrizioneStudent: lz.descrizioneStudent || '',
                             compiti:         lz.compiti         || '',
                             pagine:          lz.pagine          || '',
                             unit:            lz.unit            || '',
@@ -16396,6 +16428,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                     ora:              slot.ora,
                     titolo:           lz.titolo,
                     descrizione:      lz.descrizione,
+                    ...(lz.descrizioneStudent ? { descrizioneStudent: lz.descrizioneStudent } : {}),
                     compiti:          lz.compiti,
                     pagine:           lz.pagine,
                     unit:             lz.unit,
@@ -18741,7 +18774,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         function driveAutoReconnect() {
             document.getElementById('drive-reconnect-banner')?.remove();
             const clientId = localStorage.getItem(DRIVE_CLIENT_ID_KEY);
-            if (!clientId) { showSettings(); return; }
+            if (!clientId) { showSettings('altro'); return; }
             if (!window.google?.accounts?.oauth2) {
                 // Libreria non ancora caricata, riprova tra un secondo
                 setTimeout(driveAutoReconnect, 1000);
@@ -22189,6 +22222,7 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
                     svolta: v.lz.stato === 'svolta',
                     lezione: {
                         titolo: v.lz.titolo || '', descrizione: v.lz.descrizione || '', unit: v.lz.unit || '',
+                        descrizioneStudent: v.lz.descrizioneStudent || '',
                         pagine: v.lz.pagine || '', compiti: v.lz.compiti || '', tipo: _tipoArr(v.lz.tipo || [])
                     },
                     pd: _pdCopiaPianoA(v.lz.pianoDettagliato)
@@ -22231,9 +22265,14 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
 
         if (quale === 'A') {
             if (_pdHasPianoA(pd) && !confirm(`La lezione ha già un Piano A. Lo sostituisco con quello della ${origine}?`)) return;
-            if (!lz) { lz = { data: task.data, ora: task.ora, titolo: '', descrizione: '', compiti: '', stato: 'pianificata' }; piano.push(lz); }
+            // Descrizione dettagliata per la StudentApp della lezione d'origine
+            const descStu = String(srcLz?.descrizioneStudent ?? op.lezione?.descrizioneStudent ?? '').trim();
+            const descStuOld = String(lz?.descrizioneStudent || '').trim();
             // Lezione senza argomento o in bozza: prende anche titolo e contenuti di quella scelta
-            const daRiempire = lz.bozza === true || (!String(lz.titolo || '').trim() && !String(lz.descrizione || '').trim());
+            const daRiempire = !lz || lz.bozza === true || (!String(lz.titolo || '').trim() && !String(lz.descrizione || '').trim());
+            const prendiDescStu = !!descStu && descStu !== descStuOld && (daRiempire || !descStuOld ||
+                confirm(`La lezione ha già una descrizione per la StudentApp:\n\n${descStuOld}\n\nLa sostituisco con quella della ${origine}?\n\n${descStu}`));
+            if (!lz) { lz = { data: task.data, ora: task.ora, titolo: '', descrizione: '', compiti: '', stato: 'pianificata' }; piano.push(lz); }
             if (daRiempire) {
                 const l = op.lezione || {};
                 Object.assign(lz, {
@@ -22246,7 +22285,10 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
                 delete lz.vuota; delete lz.creataAuto;
                 if (lz.bozza) { delete lz.bozza; delete lz.bozzaDal; lz.validataAt = new Date().toISOString(); }
                 if (lz.titolo || lz.descrizione) task.lessonTitle = lz.titolo || lz.descrizione;
+                // La descrizione per la StudentApp della bozza parlava di un'altra lezione
+                if (!descStu) delete lz.descrizioneStudent;
             }
+            if (prendiDescStu) lz.descrizioneStudent = descStu;
             lz.pianoDettagliato = { ...src, pianoB: pd?.pianoB || null };
         } else {
             const pbOld = pd?.pianoB;
@@ -36341,6 +36383,7 @@ Rispondi SOLO con JSON valido, niente altro:
         const gem = forzaAI ? null : _obvGemello(u, nomeU, classe);
         if (gem) {
             u.obiettivi = gem.obiettivi.map(o => ({ ...o }));
+            if (gem.obiettiviOrale) u.obiettiviOrale = JSON.parse(JSON.stringify(gem.obiettiviOrale));
         } else {
             const r = await callGemini(_obvPrompt(u, nomeU, _obvLezioni(classe, nomeU)));
             u.obiettivi = _obvParse(r);
@@ -36502,15 +36545,39 @@ Rispondi SOLO con JSON valido, niente altro:
         return f;
     }
 
-    function _obvValori(o, f) {
+    // ── Griglia orale ↔ obiettivi ──────────────────────────────────────
+    // Come le domande dello scritto, anche le macroaree della griglia orale e il
+    // voto complessivo dell'orale si abbinano agli obiettivi della unit. Sta sulla
+    // unit, per nome della macroarea: vale per la prima impressione della griglia
+    // LIVE e per la valutazione rivista a casa con l'audio (stessa griglia).
+    //   unit.obiettiviOrale = { aree: {[nome macroarea minuscolo]: [id obiettivo]},
+    //                           voto: [id obiettivo], griglie: [id griglia aggiunte a mano] }
+    // Una macroarea (o il voto) che il docente non ha abbinato segue la regola
+    // automatica: voto → speaking e funzioni; lessico e strutture → quegli obiettivi.
+    function _obvChiaveArea(nome) { return String(nome || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+    function _obvOraleAuto(o, nomeArea) {   // nomeArea null = voto complessivo
+        if (nomeArea == null) return o.area === 'SPEAKING' || o.area === 'FUNCTIONS';
+        const re = _OBV_RE_GRIGLIA[o.area];
+        return !!(re && re.test(nomeArea));
+    }
+    function _obvOraleIds(u, nomeArea) {
+        const m = u?.obiettiviOrale;
+        const ids = nomeArea == null ? m?.voto : m?.aree?.[_obvChiaveArea(nomeArea)];
+        return Array.isArray(ids) ? ids : null;
+    }
+    function _obvOraleAbbinato(u, o, nomeArea) {
+        const ids = _obvOraleIds(u, nomeArea);
+        return ids ? ids.includes(o.id) : _obvOraleAuto(o, nomeArea);
+    }
+
+    function _obvValori(o, f, u) {
         const v = [], area = o.area;
         // Scritto: domande abbinate all'obiettivo, altrimenti il parziale dell'area
         const scr = f.obiettivi?.[o.id] || (area !== 'SPEAKING' && f.scritto[area]);
         if (scr) v.push(scr);
-        // Speaking e funzioni comunicative si verificano all'orale
-        if ((area === 'SPEAKING' || area === 'FUNCTIONS') && f.orale) v.push(f.orale);
-        const re = _OBV_RE_GRIGLIA[area];
-        if (re) f.griglia.filter(p => re.test(p.nome) && p.max > 0)
+        // Orale: voto complessivo e macroaree della griglia abbinati all'obiettivo
+        if (f.orale && _obvOraleAbbinato(u, o, null)) v.push(f.orale);
+        f.griglia.filter(p => p.max > 0 && _obvOraleAbbinato(u, o, p.nome))
             .forEach(p => v.push({ pct: p.voto / p.max * 100, fonte: p.fonte, provvisorio: p.provvisorio }));
         return v;
     }
@@ -36522,7 +36589,7 @@ Rispondi SOLO con JSON valido, niente altro:
 
     function obvStato(studente, classe, u, nomeU, o, fonti) {
         const man = studente.obiettiviEsiti?.[nomeU]?.[o.id] || null;
-        const vals = _obvValori(o, fonti || _obvFonti(studente, classe, nomeU));
+        const vals = _obvValori(o, fonti || _obvFonti(studente, classe, nomeU), u);
         const pct = vals.length ? vals.reduce((s, x) => s + x.pct, 0) / vals.length : null;
         let auto = pct == null ? 'np' : pct >= OBV_SOGLIA_OK ? 'raggiunto' : pct >= OBV_SOGLIA_PARZ ? 'parziale' : 'non_raggiunto';
         if (_obvSoloMinimi(studente, u) && !o.minimo) auto = 'escluso';
@@ -37115,9 +37182,9 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
     function _obvHtmlUnita(ctx) {
         const tab = (id, txt) => `<button onclick="obvTab('${id}')" style="padding:7px 16px;border:none;border-bottom:3px solid ${_obvUI.tab === id ? '#4f46e5' : 'transparent'};background:none;font-weight:700;font-size:13px;color:${_obvUI.tab === id ? '#4f46e5' : '#888'};cursor:pointer;font-family:inherit;">${txt}</button>`;
         return `<div style="display:flex;gap:4px;border-bottom:1px solid #e8eaf6;margin-bottom:14px;">
-                ${tab('obiettivi', '📝 Obiettivi')}${tab('domande', '🔗 Domande delle verifiche')}${tab('esiti', '✅ Esiti alunni')}
+                ${tab('obiettivi', '📝 Obiettivi')}${tab('domande', '🔗 Domande delle verifiche')}${tab('orale', '🎤 Verifica orale')}${tab('esiti', '✅ Esiti alunni')}
             </div>
-            ${_obvUI.tab === 'esiti' ? _obvHtmlEsiti(ctx) : _obvUI.tab === 'domande' ? _obvHtmlDomande(ctx) : _obvHtmlObiettivi(ctx)}`;
+            ${_obvUI.tab === 'esiti' ? _obvHtmlEsiti(ctx) : _obvUI.tab === 'domande' ? _obvHtmlDomande(ctx) : _obvUI.tab === 'orale' ? _obvHtmlOrale(ctx) : _obvHtmlObiettivi(ctx)}`;
     }
 
     function _obvHtmlObiettivi({ classe, u, nomeU }) {
@@ -37189,7 +37256,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         const legenda = ob.map((o, k) => `<div style="font-size:12px;margin-bottom:3px;"><b>O${k + 1}</b> <span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;background:${OBV_AREE[o.area]?.bg};color:${OBV_AREE[o.area]?.color};">${OBV_AREE[o.area]?.label || o.area}</span> ${_obvEsc(o.testo)}${o.minimo ? ' <span style="color:#92400e;font-size:10px;">(minimo)</span>' : ''}</div>`).join('');
         return `<div style="background:#f7f8fc;border:1px solid #e8eaf6;border-radius:10px;padding:10px 12px;margin-bottom:12px;">${legenda}</div>
             <div style="font-size:12px;color:#666;margin-bottom:10px;line-height:1.5;">
-                Calcolato dalle prove della unit: domande abbinate a ciascun obiettivo (scheda 🔗) o, se il test non è abbinato, parziali per area; voto e griglia dell'orale (le funzioni contano scritto e orale).
+                Calcolato dalle prove della unit: domande abbinate a ciascun obiettivo (scheda 🔗) o, se il test non è abbinato, parziali per area; voto e macroaree della griglia orale abbinati a ciascun obiettivo (scheda 🎤).
                 ✅ da ${OBV_SOGLIA_OK}% · 🟡 da ${OBV_SOGLIA_PARZ}% · 🔴 sotto · ⚪ nessuna prova · ➖ non previsto (PEI: solo i minimi). Senza l'orale dettagliato vale la prima impressione della griglia LIVE (cella sbiadita).
                 Clic su una cella per correggere: il bordo blu indica una tua decisione. Passa sopra una cella per vedere da quali dati viene.
                 Sotto l'esito, la faccina è l'autovalutazione dell'alunno (😀 lo so fare · 😐 quasi · 😟 non ancora); il bordo arancio tratteggiato segnala chi si sopravvaluta o si sottovaluta.
@@ -37308,7 +37375,136 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
             </div>${corpo}`;
     }
 
+    // Macroaree della griglia orale della unit: dalle griglie delle lezioni della
+    // unit, da quelle aggiunte a mano e dai punteggi già dati agli alunni
+    function _obvOraleAree(classe, u, nomeU) {
+        const aree = new Map();
+        const add = (nome, max, griglia) => {
+            const k = _obvChiaveArea(nome);
+            if (!k) return null;
+            const a = aree.get(k) || { nome: String(nome).trim(), max: null, griglie: new Set(), n: 0 };
+            if (max && !a.max) a.max = max;
+            if (griglia) a.griglie.add(griglia);
+            aree.set(k, a);
+            return k;
+        };
+        const lezioni = _obvLezioni(classe, nomeU);
+        const gids = new Set(u.obiettiviOrale?.griglie || []);
+        lezioni.forEach(p => { if (p.pianoDettagliato?.grigliaId) gids.add(p.pianoDettagliato.grigliaId); });
+        gids.forEach(id => {
+            const g = (data.griglie || []).find(x => x.id === id);
+            (g?.aree || []).forEach(a => add(a.nome, a.max, g.nome));
+        });
+        const date = new Set(lezioni.map(p => p.data));
+        let rivisti = 0, live = 0;
+        (classe.studenti || []).forEach(s => {
+            const visti = new Set();
+            const orali = (s.orale || []).filter(g => g && g.recupero !== 'escludi' && _matchUnit(g.unit, nomeU) && Number(g.voto) > 0);
+            orali.forEach(g => ((g.punteggi && g.punteggi.length) ? g.punteggi : _obvPunteggiDaTesto(g.nota))
+                .forEach(p => visti.add(add(p.nome, p.max))));
+            const vp = (s.votiPromemoria || []).filter(p => p && date.has(String(p.data).slice(0, 10)) && Number(p.voto10) > 0);
+            vp.forEach(p => (p.punteggi || []).forEach(x => visti.add(add(x.nome, x.max, p.grigliaNome))));
+            visti.forEach(k => { if (k) aree.get(k).n++; });
+            if (orali.length) rivisti++; else if (vp.length) live++;
+        });
+        Object.keys(u.obiettiviOrale?.aree || {}).forEach(k => { if (!aree.has(k)) add(k, null); });
+        return { aree: [...aree.values()], rivisti, live, griglieUnit: gids };
+    }
+
+    function _obvHtmlOrale({ classe, u, nomeU }) {
+        const ob = u.obiettivi || [];
+        if (!ob.length) return `<p style="color:#999;font-size:13px;">Prima crea gli obiettivi della unit.</p>`;
+        const { aree, rivisti, live, griglieUnit } = _obvOraleAree(classe, u, nomeU);
+        const righe = [{ nome: null, label: '⭐ Voto complessivo dell\'orale', sub: 'il voto in decimi' },
+            ...aree.map(a => ({ nome: a.nome, label: a.nome,
+                sub: [a.max ? '/' + a.max : '', a.griglie.size ? [...a.griglie].join(', ') : '', a.n ? `${a.n} alunn${a.n === 1 ? 'o' : 'i'} con il punteggio` : 'nessun punteggio ancora'].filter(Boolean).join(' · ') }))];
+        _obvUI.oraleRighe = righe.map(r => r.nome);
+        const th = ob.map((o, k) => `<th title="${_obvEsc(o.testo)}" style="padding:4px 3px;font-size:11px;min-width:42px;">
+                <div style="font-weight:800;">O${k + 1}</div>
+                <div style="font-size:9px;font-weight:700;padding:1px 4px;border-radius:6px;background:${OBV_AREE[o.area]?.bg};color:${OBV_AREE[o.area]?.color};white-space:nowrap;">${(OBV_AREE[o.area]?.label || o.area).split(' ')[0]}</div>
+            </th>`).join('');
+        const tr = righe.map((r, ri) => {
+            const manuale = !!_obvOraleIds(u, r.nome);
+            const celle = ob.map(o => {
+                const on = _obvOraleAbbinato(u, o, r.nome);
+                return `<td style="text-align:center;padding:3px;"><input type="checkbox" style="width:18px;height:18px;margin:0;cursor:pointer;${manuale ? '' : 'opacity:.6;'}" ${on ? 'checked' : ''}
+                    onchange="obvSetOrale(${ri},'${o.id}',this.checked)" title="${_obvEsc(o.testo)}"></td>`;
+            }).join('');
+            const nessuno = !ob.some(o => _obvOraleAbbinato(u, o, r.nome));
+            return `<tr style="border-top:1px solid #f0f0f5;${ri === 0 ? 'background:#fafaff;' : ''}">
+                <td style="padding:6px 8px 6px 0;">
+                    <div style="font-weight:700;font-size:13px;">${_obvEsc(r.label)}</div>
+                    <div style="font-size:11px;color:#888;">${_obvEsc(r.sub)}</div>
+                </td>
+                <td style="padding:4px;white-space:nowrap;">${manuale
+                    ? `<button onclick="obvOraleAuto(${ri})" style="${_OBV_BTN}padding:2px 8px;font-size:11px;" title="Torna all'abbinamento automatico">✋ docente ↺</button>`
+                    : `<span style="font-size:11px;color:#888;" title="Voto → speaking e funzioni; macroaree di lessico e strutture → quegli obiettivi">🤖 automatico</span>`}
+                    ${nessuno ? '<div style="font-size:10px;color:#b45309;">non conta</div>' : ''}</td>
+                ${celle}
+            </tr>`;
+        }).join('');
+        const aggiunte = new Set(u.obiettiviOrale?.griglie || []);
+        const altre = (data.griglie || []).filter(g => !griglieUnit.has(g.id));
+        const chipGriglie = [...aggiunte].map(id => {
+            const g = (data.griglie || []).find(x => x.id === id);
+            return g ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:#ede9ff;color:#4c1d95;">${_obvEsc(g.nome)}
+                <a href="#" onclick="obvOraleTogliGriglia('${_obvEsc(id)}');return false;" style="color:#7c3aed;text-decoration:none;margin-left:3px;" title="Togli">✕</a></span>` : '';
+        }).join(' ');
+        return `<div style="font-size:12px;color:#666;margin-bottom:12px;line-height:1.5;">
+                Per la verifica orale (anche se fai solo lo speaking) spunta quali obiettivi verifica ogni <b>macroarea della griglia</b> e il <b>voto complessivo</b>.
+                L'abbinamento vale per la prima impressione della griglia LIVE e, appena approvi la valutazione rivista a casa con l'audio, per i punteggi di quella (le macroaree sono le stesse).
+                Se un obiettivo ha più fonti (più macroaree, voto, domande dello scritto) l'esito è la media.
+                Le righe <b>🤖 automatiche</b> seguono la regola di base (voto → speaking e funzioni, macroaree di lessico e strutture → quegli obiettivi): appena cambi una spunta la riga diventa tua (<b>✋</b>).
+            </div>
+            <div style="font-size:12px;margin-bottom:10px;color:#4c1d95;">🎤 ${rivisti} alunn${rivisti === 1 ? 'o' : 'i'} con l'orale rivisto e approvato${live ? ` · ${live} solo con la griglia LIVE (prima impressione)` : ''}</div>
+            <div style="overflow-x:auto;"><table style="border-collapse:collapse;width:100%;">
+                <tr><th style="text-align:left;font-size:12px;padding:4px 8px 4px 0;">Macroarea</th><th></th>${th}</tr>
+                ${tr}
+            </table></div>
+            ${aree.length ? '' : `<p style="color:#999;font-size:13px;margin-top:8px;">Nessuna griglia collegata alle lezioni di questa unit e nessun punteggio ancora: aggiungi qui sotto la griglia che userai, così prepari l'abbinamento prima della verifica.</p>`}
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px;">
+                ${altre.length ? `<select onchange="obvOraleAggiungiGriglia(this.value)" style="padding:6px 9px;border:1.5px solid #e0e4ff;border-radius:8px;font-size:13px;font-family:inherit;">
+                    <option value="">➕ Aggiungi le macroaree di una griglia…</option>
+                    ${altre.map(g => `<option value="${_obvEsc(g.id)}">${_obvEsc(g.nome)} — ${_obvEsc(g.aree.map(a => a.nome).join(', '))}</option>`).join('')}
+                </select>` : ''}
+                ${chipGriglie}
+                <button onclick="showSettings('live');obvChiudi();" style="${_OBV_BTN}padding:4px 10px;font-size:12px;" title="Crea o modifica le griglie di valutazione orale">📊 Gestisci griglie</button>
+            </div>`;
+    }
+
     // ── Azioni della finestra ───────────────────────────────────────────
+    function obvSetOrale(ri, oid, on) {
+        const ctx = _obvCtx(); if (!ctx || !_obvUI.oraleRighe || ri >= _obvUI.oraleRighe.length) return;
+        const nome = _obvUI.oraleRighe[ri], u = ctx.u;
+        // Prima modifica della riga: si parte dall'abbinamento automatico
+        let ids = (u.obiettivi || []).filter(o => _obvOraleAbbinato(u, o, nome)).map(o => o.id);
+        ids = on ? [...new Set([...ids, oid])] : ids.filter(x => x !== oid);
+        const m = u.obiettiviOrale || (u.obiettiviOrale = {});
+        if (nome == null) m.voto = ids;
+        else (m.aree || (m.aree = {}))[_obvChiaveArea(nome)] = ids;
+        saveData(); _obvRender();
+    }
+    function obvOraleAuto(ri) {
+        const ctx = _obvCtx(); const m = ctx?.u.obiettiviOrale; if (!m || !_obvUI.oraleRighe) return;
+        const nome = _obvUI.oraleRighe[ri];
+        if (nome == null) delete m.voto;
+        else if (m.aree) { delete m.aree[_obvChiaveArea(nome)]; if (!Object.keys(m.aree).length) delete m.aree; }
+        if (!Object.keys(m).length) delete ctx.u.obiettiviOrale;
+        saveData(); _obvRender();
+    }
+    function obvOraleAggiungiGriglia(gid) {
+        const ctx = _obvCtx(); if (!ctx || !gid) return;
+        const m = ctx.u.obiettiviOrale || (ctx.u.obiettiviOrale = {});
+        m.griglie = [...new Set([...(m.griglie || []), gid])];
+        saveData(); _obvRender();
+    }
+    function obvOraleTogliGriglia(gid) {
+        const ctx = _obvCtx(); const m = ctx?.u.obiettiviOrale; if (!m?.griglie) return;
+        m.griglie = m.griglie.filter(x => x !== gid);
+        if (!m.griglie.length) delete m.griglie;
+        if (!Object.keys(m).length) delete ctx.u.obiettiviOrale;
+        saveData(); _obvRender();
+    }
     function _obvPulisciEsiti(classe, nomeU, oid) {
         (classe.studenti || []).forEach(s => {
             const e = s.obiettiviEsiti?.[nomeU];
@@ -37351,7 +37547,11 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         if (st) st.textContent = '⏳ Generazione in corso…';
         try {
             const modo = await _obvRicava(ctx.classe, ctx.u, _obvUI.ui, rigenera);
-            if (rigenera) _obvPulisciEsiti(ctx.classe, ctx.nomeU);
+            if (rigenera) {
+                _obvPulisciEsiti(ctx.classe, ctx.nomeU);
+                // Obiettivi nuovi (id nuovi): l'abbinamento dell'orale torna automatico
+                if (ctx.u.obiettiviOrale) { delete ctx.u.obiettiviOrale.aree; delete ctx.u.obiettiviOrale.voto; }
+            }
             saveData(); renderUnitSelector(); _obvRender();
             if (modo === 'copia') alert('Obiettivi copiati dalla stessa unit di una classe parallela. Se vuoi una versione nuova usa "Rigenera con AI".');
         } catch (e) {
@@ -37377,6 +37577,8 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
             if (d.x.obiettivi?.length) _obvPulisciEsiti(d.cl, d.nomeU);
             d.x.obiettivi = ctx.u.obiettivi.map(o => ({ ...o }));
             d.x.obiettiviGeneratiAt = new Date().toISOString();
+            if (ctx.u.obiettiviOrale) d.x.obiettiviOrale = JSON.parse(JSON.stringify(ctx.u.obiettiviOrale));
+            else delete d.x.obiettiviOrale;
         });
         saveData();
         alert(`✅ Obiettivi copiati in ${dest.length} classi. Pubblicali da ciascuna classe quando vuoi.`);
