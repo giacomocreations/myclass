@@ -1092,7 +1092,7 @@ const CONFIG = {
     <!-- VERSIONS PANEL (below builder layout) -->
     <div class="versions-panel" id="versions-panel" style="display:none;">
       <h3>🎯 Versioni differenziate</h3>
-      <p class="text-muted mb-12" style="font-size:12px;">Crea versioni differenziate. DSA/PEI/PEI 2/Recupero/FILA si assegnano manualmente; <strong>Training DSA</strong> e <strong>Training PEI</strong> sono la simulazione (Training) adattata, da assegnare ai DSA e ai PEI quando gli altri fanno "Rec./Training"; <strong>Recupero Fast 1</strong> e <strong>2</strong> vengono serviti automaticamente agli studenti sotto il 60% senza chiamate API live. <strong>FILA B</strong> e <strong>FILA C</strong> sono varianti anti-copiatura (stessi tipi, stessi argomenti, frasi diverse; le listening restano identiche).</p>
+      <p class="text-muted mb-12" style="font-size:12px;">Crea versioni differenziate. DSA/PEI/PEI 2/Recupero/FILA si assegnano manualmente; <strong>Training DSA</strong> e <strong>Training PEI</strong> sono la simulazione (Training) adattata, da assegnare ai DSA e ai PEI quando gli altri fanno "Rec./Training"; <strong>Recupero Fast 1</strong> e <strong>2</strong> vengono serviti automaticamente agli studenti sotto il 60% senza chiamate API live, e si possono anche assegnare a singoli alunni quando avvii la sessione. <strong>FILA B</strong> e <strong>FILA C</strong> sono varianti anti-copiatura (stessi tipi, stessi argomenti, frasi diverse; le listening restano identiche).</p>
       <div class="version-tabs" id="version-tabs">
         <div class="version-tab active" onclick="switchVersionTab('fila_b',this)">🔀 FILA B</div>
         <div class="version-tab" onclick="switchVersionTab('fila_c',this)">🔀 FILA C</div>
@@ -2641,7 +2641,7 @@ async function _vkEnsure(activityId) {
 // ── Vista live docente (R1b, 16/09): etichette decodificate in locale ──
 // La schermata live è solo del docente e non si proietta: mostra DSA/PEI
 // ricostruiti dalla legenda. I valori scritti su Firebase restano lettere.
-const _VK_ORDER = ['originale', 'fila_b', 'fila_c', 'pei', 'pei_2', 'dsa', 'recupero', 'training_dsa', 'training_pei', 'recupero_1', 'recupero_2'];
+const _VK_ORDER = ['originale', 'fila_b', 'fila_c', 'dsa', 'pei', 'pei_2', 'recupero', 'training_dsa', 'training_pei', 'recupero_1', 'recupero_2'];
 function _vkDefaultVer() {
   return _vkLetterOf('originale', S.liveVersionKeys) || 'originale';
 }
@@ -6516,7 +6516,8 @@ async function confirmStartSession() {
         const name = radio.dataset.studentName;
         const ver = radio.value;
         // R1: ogni alunno del registro riceve una lettera, anche per l'originale
-        const _vkL = _vkLetterOf(ver, S.pendingVersionKeys);
+        // recupero_1/2 non hanno lettera: restano col nome (vedi R1)
+        const _vkL = _vkLetterOf(ver, S.pendingVersionKeys) || (ver === 'recupero_1' || ver === 'recupero_2' ? ver : null);
         if (_vkL) studentVersions[name.replace(/[.#$\[\]\/]/g, '_')] = _vkL;
       }
     });
@@ -21214,7 +21215,7 @@ Rispondi SOLO con un array JSON valido. Nessun markdown, nessuna spiegazione.`;
 // STUDENT VERSION ASSIGNMENT IN SESSION START MODAL
 // ═══════════════════════════════════════════════════════════════
 // Intestazione di colonna cliccata: quella versione a tutta la classe
-// (es. simulazione: "Rec." a tutti, poi Tr. DSA / Tr. PEI ai singoli alunni)
+// (es. simulazione: "Training" a tutti, poi Tr. DSA / Tr. PEI ai singoli alunni)
 function _assignAllVersion(ver) {
   document.querySelectorAll('#student-assign-grid input[data-student-version][value="' + ver + '"]').forEach(r => { r.checked = true; });
 }
@@ -21260,12 +21261,15 @@ async function onClassSelectForSession() {
   if (document.getElementById('start-session-class').value !== classId) return;
   if (!roster.length) { _renderAssignGrid(); return; }
 
-  // recupero_1/2 sono automatici, non si assegnano qui
+  // recupero_1/2 (Fast 1/2) restano anche automatici per chi va sotto il 60%,
+  // ma si possono assegnare qui come prova a singoli alunni
   const has = k => versionsOk && !!(activity?.versions?.[k]?.length);
   const verCols = [
-    ['dsa', 'DSA'], ['pei', 'PEI'], ['pei_2', 'PEI 2'], ['recupero', 'Rec.'],
+    ['fila_b', 'FILA B'], ['fila_c', 'FILA C'],
+    ['dsa', 'DSA'], ['pei', 'PEI'], ['pei_2', 'PEI 2'],
+    ['recupero', 'Training', 'Recupero/Training'],
     ['training_dsa', 'Tr. DSA', 'Training DSA'], ['training_pei', 'Tr. PEI', 'Training PEI'],
-    ['fila_b', 'FILA B'], ['fila_c', 'FILA C']
+    ['recupero_1', 'Fast 1', 'Recupero Fast 1'], ['recupero_2', 'Fast 2', 'Recupero Fast 2']
   ].filter(c => has(c[0]));
   S._assignCtx = { roster, verCols };
   _renderAssignGrid();
