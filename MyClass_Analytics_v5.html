@@ -11759,6 +11759,9 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         unit: lz.unit||existing.unit||'', tipo: lz.tipo||'normal',
                         stato: 'pianificata', aiGenerated: false, modified: false
                     });
+                    // La descrizione per la StudentApp della lezione sostituita non vale più
+                    if (lz.descrizioneStudent) existing.descrizioneStudent = lz.descrizioneStudent;
+                    else delete existing.descrizioneStudent;
                 } else {
                     const nuova = {
                         data: dataLz, ora: oraLz, titolo: lz.titolo,
@@ -11767,6 +11770,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         tipo: lz.tipo||'normal', stato: 'pianificata',
                         aiGenerated: false, modified: false
                     };
+                    if (lz.descrizioneStudent) nuova.descrizioneStudent = lz.descrizioneStudent;
                     classe.pianificazione.piano.push(nuova);
                     pianoMap[lzId(nuova)] = nuova;
                 }
@@ -16220,6 +16224,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             lessonClipboard = [{
                 titolo:           lz.titolo          || '',
                 descrizione:      lz.descrizione     || '',
+                descrizioneStudent: lz.descrizioneStudent || '',
                 compiti:          lz.compiti         || '',
                 pagine:           lz.pagine          || '',
                 unit:             lz.unit            || '',
@@ -16303,6 +16308,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                         copiati.push({
                             titolo:          lz.titolo          || '',
                             descrizione:     lz.descrizione     || '',
+                            descrizioneStudent: lz.descrizioneStudent || '',
                             compiti:         lz.compiti         || '',
                             pagine:          lz.pagine          || '',
                             unit:            lz.unit            || '',
@@ -16422,6 +16428,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                     ora:              slot.ora,
                     titolo:           lz.titolo,
                     descrizione:      lz.descrizione,
+                    ...(lz.descrizioneStudent ? { descrizioneStudent: lz.descrizioneStudent } : {}),
                     compiti:          lz.compiti,
                     pagine:           lz.pagine,
                     unit:             lz.unit,
@@ -22215,6 +22222,7 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
                     svolta: v.lz.stato === 'svolta',
                     lezione: {
                         titolo: v.lz.titolo || '', descrizione: v.lz.descrizione || '', unit: v.lz.unit || '',
+                        descrizioneStudent: v.lz.descrizioneStudent || '',
                         pagine: v.lz.pagine || '', compiti: v.lz.compiti || '', tipo: _tipoArr(v.lz.tipo || [])
                     },
                     pd: _pdCopiaPianoA(v.lz.pianoDettagliato)
@@ -22257,9 +22265,14 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
 
         if (quale === 'A') {
             if (_pdHasPianoA(pd) && !confirm(`La lezione ha già un Piano A. Lo sostituisco con quello della ${origine}?`)) return;
-            if (!lz) { lz = { data: task.data, ora: task.ora, titolo: '', descrizione: '', compiti: '', stato: 'pianificata' }; piano.push(lz); }
+            // Descrizione dettagliata per la StudentApp della lezione d'origine
+            const descStu = String(srcLz?.descrizioneStudent ?? op.lezione?.descrizioneStudent ?? '').trim();
+            const descStuOld = String(lz?.descrizioneStudent || '').trim();
             // Lezione senza argomento o in bozza: prende anche titolo e contenuti di quella scelta
-            const daRiempire = lz.bozza === true || (!String(lz.titolo || '').trim() && !String(lz.descrizione || '').trim());
+            const daRiempire = !lz || lz.bozza === true || (!String(lz.titolo || '').trim() && !String(lz.descrizione || '').trim());
+            const prendiDescStu = !!descStu && descStu !== descStuOld && (daRiempire || !descStuOld ||
+                confirm(`La lezione ha già una descrizione per la StudentApp:\n\n${descStuOld}\n\nLa sostituisco con quella della ${origine}?\n\n${descStu}`));
+            if (!lz) { lz = { data: task.data, ora: task.ora, titolo: '', descrizione: '', compiti: '', stato: 'pianificata' }; piano.push(lz); }
             if (daRiempire) {
                 const l = op.lezione || {};
                 Object.assign(lz, {
@@ -22272,7 +22285,10 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
                 delete lz.vuota; delete lz.creataAuto;
                 if (lz.bozza) { delete lz.bozza; delete lz.bozzaDal; lz.validataAt = new Date().toISOString(); }
                 if (lz.titolo || lz.descrizione) task.lessonTitle = lz.titolo || lz.descrizione;
+                // La descrizione per la StudentApp della bozza parlava di un'altra lezione
+                if (!descStu) delete lz.descrizioneStudent;
             }
+            if (prendiDescStu) lz.descrizioneStudent = descStu;
             lz.pianoDettagliato = { ...src, pianoB: pd?.pianoB || null };
         } else {
             const pbOld = pd?.pianoB;
