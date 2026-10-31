@@ -15,6 +15,11 @@ Le letture sono le stesse di prima. Le scritture sono ristrette:
   lo legge e lo scrive solo l'account docente; MyClass toglie ogni copia quando la bozza viene
   approvata, scartata o rigenerata.
 
+Notifiche di QuestTown (`englishtown/push/<CLASSE>/<CODICE>`, ottobre 2026): ogni alunno che attiva
+gli avvisi nel gioco installato vi scrive il proprio token; lo legge solo l'account docente, che invia
+dal gioco (pannello docente → 📣 Notifiche / evento, e in automatico quando il cursore di classe apre
+una unit nuova). Senza questo ramo pubblicato il gioco funziona lo stesso, ma nessun token viene salvato.
+
 Dopo la pubblicazione conviene una prova veloce con un alunno tester (LiveLearn → Classi → ➕ Tester):
 pubblicare una lezione da MyClass, avviare una sessione in LiveLearn, entrare e consegnare dal tester,
 aprire la StudentApp e mandare un messaggio al prof. Se qualcosa dà "permission denied",
