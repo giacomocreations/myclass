@@ -17441,45 +17441,80 @@ async function _scoreWithHaikuStudent(question, answer, passageText) {
   if (!answer || !String(answer).trim()) return { score: 0, feedback: 'Nessuna risposta fornita.' };
   const prompt = _buildScoringPrompt(question, answer, passageText || null);
   let text;
-  try { text = await _callHaikuStudent(prompt, 300); } catch(e) { return null; }
+  try { text = await _callHaikuStudent(prompt, 500); } catch(e) { return null; }
   if (!text) return null; // silenzioso
-  try {
-    const clean = text.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(clean);
-    let score = Math.round(Number(parsed.score));
-    const maxPts = question.points || 10;
-    if (isNaN(score) || score < 0) score = 0;
-    if (score > maxPts) score = maxPts;
-    return { score, feedback: parsed.feedback || '' };
-  } catch(e) { return null; }
+  return _parseScoringResult(text, question);
 }
 // ──────────────────────────────────────────────────────────────────────────
 
 // Chiamata unificata da lato studente (submitAnswers) e lato docente.
 
+// ── Valutazione delle risposte libere: griglia a fasce ───────────────────
+// Prima l'AI dava un numero da 0 al massimo senza griglia, con la grammatica
+// allo stesso peso della comunicazione: un piccolo errore faceva crollare il
+// punteggio (es. 1/6). Ora sceglie una FASCIA (la comunicazione conta più
+// della forma, gli errori che non impediscono di capire tolgono poco) e i
+// punti li calcola il codice: percentuale della fascia × punti della domanda.
+const _FR_BANDS = {
+  A: { pct: 1.00, desc: 'consegna svolta del tutto, messaggio chiaro; al massimo qualche piccola svista' },
+  B: { pct: 0.85, desc: 'consegna svolta, messaggio chiaro, ma con alcuni errori di lingua che NON impediscono di capire (es. -s della terza persona, articoli, preposizioni, spelling, ordine delle parole)' },
+  C: { pct: 0.70, desc: 'il messaggio si capisce, ma manca una parte della consegna (una richiesta, o è molto più corta del richiesto) OPPURE gli errori sono tanti e costringono a rileggere' },
+  D: { pct: 0.50, desc: 'consegna svolta a metà, oppure il messaggio si capisce solo in parte perché alcuni errori impediscono di capire' },
+  E: { pct: 0.30, desc: 'tentativo pertinente ma molto incompleto o poco comprensibile: solo qualche frase o parola giusta' },
+  F: { pct: 0.10, desc: 'quasi tutta fuori tema o incomprensibile, ma c\'è un tentativo in inglese legato alla domanda' },
+  Z: { pct: 0.00, desc: 'vuota, solo in italiano, del tutto fuori tema, oppure copia la domanda o l\'esempio' }
+};
+function _frBandPts(band, maxPts) { return Math.round(_FR_BANDS[band].pct * maxPts); }
+
 function _buildScoringPrompt(question, answer, passageText) {
-  const maxPts = question.points || 10;
+  const maxPts = _qPts(question) || 1;  // come nel totale (1 se mancano i punti)
   const hint = question.hint || question.question?.hint || '';
   const qText = _qText(question, answer);
   const passageBlock = passageText
     ? `\nTesto di riferimento fornito agli studenti:\n"""\n${passageText}\n"""\n`
     : '';
-  return `Sei un insegnante di inglese che valuta la risposta di uno studente di scuola media italiana.
+  const bands = Object.entries(_FR_BANDS)
+    .map(([k, b]) => `${k} (${_frBandPts(k, maxPts)}/${maxPts} punti): ${b.desc}`).join('\n');
+  return `Sei un insegnante di inglese che valuta la risposta libera di uno studente di scuola media italiana (livello A1-A2).
 ${passageBlock}
 Domanda: "${qText}"
-${hint ? 'Indicazioni del docente: "' + hint + '"' : ''}
+${hint ? 'Indicazioni del docente (criteri della consegna): "' + hint + '"' : ''}
 Punti massimi: ${maxPts}
 
 Risposta dello studente: "${answer}"
 
-Valuta considerando:
-1. Aderenza alla consegna (ha risposto a ciò che si chiedeva?)
-2. Correttezza grammaticale
-3. Qualità e pertinenza del contenuto
-${passageText ? '4. Coerenza con il testo di riferimento' : ''}
+COME VALUTARE — l'obiettivo è la COMUNICAZIONE, non la perfezione:
+1. Prima chiediti: ha fatto quello che chiedeva la consegna${hint ? ' (e le indicazioni del docente)' : ''}? Il messaggio si capisce? Questo decide la fascia.
+2. Solo dopo guarda la lingua. Gli errori che NON impediscono di capire tolgono poco: da soli portano al massimo alla fascia B (alla C solo se sono così tanti da costringere a rileggere). Uno stesso errore ripetuto conta una volta sola.
+3. Valuta come un docente di scuola media, non come un esaminatore: niente inglese da madrelingua. Una struttura richiesta usata con un piccolo errore conta come usata.
+4. Una parte della consegna che manca fa scendere di una fascia, non azzera il punteggio.${passageText ? '\n5. Le informazioni devono essere coerenti con il testo di riferimento.' : ''}
+Se le indicazioni del docente dicono qualcosa di diverso, seguono quelle.
+
+FASCE (scegli quella che descrive meglio la risposta; i punti li calcola il sistema):
+${bands}
 
 Rispondi SOLO con JSON valido (niente markdown, niente spiegazioni):
-{"score": <intero 0-${maxPts}>, "feedback": "<2-3 frasi in italiano che spiegano il punteggio>"}`;
+{"fascia": "<A|B|C|D|E|F|Z>", "feedback": "<2-3 frasi in italiano rivolte allo studente: prima cosa ha fatto bene, poi 1-2 errori con la forma corretta>"}`;
+}
+
+// Punteggio dalla risposta dell'AI: fascia → punti; "score" numerico solo se manca la fascia.
+// null se la risposta non si legge.
+function _parseScoringResult(text, question) {
+  const maxPts = _qPts(question) || 1;  // come nel totale (1 se mancano i punti)
+  const m = String(text || '').replace(/```json|```/g, '').match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let parsed;
+  try { parsed = JSON.parse(m[0]); } catch(e) { return null; }
+  const band = String(parsed.fascia || parsed.band || '').trim().toUpperCase().charAt(0);
+  let score;
+  if (_FR_BANDS[band]) score = _frBandPts(band, maxPts);
+  else {
+    score = Math.round(Number(parsed.score));
+    if (isNaN(score)) return null;
+  }
+  if (score < 0) score = 0;
+  if (score > maxPts) score = maxPts;
+  return { score, feedback: parsed.feedback || '', ...(_FR_BANDS[band] ? { fascia: band } : {}) };
 }
 
 async function scoreWithGemini(question, answer, apiKey, passageText) {
@@ -17501,13 +17536,9 @@ async function scoreWithGemini(question, answer, apiKey, passageText) {
     throw Object.assign(new Error(is429 ? 'Quota Gemini esaurita (429) — riprova tra qualche minuto' : data.error.message), { is429 });
   }
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  const clean = text.replace(/```json|```/g, '').trim();
-  const parsed = JSON.parse(clean);
-  let score = Math.round(Number(parsed.score));
-  const maxPts = question.points || 10;
-  if (isNaN(score) || score < 0) score = 0;
-  if (score > maxPts) score = maxPts;
-  return { score, feedback: parsed.feedback || '' };
+  const r = _parseScoringResult(text, question);
+  if (!r) throw new Error('Valutazione AI non leggibile');
+  return r;
 }
 
 async function _scoreWithAnthropic(question, answer, passageText) {
@@ -17525,7 +17556,7 @@ async function _scoreWithAnthropic(question, answer, passageText) {
     },
     body: JSON.stringify({
       model: anthropicModel,
-      max_tokens: 300,
+      max_tokens: 500,
       messages: [{ role: 'user', content: prompt }]
     })
   });
@@ -17535,13 +17566,9 @@ async function _scoreWithAnthropic(question, answer, passageText) {
   }
   const data = await res.json();
   const text = data.content?.[0]?.text || '';
-  const clean = text.replace(/```json|```/g, '').trim();
-  const parsed = JSON.parse(clean);
-  let score = Math.round(Number(parsed.score));
-  const maxPts = question.points || 10;
-  if (isNaN(score) || score < 0) score = 0;
-  if (score > maxPts) score = maxPts;
-  return { score, feedback: parsed.feedback || '' };
+  const r = _parseScoringResult(text, question);
+  if (!r) throw new Error('Valutazione AI non leggibile');
+  return r;
 }
 
 // Punto di ingresso unificato — usato da submitAnswers (studente) e
