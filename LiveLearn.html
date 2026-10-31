@@ -745,6 +745,17 @@ textarea.qe-ce::placeholder, input.qe-ce::placeholder { color: var(--muted); opa
 #sol-overlay .sol-none { text-align:center; }
 #sol-overlay .sol-none .h { font-size:calc(13px * var(--tf, 1)); font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:#fcd34d; margin-bottom:6px; }
 #sol-overlay .sol-none-n { display:inline-block; background:rgba(252,211,77,.15); border:1.5px solid rgba(252,211,77,.5); border-radius:10px; padding:4px 12px; margin:3px; font-size:calc(16px * var(--tf, 1)); font-weight:700; }
+
+/* ── Solo quiz (copia di un altro docente, vedi kit-livelearn/) ─────────
+   Nasconde cio' che dipende da MyClass, StudentApp e dagli altri siti. */
+body.ll-solo-quiz .home-drills,
+body.ll-solo-quiz .tab[onclick*="'plans'"],
+body.ll-solo-quiz #tab-plans,
+body.ll-solo-quiz [onclick="importFromLocalStorage()"],
+body.ll-solo-quiz label:has(#myclass-stats-file),
+body.ll-solo-quiz [onclick="openCodesManager()"],
+body.ll-solo-quiz [onclick="openFeedbackImport()"],
+body.ll-solo-quiz #codes-panel { display: none !important; }
 </style>
 </head>
 <body class="notranslate" translate="no">
@@ -752,6 +763,13 @@ textarea.qe-ce::placeholder, input.qe-ce::placeholder { color: var(--muted); opa
 <!-- ════════════════════════════════════════════════════════
      ⚙️  CONFIGURAZIONE — modifica qui prima di usare l'app
      ════════════════════════════════════════════════════════ -->
+<!-- Configurazione di un ALTRO docente (vedi kit-livelearn/): se accanto a
+     questo file c'è livelearn-config.js, il suo window.LIVELEARN_CONFIG
+     sostituisce email e progetto Firebase qui sotto. Così chi usa una copia
+     di LiveLearn riceve gli aggiornamenti senza toccare questo file.
+     Qui (giacomocreations.github.io) il file non c'è: la richiesta dà 404
+     e vale la configurazione scritta sotto. -->
+<script src="livelearn-config.js"></script>
 <script>
 const CONFIG = {
   // ⚠️ L'email dell'account docente creato in Firebase Authentication.
@@ -768,6 +786,41 @@ const CONFIG = {
     appId:             "1:858581840539:web:81c68ddde0615d03eccc3e"
   }
 };
+(function () {
+  var c = window.LIVELEARN_CONFIG;
+  if (c && c.teacherEmail && c.firebase && c.firebase.databaseURL) {
+    CONFIG.teacherEmail = c.teacherEmail;
+    CONFIG.firebase     = c.firebase;
+    // Solo quiz: niente StudentApp, piani personalizzati, MyClass, drill.
+    CONFIG.soloQuiz     = c.soloQuiz !== false;
+    if (CONFIG.soloQuiz) {
+      document.body.classList.add('ll-solo-quiz');
+      document.addEventListener('DOMContentLoaded', function () {
+        var t = document.getElementById('import-classes-title');
+        if (t) t.textContent = '📥 Importa classi (file JSON)';
+        var a = document.querySelector('#launch-mode-assigned p');
+        if (a) a.textContent = 'Gli alunni entrano col codice quando vogliono, entro la scadenza.';
+      });
+    }
+    return;
+  }
+  // Copia pubblicata su un altro sito GitHub senza la sua configurazione
+  // (file mancante o non caricato): meglio fermarsi che collegarsi al
+  // database di giacomocreations con la pagina di un altro docente.
+  var h = location.hostname;
+  if (/\.github\.io$/.test(h) && h !== 'giacomocreations.github.io') {
+    CONFIG.configMancante = true;
+    CONFIG.firebase = null;
+    document.addEventListener('DOMContentLoaded', function () {
+      document.body.innerHTML = '<div style="font-family:sans-serif;max-width:520px;margin:60px auto;padding:24px;' +
+        'border:2px solid #dc2626;border-radius:14px;background:#fef2f2;color:#7f1d1d;line-height:1.5">' +
+        '<h2 style="margin-top:0">⚠️ Configurazione mancante</h2>' +
+        '<p>Non trovo <strong>livelearn-config.js</strong> accanto a LiveLearn.html, oppure il file è incompleto ' +
+        '(servono teacherEmail e firebase con databaseURL).</p>' +
+        '<p>Ricarica la pagina; se il messaggio resta, controlla il file nel repository.</p></div>';
+    });
+  }
+})();
 </script>
 
 <!-- ════════════════════
@@ -916,7 +969,7 @@ const CONFIG = {
     <div id="tab-classes" class="tab-panel">
       <!-- Pannello importazione inline -->
       <div style="background:white; border:1px solid #e8e5e0; border-radius:12px; padding:24px; margin-bottom:20px;">
-        <h3 style="font-size:15px; font-weight:700; margin-bottom:4px;">📥 Importa classi da MyClass Analytics</h3>
+        <h3 id="import-classes-title" style="font-size:15px; font-weight:700; margin-bottom:4px;">📥 Importa classi da MyClass Analytics</h3>
         <p class="text-muted mb-16">Scegli un metodo:</p>
         <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
           <button class="btn btn-primary btn-sm" onclick="importFromLocalStorage()">⚡ Lettura automatica (stesso browser)</button>
@@ -1837,7 +1890,7 @@ let db, auth;
 let _authReady = Promise.resolve(null);
 let _authResolve = function(){};
 try {
-  if (typeof firebase !== 'undefined') {
+  if (typeof firebase !== 'undefined' && CONFIG.firebase) {
 
     // evita doppia inizializzazione (causa principale del crash)
     if (!firebase.apps.length) {
@@ -6668,6 +6721,7 @@ async function _llSendFCMv1(projectId, token, title, body, classId, accessToken)
 
 // Invia notifica FCM + AVVISO in bacheca per una sessione assegnata
 async function _sendAssignedNotification(code, classId, title, deadline) {
+  if (CONFIG.soloQuiz) return;   // senza StudentApp non c'e' bacheca da avvisare
   const baseUrl = window.location.href.split('?')[0];
   const link = baseUrl + '?code=' + code;
   const scadStr = deadline ? ' — scade il ' + deadline : '';
@@ -6734,7 +6788,7 @@ function _showAssignedConfirm(code, classId, title, deadline) {
       '<div style="font-size:11px;font-weight:700;color:#7c3aed;letter-spacing:.5px;margin-bottom:4px">CODICE DI ACCESSO</div>' +
       '<div style="font-size:36px;font-weight:900;color:#5b21b6;letter-spacing:6px;font-family:monospace">' + code + '</div>' +
     '</div>' +
-    (classId ? '<div style="font-size:11px;color:#059669;font-weight:600;margin-bottom:10px">✅ AVVISO inviato in bacheca StudentApp</div>' : '') +
+    (classId && !CONFIG.soloQuiz ? '<div style="font-size:11px;color:#059669;font-weight:600;margin-bottom:10px">✅ AVVISO inviato in bacheca StudentApp</div>' : '') +
     '<div style="display:flex;gap:8px;justify-content:center;">' +
       '<button onclick="navigator.clipboard.writeText(\'' + code + '\').then(()=>{this.textContent=\'✓ Copiato!\';setTimeout(()=>this.textContent=\'📋 Copia codice\',1500)})" ' +
         'style="padding:8px 16px;background:#5b21b6;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">📋 Copia codice</button>' +
@@ -10055,7 +10109,8 @@ function _llNotifySync(esito) {
   if (esito.auto.length) {
     _llToast('🔗 Associati automaticamente al registro' + dove + ': ' + esito.auto.join(', ') + '. Controlla e, se serve, cambia con 👤→📋.', 'info', 9000);
   }
-  if (esito.senzaCodice.length) {
+  // Solo quiz: nessun alunno ha il codice personale (serve solo alla StudentApp)
+  if (esito.senzaCodice.length && !CONFIG.soloQuiz) {
     _llToast('⚠️ Non riconosciuti' + dove + ' (non visibili in StudentApp): ' + esito.senzaCodice.join(', ') + '. ' +
       (esito.attiva ? 'Alla chiusura della sessione quelli riconoscibili si associano da soli; gli altri con 👤→📋.'
                     : 'Apri la sessione e associali con 👤→📋.'), 'warn', 12000);

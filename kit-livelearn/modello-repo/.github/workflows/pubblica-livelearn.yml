@@ -1,0 +1,61 @@
+# Pubblica il sito con l'ULTIMA versione di LiveLearn.
+#
+# LiveLearn.html non sta in questo repository: ad ogni esecuzione si scarica
+# da giacomocreations/myclass e gli si mette accanto livelearn-config.js
+# (la configurazione di questo sito). Parte:
+#   - ogni notte (gli aggiornamenti arrivano da soli entro un giorno);
+#   - a ogni modifica di questo repository;
+#   - a mano: Actions → "Pubblica LiveLearn" → Run workflow.
+# Richiede: Settings → Pages → Source = "GitHub Actions".
+name: Pubblica LiveLearn
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  pubblica:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scarica l'ultima versione di LiveLearn
+        run: |
+          set -e
+          mkdir -p sito
+          curl -fsSL --retry 4 \
+            https://raw.githubusercontent.com/giacomocreations/myclass/main/LiveLearn.html \
+            -o sito/LiveLearn.html
+          # Se il file scaricato non è quello giusto ci si ferma:
+          # il sito resta com'era all'ultima pubblicazione riuscita.
+          test "$(wc -c < sito/LiveLearn.html)" -gt 500000
+          grep -q 'LIVELEARN_CONFIG' sito/LiveLearn.html
+          if grep -q 'DA-COMPILARE' livelearn-config.js; then
+            echo "::error::livelearn-config.js non è ancora compilato"
+            exit 1
+          fi
+          cp livelearn-config.js index.html sito/
+          touch sito/.nojekyll
+          echo "Versione di LiveLearn: $(sha256sum sito/LiveLearn.html | cut -c1-12)"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: sito
+      - id: deploy
+        uses: actions/deploy-pages@v4
