@@ -19,3 +19,14 @@ Dopo la pubblicazione conviene una prova veloce con un alunno tester (LiveLearn 
 pubblicare una lezione da MyClass, avviare una sessione in LiveLearn, entrare e consegnare dal tester,
 aprire la StudentApp e mandare un messaggio al prof. Se qualcosa dà "permission denied",
 si ripubblica `database.rules.prima.json`.
+
+## Copie di altri docenti (`kit-livelearn/`)
+
+Il kit contiene le stesse regole, solo il ramo `livelearn` e con l'UID al posto del tuo.
+Quando cambi `database.rules.json`, rigenera anche quelle:
+
+```bash
+python3 kit-livelearn/aggiorna-regole.py
+```
+
+Chi usa una copia le ripubblica quando LiveLearn dà "permission denied" dopo un aggiornamento.
