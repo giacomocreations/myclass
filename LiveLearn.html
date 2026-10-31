@@ -359,7 +359,27 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--primary); 
 #session-search:focus { outline:none; border-color:var(--primary); }
 .sfilter-search-clear { position:absolute; right:8px; background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:13px; padding:2px 4px; line-height:1; }
 .session-row { background: white; border-radius: var(--radius); border: 2px solid var(--border); padding: 16px 22px; display: flex; align-items: center; justify-content: space-between; gap: 16px; box-shadow: var(--shadow); }
-.session-info h3 { font-size: 16px; font-weight: 800; display:flex; align-items:center; gap:10px; flex-wrap:wrap; line-height:1.3; }
+.session-info h3 { font-size: 16px; font-weight: 800; display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; column-gap:10px; line-height:1.3; }
+.session-info h3 > span:only-child { grid-column: 1 / -1; }
+/* Riga sessione: info a sinistra, pulsanti a destra in colonne FISSE (stesso
+   posto in tutte le righe; se un pulsante non serve, resta il suo spazio vuoto).
+   Le opzioni che esistono solo per alcune sessioni (ripetibile, togli scadenza,
+   → esercitazione) stanno accanto all'etichetta che modificano. */
+.session-row { display:grid !important; grid-template-columns:minmax(0,1fr) auto; }
+.sess-actions { display:grid; grid-template-columns:80px 120px 112px 104px 42px 78px 42px; gap:8px; align-items:center; }
+.sess-actions > * { justify-self:stretch; text-align:center; white-space:nowrap; }
+.sess-actions .btn { justify-content:center; padding-left:6px; padding-right:6px; }
+.sess-actions .session-code-big { font-size:18px; letter-spacing:4px; }
+.sess-actions .badge { justify-self:center; }
+.sess-opt { font:inherit; font-size:12.5px; font-weight:700; padding:3px 10px; border-radius:20px; border:1.5px solid var(--border); background:#fff; color:#555; cursor:pointer; white-space:nowrap; line-height:1.4; }
+.sess-opt:hover { border-color:var(--primary); color:var(--primary); }
+.sess-opt.on { background:#ede9fe; color:#5b21b6; border-color:#c4b5fd; }
+.sess-tag-x { margin-left:6px; border:none; background:rgba(0,0,0,.08); color:inherit; border-radius:50%; width:18px; height:18px; line-height:18px; padding:0; font-size:11px; font-weight:900; cursor:pointer; }
+.sess-tag-x:hover { background:var(--danger); color:#fff; }
+@media (max-width: 1100px) {
+  .session-row { grid-template-columns:1fr; }
+  .sess-actions { justify-content:start; overflow-x:auto; }
+}
 /* Classe della sessione: grande e colorata (un colore fisso per classe), così si
    riconosce a colpo d'occhio. Lo stesso colore fa da striscia a sinistra della riga. */
 .session-row.has-class { border-left: 8px solid var(--cc); }
@@ -3189,7 +3209,7 @@ function renderSessionList() {
 
     // Badge scadenza per sessioni assegnate
     const deadlineBadge = s.deadline
-      ? `<span class="badge" style="background:#ede9fe;color:#5b21b6;">📅 scade ${s.deadline}</span>`
+      ? `<span class="badge" style="background:#ede9fe;color:#5b21b6;">📅 scade ${s.deadline}${isAssigned ? `<button class="sess-tag-x" onclick="removeSessionDeadline('${code}')" title="Togli la scadenza: gli alunni possono svolgerla quando vogliono">✕</button>` : ''}</span>`
       : '';
 
     // Classe: grande, colorata, prima del titolo
@@ -3208,22 +3228,18 @@ function renderSessionList() {
 
     // Pulsante "Converti in Esercitazione" — solo per sessioni chiuse di tipo test
     const convertBtn = (!isActive && !isAssigned && mode === 'test')
-      ? `<button class="btn btn-sm" onclick="convertSessionToExercise('${code}')" title="Rinomina questa sessione come Esercitazione" style="white-space:nowrap;">🎮 → Esercit.</button>`
+      ? `<button class="sess-opt" onclick="convertSessionToExercise('${code}')" title="Rinomina questa sessione come Esercitazione">→ 🎮 Esercitazione</button>`
       : '';
 
     // Pulsante "PDF tutti" — stessa funzione di Risultati (📥 PDF tutti).
     // Mostrato solo se c'è almeno un partecipante.
     const pdfAllBtn = rc > 0
-      ? `<button class="btn btn-sm" onclick="exportSessionAllPDF('${code}', '${s.activityId}')" title="Scarica i PDF di tutti gli studenti (stessa funzione di Risultati)" style="white-space:nowrap;">📥 PDF tutti</button>`
-      : '';
+      ? `<button class="btn btn-sm" onclick="exportSessionAllPDF('${code}', '${s.activityId}')" title="Scarica i PDF di tutti gli studenti (stessa funzione di Risultati)">📥 PDF tutti</button>`
+      : '<span></span>';
 
     // Assegnate: interruttore "ripetibile" (l'alunno può rifarla quante volte vuole)
     const repeatBtn = isAssigned
-      ? `<button class="btn btn-sm" onclick="toggleSessionRepeatable('${code}', ${s.repeatable ? 'false' : 'true'})" title="${s.repeatable ? 'Gli alunni possono rifarla quante volte vogliono — clicca per permettere un solo tentativo' : 'Un solo tentativo — clicca per permettere di rifarla quante volte vogliono'}" style="white-space:nowrap;${s.repeatable ? 'background:#ede9fe;color:#5b21b6;border-color:#c4b5fd;' : ''}">🔁 ${s.repeatable ? 'Ripetibile' : 'Una volta'}</button>`
-      : '';
-
-    const noDeadlineBtn = isAssigned && s.deadline
-      ? `<button class="btn btn-sm" onclick="removeSessionDeadline('${code}')" title="Togli la scadenza: gli alunni possono svolgerla quando vogliono" style="white-space:nowrap;">🗓 Togli scadenza</button>`
+      ? `<button onclick="toggleSessionRepeatable('${code}', ${s.repeatable ? 'false' : 'true'})" title="${s.repeatable ? 'Gli alunni possono rifarla quante volte vogliono — clicca per permettere un solo tentativo' : 'Un solo tentativo — clicca per permettere di rifarla quante volte vogliono'}" class="sess-opt${s.repeatable ? ' on' : ''}">🔁 ${s.repeatable ? 'Ripetibile' : 'Una volta'}</button>`
       : '';
 
     const statusLabel = isActive ? '● Attiva' : isAssigned ? '📋 Assegnata' : 'Chiusa';
@@ -3237,19 +3253,17 @@ function renderSessionList() {
         <h3>${classBadge}<span>${esc(s.title || 'Sessione')}</span></h3>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;">
           <span class="sess-meta">${fmtDate(s.createdAt)} · ${rc} partecipanti</span>
-          ${modeBadge}${forcedBadge}${deadlineBadge}
+          ${modeBadge}${repeatBtn}${convertBtn}${forcedBadge}${deadlineBadge}
         </div>
       </div>
-      <div class="flex gap-8 flex-center">
-        <span class="session-code-big" style="font-size:18px;">${code}</span>
+      <div class="sess-actions">
+        <span class="session-code-big">${code}</span>
         <span class="badge ${statusClass}">${statusLabel}</span>
         <button class="btn btn-sm" onclick="openLive('${code}', '${s.activityId}')">📊 Risultati</button>
         ${pdfAllBtn}
-        ${repeatBtn}${noDeadlineBtn}
         <button class="btn btn-sm" onclick="renameSession('${code}')" title="Rinomina sessione">✏️</button>
-        ${convertBtn}
-        ${(isActive || isAssigned) ? `<button class="btn btn-danger btn-sm" onclick="forceCloseSession('${code}')">Chiudi</button>` : ''}
-        <button class="btn btn-sm" style="color:var(--danger)" onclick="deleteSession('${code}')">🗑</button>
+        ${(isActive || isAssigned) ? `<button class="btn btn-danger btn-sm" onclick="forceCloseSession('${code}')">Chiudi</button>` : '<span></span>'}
+        <button class="btn btn-sm" style="color:var(--danger)" onclick="deleteSession('${code}')" title="Elimina sessione">🗑</button>
       </div>
     `;
     sl.appendChild(row);
