@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rules &amp; Obligations – must / have to / mustn't / don't have to</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700;800&family=Patrick+Hand&family=Playfair+Display:wght@700&display=swap');
+
+  :root {
+    --bg: #0a0d16;
+    --surface: #121827;
+    --card: #1a2234;
+    --accent: #3ec6ff;
+    --accent2: #ffb547;
+    --gold: #ffd166;
+    --text: #f1f4fa;
+    --muted: #97a3bd;
+    --ob: #2fbf71; --ob-bg: #dcf5e6; --ob-tx: #156c3c;
+    --no: #ef4444; --no-bg: #fde0e0; --no-tx: #a51c1c;
+    --nn: #3b82f6; --nn-bg: #dde9ff; --nn-tx: #1e4fb8;
+    --correct: #06d6a0;
+    --wrong: #ff4d6d;
+    --border: rgba(255,255,255,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; overflow-x: hidden; }
+  body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(ellipse 60% 40% at 15% 10%, rgba(62,198,255,0.12) 0%, transparent 60%), radial-gradient(ellipse 50% 50% at 85% 90%, rgba(255,181,71,0.09) 0%, transparent 60%); pointer-events: none; z-index: 0; }
+  .container { max-width: 1080px; margin: 0 auto; padding: 24px 16px 80px; position: relative; z-index: 1; }
+  .header { text-align: center; margin: 34px 0 18px; }
+  .header .eyebrow { font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  .header h1 { font-family: 'Bebas Neue', sans-serif; font-size: clamp(38px, 8vw, 66px); letter-spacing: 2px; line-height: 1; background: linear-gradient(135deg, #fff 30%, var(--accent) 70%, var(--accent2) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 8px; }
+  .header .subtitle { color: var(--muted); font-size: 14px; }
+
+  .home-link { position: fixed; top: 14px; left: 14px; z-index: 100; display: inline-flex; align-items: center; gap: 7px; padding: 8px 16px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; color: #aaa; text-decoration: none; font-size: 13px; font-weight: 500; backdrop-filter: blur(6px); }
+  .home-link:hover { color: #fff; }
+  #mode-switch { position: fixed; top: 14px; right: 14px; z-index: 101; display: inline-flex; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 3px; backdrop-filter: blur(6px); }
+  #mode-switch button { border: none; background: transparent; color: #aaa; font-family: inherit; font-size: 13px; font-weight: 500; padding: 6px 12px; border-radius: 7px; cursor: pointer; }
+  #mode-switch button[aria-pressed="true"] { background: var(--gold); color: var(--bg); font-weight: 700; }
+  body.mode-home .class-only, body.mode-class .home-only { display: none !important; }
+
+  /* ── scelta della scheda ── */
+  .picker { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-bottom: 14px; }
+  .picker button { border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-family: inherit; font-size: 13px; font-weight: 700; padding: 8px 11px; border-radius: 10px; cursor: pointer; }
+  .picker button:hover { color: var(--text); border-color: rgba(255,255,255,0.2); }
+  .picker button[aria-pressed="true"] { background: var(--accent); color: #06131c; border-color: transparent; }
+  .picker .p1 { border-color: rgba(255,181,71,0.45); color: var(--accent2); }
+  .picker .p1[aria-pressed="true"] { background: var(--accent2); color: #1d1300; }
+
+  .oral-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; margin-bottom: 14px; }
+  .big-btn { border: none; cursor: pointer; font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1.5px; padding: 10px 22px 8px; border-radius: 14px; color: #fff; transition: transform .15s; }
+  .big-btn:hover { transform: translateY(-2px); }
+  .big-btn.part1 { background: linear-gradient(135deg, #ff9f43, #ffb547); color: #1d1300; }
+  .big-btn.draw { background: linear-gradient(135deg, #3ec6ff, #6c7bff); box-shadow: 0 8px 24px rgba(62,198,255,0.3); }
+  .big-btn[aria-pressed="true"] { outline: 3px solid #fff; outline-offset: 2px; }
+
+  /* ── palco: scena + cartello ── */
+  .stage { position: relative; aspect-ratio: 16 / 10; border-radius: 22px; overflow: hidden; border: 1px solid var(--border); box-shadow: 0 20px 60px rgba(0,0,0,0.45); container-type: inline-size; background: #cfe9ff; }
+  .stage > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .card-tag { position: absolute; left: 2.2%; top: 3.5%; background: rgba(10,13,22,0.72); color: #fff; font-weight: 800; font-size: 1.5cqw; padding: .5cqw 1.1cqw; border-radius: 1cqw; backdrop-filter: blur(4px); letter-spacing: .02em; }
+  .card-tag b { color: var(--gold); }
+  @keyframes deal { 0% { transform: translateY(-14px) rotate(-2deg) scale(.96); opacity: 0; } 100% { transform: none; opacity: 1; } }
+  .deal { animation: deal .35s ease; }
+
+  .board { position: absolute; right: 2.5%; top: 5%; bottom: 5%; width: 60%; display: flex; flex-direction: column; padding: 2.2cqw 2.4cqw; font-size: 2.02cqw; line-height: 1.3; overflow: auto; }
+  .b-title { font-weight: 800; font-size: 2.9cqw; line-height: 1.1; }
+  .b-q { font-style: italic; margin: .5cqw 0 1.1cqw; opacity: .85; }
+  .b-rows { display: flex; flex-direction: column; gap: .7cqw; flex: 1; justify-content: flex-start; }
+  .b-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 1cqw; padding: .95cqw 1.1cqw; border-radius: .8cqw; }
+  .b-row .pr b { font-weight: 800; }
+  .b-row .why { display: block; font-size: .78em; font-style: italic; opacity: .8; margin-top: .15cqw; }
+  .chip { display: inline-flex; align-items: center; gap: .4cqw; font-size: 1.32cqw; font-weight: 800; padding: .35cqw .8cqw; border-radius: .6cqw; white-space: nowrap; font-family: 'DM Sans', sans-serif; font-style: normal; letter-spacing: .02em; }
+  .chip.ob { background: var(--ob-bg); color: var(--ob-tx); }
+  .chip.no { background: var(--no-bg); color: var(--no-tx); }
+  .chip.nn { background: var(--nn-bg); color: var(--nn-tx); }
+  .guess { display: inline-flex; gap: .4cqw; }
+  .guess button { width: 3.4cqw; height: 3.4cqw; min-width: 26px; min-height: 26px; border-radius: .7cqw; border: 2px solid rgba(0,0,0,.18); background: #fff; cursor: pointer; font-size: 1.6cqw; font-weight: 900; line-height: 1; color: #333; }
+  .guess button.ob { color: var(--ob-tx); } .guess button.no { color: var(--no-tx); } .guess button.nn { color: var(--nn-tx); }
+  .guess button:hover { transform: scale(1.08); }
+  .b-row.right { box-shadow: inset .5cqw 0 0 var(--ob); }
+  .b-row.wrong { box-shadow: inset .5cqw 0 0 var(--no); }
+  .b-free { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 1.2cqw; }
+  .b-free .big { font-size: 3.1cqw; font-weight: 800; line-height: 1.3; }
+  .b-free .sm { font-size: 2.1cqw; opacity: .85; }
+  .b-free .types { display: flex; gap: 1cqw; flex-wrap: wrap; }
+  .b-free .types .chip { font-size: 1.8cqw; padding: .6cqw 1.2cqw; }
+
+  /* stili dei cartelli, uno per luogo */
+  .bd-bus { background: #ffffff; color: #13233f; border-radius: 1.2cqw; border: .45cqw solid #1f5fbf; box-shadow: 0 1cqw 3cqw rgba(0,0,0,.35); }
+  .bd-bus .b-title { color: #1f5fbf; } .bd-bus .b-row { background: #f1f5fb; }
+  .bd-museum { background: #1d2333; color: #f3ead5; border: .55cqw double #c9a24a; border-radius: .4cqw; box-shadow: 0 1cqw 3cqw rgba(0,0,0,.45); font-family: 'DM Sans', sans-serif; }
+  .bd-museum .b-title { font-family: 'Playfair Display', serif; color: #e8c770; font-size: 3.1cqw; } .bd-museum .b-row { background: rgba(255,255,255,.06); }
+  .bd-camping { background: #fbf3df; color: #3d2a14; border: 1.1cqw solid #8b5a2b; border-radius: 1cqw; box-shadow: 0 1cqw 3cqw rgba(0,0,0,.45), inset 0 0 0 .3cqw #6b4220; }
+  .bd-camping .b-title { color: #6b3f12; } .bd-camping .b-row { background: rgba(139,90,43,.09); }
+  .bd-school { background: #22543d; color: #f4f7f2; border: 1.1cqw solid #a8743f; border-radius: .6cqw; font-family: 'Patrick Hand', cursive; font-size: 2.25cqw; box-shadow: 0 1cqw 3cqw rgba(0,0,0,.4); }
+  .bd-school .b-title { font-size: 3.3cqw; font-weight: 400; color: #fff7c2; } .bd-school .b-row { background: rgba(255,255,255,.06); } .bd-school .b-row .pr b { color: #fff7c2; font-weight: 400; }
+  .bd-party { background: #fff; color: #3a1d46; border-radius: 1.6cqw; border: .5cqw dashed #ff5d8f; box-shadow: 0 1cqw 3cqw rgba(0,0,0,.3); }
+  .bd-party .b-title { color: #d6246e; } .bd-party .b-row { background: #fff1f6; }
+  .bd-pool { background: #ffffff; color: #0d3a5c; border-radius: 1.2cqw; border: .5cqw solid #0aa5d8; box-shadow: 0 1cqw 3cqw rgba(0,0,0,.3); }
+  .bd-pool .b-title { color: #fff; background: #0aa5d8; margin: -2.2cqw -2.4cqw 0; padding: 1.3cqw 2.4cqw; } .bd-pool .b-q { margin-top: 1cqw; } .bd-pool .b-row { background: #eef9fd; }
+  .bd-sport { background: #fdfdfd; color: #1b2a6b; border-radius: .8cqw; border: .7cqw solid #b9c0cc; box-shadow: 0 1cqw 3cqw rgba(0,0,0,.35); font-family: 'Patrick Hand', cursive; font-size: 2.4cqw; }
+  .bd-sport .b-title { font-size: 3.3cqw; font-weight: 400; color: #d62828; } .bd-sport .b-row { background: #f1f3f8; } .bd-sport .b-row .pr b { font-weight: 400; color: #0b4fd8; }
+  .bd-airport { background: #14161c; color: #f2f2f2; border-radius: .8cqw; border: .45cqw solid #2c2f38; box-shadow: 0 1cqw 3cqw rgba(0,0,0,.45); }
+  .bd-airport .b-title { color: #ffd23f; font-family: 'Space Mono', monospace; letter-spacing: .05em; text-transform: uppercase; font-size: 2.6cqw; } .bd-airport .b-row { background: #1f232c; } .bd-airport .b-row .pr b { color: #ffd23f; }
+  .bd-home { background: #fff8c9; color: #4a3b12; border-radius: .3cqw; box-shadow: 0 1.2cqw 3cqw rgba(0,0,0,.35); transform: rotate(-.6deg); font-family: 'Patrick Hand', cursive; font-size: 2.4cqw; }
+  .bd-home .b-title { font-size: 3.4cqw; font-weight: 400; color: #c2410c; } .bd-home .b-free .big { font-weight: 400; }
+
+  /* ── barre e pannelli ── */
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0 6px; align-items: center; }
+  .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 4px; gap: 2px; flex-wrap: wrap; justify-content: center; }
+  .seg button { border: none; background: transparent; color: var(--muted); font-family: inherit; font-size: 13px; font-weight: 700; padding: 8px 11px; border-radius: 9px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #06131c; }
+  .btn { cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 700; padding: 9px 14px; border-radius: 10px; background: var(--card); color: var(--text); border: 1px solid var(--border); }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #06131c; border-color: transparent; }
+  .btn.orange { background: var(--accent2); color: #1d1300; border-color: transparent; }
+  .btn.pink { background: #ff5d8f; color: #fff; border-color: transparent; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .score { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; color: var(--gold); }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 18px 20px; }
+  .panel h3 { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; margin-bottom: 10px; }
+  .panel p, .panel li { font-size: 14px; line-height: 1.6; color: #dde3ef; }
+  .panel ol, .panel ul { padding-left: 20px; }
+  .note { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+
+  .rules-t { width: 100%; border-collapse: separate; border-spacing: 0 6px; font-size: 14px; }
+  .rules-t td { padding: 8px 10px; vertical-align: middle; }
+  .rules-t td:first-child { border-radius: 10px 0 0 10px; } .rules-t td:last-child { border-radius: 0 10px 10px 0; }
+  .rules-t tr.ob td { background: rgba(47,191,113,.12); } .rules-t tr.no td { background: rgba(239,68,68,.12); } .rules-t tr.nn td { background: rgba(59,130,246,.14); }
+  .rules-t .m { font-weight: 800; white-space: nowrap; }
+  .rules-t small { display: block; color: var(--muted); }
+  .warn-box { background: rgba(255,181,71,.1); border: 1px solid rgba(255,181,71,.35); border-radius: 12px; padding: 12px 14px; margin-top: 10px; }
+  .warn-box li { font-size: 13.5px; }
+
+  .say-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start; padding: 10px 0; border-bottom: 1px dashed var(--border); }
+  .say-row:last-child { border-bottom: none; }
+  .say-row .n { font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: var(--muted); line-height: 1; padding-top: 3px; }
+  .say-row .pp { font-size: 15px; font-weight: 600; }
+  .say-row .model { color: var(--correct); font-size: 14.5px; margin-top: 4px; }
+  .say-row .fb { font-size: 13.5px; margin-top: 4px; }
+  .say-row .acts { display: flex; gap: 4px; }
+  .say-row .acts button { width: 36px; height: 34px; padding: 0; font-size: 15px; }
+  .ok { color: var(--correct); font-weight: 700; } .ko { color: var(--wrong); font-weight: 700; } .half { color: var(--gold); font-weight: 700; }
+
+  .idea { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 4px; }
+  .idea span { font-size: 13px; font-weight: 600; padding: 4px 9px; border-radius: 7px; background: var(--card); }
+  .idea span b { color: var(--accent2); }
+  .idea.no span { background: rgba(239,68,68,.12); } .idea.nn span { background: rgba(59,130,246,.14); } .idea.ob span { background: rgba(47,191,113,.12); }
+  .model-text { background: var(--card); border-left: 3px solid var(--correct); border-radius: 0 12px 12px 0; padding: 12px 14px; margin-top: 10px; font-size: 15px; line-height: 1.6; }
+  .model-text b { color: var(--accent); }
+  .heard { background: var(--card); padding: 10px 12px; border-radius: 10px; font-style: italic; margin: 10px 0 8px; font-size: 14px; }
+  .checklist { list-style: none; padding: 0 !important; }
+  .checklist li { font-size: 14px; }
+
+  .timer-row { display: inline-flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 4px 6px 4px 10px; }
+  .timer { font-family: 'Bebas Neue', sans-serif; font-size: 34px; letter-spacing: 2px; line-height: 1; min-width: 80px; font-variant-numeric: tabular-nums; }
+  .timer.run { color: var(--correct); } .timer.warn { color: var(--gold); } .timer.over { color: var(--wrong); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .45; } }
+  .toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%); background: var(--correct); color: #032; font-weight: 800; padding: 10px 18px; border-radius: 12px; z-index: 200; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+
+  @media (max-width: 760px) {
+    .grid2 { grid-template-columns: 1fr; }
+    .header { margin-top: 56px; }
+    .rules-t, .rules-t tbody, .rules-t tr, .rules-t td { display: block; }
+    .rules-t tr { border-radius: 10px; overflow: hidden; margin-bottom: 6px; }
+    .rules-t td { border-radius: 0 !important; padding: 5px 12px; }
+    #mode-switch button { padding: 6px 8px; font-size: 12px; }
+    /* su telefono: la scena diventa una fascia, il cartello sta sotto e si legge bene */
+    .stage { aspect-ratio: auto; container-type: normal; overflow: visible; background: none; border: none; box-shadow: none; }
+    .stage > svg { position: relative; height: 150px; border-radius: 16px; }
+    .card-tag { font-size: 12px; padding: 4px 8px; border-radius: 8px; left: 10px; top: 10px; }
+    .board { position: relative; inset: auto; width: auto; margin-top: -26px; font-size: 15px; padding: 16px; }
+    .board .b-title { font-size: 20px; } .bd-school, .bd-sport, .bd-home { font-size: 17px; } .bd-school .b-title, .bd-sport .b-title, .bd-home .b-title { font-size: 23px; }
+    .b-q { margin: 4px 0 10px; } .b-rows { gap: 6px; } .b-row { padding: 8px 10px; border-radius: 9px; gap: 8px; }
+    .chip { font-size: 11px; padding: 3px 7px; border-radius: 6px; }
+    .guess button { width: 30px; height: 30px; font-size: 15px; border-radius: 7px; }
+    .b-free .big { font-size: 19px; } .b-free .sm { font-size: 14px; } .b-free .types .chip { font-size: 12px; padding: 5px 9px; }
+    .bd-pool .b-title { margin: -16px -16px 0; padding: 12px 16px; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+</style>
+<script src="font-zoom.js" defer></script>
+</head>
+<body class="mode-home">
+
+<a class="home-link" href="index.html">← Home</a>
+<div id="mode-switch" role="group" aria-label="Modalità">
+  <button type="button" data-mode="home" onclick="setMode('home')">🏠 At home</button>
+  <button type="button" data-mode="class" onclick="setMode('class')">📺 Oral test</button>
+</div>
+
+<div class="container">
+  <div class="header">
+    <div class="eyebrow">must · have to · mustn't · don't have to · 3ª</div>
+    <h1>Rules &amp; Obligations</h1>
+    <div class="subtitle">Guarda il luogo, leggi la regola e dilla a voce con il modale giusto</div>
+  </div>
+
+  <!-- AT HOME: scelgo la scheda -->
+  <div class="picker home-only" id="picker"></div>
+
+  <!-- ORAL TEST: parte 1, pesca, timer -->
+  <div class="oral-bar class-only">
+    <button type="button" class="big-btn part1" id="btn-part1" onclick="goPart1()">🏠 Parte 1 · Chores</button>
+    <button type="button" class="big-btn draw" id="btn-draw" onclick="drawCard()">🎴 Parte 2 · Pesca una scheda</button>
+    <span class="timer-row"><span class="timer" id="tm-main">2:00</span><button type="button" class="btn" id="tm-btn" onclick="timerToggle()">⏱ Avvia</button><button type="button" class="btn" onclick="timerReset()" title="Azzera il timer">↺</button></span>
+    <button type="button" class="btn pink" onclick="openTeacherWin()">🖥️ Finestra docente</button>
+  </div>
+
+  <div class="stage" id="stage">
+    <svg id="scene" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice" aria-hidden="true"></svg>
+    <div class="card-tag" id="card-tag"></div>
+    <div class="board" id="board"></div>
+  </div>
+
+  <!-- AT HOME: come usare il cartello -->
+  <div class="bar home-only" id="hint-bar">
+    <div class="seg" role="group" aria-label="Indizi">
+      <button type="button" data-hint="hints" onclick="setHint('hints')">💡 Con indizi</button>
+      <button type="button" data-hint="game" onclick="setHint('game')">🎯 Che regola è?</button>
+      <button type="button" data-hint="none" onclick="setHint('none')">🙈 Senza indizi (come in verifica)</button>
+    </div>
+    <span class="score" id="game-score"></span>
+  </div>
+
+  <!-- ═══════════ AT HOME ═══════════ -->
+  <div class="home-only" id="home-cards">
+    <div class="grid2">
+      <div class="panel">
+        <h3>🗣️ Dillo a voce</h3>
+        <p>Trasforma ogni regola in una frase completa, <b>ad alta voce</b>. Se riesci, aggiungi il motivo con <b>because</b>.</p>
+        <div id="say"></div>
+        <div class="bar" style="justify-content:flex-start">
+          <button type="button" class="btn" onclick="toggleAllModels()" id="btn-models">👁 Mostra tutte le frasi</button>
+          <button type="button" class="btn" onclick="speakAll()">🔊 Ascolta tutte</button>
+        </div>
+        <p class="note" id="mic-note"></p>
+      </div>
+      <div class="panel">
+        <h3>📌 La regola</h3>
+        <table class="rules-t">
+          <tr class="ob"><td>✔ <b>OBBLIGO</b><small>è una regola / è necessario</small></td><td class="m">MUST · HAVE TO</td><td>You <b>must</b> buy a ticket.<br>You <b>have to</b> buy a ticket.</td></tr>
+          <tr class="no"><td>✖ <b>DIVIETO</b><small>è vietato, non si può</small></td><td class="m">MUSTN'T</td><td>You <b>mustn't</b> smoke on the bus.</td></tr>
+          <tr class="nn"><td>○ <b>NON NECESSARIO</b><small>non sei obbligato, ma puoi farlo</small></td><td class="m">DON'T HAVE TO</td><td>You <b>don't have to</b> buy a souvenir.</td></tr>
+        </table>
+        <div class="warn-box">
+          <b>⚠️ Attenzione!</b>
+          <ul>
+            <li><b>mustn't ≠ don't have to</b>: <i>You mustn't run</i> = è vietato. <i>You don't have to run</i> = non serve, ma se vuoi puoi.</li>
+            <li>Dopo <b>must</b> non c'è <b>to</b>: <s>must to</s> → must buy. Non esiste <s>don't must</s> → mustn't.</li>
+            <li>Con he / she / it: <b>he has to</b> · <b>she doesn't have to</b> (must non cambia: he must).</li>
+            <li>Pronuncia: mustn't = /ˈmʌsnt/ (la prima t non si sente) · have to = /ˈhæftə/.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="home-only" id="home-chores" hidden>
+    <div class="grid2">
+      <div class="panel">
+        <h3>💡 Idee per parlare di te</h3>
+        <p><b>✔ I have to / I must</b> · household chores (attenzione a <b>do</b> / <b>make</b>):</p>
+        <div class="idea ob" id="idea-chores"></div>
+        <p style="margin-top:8px"><b>✖ I mustn't</b> · le regole dei genitori (è la parte più difficile!):</p>
+        <div class="idea no" id="idea-no"></div>
+        <p style="margin-top:8px"><b>○ I don't have to</b> · cose che fanno gli altri o non servono:</p>
+        <div class="idea nn" id="idea-nn"></div>
+        <p class="note">Obiettivo: almeno <b>2 frasi per tipo</b> su di te, con <b>because</b>, senza leggere.</p>
+      </div>
+      <div class="panel">
+        <h3>🎤 Parla per 2 minuti</h3>
+        <p>Premi il microfono e parla di te: cosa devi fare a casa, cosa non devi fare, cosa non è necessario. Ti dico cosa hai usato.</p>
+        <div class="bar" style="justify-content:flex-start">
+          <button type="button" class="btn pink" id="btn-free-mic" onclick="toggleFreeMic()">🎤 Parla</button>
+          <button type="button" class="btn" onclick="toggleChoresModel()" id="btn-chmodel">👁 Esempio</button>
+          <button type="button" class="btn" onclick="speak(CHORES_MODEL_TXT)">🔊 Ascolta l'esempio</button>
+        </div>
+        <div id="free-out"></div>
+        <div class="model-text" id="chores-model" hidden></div>
+        <p class="note" id="free-note"></p>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h3>❓ Allenati con le domande a sorpresa</h3>
+      <p>In verifica l'insegnante può farti queste domande: prova a rispondere senza preparare.</p>
+      <ul id="surprise-list"></ul>
+    </div>
+  </div>
+
+  <div class="panel home-only" style="margin-top:16px">
+    <h3>🏠 La verifica è orale: ti alleni parlando, non scrivendo</h3>
+    <ul>
+      <li>Puoi prendere appunti (meglio solo parole chiave), ma in verifica non hai il foglio: <b>devi dire le frasi</b>.</li>
+      <li><b>Ad alta voce</b>, ogni giorno qualche minuto: non nella testa, con la voce.</li>
+      <li><b>Registrati</b> con il telefono (memo vocale) e riascoltati: si sentono subito errori e pause.</li>
+      <li><b>Con qualcuno</b>: un compagno o un familiare ti fa la domanda, tu rispondi senza guardare.</li>
+      <li>Usa <b>🎯 Che regola è?</b>: copri gli indizi e decidi tu se è obbligo, divieto o non necessario.</li>
+      <li>In verifica: prima la <b>Parte 1</b> (household chores, senza prompt), poi <b>una scheda a sorte</b> senza indizi.</li>
+    </ul>
+  </div>
+
+  <!-- ═══════════ ORAL TEST ═══════════ -->
+  <div class="panel class-only" style="margin-top:16px">
+    <h3>📺 Come fare l'interrogazione</h3>
+    <ol>
+      <li>Collega la LIM in modalità <b>Estendi</b> (Windows: <b>⊞ + P</b> → <i>Estendi</i>), apri questa pagina sulla LIM e premi <b>🖥️ Finestra docente</b>: trascina la finestra sul <b>tuo</b> schermo.</li>
+      <li><b>Parte 1 · Chores</b> (sempre per prima, circa 2 minuti): lo studente parla di sé senza prompt. Avvia il timer.</li>
+      <li><b>🎴 Parte 2 · Pesca una scheda</b>: esce un luogo a sorte, senza indizi. Il timer riparte da 3:00.</li>
+      <li>Nella finestra docente hai le soluzioni, le domande a sorpresa e la griglia /15. <b>💾 Salva e prossimo</b> registra voto, scheda e tempi.</li>
+    </ol>
+    <p class="note">Le schede già uscite non si ripetono finché non sono uscite tutte e 8.</p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+//  DATI: le 8 schede (dal file della verifica) + Parte 1
+//  t = ob (obbligo) · no (divieto) · nn (non necessario)
+// ══════════════════════════════════════════════════════════════════
+const CARDS = [
+  { id: 'transport', short: 'Transport', n: 1, title: 'Using Public Transport', q: 'What are the rules when you use public transport?', scene: 'bus', items: [
+    { p: 'Buy a ticket before you get on the bus.', t: 'ob', because: "the inspector can check it" },
+    { p: 'Play loud music on your phone.', t: 'no', because: 'it disturbs the other passengers' },
+    { p: 'Print your ticket.', t: 'nn', it: 'puoi mostrarlo sul telefono', because: 'you can show it on your phone' },
+    { p: 'Show your ticket to the inspector when he asks.', t: 'ob', because: "it's his job to check tickets" },
+    { p: 'Smoke on the bus or train.', t: 'no', because: "it's bad for everybody" },
+    { p: 'Buy a ticket for your baby.', t: 'nn', it: 'i bambini piccoli viaggiano gratis', because: 'babies travel for free' } ] },
+  { id: 'museum', short: 'Museum', n: 2, title: 'Visiting a Museum', q: 'What are the rules when you visit a museum?', scene: 'museum', items: [
+    { p: 'Touch the paintings.', t: 'no', because: "they're old and delicate" },
+    { p: 'Buy a ticket to enter.', t: 'ob', because: "the museum isn't free" },
+    { p: 'Take a guided tour.', t: 'nn', it: 'puoi visitarlo da solo', because: 'you can visit it on your own' },
+    { p: 'Speak quietly in the rooms.', t: 'ob', because: 'other people want to enjoy the art' },
+    { p: 'Take photos with a flash.', t: 'no', because: 'the light can damage the paintings' },
+    { p: 'Buy a souvenir in the gift shop.', t: 'nn', it: 'solo se ti va', because: "it's your choice" } ] },
+  { id: 'camping', short: 'Camping', n: 3, title: 'Camping in the Wild', q: 'What are the rules when you go camping?', scene: 'camping', items: [
+    { p: 'Respect the animals and plants.', t: 'ob', because: 'the forest is their home' },
+    { p: 'Leave your rubbish in the forest.', t: 'no', because: 'it pollutes nature' },
+    { p: 'Sleep in a tent.', t: 'nn', it: 'puoi dormire in camper', because: 'you can sleep in a camper van' },
+    { p: 'Take enough water with you.', t: 'ob', because: "there aren't any shops in the wild" },
+    { p: "Light a fire when it's very windy.", t: 'no', because: "it's very dangerous" },
+    { p: 'Wake up early.', v: 'Wake up', t: 'nn', it: 'sei in vacanza!', because: "you're on holiday" } ] },
+  { id: 'school', short: 'School', n: 4, title: 'At School', q: 'What are the rules at your school?', scene: 'school', items: [
+    { p: 'Arrive on time.', t: 'ob', because: 'lessons start at eight' },
+    { p: 'Cheat in a test.', t: 'no', because: "it isn't fair" },
+    { p: 'Wear a uniform.', t: 'nn', it: "in Italia non c'è la divisa", because: "Italian schools haven't got uniforms" },
+    { p: 'Listen to the teacher.', t: 'ob', because: "it's important to learn" },
+    { p: 'Use your phone in class.', t: 'no', because: 'it distracts you' },
+    { p: 'Study English for three hours every day.', t: 'nn', it: 'basta molto meno!', because: 'a little every day is enough' } ] },
+  { id: 'party', short: 'Party', n: 5, title: 'Organizing a Party', q: 'What are the rules when you organize a party?', scene: 'party', items: [
+    { p: 'Ask your parents for permission.', t: 'ob', because: "it's their house too" },
+    { p: 'Invite all your classmates.', t: 'nn', it: 'inviti chi vuoi', because: 'you can invite who you want' },
+    { p: 'Play loud music after midnight.', t: 'no', it: 'i vicini dormono', because: 'the neighbours are sleeping' },
+    { p: 'Buy food and drinks.', t: 'ob', because: 'your friends are hungry' },
+    { p: 'Buy expensive decorations.', t: 'nn', it: 'non servono', because: "they aren't necessary" },
+    { p: 'Forget to invite your best friend.', t: 'no', because: 'he or she will be sad' } ] },
+  { id: 'pool', short: 'Pool', n: 6, title: 'At the Swimming Pool', q: 'What are the rules at the swimming pool?', scene: 'pool', items: [
+    { p: 'Have a shower before you swim.', t: 'ob', because: 'the water must be clean' },
+    { p: 'Run next to the pool.', t: 'no', because: 'the floor is wet and you can fall' },
+    { p: 'Swim all the time.', t: 'nn', it: 'puoi anche riposarti', because: 'you can also relax' },
+    { p: 'Wear a swimming cap.', t: 'ob', because: 'hair makes the water dirty' },
+    { p: 'Push people into the water.', t: 'no', because: "it's dangerous" },
+    { p: 'Swim fast.', t: 'nn', it: "non è una gara", because: "it isn't a race" } ] },
+  { id: 'team', short: 'Sports team', n: 7, title: 'Being in a Sports Team', q: 'What are the rules when you are in a sports team?', scene: 'sport', items: [
+    { p: 'Go to every training session.', t: 'ob', because: 'the team needs you' },
+    { p: 'Arrive late for training.', t: 'no', because: 'the coach gets angry' },
+    { p: 'Buy expensive shoes.', t: 'nn', it: 'vanno bene anche quelle normali', because: 'normal shoes are OK too' },
+    { p: 'Wear the team shirt for the matches.', t: 'ob', because: "it's the rule" },
+    { p: 'Shout at the referee.', t: 'no', because: "it's rude" },
+    { p: 'Win every match.', t: 'nn', it: 'impossibile!', because: "it's impossible" } ] },
+  { id: 'airport', short: 'Airport', n: 8, title: 'At the Airport', q: 'What are the rules at the airport?', scene: 'airport', items: [
+    { p: 'Show your passport or ID card.', t: 'ob', because: 'they have to check who you are' },
+    { p: 'Put knives or scissors in your small bag.', t: 'no', because: "it's dangerous on the plane" },
+    { p: 'Take a big suitcase.', t: 'nn', it: 'puoi viaggiare con uno zaino', because: 'you can travel with a backpack' },
+    { p: 'Be at the gate 30 minutes before departure.', t: 'ob', because: "the plane doesn't wait for you" },
+    { p: 'Smoke on the plane.', t: 'no', because: "it's dangerous and it's against the law" },
+    { p: 'Buy food on the plane.', t: 'nn', it: 'puoi portarti un panino', because: 'you can bring a sandwich' } ] },
+];
+const CHORES = { id: 'chores', n: 0, title: 'Doing Household Chores', q: "What do you have to do at home? What mustn't you do? What don't you have to do?", scene: 'home' };
+
+const TYPE = {
+  ob: { sym: '✔', it: 'OBBLIGO', mod: 'must / have to' },
+  no: { sym: '✖', it: 'DIVIETO', mod: "mustn't" },
+  nn: { sym: '○', it: 'NON NECESSARIO', mod: "don't have to" },
+};
+
+const CHORE_IDEAS = ['<b>make</b> my bed', '<b>do</b> the washing-up', '<b>do</b> the washing', '<b>do</b> the ironing', '<b>do</b> the vacuuming', '<b>lay</b> the table', '<b>clear</b> the table', '<b>cook</b> dinner', '<b>take</b> the rubbish out', '<b>tidy</b> my room', '<b>feed</b> the cat', '<b>walk</b> the dog', '<b>do</b> the shopping'];
+const NO_IDEAS = ['play video games after 10 p.m.', 'come home late', 'leave my room in a mess', 'use my phone at dinner', 'eat in my bedroom', 'invite friends without asking'];
+const NN_IDEAS = ['do the ironing (my mum does it)', 'cook dinner', 'do the shopping', 'clean the bathroom', 'get up early on Sunday'];
+const SURPRISE = ['Who does the washing-up in your family?', 'Does your brother / sister have to … ?', 'What did you have to do last weekend?', 'Is it fair? Why?'];
+const EXTRA_Q = [
+  { q: 'Tell me about your brother / a friend.', a: 'He has to … / She doesn\'t have to …', why: 'terza persona' },
+  { q: 'Do you have to wear a uniform at school?', a: "No, I don't.", why: 'domanda e risposta breve' },
+  { q: 'What did you have to do at primary school?', a: 'I had to …', why: 'passato (solo se fatto in classe)' },
+];
+const CHORES_MODEL_TXT = "At home I have to make my bed every morning because my mum says it's important. I must do the washing-up after dinner, because my parents work all day. I have to feed the cat too. I mustn't play video games after ten o'clock because I have to sleep, and I mustn't leave my room in a mess. I don't have to do the ironing because my dad does it, and I don't have to cook dinner, because my mum is a great cook!";
+
+// ══════════════════════════════════════════════════════════════════
+//  UTILITÀ
+// ══════════════════════════════════════════════════════════════════
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const rnd = n => Math.floor(Math.random() * n);
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+const verbOf = it => it.v || it.p.split(' ')[0];
+const promptHTML = it => { const v = verbOf(it); return `<b>${esc(v)}</b>${esc(it.p.slice(v.length))}`; };
+const lc1 = s => s.charAt(0).toLowerCase() + s.slice(1);
+function model(it, opts = {}) {
+  const base = lc1(it.p).replace(/\.$/, '');
+  const mod = it.t === 'ob' ? (opts.both ? 'must / have to' : opts.must ? 'must' : 'have to') : it.t === 'no' ? "mustn't" : "don't have to";
+  return `You ${mod} ${base}${opts.noBecause ? '' : ` because ${it.because}`}.`;
+}
+let toastT;
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 1800); }
+
+// ══════════════════════════════════════════════════════════════════
+//  SCENE (sfondi SVG 1600×1000: il cartello sta a destra, la scena a sinistra)
+// ══════════════════════════════════════════════════════════════════
+const R = (x, y, w, h, f, extra = '') => `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${f}" ${extra}/>`;
+const C = (x, y, r, f, extra = '') => `<circle cx="${x}" cy="${y}" r="${r}" fill="${f}" ${extra}/>`;
+const P = (d, f, extra = '') => `<path d="${d}" fill="${f}" ${extra}/>`;
+function cloud(x, y, s = 1) { return `<g transform="translate(${x},${y}) scale(${s})" fill="#fff"><ellipse cx="0" cy="0" rx="60" ry="28"/><ellipse cx="-40" cy="10" rx="40" ry="22"/><ellipse cx="44" cy="10" rx="42" ry="22"/><ellipse cx="6" cy="-18" rx="36" ry="26"/></g>`; }
+function pine(x, y, s = 1, c = '#2e7d4f') { return `<g transform="translate(${x},${y}) scale(${s})"><rect x="-10" y="70" width="20" height="40" fill="#6b4220"/><path d="M0,-110 L60,0 L30,0 L75,70 L-75,70 L-30,0 L-60,0 Z" fill="${c}"/></g>`; }
+
+const SCENES = {
+  bus() {
+    let o = `<defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cc8ff"/><stop offset="1" stop-color="#d9f0ff"/></linearGradient></defs>`;
+    o += R(0, 0, 1600, 1000, 'url(#g1)') + cloud(180, 120, 1.1) + cloud(820, 90, .8);
+    const bc = ['#f4a6a6', '#ffd38a', '#a7d8c9', '#b7b2f0', '#f7c6e0', '#9fd3f5'];
+    for (let i = 0; i < 9; i++) { const x = i * 190 - 20, h = 330 + (i % 3) * 90; o += R(x, 640 - h, 180, h, bc[i % 6], 'stroke="rgba(0,0,0,.12)" stroke-width="3"'); for (let wy = 680 - h; wy < 600; wy += 70) for (let wx = x + 22; wx < x + 160; wx += 52) o += R(wx, wy, 30, 42, '#eef8ff', 'rx="4"'); }
+    o += R(0, 640, 1600, 70, '#cfcfd6') + R(0, 710, 1600, 290, '#5b5f6b') + R(0, 706, 1600, 10, '#9a9aa6');
+    for (let x = 30; x < 1600; x += 160) o += R(x, 850, 90, 12, '#f2f2f2', 'rx="4"');
+    // autobus
+    o += `<g transform="translate(40,410)">` + R(0, 0, 560, 300, '#e63946', 'rx="34" stroke="#9e1d29" stroke-width="6"') + R(0, 220, 560, 26, '#ffd166');
+    for (let i = 0; i < 4; i++) o += R(30 + i * 115, 40, 95, 110, '#bfe6ff', 'rx="12" stroke="#7a1520" stroke-width="5"');
+    o += R(490, 40, 50, 150, '#bfe6ff', 'rx="10" stroke="#7a1520" stroke-width="5"') + R(30, 170, 80, 40, '#2b2b33', 'rx="6"') + `<text x="70" y="200" text-anchor="middle" font-family="Arial Black,Arial" font-weight="900" font-size="28" fill="#ffd166">42</text>`;
+    o += C(120, 300, 46, '#2b2b33') + C(120, 300, 18, '#c9ced6') + C(440, 300, 46, '#2b2b33') + C(440, 300, 18, '#c9ced6') + `</g>`;
+    // fermata
+    o += R(625, 330, 12, 380, '#6b717b') + C(631, 330, 46, '#1f5fbf', 'stroke="#fff" stroke-width="8"') + `<text x="631" y="342" text-anchor="middle" font-family="Arial Black,Arial" font-weight="900" font-size="34" fill="#fff">BUS</text>`;
+    return o;
+  },
+  museum() {
+    let o = R(0, 0, 1600, 1000, '#efe4cf') + R(0, 0, 1600, 70, '#d9c9a8') + R(0, 760, 1600, 240, '#a8794b');
+    for (let x = 0; x < 1600; x += 120) o += R(x, 760, 4, 240, '#8d6239');
+    o += R(0, 740, 1600, 22, '#7a5634');
+    // quadri
+    o += R(70, 170, 290, 230, '#c9a24a', 'stroke="#8a6a24" stroke-width="6"') + R(92, 192, 246, 186, '#9fd3f5') + P('M92,378 L180,270 L240,330 L290,250 L338,330 L338,378 Z', '#4caf50') + C(300, 230, 22, '#ffd166');
+    o += R(420, 200, 170, 230, '#c9a24a', 'stroke="#8a6a24" stroke-width="6"') + R(440, 220, 130, 190, '#e8cfa8') + C(505, 290, 38, '#f3c9a0') + P('M455,410 Q505,320 555,410 Z', '#2f6fdb') + P('M467,280 Q505,220 543,280 Q530,250 505,250 Q480,250 467,280 Z', '#5a3825');
+    o += R(110, 470, 200, 150, '#c9a24a', 'stroke="#8a6a24" stroke-width="6"') + R(128, 488, 164, 114, '#f4842c') + C(210, 545, 34, '#e63946');
+    // corda e colonnine
+    [60, 330, 600].forEach(x => { o += R(x - 8, 600, 16, 150, '#c9a24a') + `<ellipse cx="${x}" cy="752" rx="34" ry="10" fill="#8a6a24"/>` + C(x, 598, 14, '#e8c770'); });
+    o += P('M60,612 Q195,680 330,612 Q465,680 600,612', 'none', 'stroke="#b0122c" stroke-width="12"');
+    return o;
+  },
+  camping() {
+    let o = `<defs><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9a6b"/><stop offset=".55" stop-color="#ffd18a"/><stop offset="1" stop-color="#ffe9b8"/></linearGradient></defs>`;
+    o += R(0, 0, 1600, 1000, 'url(#g2)') + C(320, 300, 70, '#fff3c4', 'opacity=".9"');
+    o += P('M0,560 L220,300 L420,520 L640,260 L900,540 L1120,330 L1400,560 L1600,420 L1600,1000 L0,1000 Z', '#8a7fb8') + P('M640,260 L700,330 L670,340 L640,310 L610,345 L585,325 Z', '#fff');
+    o += R(0, 640, 1600, 360, '#6fb35a') + P('M0,640 Q400,600 800,640 T1600,630 L1600,660 L0,660 Z', '#5aa04a');
+    [[60, 560, 1.1], [600, 590, .9], [1500, 560, 1]].forEach(t => o += pine(...t));
+    // tenda
+    o += P('M140,820 L340,470 L540,820 Z', '#f4842c', 'stroke="#a34d0d" stroke-width="8" stroke-linejoin="round"') + P('M340,470 L300,820 L380,820 Z', '#8a4410') + P('M340,470 L340,820', 'none', 'stroke="#a34d0d" stroke-width="6"');
+    // fuoco
+    o += `<g transform="translate(600,800)">` + R(-60, 18, 120, 18, '#6b4220', 'rx="8" transform="rotate(12)"') + R(-60, 18, 120, 18, '#7a4b28', 'rx="8" transform="rotate(-12)"') + P('M-34,10 Q-40,-50 0,-100 Q8,-40 34,10 Z', '#ff6b35') + P('M-18,10 Q-18,-30 4,-62 Q10,-20 18,10 Z', '#ffd166') + `</g>`;
+    return o;
+  },
+  school() {
+    let o = R(0, 0, 1600, 1000, '#f3ead7') + R(0, 680, 1600, 320, '#c9a074') + R(0, 660, 1600, 26, '#9b7448');
+    o += R(80, 90, 300, 250, '#bfe6ff', 'stroke="#fff" stroke-width="14"') + P('M230,90 L230,340 M80,215 L380,215', 'none', 'stroke="#fff" stroke-width="10"') + cloud(160, 150, .5);
+    o += C(530, 140, 56, '#fff', 'stroke="#2b2b33" stroke-width="8"') + P('M530,140 L530,104 M530,140 L556,152', 'none', 'stroke="#2b2b33" stroke-width="7" stroke-linecap="round"');
+    // banchi
+    [[60, 760], [340, 760], [140, 880], [440, 880]].forEach(([x, y]) => { o += R(x, y, 220, 26, '#d98b3a', 'rx="6"') + R(x + 16, y + 26, 12, 90, '#6b717b') + R(x + 192, y + 26, 12, 90, '#6b717b') + R(x + 70, y - 40, 60, 40, '#2f6fdb', 'rx="4"'); });
+    // globo
+    o += R(450, 560, 120, 18, '#8b5a3c') + C(510, 500, 52, '#3ec6ff', 'stroke="#1d6fa8" stroke-width="5"') + P('M480,480 q20,-20 40,0 q10,30 -20,40 z', '#4caf50') + R(505, 548, 10, 14, '#8b5a3c');
+    return o;
+  },
+  party() {
+    let o = R(0, 0, 1600, 1000, '#5b3a8c') + R(0, 760, 1600, 240, '#3e2766');
+    for (let i = 0; i < 70; i++) o += C((i * 137) % 1600, (i * 89) % 740, 5 + (i % 3) * 2, ['#ffd166', '#ff5d8f', '#3ec6ff', '#06d6a0'][i % 4], 'opacity=".75"');
+    o += P('M0,60 Q400,160 800,60 T1600,60', 'none', 'stroke="#fff" stroke-width="4"');
+    for (let x = 30; x < 1600; x += 80) { const y = 60 + 50 * Math.sin((x / 800) * Math.PI) * 1.4; o += P(`M${x - 26},${y} L${x + 26},${y} L${x},${y + 50} Z`, ['#ff5d8f', '#ffd166', '#3ec6ff', '#06d6a0'][(x / 80 | 0) % 4]); }
+    // palloncini
+    [[120, 330, '#ff5d8f'], [220, 280, '#ffd166'], [300, 350, '#3ec6ff'], [190, 400, '#06d6a0']].forEach(([x, y, c]) => { o += P(`M${x},${y + 70} Q${x + 30},${y + 200} ${x + 80},${y + 330}`, 'none', 'stroke="#fff" stroke-width="3"') + `<ellipse cx="${x}" cy="${y}" rx="56" ry="68" fill="${c}"/>` + `<ellipse cx="${x - 18}" cy="${y - 24}" rx="12" ry="18" fill="#fff" opacity=".45"/>`; });
+    // tavolo e torta
+    o += R(80, 760, 560, 30, '#e9c27b', 'rx="8"') + R(110, 790, 20, 160, '#a8742f') + R(590, 790, 20, 160, '#a8742f');
+    o += R(240, 640, 220, 120, '#ff8fbf', 'rx="16"') + R(240, 690, 220, 22, '#fff') + R(280, 580, 140, 64, '#ffd6e7', 'rx="12"');
+    [300, 350, 400].forEach(x => o += R(x - 5, 540, 10, 40, '#3ec6ff') + P(`M${x},518 q10,14 0,22 q-10,-8 0,-22`, '#ffd166'));
+    return o;
+  },
+  pool() {
+    let o = R(0, 0, 1600, 1000, '#e8f6fb');
+    for (let x = 0; x < 1600; x += 60) for (let y = 0; y < 560; y += 60) o += R(x + 2, y + 2, 56, 56, (x / 60 + y / 60) % 2 ? '#d3eef8' : '#e2f4fb');
+    o += R(0, 560, 1600, 80, '#f5f5f5') + R(0, 640, 1600, 360, '#28b0e0');
+    for (let y = 680; y < 1000; y += 60) for (let x = 0; x < 1600; x += 140) o += P(`M${x},${y} q35,-16 70,0 t70,0`, 'none', 'stroke="#9be3fb" stroke-width="5" opacity=".8"');
+    for (let y = 700; y < 1000; y += 110) o += P(`M0,${y} L1600,${y}`, 'none', 'stroke="#ff5d8f" stroke-width="6" stroke-dasharray="20 20" opacity=".7"');
+    // scaletta
+    o += P('M480,520 L480,760 M540,520 L540,760', 'none', 'stroke="#c9ced6" stroke-width="12" stroke-linecap="round"') + P('M480,520 Q480,480 510,480 Q540,480 540,520', 'none', 'stroke="#c9ced6" stroke-width="12"') + R(480, 620, 60, 10, '#c9ced6') + R(480, 690, 60, 10, '#c9ced6');
+    // sedia del bagnino
+    o += P('M100,600 L160,250 M300,600 L240,250 M130,430 L270,430', 'none', 'stroke="#fff" stroke-width="16" stroke-linecap="round"') + R(140, 220, 120, 34, '#e63946', 'rx="8"') + R(140, 150, 20, 80, '#e63946');
+    // salvagente
+    o += C(390, 420, 58, 'none', 'stroke="#e63946" stroke-width="30"') + P('M347,378 l20,20 M433,378 l-20,20 M347,462 l20,-20 M433,462 l-20,-20', 'none', 'stroke="#fff" stroke-width="30"');
+    return o;
+  },
+  sport() {
+    let o = R(0, 0, 1600, 1000, '#8fd3ff') + R(0, 120, 1600, 240, '#5a6478');
+    for (let i = 0; i < 160; i++) o += C((i * 53) % 1600, 140 + ((i * 37) % 200), 12, ['#e63946', '#ffd166', '#f6f6f6', '#3ec6ff', '#ff8fbf'][i % 5]);
+    o += R(0, 360, 1600, 640, '#4caf50');
+    for (let x = 0; x < 1600; x += 200) o += R(x, 360, 100, 640, '#58b85c');
+    o += P('M0,600 L1600,600', 'none', 'stroke="#fff" stroke-width="8" opacity=".8"');
+    // porta
+    o += P('M80,780 L80,480 L520,480 L520,780', 'none', 'stroke="#fff" stroke-width="16" stroke-linejoin="round"');
+    for (let x = 100; x < 520; x += 30) o += P(`M${x},490 L${x - 20},740`, 'none', 'stroke="#fff" stroke-width="2" opacity=".6"');
+    for (let y = 510; y < 780; y += 30) o += P(`M90,${y} L510,${y}`, 'none', 'stroke="#fff" stroke-width="2" opacity=".6"');
+    // pallone e coni
+    o += `<g transform="translate(560,860)">` + C(0, 0, 48, '#fff', 'stroke="#2b2b33" stroke-width="5"') + P('M0,-16 l15,11 -6,18 h-18 l-6,-18 z', '#2b2b33') + `</g>`;
+    [140, 300].forEach(x => o += P(`M${x - 26},900 L${x},820 L${x + 26},900 Z`, '#f4842c') + R(x - 32, 896, 64, 10, '#f4842c', 'rx="3"'));
+    return o;
+  },
+  airport() {
+    let o = R(0, 0, 1600, 1000, '#d6dde6') + R(40, 60, 1520, 560, '#7cc8ff', 'stroke="#8b96a6" stroke-width="16"');
+    for (let x = 40; x < 1600; x += 304) o += R(x - 8, 60, 16, 560, '#8b96a6');
+    o += cloud(250, 200, 1) + cloud(700, 140, .7) + R(48, 520, 1504, 92, '#9aa6b6');
+    // aereo
+    o += `<g transform="translate(330,330) rotate(-12)">` + `<ellipse cx="0" cy="0" rx="230" ry="38" fill="#fff" stroke="#9aa0a8" stroke-width="4"/>` + P('M-40,0 L-120,-150 L-70,-150 L60,0 Z', '#e3e8ee', 'stroke="#9aa0a8" stroke-width="4"') + P('M-200,-10 L-240,-100 L-200,-100 L-160,-10 Z', '#2f6fdb') + P('M-30,10 L-90,110 L-50,110 L40,10 Z', '#e3e8ee', 'stroke="#9aa0a8" stroke-width="4"');
+    for (let x = -150; x < 180; x += 34) o += C(x, -8, 8, '#2f6fdb');
+    o += `</g>`;
+    o += R(0, 620, 1600, 380, '#e9ecf1');
+    for (let x = 0; x < 1600; x += 100) o += P(`M${x},620 L${x - 160},1000`, 'none', 'stroke="#d7dce4" stroke-width="3"');
+    // valigia e zaino
+    o += R(150, 700, 170, 230, '#e63946', 'rx="22" stroke="#9e1d29" stroke-width="6"') + P('M205,700 L205,640 L265,640 L265,700', 'none', 'stroke="#2b2b33" stroke-width="12"') + R(150, 760, 170, 14, '#9e1d29') + C(180, 940, 14, '#2b2b33') + C(290, 940, 14, '#2b2b33');
+    o += R(380, 790, 130, 150, '#2f6fdb', 'rx="40" stroke="#1d4794" stroke-width="6"') + R(405, 860, 80, 50, '#4a86e8', 'rx="12"');
+    return o;
+  },
+  home() {
+    let o = R(0, 0, 1600, 1000, '#fde9cf') + R(0, 720, 1600, 280, '#c8d3dc');
+    for (let x = 0; x < 1600; x += 100) for (let y = 720; y < 1000; y += 100) o += R(x + 2, y + 2, 96, 96, (x / 100 + y / 100) % 2 ? '#b9c6d1' : '#d3dce4');
+    // pensili e lavello
+    o += R(40, 120, 600, 170, '#7fb7a4', 'rx="10" stroke="#5a8d7b" stroke-width="5"') + P('M340,120 L340,290', 'none', 'stroke="#5a8d7b" stroke-width="5"') + C(310, 210, 8, '#fff') + C(370, 210, 8, '#fff');
+    o += R(40, 470, 600, 250, '#7fb7a4', 'stroke="#5a8d7b" stroke-width="5"') + R(30, 450, 620, 30, '#e9e2d6', 'rx="6"');
+    o += R(380, 452, 180, 18, '#b9c0cc', 'rx="6"') + P('M470,452 L470,390 Q470,370 500,370', 'none', 'stroke="#9aa0a8" stroke-width="12" stroke-linecap="round"');
+    // piatti sporchi
+    o += `<ellipse cx="140" cy="440" rx="70" ry="14" fill="#fff" stroke="#c9ced6" stroke-width="4"/><ellipse cx="140" cy="426" rx="64" ry="12" fill="#fff" stroke="#c9ced6" stroke-width="4"/><ellipse cx="140" cy="412" rx="58" ry="11" fill="#fff" stroke="#c9ced6" stroke-width="4"/>`;
+    // scopa e secchio
+    o += P('M720,300 L640,860', 'none', 'stroke="#a8742f" stroke-width="14" stroke-linecap="round"') + P('M600,860 L680,860 L700,940 L580,940 Z', '#f7c948');
+    o += R(760, 820, 120, 120, '#3ec6ff', 'rx="14"') + P('M770,820 Q820,760 870,820', 'none', 'stroke="#2b2b33" stroke-width="6"');
+    // gatto con la ciotola
+    o += `<ellipse cx="300" cy="930" rx="60" ry="16" fill="#e63946"/>` + `<g transform="translate(160,860)"><ellipse cx="0" cy="40" rx="50" ry="40" fill="#8a8f99"/><circle cx="0" cy="-10" r="34" fill="#8a8f99"/><path d="M-28,-30 L-22,-60 L-6,-38 Z M28,-30 L22,-60 L6,-38 Z" fill="#8a8f99"/><circle cx="-12" cy="-12" r="5" fill="#2b2b33"/><circle cx="12" cy="-12" r="5" fill="#2b2b33"/><path d="M50,50 q40,-10 30,-60" fill="none" stroke="#8a8f99" stroke-width="12" stroke-linecap="round"/></g>`;
+    return o;
+  },
+};
+
+// ══════════════════════════════════════════════════════════════════
+//  STATO E RENDER
+// ══════════════════════════════════════════════════════════════════
+const state = { mode: 'home', card: CARDS[0], hint: 'hints', guesses: {}, models: {}, fb: {}, allModels: false, part: 1, deck: [] };
+const isChores = () => state.card.id === 'chores';
+
+function renderStage(deal) {
+  const c = state.card;
+  document.getElementById('scene').innerHTML = SCENES[c.scene]();
+  document.getElementById('card-tag').innerHTML = isChores() ? (state.mode === 'class' ? '<b>Parte 1</b> · Household chores' : '🏠 Parte 1 · Household chores') : `${state.mode === 'class' ? '<b>Parte 2</b> · ' : ''}Scheda <b>${c.n}</b> / 8`;
+  const b = document.getElementById('board');
+  b.className = 'board bd-' + c.scene + (deal ? ' deal' : '');
+  if (isChores()) {
+    b.innerHTML = `<div class="b-title">${esc(c.title)}</div><div class="b-free"><div class="big">What do you <u>have to</u> do at home?<br>What <u>mustn't</u> you do?<br>What <u>don't you have to</u> do?</div><div class="sm">No prompts: talk about you and your home. Say why with <b>because</b>!</div>${state.mode === 'home' ? '<div class="types"><span class="chip ob">✔ I have to / I must</span><span class="chip no">✖ I mustn\'t</span><span class="chip nn">○ I don\'t have to</span></div>' : ''}</div>`;
+    return;
+  }
+  const showHints = state.mode === 'home' && state.hint === 'hints';
+  const game = state.mode === 'home' && state.hint === 'game';
+  b.innerHTML = `<div class="b-title">${c.n}. ${esc(c.title)}</div><div class="b-q">${esc(c.q)}</div><div class="b-rows">${c.items.map((it, i) => {
+    let right = '';
+    const g = state.guesses[i];
+    if (showHints) right = `<span class="chip ${it.t}">${TYPE[it.t].sym} ${TYPE[it.t].it}</span>`;
+    else if (game) right = g ? `<span class="chip ${it.t}">${g === it.t ? '✅' : '❌'} ${TYPE[it.t].sym} ${TYPE[it.t].it}</span>` : `<span class="guess">${['ob', 'no', 'nn'].map(t => `<button type="button" class="${t}" title="${TYPE[t].it}" onclick="guess(${i},'${t}')">${TYPE[t].sym}</button>`).join('')}</span>`;
+    const why = showHints && it.it ? `<span class="why">(${esc(it.it)})</span>` : '';
+    const cls = game && g ? (g === it.t ? ' right' : ' wrong') : '';
+    return `<div class="b-row${cls}"><div class="pr">${promptHTML(it)}${why}</div>${right}</div>`;
+  }).join('')}</div>`;
+  const sc = document.getElementById('game-score');
+  if (game) { const n = Object.keys(state.guesses).length, ok = c.items.filter((it, i) => state.guesses[i] === it.t).length; sc.textContent = n ? `${ok} / ${n}${n === 6 ? (ok === 6 ? ' 🎉' : ok >= 4 ? ' 👍' : ' 💪') : ''}` : ''; }
+  else sc.textContent = '';
+}
+
+function guess(i, t) { if (state.guesses[i]) return; state.guesses[i] = t; renderStage(); }
+function setHint(h) { state.hint = h; state.guesses = {}; document.querySelectorAll('[data-hint]').forEach(b => b.setAttribute('aria-pressed', b.dataset.hint === h)); renderStage(); }
+
+function renderPicker() {
+  const p = document.getElementById('picker');
+  p.innerHTML = `<button type="button" class="p1" data-card="chores" onclick="selectCard('chores')">🏠 Parte 1 · Chores</button>` + CARDS.map(c => `<button type="button" data-card="${c.id}" onclick="selectCard('${c.id}')">${c.n}. ${esc(c.title)}</button>`).join('');
+  p.querySelectorAll('[data-card]').forEach(b => b.setAttribute('aria-pressed', b.dataset.card === state.card.id));
+}
+
+function selectCard(id, deal = true) {
+  state.card = id === 'chores' ? CHORES : CARDS.find(c => c.id === id);
+  state.guesses = {}; state.models = {}; state.fb = {}; state.allModels = false;
+  renderPicker(); renderStage(deal); renderSay();
+  document.getElementById('home-cards').hidden = isChores();
+  document.getElementById('home-chores').hidden = !isChores();
+  document.getElementById('hint-bar').style.visibility = isChores() ? 'hidden' : '';
+  updateTeacherWin();
+}
+
+// ── pannello "Dillo a voce" ──
+function renderSay() {
+  if (isChores()) return;
+  const c = state.card;
+  document.getElementById('say').innerHTML = c.items.map((it, i) => {
+    const show = state.allModels || state.models[i];
+    const fb = state.fb[i] || '';
+    return `<div class="say-row"><div class="n">${i + 1}</div><div><div class="pp">${promptHTML(it)}</div>${show ? `<div class="model">${esc(model(it, { both: true }))}</div>` : ''}${fb ? `<div class="fb">${fb}</div>` : ''}</div><div class="acts">${SpeechRec ? `<button type="button" class="btn" title="Dilla tu" onclick="micRow(${i})" id="mic-${i}">🎤</button>` : ''}<button type="button" class="btn" title="Mostra la frase" onclick="toggleRowModel(${i})">👁</button><button type="button" class="btn" title="Ascolta" onclick="speak(model(state.card.items[${i}]))">🔊</button></div></div>`;
+  }).join('');
+  document.getElementById('btn-models').textContent = state.allModels ? '🙈 Nascondi le frasi' : '👁 Mostra tutte le frasi';
+}
+function toggleRowModel(i) { state.models[i] = !state.models[i]; renderSay(); }
+function toggleAllModels() { state.allModels = !state.allModels; state.models = {}; renderSay(); }
+
+// ══════════════════════════════════════════════════════════════════
+//  VOCE: sintesi e riconoscimento
+// ══════════════════════════════════════════════════════════════════
+function speak(text) {
+  if (!window.speechSynthesis) { toast('Il browser non può leggere ad alta voce'); return; }
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text); u.lang = 'en-GB'; u.rate = 0.9;
+  const vs = speechSynthesis.getVoices(); const v = vs.find(v => /en[-_]GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)); if (v) u.voice = v;
+  speechSynthesis.speak(u);
+}
+function speakAll() { if (isChores()) return; speak(state.card.items.map((it, i) => model(it, { must: i % 2 === 1 })).join(' ')); }
+
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, recBusy = false;
+const norm = s => ' ' + s.toLowerCase().replace(/[’`]/g, "'").replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ') + ' ';
+function detectModal(t) {
+  if (/\b(must not|mustn't|mustnt|must n't)\b/.test(t)) return 'no';
+  if (/\b(don't|do not|dont|doesn't|does not|doesnt) (have|need) to\b/.test(t)) return 'nn';
+  if (/\b(must|have to|has to|have got to|need to)\b/.test(t)) return 'ob';
+  return null;
+}
+function listen(onText, onEnd, continuous) {
+  if (!SpeechRec || recBusy) return false;
+  rec = new SpeechRec(); rec.lang = 'en-GB'; rec.interimResults = false; rec.continuous = !!continuous; rec.maxAlternatives = 1;
+  let text = '';
+  rec.onresult = e => { for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) text += ' ' + e.results[i][0].transcript; };
+  rec.onerror = e => { const n = document.getElementById(isChores() ? 'free-note' : 'mic-note'); if (n) n.textContent = e.error === 'not-allowed' ? "⚠️ Permetti l'uso del microfono al browser." : '⚠️ Non ho sentito bene: riprova.'; };
+  rec.onend = () => { recBusy = false; onEnd && onEnd(); if (text.trim()) onText(text.trim()); };
+  try { rec.start(); recBusy = true; return true; } catch (e) { recBusy = false; return false; }
+}
+function micRow(i) {
+  if (recBusy) { rec.stop(); return; }
+  const btn = document.getElementById('mic-' + i);
+  if (!listen(txt => checkRow(i, txt), () => { const b = document.getElementById('mic-' + i); if (b) b.textContent = '🎤'; })) return;
+  btn.textContent = '⏹';
+  document.getElementById('mic-note').textContent = 'Parla adesso… (si ferma da solo quando smetti)';
+}
+function checkRow(i, raw) {
+  const it = state.card.items[i], t = norm(raw);
+  const got = detectModal(t);
+  const verb = verbOf(it).toLowerCase().split(' ')[0];
+  const verbOk = new RegExp('\\b' + verb + '\\b').test(t);
+  const errs = [];
+  if (/\bmust to\b/.test(t)) errs.push('“must to” ✗ → must + verbo');
+  if (/\b(don't|do not) must\b/.test(t)) errs.push("“don't must” ✗ → mustn't");
+  let line;
+  if (got === it.t) line = `<span class="ok">✅ ${TYPE[it.t].mod}: giusto!</span>`;
+  else if (!got) line = `<span class="ko">❌ Non ho sentito il modale (${TYPE[it.t].mod}).</span>`;
+  else if ((got === 'no' && it.t === 'nn') || (got === 'nn' && it.t === 'no')) line = `<span class="ko">❌ Attenzione: mustn't ≠ don't have to. Qui ci vuole <b>${TYPE[it.t].mod}</b>.</span>`;
+  else line = `<span class="ko">❌ Hai detto ${TYPE[got].mod}: qui ci vuole <b>${TYPE[it.t].mod}</b>.</span>`;
+  if (!verbOk) line += ` <span class="half">🟡 verbo “${verb}”?</span>`;
+  if (/\bbecause\b/.test(t)) line += ' <span class="ok">⭐ because</span>';
+  if (errs.length) line += ` <span class="ko">${errs.join(' · ')}</span>`;
+  state.fb[i] = `<i>“${esc(raw)}”</i><br>${line}`;
+  document.getElementById('mic-note').textContent = '';
+  renderSay();
+}
+
+// Parte 1 a casa: parlato libero sulle faccende
+const CHORE_RE = [
+  ['make my bed', /\bmake (my|the|our) beds?\b/], ['do the washing-up', /\b(do|doing) the (washing[\s-]?up|dishes)\b|\bwash(ing)? the dishes\b/], ['do the washing', /\b(do|doing) the (washing|laundry)\b(?![\s-]?up)/],
+  ['do the ironing', /\b(do|doing) the ironing\b/], ['do the vacuuming', /\b(do|doing) the (vacuuming|hoovering)\b|\b(vacuum|hoover)(ing)? the\b/], ['lay the table', /\b(lay|set|laying|setting) the table\b/],
+  ['clear the table', /\bclear(ing)? the table\b/], ['cook dinner', /\b(cook|make|cooking|making) (the )?(dinner|lunch|breakfast)\b/], ['take the rubbish out', /\b(take|taking) (out )?the (rubbish|trash|bins?)\b/],
+  ['tidy my room', /\b(tidy|clean|tidying|cleaning)( up)? (my|the|our) (bed)?room\b/], ['feed the pet', /\bfeed(ing)? (the|my) (cat|dog|fish|pets?|rabbit)\b/], ['walk the dog', /\bwalk(ing)? the dog\b/],
+  ['do the shopping', /\b(do|doing) the shopping\b/], ['water the plants', /\bwater(ing)? the plants\b/],
+];
+const DOMAKE_ERR = [[/\bmake the (washing[\s-]?up|washing|ironing|shopping|vacuuming)\b/, 'make → do the …'], [/\bdo (my|the) bed\b/, 'do → make my bed']];
+let freeOn = false;
+function toggleFreeMic() {
+  if (recBusy) { rec.stop(); return; }
+  if (!listen(checkFree, () => { freeOn = false; document.getElementById('btn-free-mic').textContent = '🎤 Parla'; }, true)) return;
+  freeOn = true; document.getElementById('btn-free-mic').textContent = '⏹ Ho finito';
+  document.getElementById('free-note').textContent = 'Parla adesso… premi ⏹ quando hai finito.';
+}
+function checkFree(raw) {
+  const t = norm(raw);
+  const chores = CHORE_RE.filter(c => c[1].test(t)).map(c => c[0]);
+  const cnt = re => (t.match(re) || []).length;
+  const ob = cnt(/\bi (must|have to|'ve got to|have got to)\b(?! not)/g), no = cnt(/\bi (mustn't|must not|mustnt)\b/g), nn = cnt(/\bi (don't|do not|dont) have to\b/g), bc = cnt(/\bbecause\b/g);
+  const errs = DOMAKE_ERR.filter(e => e[0].test(t)).map(e => e[1]);
+  if (/\bmust to\b/.test(t)) errs.push('must to → must + verbo');
+  const row = (n, goal, lbl) => `<li class="${n >= goal ? 'ok' : n ? 'half' : 'ko'}">${n >= goal ? '✅' : n ? '🟡' : '❌'} ${lbl}: ${n} / ${goal}</li>`;
+  document.getElementById('free-out').innerHTML = `<div class="heard">“${esc(raw)}”</div><ul class="checklist">${row(ob, 2, '✔ I have to / I must')}${row(no, 2, "✖ I mustn't")}${row(nn, 2, "○ I don't have to")}${row(bc, 2, 'because')}${row(chores.length, 5, 'faccende diverse')}</ul>${chores.length ? `<p class="note">Ho sentito: ${chores.join(' · ')}</p>` : ''}${errs.length ? `<p class="ko" style="font-size:13.5px">⚠️ ${errs.join(' · ')}</p>` : ''}`;
+  document.getElementById('free-note').textContent = '';
+}
+function toggleChoresModel() { const m = document.getElementById('chores-model'); m.hidden = !m.hidden; document.getElementById('btn-chmodel').textContent = m.hidden ? '👁 Esempio' : '🙈 Nascondi'; }
+
+// ══════════════════════════════════════════════════════════════════
+//  ORAL TEST: parti, pesca, timer
+// ══════════════════════════════════════════════════════════════════
+const partTimes = {};
+function goPart1() {
+  savePartTime();
+  state.part = 1; selectCard('chores'); timerSet(120); markParts();
+}
+function drawCard(id) {
+  const wasRunning = !!tmr.startAt;
+  savePartTime();
+  if (!id) {
+    if (!state.deck.length) state.deck = shuffle(CARDS.map(c => c.id));
+    id = state.deck.pop();
+  } else state.deck = state.deck.filter(x => x !== id);
+  state.part = 2; selectCard(id); timerSet(180); markParts();
+  if (wasRunning) timerToggle();
+}
+function savePartTime() { const e = timerElapsed(); if (e > 0) partTimes[state.part] = (partTimes[state.part] || 0) + e; }
+function markParts() { document.getElementById('btn-part1').setAttribute('aria-pressed', state.part === 1 && isChores()); document.getElementById('btn-draw').setAttribute('aria-pressed', state.part === 2); }
+
+const tmr = { dur: 120, startAt: null, acc: 0, iv: null };
+const timerElapsed = () => tmr.acc + (tmr.startAt ? (Date.now() - tmr.startAt) / 1000 : 0);
+const fmtTime = sec => { sec = Math.floor(sec); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); };
+function timerToggle() {
+  if (tmr.startAt) { tmr.acc = timerElapsed(); tmr.startAt = null; clearInterval(tmr.iv); tmr.iv = null; }
+  else { tmr.startAt = Date.now(); tmr.iv = setInterval(renderTimer, 250); }
+  renderTimer();
+}
+function timerSet(sec) { clearInterval(tmr.iv); tmr.iv = null; tmr.startAt = null; tmr.acc = 0; tmr.dur = sec; renderTimer(); }
+function timerReset() { timerSet(tmr.dur); }
+function renderTimer() {
+  const el = timerElapsed(), left = tmr.dur - el, running = !!tmr.startAt;
+  const txt = left >= 0 ? fmtTime(Math.ceil(left - 1e-9)) : '+' + fmtTime(-left);
+  const cls = left < 0 ? 'over' : !running ? '' : left <= 30 ? 'warn' : 'run';
+  const btn = running ? '⏸ Pausa' : el > 0 ? '▶ Riprendi' : '⏱ Avvia';
+  const m = document.getElementById('tm-main');
+  m.textContent = txt; m.className = 'timer ' + cls; document.getElementById('tm-btn').textContent = btn;
+  if (twOpen()) { tw('t-timer').textContent = txt; tw('t-timer').className = 'tv ' + cls; tw('t-tbtn').textContent = btn; tw('t-tlbl').textContent = (state.part === 1 ? 'Parte 1 · circa 2 minuti' : 'Parte 2 · scheda') + (left < 0 ? ` · ⏰ tempo scaduto (${fmtTime(el)})` : ''); }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  GRIGLIA (la stessa della griglia MyClass) · 15 punti
+// ══════════════════════════════════════════════════════════════════
+const GRID = {"id":"g_1793348557302_0","nome":"Rules & Obligations + Household Chores — must / have to / mustn't / don't have to (3ª)","aree":[{"nome":"Modali: must / have to / mustn't / don't have to","max":5,"descrittori":[{"pt":5,"testo":"In entrambe le parti sceglie sempre il modale giusto: must/have to per gli obblighi, mustn't per i divieti, don't have to per ciò che non è necessario. Distingue con sicurezza mustn't da don't have to anche nella produzione libera sui household chores (I have to / I mustn't / I don't have to riferiti a sé). Forma affermativa e negative sempre corrette, verbo base dopo il modale (nessun 'must to' o 'have to + -ing'). Gestisce anche terza persona (has to / doesn't have to) e interrogativa (Do you have to…?)."},{"pt":4,"testo":"Modale corretto nella scheda e nella parte libera, forme affermative e negative comprese. Un errore di forma isolato (es. 'must to', 'he have to') oppure esitazione su terza persona/interrogativa, senza compromettere il significato."},{"pt":3,"testo":"Obblighi (must/have to) e divieti (mustn't) corretti, ma confonde almeno una volta mustn't e don't have to, oppure si corregge solo dopo un'indicazione. Oppure: scheda corretta ma nella parte libera usa quasi solo have to, senza mustn't/don't have to spontanei. Frasi comprensibili."},{"pt":2,"testo":"Forma affermativa corretta ma confonde sistematicamente mustn't e don't have to (es. usa mustn't per tutto ciò che è negativo) oppure usa forme inesistenti come 'don't must'. Errori di forma frequenti."},{"pt":1,"testo":"Produce qualche modale solo con supporto costante; struttura quasi sempre errata (manca il verbo base, modale omesso o in italiano)."},{"pt":0,"testo":"Non produce nessuna frase con un modale riconoscibile."}]},{"nome":"Vocabolario (household chores)","max":5,"descrittori":[{"pt":5,"testo":"Parte libera: nomina senza aiuto almeno 5–6 household chores diversi con collocazioni corrette (do the washing-up, make my bed, tidy my room, take out the rubbish, do the shopping, lay the table…), nessun errore do/make. Nelle motivazioni (because…) usa lessico preciso e personale. Scheda: capisce tutti i prompt."},{"pt":4,"testo":"Parte libera: 4–5 chores diversi, un errore do/make isolato o una collocazione imprecisa. Scheda: capisce tutti i prompt."},{"pt":3,"testo":"Parte libera: 3 chores, lessico di base e generico (clean, help my mum), errori do/make ricorrenti. Scheda: chiede il significato di una o due parole."},{"pt":2,"testo":"Parte libera: 1–2 chores, ricorre all'italiano o a termini generici. Scheda: si limita a ripetere le parole del prompt."},{"pt":1,"testo":"Non sa nominare faccende domestiche anche con aiuto; non capisce più prompt della scheda."},{"pt":0,"testo":"Non produce lessico pertinente."}]},{"nome":"Comunicazione Globale","max":5,"descrittori":[{"pt":5,"testo":"Parte libera: parla in autonomia dei propri household chores senza domande guida (almeno 2 frasi per tipo: devo / non devo / non c'è bisogno), motiva con because e risponde ai follow-up a sorpresa (es. 'Who does the washing-up in your family?') senza sembrare recitato. Scheda fluida. Pronuncia chiara, anche di mustn't /ˈmʌsnt/ e have to /ˈhæftə/."},{"pt":4,"testo":"Parte libera: 4–5 frasi autonome, serve al massimo una domanda guida; risponde ai follow-up con una guida minima. Scheda con pause occasionali. Pronuncia comprensibile."},{"pt":3,"testo":"Parte libera: 2–3 frasi spontanee, poi servono domande guida; oppure testo chiaramente memorizzato che si blocca ai follow-up. Scheda lenta, motiva poco o solo se sollecitato."},{"pt":2,"testo":"Parte libera solo con domande guida continue; frasi spezzate nella scheda. La pronuncia a volte compromette la comprensione."},{"pt":1,"testo":"Produce pochissimo anche con supporto. Comunicazione quasi nulla."},{"pt":0,"testo":"Non comunica."}]}],"conversione_voto":{"3":4,"4":4.5,"5":5,"6":5.5,"7":6,"8":6.5,"9":7,"10":7.5,"11":8,"12":8.5,"13":9,"14":9.5,"15":10}};
+const SHORT = ['Modali', 'Vocabolario', 'Comunicazione'];
+const rub = {};
+let swapCap = false; // scambio mustn't / don't have to → Modali max 3
+const rubDone = () => GRID.aree.every((a, i) => rub[i] !== undefined);
+const rubTot = () => GRID.aree.reduce((s, a, i) => s + (rub[i] || 0), 0);
+const voto = t => String(t < 3 ? 4 : GRID.conversione_voto[t]).replace('.', ',');
+const GKEY = 'roo_voti';
+function loadGrades() { try { return JSON.parse(localStorage.getItem(GKEY)) || []; } catch (e) { return []; } }
+function storeGrades(g) { try { localStorage.setItem(GKEY, JSON.stringify(g)); } catch (e) {} }
+
+// ══════════════════════════════════════════════════════════════════
+//  FINESTRA DOCENTE (secondo schermo)
+// ══════════════════════════════════════════════════════════════════
+let teacherWin = null;
+const TEACHER_HTML = `<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>Finestra docente – Rules & Obligations</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}
+body{margin:0;font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',sans-serif;background:#0f141f;color:#eef2f8;padding:18px 20px 40px;font-size:14px}
+h1{font-size:15px;margin:0 0 4px;color:#3ec6ff;letter-spacing:.04em;text-transform:uppercase}
+h2{font-size:12px;color:#97a3bd;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:20px 0 8px}
+.sub{color:#97a3bd;font-size:12.5px;margin-bottom:12px}
+.bar{display:flex;gap:6px;flex-wrap:wrap}
+button{font-family:inherit;font-size:13px;font-weight:700;border:1px solid rgba(255,255,255,.12);background:#1a2234;color:#eef2f8;padding:7px 11px;border-radius:9px;cursor:pointer}
+button:hover{border-color:#3ec6ff}button.pri{background:#3ec6ff;color:#06131c;border-color:transparent}button.or{background:#ffb547;color:#1d1300;border-color:transparent}button.pink{background:#ff5d8f;color:#fff;border-color:transparent}
+button.on{outline:2px solid #ffd166}
+button.used{opacity:.45}
+.tmr{display:flex;align-items:center;gap:10px;margin:4px 0 12px;padding:10px 12px;border-radius:12px;background:#161e2e;border:1px solid rgba(255,255,255,.1);flex-wrap:wrap}
+.tv{font-size:44px;font-weight:900;line-height:1;min-width:120px;font-variant-numeric:tabular-nums}.tv.run{color:#06d6a0}.tv.warn{color:#ffd166}.tv.over{color:#ff4d6d}.tl{color:#97a3bd;font-size:12.5px}
+.cur{font-size:16px;font-weight:800;color:#ffd166;margin-bottom:6px}
+table.sol{width:100%;border-collapse:separate;border-spacing:0 5px}
+table.sol td{padding:7px 8px;vertical-align:top;font-size:13.5px}
+table.sol tr.ob td{background:rgba(47,191,113,.13)}table.sol tr.no td{background:rgba(239,68,68,.14)}table.sol tr.nn td{background:rgba(59,130,246,.16)}
+table.sol td:first-child{border-radius:8px 0 0 8px;width:46%}table.sol td:last-child{border-radius:0 8px 8px 0}
+.k{font-weight:900;white-space:nowrap}.ob .k{color:#5be39a}.no .k{color:#ff8a8a}.nn .k{color:#8db6ff}
+.md{color:#cfd8e6;font-size:12.5px;margin-top:2px}
+.tip{background:rgba(255,181,71,.1);border:1px solid rgba(255,181,71,.35);border-radius:10px;padding:9px 11px;font-size:13px;margin-top:8px}
+ul{margin:6px 0;padding-left:20px}li{margin:3px 0;line-height:1.45}
+.fields{display:grid;grid-template-columns:2fr 1fr;gap:8px}
+input{width:100%;background:#1a2234;border:1px solid rgba(255,255,255,.12);color:#eef2f8;font-family:inherit;font-size:14px;padding:8px 10px;border-radius:9px}input:focus{outline:none;border-color:#3ec6ff}
+.r{padding:9px 0;border-bottom:1px dashed rgba(255,255,255,.1)}.rh{display:flex;align-items:center;gap:8px}.rn{flex:1;font-weight:700}.rn small{color:#97a3bd;font-weight:500}
+.pts{display:flex;gap:4px}.pts button{width:32px;height:32px;padding:0;border-radius:8px}.pts button.on{background:#ffd166;color:#1a1300;border-color:transparent;outline:none}.pts button:disabled{opacity:.25;cursor:default}
+.rd{font-size:12.5px;color:#c9d2e2;margin-top:5px;line-height:1.45}
+label.cap{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:#ffcf8a;margin-top:8px;cursor:pointer}
+.tot{display:flex;align-items:baseline;gap:12px;margin:12px 0 8px}.tot .v{font-size:40px;font-weight:900;color:#ffd166;line-height:1}.tot .p{color:#97a3bd}
+.msg{min-height:18px;font-weight:700;color:#06d6a0;margin-top:6px}
+table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}table.sv td,table.sv th{text-align:left;padding:5px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}table.sv th{color:#97a3bd;font-size:11px;text-transform:uppercase}td.v{font-weight:800;color:#ffd166}
+.x{background:none;border:none;color:#97a3bd;padding:0 4px}.empty{color:#97a3bd;font-style:italic}
+</style></head><body>
+<h1>🖥️ Finestra docente · Rules &amp; Obligations</h1>
+<div class="sub">Tienila sul tuo schermo: alla LIM si vedono solo la scena e il cartello senza indizi.</div>
+<div class="tmr"><span class="tv" id="t-timer">2:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia</button><button data-act="treset" title="Azzera">↺</button><span class="tl" id="t-tlbl"></span></div>
+<div class="bar"><button class="or" data-act="p1">🏠 Parte 1 · Chores</button><button class="pri" data-act="draw">🎴 Pesca a caso</button></div>
+<div class="bar" id="t-cards" style="margin-top:6px"></div>
+<h2 id="t-h">Soluzioni</h2><div id="t-sol"></div>
+<h2>Valutazione · /15</h2>
+<div class="fields"><input id="t-name" placeholder="Nome dello studente" autocomplete="off"><input id="t-class" placeholder="Classe (es. 3C)" autocomplete="off"></div>
+<div id="t-rub"></div>
+<div class="tot"><span class="v" id="t-voto">–</span><span class="p" id="t-pts">Scegli un punteggio per ogni area</span></div>
+<input id="t-note" placeholder="Nota (facoltativa)" autocomplete="off">
+<div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva e prossimo</button><button data-act="reset">↺ Azzera</button></div>
+<div class="msg" id="t-msg"></div>
+<h2>Voti salvati</h2>
+<div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-act="clear">🗑 Svuota</button></div>
+<div id="t-saved"></div>
+</body></html>`;
+
+function openTeacherWin() {
+  if (teacherWin && !teacherWin.closed) { teacherWin.focus(); updateTeacherWin(); return; }
+  teacherWin = window.open('', 'roo_teacher', 'popup,width=640,height=860');
+  if (!teacherWin) { alert('Il browser ha bloccato la finestra. Consenti i pop-up per questa pagina e riprova.'); return; }
+  const d = teacherWin.document; d.open(); d.write(TEACHER_HTML); d.close();
+  d.addEventListener('click', onTeacherClick);
+  d.addEventListener('change', e => { if (e.target.id === 't-cap') { swapCap = e.target.checked; if (swapCap && rub[0] > 3) rub[0] = 3; renderTeacherRubric(); } });
+  updateTeacherWin(); renderTeacherRubric(); renderTeacherSaved(); renderTimer();
+  moveTeacherWinToOtherScreen();
+}
+async function moveTeacherWinToOtherScreen() {
+  try {
+    if (!('getScreenDetails' in window)) return;
+    const sd = await window.getScreenDetails(); const other = sd.screens.find(x => x !== sd.currentScreen);
+    if (!other || !teacherWin || teacherWin.closed) return;
+    teacherWin.moveTo(other.availLeft + 30, other.availTop + 30); teacherWin.resizeTo(Math.min(680, other.availWidth - 60), other.availHeight - 60);
+  } catch (e) {}
+}
+const twOpen = () => teacherWin && !teacherWin.closed && teacherWin.document.getElementById('t-sol');
+const tw = id => teacherWin.document.getElementById(id);
+
+function updateTeacherWin() {
+  if (!twOpen()) return;
+  const used = CARDS.filter(c => !state.deck.includes(c.id) && state.deck.length).map(c => c.id);
+  tw('t-cards').innerHTML = CARDS.map(c => `<button data-act="card" data-id="${c.id}" class="${state.card.id === c.id ? 'on' : ''} ${used.includes(c.id) && state.card.id !== c.id ? 'used' : ''}" title="${esc(c.title)}">${c.n}. ${esc(c.short)}</button>`).join('');
+  if (isChores()) {
+    tw('t-h').textContent = 'Parte 1 · Household chores (circa 2 minuti, sempre per prima)';
+    tw('t-sol').innerHTML = `<div class="cur">🏠 Doing Household Chores · nessun prompt</div>
+      <ul><li><b>Atteso:</b> almeno 2 frasi per tipo su di sé (<i>I have to / I mustn't / I don't have to</i>) + <b>because</b>, senza domande guida.</li>
+      <li><b>Mustn't a casa</b> = regole dei genitori (orari, videogiochi, camera in disordine): è la parte più difficile, se manca chiedila tu.</li>
+      <li><b>Lessico da ascoltare:</b> collocazioni do / make corrette e varietà di faccende (almeno 5–6 diverse per il 5 in Vocabolario).</li></ul>
+      <div class="tip"><b>Anti-recita · 1–2 domande a sorpresa:</b><ul>${SURPRISE.map(q => `<li>${esc(q)}</li>`).join('')}</ul></div>`;
+    return;
+  }
+  const c = state.card;
+  tw('t-h').textContent = 'Parte 2 · Soluzioni della scheda';
+  tw('t-sol').innerHTML = `<div class="cur">${c.n}. ${esc(c.title)}</div><table class="sol">${c.items.map(it => `<tr class="${it.t}"><td>${promptHTML(it)}${it.it ? `<div class="md">(${esc(it.it)})</div>` : ''}</td><td><span class="k">${TYPE[it.t].sym} ${TYPE[it.t].mod.toUpperCase()}</span><div class="md">${esc(model(it, { both: true }))}</div></td></tr>`).join('')}</table>
+    <div class="tip">Per ✔ accetta sia <b>must</b> che <b>have to</b>. L'errore da sanzionare davvero è lo scambio <b>mustn't / don't have to</b>.</div>
+    <div class="tip" style="background:rgba(62,198,255,.08);border-color:rgba(62,198,255,.3)"><b>Domande extra (per distinguere 8–10):</b><ul>${EXTRA_Q.map(x => `<li>${esc(x.q)} → <i>${esc(x.a)}</i> <span style="color:#97a3bd">(${esc(x.why)})</span></li>`).join('')}</ul></div>`;
+}
+function renderTeacherRubric() {
+  if (!twOpen()) return;
+  tw('t-rub').innerHTML = GRID.aree.map((a, i) => `<div class="r"><div class="rh"><div class="rn">${esc(a.nome)} <small>/ ${a.max}</small></div><div class="pts">${a.descrittori.map(d => `<button class="${rub[i] === d.pt ? 'on' : ''}" data-act="pt" data-r="${i}" data-v="${d.pt}" title="${esc(d.testo)}" ${i === 0 && swapCap && d.pt > 3 ? 'disabled' : ''}>${d.pt}</button>`).join('')}</div></div>${rub[i] !== undefined ? `<div class="rd">${esc(a.descrittori.find(d => d.pt === rub[i]).testo)}</div>` : ''}${i === 0 ? `<label class="cap"><input type="checkbox" id="t-cap" ${swapCap ? 'checked' : ''} style="width:auto;margin-top:2px"> Scambio mustn't / don't have to → Modali al massimo 3</label>` : ''}</div>`).join('');
+  tw('t-voto').textContent = rubDone() ? voto(rubTot()) : '–';
+  tw('t-pts').textContent = rubDone() ? `${rubTot()} / 15 punti` : 'Scegli un punteggio per ogni area';
+}
+function renderTeacherSaved() {
+  if (!twOpen()) return;
+  const g = loadGrades();
+  tw('t-saved').innerHTML = g.length ? `<table class="sv"><tr><th>Data</th><th>Cl.</th><th>Studente</th><th>Voto</th><th>M-V-C</th><th>Scheda</th><th>Tempo</th><th></th></tr>${g.map((x, i) => `<tr><td>${esc(x.date)}</td><td>${esc(x.cls)}</td><td>${esc(x.name)}${x.note ? `<br><small>${esc(x.note)}</small>` : ''}</td><td class="v">${esc(x.voto)}</td><td>${esc(x.det)}</td><td>${esc(x.card)}</td><td>${esc(x.tempo)}</td><td><button class="x" data-act="del" data-i="${i}" title="Elimina">✕</button></td></tr>`).reverse().join('')}</table>` : '<div class="empty">Nessun voto salvato.</div>';
+}
+function twMsg(t) { if (!twOpen()) return; tw('t-msg').textContent = t; clearTimeout(twMsg.t); twMsg.t = setTimeout(() => { if (twOpen()) tw('t-msg').textContent = ''; }, 2600); }
+function onTeacherClick(e) {
+  const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+  const act = b.dataset.act;
+  if (act === 'timer') timerToggle();
+  else if (act === 'treset') timerReset();
+  else if (act === 'p1') goPart1();
+  else if (act === 'draw') drawCard();
+  else if (act === 'card') drawCard(b.dataset.id);
+  else if (act === 'pt') { rub[+b.dataset.r] = +b.dataset.v; renderTeacherRubric(); }
+  else if (act === 'reset') resetRubric();
+  else if (act === 'save') saveGrade();
+  else if (act === 'copy') copyGrades();
+  else if (act === 'clear') { if (teacherWin.confirm('Cancellare tutti i voti salvati su questo computer?')) { storeGrades([]); renderTeacherSaved(); } }
+  else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
+}
+function resetRubric() { Object.keys(rub).forEach(k => delete rub[k]); swapCap = false; if (twOpen()) { tw('t-name').value = ''; tw('t-note').value = ''; } renderTeacherRubric(); }
+function saveGrade() {
+  const name = tw('t-name').value.trim();
+  if (!name) { twMsg('✏️ Scrivi il nome dello studente'); tw('t-name').focus(); return; }
+  if (!rubDone()) { twMsg('✏️ Completa tutte le aree della griglia'); return; }
+  savePartTime();
+  const t1 = partTimes[1] ? fmtTime(partTimes[1]) : '–', t2 = partTimes[2] ? fmtTime(partTimes[2]) : '–';
+  const tot = rubTot();
+  const g = loadGrades();
+  g.push({ name, cls: tw('t-class').value.trim(), voto: voto(tot), punti: tot, det: GRID.aree.map((a, i) => rub[i]).join('-'), card: isChores() ? '–' : `${state.card.n}. ${state.card.title}`, tempo: `${t1} + ${t2}`, note: tw('t-note').value.trim() + (swapCap ? (tw('t-note').value.trim() ? ' · ' : '') + "scambio mustn't/don't have to" : ''), date: new Date().toLocaleDateString('it-IT') });
+  storeGrades(g);
+  twMsg(`✅ Salvato: ${name} → ${voto(tot)}`);
+  Object.keys(partTimes).forEach(k => delete partTimes[k]);
+  resetRubric(); renderTeacherSaved(); goPart1();
+}
+function copyGrades() {
+  const g = loadGrades();
+  if (!g.length) { twMsg('Nessun voto da copiare'); return; }
+  const head = 'Data\tClasse\tStudente\tVoto\tPunti /15\tModali\tVocabolario\tComunicazione\tScheda\tTempo (P1 + P2)\tNota';
+  const txt = [head, ...g.map(x => [x.date, x.cls, x.name, x.voto, x.punti, ...String(x.det).split('-'), x.card, x.tempo, x.note].join('\t'))].join('\n');
+  const w = teacherWin, done = () => twMsg('📋 Elenco copiato: incollalo nel registro o in Excel');
+  const fb = () => { const d = w.document, ta = d.createElement('textarea'); ta.value = txt; d.body.appendChild(ta); ta.select(); try { d.execCommand('copy'); done(); } catch (e) {} ta.remove(); };
+  if (w.navigator.clipboard) w.navigator.clipboard.writeText(txt).then(done, fb); else fb();
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  MODALITÀ E AVVIO
+// ══════════════════════════════════════════════════════════════════
+const MODE_KEY = 'roo_mode';
+function setMode(m) {
+  state.mode = m;
+  document.body.classList.toggle('mode-home', m === 'home');
+  document.body.classList.toggle('mode-class', m === 'class');
+  document.querySelectorAll('#mode-switch button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
+  try { localStorage.setItem(MODE_KEY, m); } catch (e) {}
+  if (m === 'class') goPart1(); else { renderStage(); renderSay(); }
+}
+window.addEventListener('beforeunload', () => { try { if (teacherWin && !teacherWin.closed) teacherWin.close(); } catch (e) {} });
+
+(function init() {
+  document.getElementById('idea-chores').innerHTML = CHORE_IDEAS.map(x => `<span>${x}</span>`).join('');
+  document.getElementById('idea-no').innerHTML = NO_IDEAS.map(x => `<span>${esc(x)}</span>`).join('');
+  document.getElementById('idea-nn').innerHTML = NN_IDEAS.map(x => `<span>${esc(x)}</span>`).join('');
+  document.getElementById('surprise-list').innerHTML = SURPRISE.concat(['Tell me about your brother / a friend: what does he / she have to do?', 'Do you have to wear a uniform at school?']).map(q => `<li>${esc(q)}</li>`).join('');
+  document.getElementById('chores-model').innerHTML = esc(CHORES_MODEL_TXT).replace(/\b(I have to|I must|I mustn't|I don't have to|because)\b/g, '<b>$1</b>').replace(/I mustn&#39;t|I don&#39;t have to/g, m => `<b>${m}</b>`);
+  if (!SpeechRec) { document.getElementById('mic-note').textContent = 'Il microfono funziona con Chrome o Edge. Puoi comunque usare 👁 e 🔊.'; document.getElementById('btn-free-mic').disabled = true; document.getElementById('free-note').textContent = 'Il microfono funziona con Chrome o Edge.'; }
+  const url = new URLSearchParams(location.search).get('mode');
+  let m = /^(oral|test|class|classe)$/.test(url || '') ? 'class' : /^(home|casa)$/.test(url || '') ? 'home' : null;
+  if (!m) { try { m = localStorage.getItem(MODE_KEY); } catch (e) {} }
+  setHint('hints');
+  selectCard(CARDS[0].id, false);
+  setMode(m === 'class' ? 'class' : 'home');
+  renderTimer();
+})();
+</script>
+</body>
+</html>
