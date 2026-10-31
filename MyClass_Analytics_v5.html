@@ -31689,6 +31689,37 @@ ${righe.join('\n')}
         return { ...activity, questions: out };
     }
 
+    // Schede "scopri la regola" del piano: domande con "scheda" (R1, R2…) e "fase"
+    // osserva → regola → controllo, consecutive. Per ogni scheda l'elenco dei problemi.
+    function _ppRuleCards(questions) {
+        const qs = (questions || []).filter(q => q && typeof q === 'object');
+        const by = new Map();
+        qs.forEach((q, i) => {
+            const k = q.scheda == null ? '' : String(q.scheda).trim().toUpperCase();
+            if (!k) return;
+            if (!by.has(k)) by.set(k, []);
+            by.get(k).push({ i, q, fase: String(q.fase || '').trim().toLowerCase() });
+        });
+        const cards = [...by.entries()].map(([key, list]) => {
+            const problems = [];
+            const at = f => list.find(x => x.fase === f);
+            const o = at('osserva'), r = at('regola'), c = at('controllo');
+            if (!o) problems.push('manca la domanda "osserva"');
+            else if (o.q.type !== 'multiple-choice') problems.push('"osserva" deve essere una multiple-choice');
+            if (!r) problems.push('manca la domanda "regola"');
+            else if (r.q.type !== 'cloze' || !_ppHasInlineChoice(r.q.text || r.q.question) || _ppCountBlanks(r.q.text || r.q.question) !== _ppCountInlineChoices(r.q.text || r.q.question))
+                problems.push('"regola" deve essere una cloze con SOLO scelte [[a|b|c]] (niente ___)');
+            if (!c) problems.push('manca la domanda "controllo"');
+            else {
+                if (c.q.type !== 'multiple-choice') problems.push('"controllo" deve essere una multiple-choice');
+                if (!String(c.q.referenceTable || '').trim()) problems.push('"controllo" deve avere "referenceTable" con la regola completa');
+            }
+            if (o && r && c && !(o.i + 1 === r.i && r.i + 1 === c.i)) problems.push('osserva, regola e controllo devono essere tre domande consecutive, in quest\'ordine');
+            return { key, problems, n: list.length };
+        });
+        return { cards };
+    }
+
     // La consegna è stata rispettata? Errori della verifica ripresi (campo "errore"),
     // tipi ammessi e numero di opzioni (versione PEI). score: più alto = meglio.
     function _ppCheckCompliance(questions, check) {
@@ -31709,6 +31740,14 @@ ${righe.join('\n')}
         if (badF.length) {
             out.problems.push(`domande ${badF.map(x => x.i + 1).join(', ')}: parlano di una foto ma non ce l'hanno. ${check.photos?.length ? `Aggiungi "foto" con il numero di una domanda della verifica che aveva la foto (${check.photos.join(', ')}) e chiedi ciò che quella foto mostra, oppure riscrivi la domanda senza foto.` : 'Il piano non ha immagini: riscrivi la domanda senza foto.'}`);
             out.score -= badF.length;
+        }
+        if (check.rules) {
+            const sk = _ppRuleCards(qs);
+            const ok = sk.cards.filter(c => !c.problems.length);
+            sk.cards.filter(c => c.problems.length).forEach(c => out.problems.push(`scheda "scopri la regola" ${c.key}: ${c.problems.join('; ')}.`));
+            if (ok.length < check.rules.min) out.problems.push(`servono almeno ${check.rules.min} schede "scopri la regola" complete (3 domande consecutive con lo stesso "scheda": "fase" osserva → regola → controllo); ${ok.length ? `ce n'è ${ok.length}` : 'non ce n\'è nessuna'}.`);
+            if (sk.cards.length > check.rules.max) out.problems.push(`le schede "scopri la regola" sono ${sk.cards.length}: al massimo ${check.rules.max}, sulle regole più importanti.`);
+            out.score += Math.min(ok.length, check.rules.max) - Math.max(0, check.rules.min - ok.length) * 2;
         }
         if (check.errors?.length) {
             const cov = new Set(qs.flatMap(_ppErrIdsOf));
@@ -31761,7 +31800,7 @@ ${righe.join('\n')}
             : prefix === 'REC'
                 ? `LIVELLO DOMANDE — RECUPERO:
 - Frasi brevi e semplici, vocabolario di base dell'unità.
-- Ogni domanda deve avere scaffolding esplicito: hint tra parentesi (es. "(usa il Past Simple)"), word bank abbondante nel cloze, distrattori molto diversi nel multiple-choice.
+- Ogni esercizio (le schede "scopri la regola" seguono le loro istruzioni) deve avere scaffolding esplicito: hint tra parentesi (es. "(usa il Past Simple)"), word bank abbondante nel cloze, distrattori molto diversi nel multiple-choice.
 - Per fill-blanks: sempre la forma base del verbo tra parentesi come guida. Es: "She ___ (go) to school."
 - Focus sui pattern di base che ha sbagliato — non introdurre strutture non testate.`
                 : prefix === 'CON'
@@ -31817,7 +31856,7 @@ ${pei.fromTest ? `DOMANDE DELLA SUA VERIFICA (versione ${verInfo.label}) — son
                 ? `Nella verifica di questa unità lo studente NON ha svolto la prova standard ma la versione ${verInfo.label}.`
                 : `Lo studente ha un PDP per DSA: le sue verifiche sono in versione ${verInfo.label}.`;
             const _regole = `REGOLE VERSIONE DSA (obbligatorie, come nella sua verifica):
-- Le domande di completamento diventano "multiple-choice" con 4 opzioni (una domanda per ogni spazio): NIENTE fill-blanks, cloze o risposta libera.
+- Le domande di completamento diventano "multiple-choice" con 4 opzioni (una domanda per ogni spazio): NIENTE fill-blanks, cloze o risposta libera (unica eccezione: la cloze con le scelte [[...]] nella fase "regola" delle schede "scopri la regola").
 - Frasi brevi e chiare, una richiesta per domanda, istruzioni in grassetto, nessun trabocchetto ortografico.
 - Mantieni "matching" e "drag-drop" (frasi brevi, poche parole).
 - OBBLIGATORIO su ogni domanda: "dsaLargeText": true.`;
@@ -31841,6 +31880,38 @@ Le regole di questa sezione PREVALGONO sui tipi, sulla distribuzione e sul livel
         const isNotesContext   = prefix === 'APP' && ctxUse.startsWith('NOTE DISCORSIVE');
         const isPreviousWeak   = prefix === 'APP' && !isNotesContext && ctxUse.startsWith('AREE DEBOLI');
         const nErrQ = !errList.length ? 0 : isPei ? errReq : prefix === 'APP' ? Math.ceil(nQ / 2) : Math.ceil(nQ * 2 / 3);
+
+        // ── Schede "scopri la regola" (metodo induttivo, come nelle attività in classe) ──
+        // Per gli errori più importanti l'alunno prima ragiona e ricostruisce la regola,
+        // poi si esercita. Le schede sono domande normali (multiple-choice + cloze con
+        // le scelte [[a|b|c]]): LiveLearn le mostra già, nessuna schermata nuova.
+        // PEI no: il piano è il ripasso della sua verifica (ha già la regola su ogni domanda).
+        // Sfide (alunni da 9,5, poche domande): al massimo una scheda, facoltativa.
+        const rules = isPei ? null
+            : opts.level ? (errList.length ? { min: 0, max: 1 } : null)
+            : errList.length || prefix !== 'APP' ? { min: 1, max: prefix === 'APP' ? 2 : 3 }
+            : null;
+        const _ruleEx = prefix === 'REC' ? '2-3' : '1-2';
+        const regoleSection = !rules ? '' : `
+══════════════════════════════════════════════
+🔍 SCHEDE "SCOPRI LA REGOLA" (metodo induttivo, come nelle attività fatte in classe)${rules.min ? ' — OBBLIGATORIE' : ' — FACOLTATIVA'}
+Lo studente non deve solo rifare esercizi: ${errList.length ? 'per gli errori più importanti' : 'per le strutture fondamentali dell\'unità'} prima RAGIONA e ricostruisce da solo la regola, poi si esercita. Le schede FANNO PARTE delle ${nQ} domande.
+- ${errList.length ? 'Raggruppa gli errori per REGOLA (più errori nascono spesso dalla stessa regola) e fai' : 'Fai'} ${rules.min ? `da ${rules.min} a ${rules.max} schede` : 'al massimo 1 scheda, solo se un errore riguarda una regola'}, sulle regole più importanti${errList.length ? ' (quelle con più errori)' : ''}.
+- Ogni scheda sono 3 domande CONSECUTIVE con lo stesso campo "scheda" ("R1", "R2"…) e il campo "fase":
+  1. "fase":"osserva" — "multiple-choice" con 3 opzioni. Testo: "🔍 **Osserva.** Non c'è nessuna regola: scoprila tu!", poi 3-4 frasi inglesi brevi e CORRETTE con la parte chiave in **grassetto** (es. "She **goes** to school. He **plays** tennis.")${errList.length ? ', poi (se la riga dell\'errore mostra la risposta data) la frase sbagliata dello studente: "Nella verifica hai scritto: …"' : ''}, poi una domanda guida in italiano (es. "❓ Che cosa succede al verbo con he / she / it?"). Opzioni in italiano: una giusta e due ragionamenti sbagliati plausibili (proprio quelli che portano all'errore).
+  2. "fase":"regola" — "cloze" in italiano: "✍️ **Ora scrivi tu la regola!** Clicca le parole giuste." seguito dalla regola con 2-5 scelte dentro la frase [[a|b|c]] (doppie parentesi quadre, opzioni separate da |, ${prefix === 'REC' ? '2-3' : '2-4'} opzioni). Ogni [[...]] conta come uno spazio: "answers" ha, nello stesso ordine, il testo dell'opzione giusta. In questa domanda niente ___ e niente "hint".
+  3. "fase":"controllo" — "multiple-choice" in inglese che applica la regola: "👀 **Avevi ragione?** Controlla la regola.\\n\\n❓ **Which is correct?**" (4 frasi, una sola corretta, gli errori tipici come distrattori), con il campo "referenceTable": la regola COMPLETA in italiano, max 3 righe con 1 esempio. L'alunno la vede nel riquadro "📘 Regola di riferimento" e la confronta con quella che ha scritto.
+- Subito dopo ogni scheda: ${_ruleEx} esercizi su quella regola, dal più guidato al meno guidato, con lo stesso "scheda" e SENZA "fase" (non mettere "referenceTable": devono ricordare la regola da soli).
+- Le domande della scheda e i suoi esercizi portano nel campo "errore" i codici degli errori che riprendono (anche più codici: "errore":"E1,E3").
+- Dopo tutte le schede vengono le altre domande (senza "scheda"), mescolate: ${prefix === 'CON' ? 'riprendono gli altri errori e fanno scegliere tra strutture simili che si confondono' : prefix === 'APP' ? 'riprendono gli altri errori e contengono i "Transfer"' : 'riprendono gli altri errori e il resto dell\'unità'}.
+- ${prefix === 'REC' ? 'Recupero: esempi molto chiari e semplici, parole della regola da ragazzo di scuola media.' : prefix === 'CON' ? 'Consolidamento: negli esempi di "osserva" metti a confronto la struttura giusta con quella che lo studente confonde (es. some/any, Present simple/continuous).' : 'Approfondimento: scheda più asciutta e meno guidata; puoi far scoprire un caso particolare o un\'eccezione della regola.'}${isDsa ? `
+- Versione DSA: la cloze della fase "regola" è ammessa (si clicca, non si scrive), SOLO con le scelte [[...]].` : ''}
+- La regola deve essere CORRETTA al 100%: verificala prima di scriverla. Nelle schede non parlare di foto o immagini.
+ESEMPIO DI SCHEDA (struttura da seguire, contenuto da adattare agli errori):
+{"type":"multiple-choice","question":"🔍 **Osserva.** Non c'è nessuna regola: scoprila tu!\\nShe **watches** TV. He **plays** tennis. My mum **works** in a shop.\\nNella verifica hai scritto: \\\"He play football.\\\"\\n❓ Che cosa succede al verbo con he / she / it?","options":["Resta uguale, come con I e you","Prende la -s finale","Prende -ing"],"correct":1,"points":1,"scheda":"R1","fase":"osserva","errore":"E1"}
+{"type":"cloze","question":"✍️ **Ora scrivi tu la regola!** Clicca le parole giuste.\\nNel Present simple, con **he / she / it** il verbo prende [[-s|-ing|-ed]].\\nCon **I / you / we / they** il verbo [[prende -s|resta alla forma base]].","answers":["-s","resta alla forma base"],"points":2,"scheda":"R1","fase":"regola","errore":"E1"}
+{"type":"multiple-choice","question":"👀 **Avevi ragione?** Controlla la regola.\\n\\n❓ **Which is correct?**","options":["My brother play the guitar.","My brother plays the guitar.","My brother playing the guitar.","My brother is play the guitar."],"correct":1,"points":1,"referenceTable":"Present simple: con he / she / it il verbo prende -s (he plays, she watches). Con I / you / we / they resta alla forma base (I play).","scheda":"R1","fase":"controllo","errore":"E1"}
+══════════════════════════════════════════════`;
 
         const erroriSection = errList.length
             ? `
@@ -31920,6 +31991,9 @@ Per le domande sulle unit precedenti: usa strutture grammaticali e lessico di qu
             ? 'TIPI DI DOMANDA: vedi le REGOLE DELLA VERSIONE ' + verInfo.label + ' in fondo (prevalgono su questo elenco). Formati di riferimento:'
             : 'TIPI DI DOMANDA DA USARE (mix obbligatorio — usa tutti e 5 i tipi):';
         const _dist = isPei ? 'DISTRIBUZIONE (come nella sua verifica): ' + pei.dist + '.'
+            : rules && isDsa ? `DISTRIBUZIONE: ${nQ} domande in tutto, schede comprese. Le schede usano multiple-choice e la cloze con le scelte [[...]]; le altre domande sono multiple-choice, matching e drag-drop (almeno 2 matching e 2 drag-drop).`
+            : rules && opts.level ? `DISTRIBUZIONE: ${nQ} domande in tutto, scheda compresa (se c'è). Riferimento per i tipi: ${opts.level.dist}`
+            : rules ? `DISTRIBUZIONE: ${nQ} domande in tutto, schede comprese. Le schede usano multiple-choice (osserva, controllo) e cloze (regola); nelle altre domande alterna fill-blanks, cloze, matching, drag-drop e multiple-choice (almeno 2 fill-blanks, 1 matching e 1 drag-drop).`
             : isDsa ? 'DISTRIBUZIONE: 9 multiple-choice + 3 matching + 3 drag-drop = 15 totali.'
             : opts.level ? 'DISTRIBUZIONE: ' + opts.level.dist
             : nQ === 10 ? 'DISTRIBUZIONE: 3 multiple-choice + 3 fill-blanks + 2 cloze + 1 matching + 1 drag-drop = 10 totali.'
@@ -31936,8 +32010,8 @@ ${_typesHead}
 ${_types.map((t, i) => `${i + 1}. ${_desc[t]}`).join('\n')}
 
 ${_dist}
-Domande mescolate (non raggruppare per tipo). ${isPei ? 'Stesso livello della sua verifica, senza salti di difficoltà.' : 'Difficoltà variata, non progressiva.'}
-Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni di tipo ("Scegli", "Completa", "Abbina", "Trascina").
+${rules ? 'ORDINE: prima le schede "scopri la regola", ognuna seguita dai suoi esercizi; poi le altre domande, mescolate (non raggruppate per tipo).' : 'Domande mescolate (non raggruppare per tipo).'} ${isPei ? 'Stesso livello della sua verifica, senza salti di difficoltà.' : rules ? 'Negli esercizi di ogni scheda dal più guidato al meno guidato; nelle altre domande difficoltà variata.' : 'Difficoltà variata, non progressiva.'}
+Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni di tipo ("Scegli", "Completa", "Abbina", "Trascina")${rules ? '; nelle schede "scopri la regola" sono in italiano anche la domanda guida, le opzioni di "osserva", la regola da completare e la "referenceTable"' : ''}.
 
 FORMATI JSON ESATTI per ogni tipo${errList.length ? ' (il campo "errore" è spiegato più sotto)' : ''}:
 ${_types.map(t => (isPei && pei.examples[t]) || _fmt[t]).join('\n')}${isPei ? '\n(Formati presi dalla sua verifica: cambia frasi ed esempi, non copiarli.)' : ''}
@@ -31952,6 +32026,7 @@ CONTROLLO QUALITÀ (obbligatorio, prima di rispondere ricontrolla OGNI domanda):
 - la frase non suggerisce la risposta (niente indizi che la rendono ovvia senza conoscere la regola);
 - ${photoNums.length ? 'una domanda che parla di foto o immagini ha il campo "foto"' : 'il piano non ha immagini: niente "guarda la foto/immagine" o "look at the picture"'}.
 ${erroriSection}
+${regoleSection}
 ${contestoSection}
 ${adattamentoSection}
 Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdown.`;
@@ -31963,7 +32038,8 @@ Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdow
             errors: errList, errReq,
             allowedTypes: isPei ? pei.types : null,
             mcOptions: isPei && pei.fromTest ? pei.mcOptions : null,
-            photos: photoNums
+            photos: photoNums,
+            rules
         };
         return { prompt, sysMsg, nQ, check, pei, fotoCtx };
     }
@@ -31979,7 +32055,7 @@ Rispondi SOLO con l'array JSON, senza testo prima o dopo, senza backtick markdow
         const prompt = `Hai generato le domande qui sotto per un piano personalizzato, ma NON rispettano la consegna:
 ${comp.problems.map(p => '- ' + p).join('\n')}
 ${comp.missing.length ? `\nERRORI DELLA VERIFICA NON ANCORA RIPRESI:\n${comp.missing.map(e => `${e.id}: ${e.line}`).join('\n')}\n` : ''}
-Correggi l'array: ${comp.missing.length ? 'sostituisci le domande con "errore": null (o quelle in più sullo stesso errore) con domande nuove che riprendono gli errori mancanti, con il loro codice nel campo "errore"; ' : ''}${P.check.allowedTypes ? `rifai le domande con un tipo non ammesso usando solo ${P.check.allowedTypes.join(', ')}; ` : ''}correggi le domande che parlano di una foto senza averla; lascia invariate le domande già corrette.
+Correggi l'array: ${comp.missing.length ? 'sostituisci le domande con "errore": null (o quelle in più sullo stesso errore) con domande nuove che riprendono gli errori mancanti, con il loro codice nel campo "errore"; ' : ''}${P.check.allowedTypes ? `rifai le domande con un tipo non ammesso usando solo ${P.check.allowedTypes.join(', ')}; ` : ''}${P.check.rules ? 'aggiungi o completa le schede "scopri la regola" (osserva → regola → controllo, campi "scheda" e "fase") come chiede la consegna, togliendo domande senza "errore" o in più sullo stesso errore; ' : ''}correggi le domande che parlano di una foto senza averla; lascia invariate le domande già corrette.
 Restituisci l'array COMPLETO di ${P.nQ} domande, stessi formati JSON${errs.length ? ', campo "errore" su ogni domanda' : ''}.
 
 DOMANDE DA CORREGGERE:
@@ -32156,7 +32232,13 @@ ${P.prompt}`;
         }
     }
 
-    function _ppCountBlanks(s) { return (String(s || '').match(/_{3,}/g) || []).length; }
+    // Spazi di cloze/fill-blanks: ___ e le scelte dentro la frase [[a|b|c]] (come in LiveLearn)
+    const _PP_BLANK_RX = /_{3,}|\[\[([^\[\]\n]*\|[^\[\]\n]*)\]\]/g;
+    function _ppCountBlanks(s) { return (String(s || '').match(_PP_BLANK_RX) || []).length; }
+    function _ppCountInlineChoices(s) { return (String(s || '').match(/\[\[[^\[\]\n]*\|[^\[\]\n]*\]\]/g) || []).length; }
+    function _ppHasInlineChoice(s) { return _ppCountInlineChoices(s) > 0; }
+    // Per ogni spazio, in ordine: le opzioni se è una scelta [[...]], altrimenti null (spazio ___)
+    function _ppBlankSlots(s) { return [...String(s || '').matchAll(_PP_BLANK_RX)].map(m => m[1] === undefined ? null : m[1].split('|').map(x => x.trim()).filter(Boolean)); }
 
     // Categorization: LiveLearn corregge con "answers" = indice della categoria di
     // ogni elemento (stesso ordine di "items"). L'editor delle bozze lavora con la
@@ -32221,10 +32303,15 @@ ${P.prompt}`;
             case 'cloze': {
                 const n = _ppCountBlanks(txt);
                 if (!filled(q.answers)) { issues.push('"answers" vuoto'); break; }
-                if (n !== q.answers.length) issues.push(`${n} spazi ___ nel testo ma ${q.answers.length} risposte`);
+                if (n !== q.answers.length) issues.push(`${n} spazi nel testo (___ o scelte [[...]]) ma ${q.answers.length} risposte`);
+                const slots = _ppBlankSlots(txt);
+                const badIc = slots.map((o, i) => ({ o, i })).filter(x => x.o && q.answers[x.i] != null
+                    && !String(q.answers[x.i]).split('|').some(alt => x.o.map(norm).includes(norm(alt))));
+                if (badIc.length) issues.push(`spazi ${badIc.map(x => x.i + 1).join(', ')}: la risposta non è una delle opzioni [[...]]`);
                 if (q.type === 'cloze' && q.hint) {
                     const bank = norm(q.hint);
-                    const missing = q.answers.filter(a => !String(a).split('|').some(alt => alt.trim() && bank.includes(norm(alt))));
+                    // le scelte [[...]] non passano dalla word bank
+                    const missing = q.answers.filter((a, i) => !slots[i] && !String(a).split('|').some(alt => alt.trim() && bank.includes(norm(alt))));
                     if (missing.length) issues.push('la word bank non contiene: ' + missing.join(', '));
                 }
                 break;
@@ -32296,9 +32383,10 @@ ${P.prompt}`;
 Rivedi queste ${qs.length} domande. Per OGNI domanda controlla:
 1. La risposta indicata come corretta è davvero corretta (grammatica, ortografia, uso naturale dell'inglese).
 2. Esiste UNA sola risposta corretta. Nella scelta multipla nessun distrattore deve essere accettabile: se lo è, sostituiscilo. Nei completamenti ("fill-blanks", "cloze") elenca con | tutte le forme ugualmente corrette (es. "didn't|did not") e MAI forme sbagliate.
-3. Il numero di ___ nel testo è uguale al numero di risposte; nel "drag-drop" ogni risposta compare in "words"; nel "matching" "left" e "right" hanno la stessa lunghezza; nella "categorization" "answers" ha, per ogni elemento di "items", l'indice (da 0) della sua categoria.
+3. Il numero di spazi nel testo (___ e scelte [[a|b|c]]) è uguale al numero di risposte, e per ogni [[...]] la risposta è una delle sue opzioni (mantieni la sintassi [[...]]: non trasformarla in ___); nel "drag-drop" ogni risposta compare in "words"; nel "matching" "left" e "right" hanno la stessa lunghezza; nella "categorization" "answers" ha, per ogni elemento di "items", l'indice (da 0) della sua categoria.
 4. Istruzione chiara in italiano, frase in inglese naturale, nessun indizio che renda ovvia la risposta.
-${bad.length ? 'PROBLEMI GIÀ RILEVATI DAL CONTROLLO AUTOMATICO (correggili):\n' + bad.map(b => `- domanda ${b.i + 1}: ${b.issues.join('; ')}`).join('\n') + '\n' : ''}Correggi SOLO ciò che è sbagliato e lascia invariato il resto. Stesso numero di domande, stesso ordine, stessi tipi, stessi campi JSON (compresi "errore" e "foto").
+${bad.length ? 'PROBLEMI GIÀ RILEVATI DAL CONTROLLO AUTOMATICO (correggili):\n' + bad.map(b => `- domanda ${b.i + 1}: ${b.issues.join('; ')}`).join('\n') + '\n' : ''}5. Nelle schede "scopri la regola" (campi "scheda" e "fase") la regola è corretta e la "referenceTable" del "controllo" dice la stessa regola, completa. Queste domande hanno testo e opzioni in italiano: va bene così.
+Correggi SOLO ciò che è sbagliato e lascia invariato il resto. Stesso numero di domande, stesso ordine, stessi tipi, stessi campi JSON (compresi "errore", "foto", "scheda", "fase" e "referenceTable").
 Rispondi SOLO con l'array JSON corretto, senza testo prima o dopo, senza backtick.
 
 DOMANDE:
@@ -32312,6 +32400,7 @@ ${JSON.stringify(send)}`;
                     if (revN.length === qs.length) revN.forEach((q, i) => {
                         if (q.errore == null && qs[i].errore != null) q.errore = qs[i].errore;
                         if (q.foto == null && qs[i].foto != null) q.foto = qs[i].foto;
+                        ['scheda', 'fase', 'referenceTable'].forEach(k => { if (q[k] == null && qs[i][k] != null) q[k] = qs[i][k]; });
                     });
                     const revBad = issuesOf(revN);
                     // La revisione si tiene solo se non peggiora il controllo automatico
@@ -32706,7 +32795,7 @@ Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markd
     const _PP_CLAUDE_CONSEGNA = `Sei Claude e prepari i PIANI PERSONALIZZATI di inglese (scuola media italiana) per MyClass / LiveLearn.
 Questo file è stato esportato da MyClass. Per OGNI elemento di "alunni":
 - genera l'array di domande seguendo ESATTAMENTE la sua "consegna_quiz" (numero di domande, tipi, livello, errori su cui lavorare, regole DSA/PEI);
-- se "controlli" non è null, la risposta deve superarli: almeno "errori_minimi" codici diversi di "errori_da_riprendere" (E1, E2…) nel campo "errore" delle domande, e ogni domanda con un codice esercita davvero quell'errore; con "tipi_ammessi" (alunni PEI: il piano è un ripasso della sua verifica, anche con voto alto) usa SOLO quei tipi; con "opzioni_scelta_multipla" ogni scelta multipla ha esattamente quel numero di opzioni; nessuna domanda parla di foto o immagini se non ha il campo "foto" con un numero di "foto_disponibili" (la foto della verifica viene inserita da MyClass);
+- se "controlli" non è null, la risposta deve superarli: almeno "errori_minimi" codici diversi di "errori_da_riprendere" (E1, E2…) nel campo "errore" delle domande, e ogni domanda con un codice esercita davvero quell'errore; con "schede_regola" fai tra "minime" e "massime" schede "scopri la regola" come spiegato nella consegna_quiz (3 domande consecutive con lo stesso "scheda": "fase" osserva = multiple-choice, regola = cloze con SOLO scelte [[a|b|c]], controllo = multiple-choice con "referenceTable"), dentro il numero di domande richiesto; con "tipi_ammessi" (alunni PEI: il piano è un ripasso della sua verifica, anche con voto alto) usa SOLO quei tipi; con "opzioni_scelta_multipla" ogni scelta multipla ha esattamente quel numero di opzioni; nessuna domanda parla di foto o immagini se non ha il campo "foto" con un numero di "foto_disponibili" (la foto della verifica viene inserita da MyClass);
 - se "consegna_listening" non è null, genera anche l'esercizio di listening seguendo quella consegna (testo scritto da te, letto poi dalla sintesi vocale);
 - se "consegna_speaking" non è null, scrivi lo speaking prompt richiesto;
 - se "piano" è "ORALE" non c'è nessun quiz: segui la sua "consegna_testo" e scrivi il testo del recupero orale (italiano, testo semplice, 200-280 parole, [NOME] al posto del nome).
@@ -32716,8 +32805,8 @@ Gli alunni non hanno nomi: sono identificati solo da "ref". Non inventare nomi.
 QUALITÀ — prima di consegnare ricontrolla ogni domanda come un docente madrelingua:
 - la risposta indicata come corretta è davvero corretta, in inglese corretto e naturale;
 - c'è UNA sola risposta corretta: nella scelta multipla nessun distrattore è accettabile; nei "fill-blanks"/"cloze" il simbolo | separa SOLO forme ugualmente corrette (es. "didn't|did not"), mai forme sbagliate;
-- numero di ___ nel testo = numero di risposte; nel "drag-drop" ogni risposta compare in "words"; nel "matching" "left" e "right" hanno la stessa lunghezza; nella "categorization" "answers" ha, per ogni elemento di "items" nello stesso ordine, l'indice (da 0) della sua categoria;
-- istruzioni in italiano, contenuti in inglese, livello adatto alla fascia (REC = recupero, CON = consolidamento, APP = approfondimento) e alla versione DSA/PEI quando indicata;
+- numero di spazi nel testo (___ e scelte [[a|b|c]]) = numero di risposte, e per ogni [[...]] la risposta è una delle sue opzioni; nel "drag-drop" ogni risposta compare in "words"; nel "matching" "left" e "right" hanno la stessa lunghezza; nella "categorization" "answers" ha, per ogni elemento di "items" nello stesso ordine, l'indice (da 0) della sua categoria;
+- istruzioni in italiano, contenuti in inglese (nelle schede "scopri la regola" anche domanda guida, regola e "referenceTable" in italiano), livello adatto alla fascia (REC = recupero, CON = consolidamento, APP = approfondimento) e alla versione DSA/PEI quando indicata;
 - gli esercizi lavorano sugli errori riportati nella consegna, con tipi variati e senza indizi che rendano ovvia la risposta.
 
 OUTPUT: crea UN file chiamato "piani_da_claude.json" (solo JSON valido, nessun testo fuori) con questa struttura:
@@ -32752,6 +32841,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             local: { studentSafe, studentName, classeNome, unit, prefix, voto, code, draftId,
                      layout: verInfo?.layout || 0, versione: verInfo?.label || null, tagBreakdown: tagBreakdown || {}, sfida,
                      tipiAmmessi: P.check?.allowedTypes || null, erroriTot: P.check?.errors?.length || 0,
+                     schedeRegola: P.check?.rules || null,
                      fotoCheck: { photos: P.check.photos },
                      foto: P.fotoCtx },
             file: {
@@ -32766,7 +32856,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                     errori_minimi: P.check.errReq,
                     tipi_ammessi: P.check.allowedTypes,
                     opzioni_scelta_multipla: P.check.mcOptions,
-                    foto_disponibili: P.check.photos
+                    foto_disponibili: P.check.photos,
+                    schede_regola: P.check.rules ? { minime: P.check.rules.min, massime: P.check.rules.max } : null
                 },
                 sfida
             }
@@ -32959,6 +33050,12 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 const nPrima = activity.questions.length;
                 activity.questions = _ppApplyFoto(activity.questions, L.fotoCheck || { photos: [] }, L.foto);
                 if (activity.questions.length < nPrima) scartate.push(`${L.studentName}: ${nPrima - activity.questions.length} esercizi che parlavano di una foto inesistente scartati`);
+            }
+            if (L.schedeRegola) {
+                const sk = _ppRuleCards(qs);
+                const ok = sk.cards.filter(c => !c.problems.length).length;
+                if (ok < L.schedeRegola.min || sk.cards.length > ok)
+                    scartate.push(`${L.studentName}: schede "scopri la regola" complete ${ok}${L.schedeRegola.min ? ` (ne servono almeno ${L.schedeRegola.min})` : ''}${sk.cards.length > ok ? ` — da sistemare: ${sk.cards.filter(c => c.problems.length).map(c => c.key + ' (' + c.problems.join(', ') + ')').join('; ')}` : ''}`);
             }
             if (L.erroriTot) activity.erroriCoperti = { n: Math.min(L.erroriTot, new Set(qs.flatMap(_ppErrIdsOf)).size), tot: L.erroriTot };
             if (L.sfida) {
@@ -34833,7 +34930,10 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         const intro = q.text && q.text !== inner.text ? '<div class="pq-text">' + _ppkqRich(q.text) + '</div>' : '';
         return img + innerImg + '<div class="pq-listen">🎧 Esercizio di ascolto</div>' + tts + intro + _ppkqBody(inner, sub, _ppkAnswer(inner, sub));
       }
-      return img + tts + _ppkqBody(q, q.type, _ppkAnswer(q, q.type));
+      const fase = { osserva: '🔍 osserva', regola: '✍️ scrive la regola', controllo: '👀 controllo' }[String(q.fase || '').toLowerCase()] || 'esercizio';
+      const sch = q.scheda ? '<div class="pq-note">Scheda "scopri la regola" ' + _ppkqEsc(q.scheda) + ' · ' + fase + '</div>' : '';
+      const ref = q.referenceTable ? '<div class="pq-bank"><strong>📘 Regola di riferimento:</strong> ' + _ppkqEsc(q.referenceTable) + '</div>' : '';
+      return sch + img + tts + ref + _ppkqBody(q, q.type, _ppkAnswer(q, q.type));
     }
 
     const _PPKQ_CSS = `
