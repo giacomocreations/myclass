@@ -12234,6 +12234,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             document.body.appendChild(ov);
             ov.addEventListener('click', e=>{ if(e.target===ov) _lessonEditCloseSaving(); });
             _lessonEditBegin(data_iso, ov);
+            _stuAppPreviewAttach(document.getElementById('editDescStu'), 'editDesc');
             // Init autocomplete, load resources and pagine repo after DOM insertion
             _loadModalRisorse(data_iso);
             _loadCompitiRecenti(data_iso);
@@ -12822,6 +12823,90 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
         // niente note riservate, niente nomi, righe con BES/DSA/PEI/PDP escluse.
         // ================================================================
         // Toglie eventuali saluti iniziali ("Ciao ragazzi!", "Salve,"...) dal testo per la StudentApp
+        // ================================================================
+        // ANTEPRIMA STUDENTAPP — la descrizione per gli alunni impaginata
+        // esattamente come la mostra la StudentApp (paragrafi, parole colorate).
+        // _stuAppFmtDesc è una COPIA di fmtLessonDesc di StudentApp.html:
+        // se cambi l'una, aggiorna anche l'altra.
+        // ================================================================
+        function _stuAppFmtDesc(raw){
+          const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          const text = String(raw||'').replace(/\r/g,'').trim();
+          if(!text) return '';
+          // 1) Paragrafi: a capo espliciti o separatore " | " (usato quando più
+          //    attività della stessa lezione vengono unite)
+          let paras = text.split(/\n+|\s+\|\s+/).map(s=>s.trim()).filter(Boolean);
+          // Testo unico e lungo → un paragrafo ogni 2 frasi. Il punto dopo abbreviazioni
+          // (p. 164, ex. 3, es. 2) o dentro numeri (3.5) NON chiude la frase; la divisione
+          // inserisce solo a-capo, quindi non può mai far perdere testo.
+          if(paras.length===1){
+            const ABBR = new Set(['p','pp','pag','ex','es','n','nr','fig','cfr','vs','sig','prof','dott','unit','u']);
+            const marked = text.replace(/(\S*?)([.!?])\s+(?=[A-ZÀ-ÝÈ"“'‘(])/g,(m,w,pt)=>{
+              if(pt==='.' && ABBR.has(w.toLowerCase().replace(/^[^a-zà-ÿ]+/,''))) return m;
+              return w+pt+'\n';
+            });
+            const sent = marked.split('\n').map(x=>x.trim()).filter(Boolean);
+            if(sent.length>2){
+              paras=[];
+              for(let i=0;i<sent.length;i+=2) paras.push(sent.slice(i,i+2).join(' '));
+            }
+          }
+          // Categorie di parole evidenziate, ognuna con il suo colore:
+          //  • verde  = grammatica (tempi verbali, strutture, parti del discorso)
+          //  • blu    = abilità e tipi di attività (lessico, lettura, scrittura, ascolto…)
+          //  • rosso  = verifiche e prove
+          // I confini di parola sono "Unicode" (\p{L}), così funzionano anche le
+          // parole accentate (attività) e "can" non colora "canzone".
+          const GRAM = 'adverbs? of (?:manner|frequency|place|time|degree)|adverbs?|adjectives?|present simple|present continuous|present perfect|past simple|past continuous|past participle|future simple|going to|will|there is|there are|have got|has got|have to|can|can\'t|cannot|could|must|mustn\'t|should|would|might|may|comparatives?|superlatives?|countable|uncountable|some|any|much|many|a lot of|what|which|who|whose|where|when|why|how|articles?|prepositions?|pronouns?|possessives?|imperative|verbi irregolari|irregular verbs?|phrasal verbs?|grammatica|grammaticali|grammaticale|grammar|forma (?:affermativa|negativa|interrogativa)|risposte brevi|short answers?|verbi|verbo|aggettivi|aggettivo|avverbi|avverbio|pronomi|pronome|preposizioni|preposizione|articoli|articolo|plurali?|genitivo sassone';
+          const SKILL = 'lessico|lessicali|lessicale|vocabolario|vocabulary|parole nuove|nuovi vocaboli|vocaboli|lettura|letture|reading|scrittura|writing|ascolto|listening|comprensione(?: (?:orale|scritta|del testo|dell\'ascolto|globale|dettagliata))?|produzione(?: (?:orale|scritta))?|speaking|parlato|conversazione|dialoghi|dialogo|role[- ]?play|pronuncia|pronunciation|spelling|dettato|dictation|ripasso|revision|consolidamento|correzione(?: (?:dei|del) compiti?)?|correzione|esercizi|esercizio|esercitazione|gioco|giochi|game|canzone|canzoni|song|video|brainstorming|flashcards?|warm[- ]?up|presentazione|introduzione|cultura|civiltà|brano|lavoro di gruppo|a coppie|in coppia|pair work|group work';
+          const EVAL = 'verifica|verifiche|interrogazione|interrogazioni|test|quiz|prova|prove|simulazione|invalsi';
+          const wordRe = list => new RegExp('(^|[^\\p{L}\\p{N}])('+list+')(?![\\p{L}\\p{N}])','giu');
+          const gramRe = wordRe(GRAM), skillRe = wordRe(SKILL), evalRe = wordRe(EVAL);
+          const hl = (c,bg,t)=>`<span style="color:${c};${bg?`background:${bg};padding:0 4px;border-radius:5px;`:''}font-weight:700">${t}</span>`;
+          const fmtLine = (s)=>{
+            let h = esc(s);
+            const keep = [];                       // placeholder per evitare doppie sostituzioni
+            const put = (html)=>{ keep.push(html); return '\u0000'+(keep.length-1)+'\u0000'; };
+            h = h.replace(/\*\*(.+?)\*\*/g,(m,t)=>put(hl('#3C3489','#EEEDFE',t)));          // **evidenziato**
+            h = h.replace(/^([^:]{2,30}):(\s)/,(m,t,sp)=>put(hl('#534AB7','',t+':'))+sp);   // "Etichetta: ..."
+            // pagine ed esercizi: p. 34, pp. 34-35, pag. 34, pagina 34, ex. 3, es. 2, esercizio 4…
+            h = h.replace(/(^|[^\p{L}])((?:pp?|pagg?|pagin[ae])\.?\s?\d+(?:\s?[-–]\s?\d+)?(?:,?\s+(?:ex|es|esercizi[oi])\.?\s?\d+[a-z]?(?:\s?(?:[-–,]|e)\s?\d+[a-z]?)*)?|(?:ex|es|esercizi[oi])\.?\s?\d+[a-z]?(?:\s?(?:[-–,]|e)\s?\d+[a-z]?)*)(?![\p{L}\d])/giu,(m,pre,t)=>pre+put(hl('#854F0B','#FAEEDA',t.trim()))); // pagine/esercizi
+            h = h.replace(/("[^"]{1,40}"|«[^»]{1,40}»|“[^”]{1,40}”)/g,(m)=>put(hl('#085041','#E1F5EE',m)));        // "parole tra virgolette"
+            h = h.replace(/(^|[\s(])('[^']{1,40}?'|‘[^’]{1,40}?’)(?=[\s.,;:!?)]|$)/g,(m,pre,q)=>pre+put(hl('#085041','#E1F5EE',q)));   // 'parole tra apici'
+            h = h.replace(evalRe,(m,pre,w)=>pre+put(hl('#A32D2D','#FCEBEB',w)));            // verifiche e prove
+            h = h.replace(skillRe,(m,pre,w)=>pre+put(hl('#185FA5','',w)));                  // abilità e attività
+            h = h.replace(gramRe,(m,pre,w)=>pre+put(hl('#1D9E75','',w)));                   // termini grammaticali
+            return h.replace(/\u0000(\d+)\u0000/g,(m,i)=>keep[+i]);
+          };
+          return paras.map(p=>{
+            const bullet = p.match(/^[-•*–]\s+(.*)$/);
+            if(bullet) return `<div style="display:flex;gap:8px;margin:0 0 8px"><span style="color:#1D9E75;font-weight:700">•</span><span>${fmtLine(bullet[1])}</span></div>`;
+            return `<p style="margin:0 0 10px">${fmtLine(p)}</p>`;
+          }).join('');
+        }
+        // Collega un riquadro di anteprima sotto la textarea e lo aggiorna mentre scrivi.
+        // fallbackId: campo da mostrare se la descrizione StudentApp è vuota
+        // (gli alunni vedono allora quella del registro).
+        function _stuAppPreviewAttach(ta, fallbackId) {
+            if (!ta || ta.dataset.stuPrev) return;
+            ta.dataset.stuPrev = '1';
+            const box = document.createElement('div');
+            box.style.cssText = 'margin-top:8px;max-width:400px;background:#F7F6FE;border:1px dashed #AFA9EC;border-radius:14px;padding:10px;';
+            ta.insertAdjacentElement('afterend', box);
+            const fb = fallbackId ? document.getElementById(fallbackId) : null;
+            const upd = () => {
+                let t = ta.value.trim(), nota = '';
+                if (!t && fb && fb.value.trim()) { t = fb.value.trim(); nota = ' · vuota: gli alunni vedono quella del registro'; }
+                box.innerHTML = '<div style="font-size:11px;font-weight:700;color:#534AB7;margin:0 2px 6px;">📱 Anteprima StudentApp' + nota + '</div>'
+                    + '<div style="background:#fff;border:0.5px solid rgba(0,0,0,0.1);border-radius:14px;padding:14px;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;">'
+                    + '<div style="font-size:11px;font-weight:600;letter-spacing:0.5px;color:#888780;margin-bottom:8px;">ARGOMENTI TRATTATI</div>'
+                    + '<div style="font-size:14px;color:#2C2C2A;line-height:1.7;">' + (t ? _stuAppFmtDesc(t) : '<span style="color:#aaa;font-style:italic;">Nessuna descrizione.</span>') + '</div></div>';
+            };
+            ta.addEventListener('input', upd);
+            if (fb) fb.addEventListener('input', upd);
+            upd();
+        }
+
         function _togliSaluto(t) {
             let x = String(t || '');
             const re = /^\s*(?:(?:ciao|salve|buongiorno|buonasera|ehi|hello|hi|hey)(?:\s+(?:a\s+tutti|ragazzi|ragazze|classe|bambini))?|cari\s+ragazzi|ragazzi|classe)\b\s*[,!.:;–-]*\s*/i;
@@ -12900,7 +12985,8 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
               + '1) "titolo": titolo breve, massimo 5-6 parole, ricavato dalle attività effettivamente presenti (mantenute, aggiunte o modificate); ignora quelle non svolte.\n'
               + '2) "argo": descrizione per il registro elettronico, via di mezzo tra un elenco telegrafico e un testo discorsivo: brevi frasi nominali o con verbo, separate da punto e virgola, nell\'ordine in cui le attività sono state svolte (circa 150-280 caratteri). Ogni voce dice cosa si è fatto con un minimo di dettaglio concreto (nome del gioco, titolo del video o della canzone, argomento). Se nelle attività ci sono pagine ed esercizi del libro indicali (p.__ ex.__); non aggiungere pagine che non compaiono nelle attività. Niente aggettivi di riempimento, commenti o valutazioni, niente frasi lunghe o subordinate.\n'
               + 'Esempio dello stile richiesto: "Correzione compiti; consolidamento alfabeto con attività di spelling e gioco \'The Alphabet Chain\'; introduzione a \'The Numbers 1-100\'; gli alunni ripetono i numeri seguendo il video \'Count by ten\'"\n'
-              + '3) "studente": descrizione un po\' più dettagliata per la StudentApp, 3-5 frasi, massimo 450 caratteri. Scrivi semplicemente cosa è stato fatto durante la lezione, in ordine, con pagine ed esercizi solo se compaiono nelle attività. NON salutare (niente "Ciao", "Salve", "Ragazzi" o simili), niente formule di apertura o chiusura, non rivolgerti direttamente agli alunni, niente commenti motivazionali: solo le attività svolte, con frasi semplici.\n\n'
+              + '3) "studente": descrizione un po\' più dettagliata per la StudentApp, 3-5 frasi, massimo 450 caratteri. Scrivila SEMPRE alla prima persona plurale e al passato prossimo, come se parlasse la classe insieme al docente ("Abbiamo fatto…", "Abbiamo letto…", "Abbiamo ascoltato…", "Abbiamo ripassato…", "Abbiamo corretto…"); mai forme impersonali o passive ("si è fatto", "è stato svolto", "gli alunni hanno…"). Racconta in ordine cosa abbiamo fatto durante la lezione, con pagine ed esercizi solo se compaiono nelle attività (scrivili come "p. 34 ex. 2"). Nomina con le parole giuste le abilità e i tipi di attività (lessico, grammatica, lettura, scrittura, ascolto, comprensione, dialogo, pronuncia, ripasso, correzione dei compiti, gioco, canzone, video, verifica…) e metti tra virgolette i titoli di giochi, video, canzoni e testi. NON salutare (niente "Ciao", "Salve", "Ragazzi" o simili), niente formule di apertura o chiusura, niente commenti motivazionali: solo le attività svolte, con frasi semplici.\n'
+              + 'Esempio dello stile richiesto per "studente": "Abbiamo corretto i compiti di p. 30 ex. 4. Abbiamo ripassato il lessico dei vestiti con il gioco \'Guess Who\'. Poi abbiamo letto il dialogo a p. 32 e abbiamo fatto la comprensione del testo. Infine abbiamo ascoltato la canzone \'Happy\' completando le parole mancanti."\n\n'
               + 'In NESSUNO dei campi citare il saluto o l\'appello (sono scontati) né l\'assegnazione dei compiti (vanno già nel campo Compiti). La correzione dei compiti assegnati la volta prima, invece, è un\'attività e va citata.\n'
               + 'Non citare nomi di alunni, voti, note sul comportamento, BES/DSA/PEI/PDP né livelli CEFR.\n'
               + 'Rispondi SOLO con JSON valido senza markdown: {"titolo":"...","argo":"...","studente":"..."}';
@@ -12990,6 +13076,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                 </div>
             </div>`;
             document.body.appendChild(ov);
+            _stuAppPreviewAttach(ov.querySelector('#gdc-stu'));
             const ta = ov.querySelector('#gdc-argo'), cnt = ov.querySelector('#gdc-cnt');
             const upd = () => { cnt.textContent = ta.value.length + ' car.'; };
             ta.addEventListener('input', upd); upd();
@@ -18386,6 +18473,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                   +'<button class="lv-fine-btn fb2" style="margin-top:8px;" onclick="lvApplyGen(true)">✅ Applica alla lezione</button>'
                   +'<button class="lv-fine-btn fb1" onclick="lvGeneraDesc()">🔄 Rigenera</button>'
                   +'<div id="lv-gen-msg" style="font-size:calc(13px*var(--lv-z,1));"></div>';
+                _stuAppPreviewAttach(q('lv-gen-stu'));
                 const ta=q('lv-gen-argo'), cnt=q('lv-gen-cnt');
                 const upd=()=>{ if(cnt)cnt.textContent=ta.value.length+' car.'; };
                 ta.addEventListener('input',upd); upd();

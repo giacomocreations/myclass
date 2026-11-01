@@ -555,8 +555,17 @@ function fmtLessonDesc(raw){
       for(let i=0;i<sent.length;i+=2) paras.push(sent.slice(i,i+2).join(' '));
     }
   }
-  const GRAM = 'adverbs? of (?:manner|frequency|place|time|degree)|adverbs?|adjectives?|present simple|present continuous|present perfect|past simple|past continuous|past participle|future simple|going to|will|there is|there are|have got|has got|have to|can|can\'t|cannot|could|must|should|would|might|may|comparatives?|superlatives?|countable|uncountable|some|any|much|many|a lot of|what|which|who|whose|where|when|why|how|articles?|prepositions?|pronouns?|possessives?|imperative|vocabulary|vocabolario|lessico|grammar|grammatica|listening|speaking|reading|writing|verifica|interrogazione|test|quiz|verbi irregolari|irregular verbs?|phrasal verbs?';
-  const gramRe = new RegExp('\\b('+GRAM+')\\b','gi');
+  // Categorie di parole evidenziate, ognuna con il suo colore:
+  //  • verde  = grammatica (tempi verbali, strutture, parti del discorso)
+  //  • blu    = abilità e tipi di attività (lessico, lettura, scrittura, ascolto…)
+  //  • rosso  = verifiche e prove
+  // I confini di parola sono "Unicode" (\p{L}), così funzionano anche le
+  // parole accentate (attività) e "can" non colora "canzone".
+  const GRAM = 'adverbs? of (?:manner|frequency|place|time|degree)|adverbs?|adjectives?|present simple|present continuous|present perfect|past simple|past continuous|past participle|future simple|going to|will|there is|there are|have got|has got|have to|can|can\'t|cannot|could|must|mustn\'t|should|would|might|may|comparatives?|superlatives?|countable|uncountable|some|any|much|many|a lot of|what|which|who|whose|where|when|why|how|articles?|prepositions?|pronouns?|possessives?|imperative|verbi irregolari|irregular verbs?|phrasal verbs?|grammatica|grammaticali|grammaticale|grammar|forma (?:affermativa|negativa|interrogativa)|risposte brevi|short answers?|verbi|verbo|aggettivi|aggettivo|avverbi|avverbio|pronomi|pronome|preposizioni|preposizione|articoli|articolo|plurali?|genitivo sassone';
+  const SKILL = 'lessico|lessicali|lessicale|vocabolario|vocabulary|parole nuove|nuovi vocaboli|vocaboli|lettura|letture|reading|scrittura|writing|ascolto|listening|comprensione(?: (?:orale|scritta|del testo|dell\'ascolto|globale|dettagliata))?|produzione(?: (?:orale|scritta))?|speaking|parlato|conversazione|dialoghi|dialogo|role[- ]?play|pronuncia|pronunciation|spelling|dettato|dictation|ripasso|revision|consolidamento|correzione(?: (?:dei|del) compiti?)?|correzione|esercizi|esercizio|esercitazione|gioco|giochi|game|canzone|canzoni|song|video|brainstorming|flashcards?|warm[- ]?up|presentazione|introduzione|cultura|civiltà|brano|lavoro di gruppo|a coppie|in coppia|pair work|group work';
+  const EVAL = 'verifica|verifiche|interrogazione|interrogazioni|test|quiz|prova|prove|simulazione|invalsi';
+  const wordRe = list => new RegExp('(^|[^\\p{L}\\p{N}])('+list+')(?![\\p{L}\\p{N}])','giu');
+  const gramRe = wordRe(GRAM), skillRe = wordRe(SKILL), evalRe = wordRe(EVAL);
   const hl = (c,bg,t)=>`<span style="color:${c};${bg?`background:${bg};padding:0 4px;border-radius:5px;`:''}font-weight:700">${t}</span>`;
   const fmtLine = (s)=>{
     let h = esc(s);
@@ -564,10 +573,13 @@ function fmtLessonDesc(raw){
     const put = (html)=>{ keep.push(html); return '\u0000'+(keep.length-1)+'\u0000'; };
     h = h.replace(/\*\*(.+?)\*\*/g,(m,t)=>put(hl('#3C3489','#EEEDFE',t)));          // **evidenziato**
     h = h.replace(/^([^:]{2,30}):(\s)/,(m,t,sp)=>put(hl('#534AB7','',t+':'))+sp);   // "Etichetta: ..."
-    h = h.replace(/\b(pp?\.\s?\d+(?:[-–]\d+)?(?:\s+ex\.?\s?[\d\-–,\s]+)?)/gi,(m)=>put(hl('#854F0B','#FAEEDA',m.trim()))); // pagine
+    // pagine ed esercizi: p. 34, pp. 34-35, pag. 34, pagina 34, ex. 3, es. 2, esercizio 4…
+    h = h.replace(/(^|[^\p{L}])((?:pp?|pagg?|pagin[ae])\.?\s?\d+(?:\s?[-–]\s?\d+)?(?:,?\s+(?:ex|es|esercizi[oi])\.?\s?\d+[a-z]?(?:\s?(?:[-–,]|e)\s?\d+[a-z]?)*)?|(?:ex|es|esercizi[oi])\.?\s?\d+[a-z]?(?:\s?(?:[-–,]|e)\s?\d+[a-z]?)*)(?![\p{L}\d])/giu,(m,pre,t)=>pre+put(hl('#854F0B','#FAEEDA',t.trim()))); // pagine/esercizi
     h = h.replace(/("[^"]{1,40}"|«[^»]{1,40}»|“[^”]{1,40}”)/g,(m)=>put(hl('#085041','#E1F5EE',m)));        // "parole tra virgolette"
     h = h.replace(/(^|[\s(])('[^']{1,40}?'|‘[^’]{1,40}?’)(?=[\s.,;:!?)]|$)/g,(m,pre,q)=>pre+put(hl('#085041','#E1F5EE',q)));   // 'parole tra apici'
-    h = h.replace(gramRe,(m)=>put(hl('#1D9E75','',m)));                              // termini grammaticali
+    h = h.replace(evalRe,(m,pre,w)=>pre+put(hl('#A32D2D','#FCEBEB',w)));            // verifiche e prove
+    h = h.replace(skillRe,(m,pre,w)=>pre+put(hl('#185FA5','',w)));                  // abilità e attività
+    h = h.replace(gramRe,(m,pre,w)=>pre+put(hl('#1D9E75','',w)));                   // termini grammaticali
     return h.replace(/\u0000(\d+)\u0000/g,(m,i)=>keep[+i]);
   };
   return paras.map(p=>{
@@ -1674,9 +1686,32 @@ function filterLessons(){
   });
 }
 
+// Lezioni nello stesso ordine e con gli stessi criteri dell'elenco "Lezioni"
+// (svolte fino a oggi + prossime), dalla più vecchia alla più recente: serve
+// per passare alla precedente/successiva direttamente dal dettaglio.
+function _lessonSequence(l){
+  const today = new Date().toISOString().slice(0,10);
+  const seq = S.lessons.filter(x=>(x.stato==='svolta' && x.data <= today) || x.data > today).sort(_lessonCmpAsc);
+  return seq.includes(l) ? seq : [...S.lessons].sort(_lessonCmpAsc);
+}
+function _lessonNavBtn(x, dir){
+  if(!x) return `<div style="flex:1"></div>`;
+  const prev = dir==='prev';
+  return `<button onclick="openLesson('${_lk(x)}')" style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;${prev?'':'flex-direction:row-reverse;text-align:right;'}padding:10px 12px;border:1.5px solid var(--purple-mid);background:#fff;border-radius:12px;cursor:pointer;font-family:inherit;color:var(--purple-dark)">
+    <span style="font-size:20px;font-weight:700;line-height:1;flex-shrink:0">${prev?'‹':'›'}</span>
+    <span style="min-width:0;flex:1">
+      <span style="display:block;font-size:10px;font-weight:700;letter-spacing:0.5px;color:var(--purple)">${prev?'PRECEDENTE':'SUCCESSIVA'}</span>
+      <span style="display:block;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${fmtDate(x.data)} · ${esc(x.titolo||'')}</span>
+    </span>
+  </button>`;
+}
+
 function openLesson(key){
   const l = S.lessons.find(x=>x._key===key) || S.lessons.find(x=>x.data===key);
   if(!l) return;
+  const _seq = _lessonSequence(l), _pos = _seq.indexOf(l);
+  S._ldPrev = _pos > 0 ? _seq[_pos-1] : null;
+  S._ldNext = _pos >= 0 && _pos < _seq.length-1 ? _seq[_pos+1] : null;
   document.getElementById('ld-title').textContent = l.titolo;
   document.getElementById('ld-sub').textContent = fmtDateLong(l.data)+_oraLbl(l)+(l.unit?' · '+l.unit:'');
   const hwDate = computeHwDate(l) || extractHwDate(l.compiti);
@@ -1714,7 +1749,13 @@ function openLesson(key){
         </a>`).join('')}
     </div>`;
   }
-  document.getElementById('lesson-detail-body').innerHTML = html || '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">Nessun dettaglio disponibile.</div>';
+  if(!html) html = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">Nessun dettaglio disponibile.</div>';
+  if(S._ldPrev || S._ldNext){
+    html += `<div style="display:flex;gap:10px;margin:4px 0 12px">${_lessonNavBtn(S._ldPrev,'prev')}${_lessonNavBtn(S._ldNext,'next')}</div>`;
+  }
+  const _ldBody = document.getElementById('lesson-detail-body');
+  _ldBody.innerHTML = html;
+  _ldBody.scrollTop = 0;
   showScreen('scr-lesson-detail');
   document.getElementById('main-tab-bar').style.display='none';
   document.getElementById('lesson-back-btn').onclick = ()=>{
@@ -4077,8 +4118,14 @@ ${recoveryHtml}
     _sx = null; _sy = null;
     // Ignora swipe troppo corti o prevalentemente verticali
     if (Math.abs(dx) < 55 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
-    // Solo se uno dei tab principali è attivo
     const activeScreen = document.querySelector('.screen.active');
+    // Dettaglio lezione: swipe verso sinistra = lezione successiva, verso destra = precedente
+    if (activeScreen && activeScreen.id === 'scr-lesson-detail') {
+      const target = dx < 0 ? S._ldNext : S._ldPrev;
+      if (target) openLesson(_lk(target));
+      return;
+    }
+    // Solo se uno dei tab principali è attivo
     if (!activeScreen || !TAB_SWIPE_SET.has(activeScreen.id)) return;
     const curIdx = TAB_SCREENS.indexOf(activeScreen.id);
     if (curIdx === -1) return;
