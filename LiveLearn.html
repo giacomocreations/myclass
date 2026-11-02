@@ -2072,16 +2072,27 @@ function _clearAutoResume() {
 })();
 
 // ── Online/Offline detection ───────────────────────────────
-let _isOnline = true;
+let _isOnline = true, _offMonOn = false, _offSince = 0, _offQ = null;
 function _initOfflineMonitor() {
-  if (!db) return;
+  if (!db || _offMonOn) return;   // un solo listener (prima se ne aggiungeva uno a ogni ingresso)
+  _offMonOn = true;
   db.ref('.info/connected').on('value', function(snap) {
     const wasOnline = _isOnline;
     _isOnline = snap.val() === true;
     const banner = document.getElementById('s-offline-banner');
     if (banner) banner.style.display = _isOnline ? 'none' : 'block';
+    const inProva = S.sessionCode && !S.submitted && !S.removed;
+    if (!_isOnline && wasOnline && inProva) { _offSince = Date.now(); try { _offQ = _focusQNum(); } catch(e) { _offQ = null; } }
     // Reconnected while student is in an activity → re-push local backup
-    if (_isOnline && !wasOnline && S.sessionCode && !S.submitted) {
+    if (_isOnline && !wasOnline && inProva) {
+      // Disconnessione registrata per il docente (sotto i 3 s è solo un'oscillazione)
+      if (_offSince && Date.now() - _offSince >= 3000 && S.safeName) {
+        try {
+          db.ref('livelearn/responses/' + S.sessionCode + '/' + S.safeName + '/connEvents')
+            .push({ type: 'offline', at: _offSince, ms: Date.now() - _offSince, q: _offQ });
+        } catch(e) {}
+      }
+      _offSince = 0;
       _resyncLocalBackup();
     }
   });
@@ -10848,6 +10859,37 @@ function renderStudentResultsTeacher(name, response) {
       '</div>';
   }
 
+  // ── Connessione: disconnessioni del dispositivo e risposte recuperate ──
+  // Serve a capire se una prova incompleta dipende dalla rete dell'alunno
+  let connCard = '';
+  {
+    const cev = (response.connEvents && typeof response.connEvents === 'object' ? fbArr(response.connEvents) : [])
+      .filter(Boolean).sort((a, b) => (a.at || 0) - (b.at || 0));
+    const reloads = (response.focusEvents && typeof response.focusEvents === 'object' ? fbArr(response.focusEvents) : [])
+      .filter(e => e && e.type === 'reload').length;
+    if (cev.length) {
+      const nOff = cev.filter(e => e.type === 'offline').length;
+      const totOff = Math.round(cev.filter(e => e.type === 'offline').reduce((t, e) => t + (e.ms || 0), 0) / 1000);
+      const nRec = cev.filter(e => e.type === 'restore').reduce((t, e) => t + (e.n || 0), 0);
+      const hh = t => t ? new Date(t).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+      connCard =
+        '<div style="margin-bottom:20px;background:#eff6ff;border:2px solid #bfdbfe;border-radius:14px;padding:14px 18px;">' +
+          '<div style="font-size:14px;font-weight:800;color:#1d4ed8;">📶 Connessione' +
+            (nOff ? ' — ' + nOff + ' disconnession' + (nOff === 1 ? 'e' : 'i') + ' (' + fmtSecs(totOff) + ' senza rete)' : '') +
+            (nRec ? ' — ' + nRec + ' rispost' + (nRec === 1 ? 'a recuperata' : 'e recuperate') + ' dal dispositivo' : '') +
+            (reloads ? ' — ' + reloads + ' ricaric' + (reloads === 1 ? 'amento' : 'amenti') + ' della pagina' : '') + '</div>' +
+          '<div style="margin-top:8px;display:flex;flex-direction:column;gap:3px;">' +
+          cev.slice(-12).map(e => e.type === 'offline'
+            ? '<div style="font-size:11px;color:#1e3a8a;">📵 ' + hh(e.at) + ' — senza rete per ' + fmtSecs(Math.round((e.ms || 0) / 1000)) + (e.q ? ' (alla domanda ' + e.q + ')' : '') + '</div>'
+            : e.type === 'restore'
+            ? '<div style="font-size:11px;color:#166534;">♻️ ' + hh(e.at) + ' — rientrato/a: ' + (e.n || 0) + ' rispost' + ((e.n || 0) === 1 ? 'a recuperata' : 'e recuperate') + ' dal suo dispositivo</div>'
+            : '').join('') +
+          '</div>' +
+          '<div style="font-size:10px;color:#64748b;margin-top:8px;line-height:1.4;">Durante le disconnessioni le risposte restano sul dispositivo dell\'alunno e arrivano qui quando torna la rete (o quando rientra dallo stesso dispositivo).</div>' +
+        '</div>';
+    }
+  }
+
   // Associazione al nome del registro: sempre disponibile (anche a test
   // finito e a sessione chiusa), per i nomi scritti male o attaccati.
   const aliasBadge = response.aliasOf
@@ -10888,7 +10930,7 @@ function renderStudentResultsTeacher(name, response) {
         pdfBtn +
       '</div>' +
     '</div>' +
-    focusCard +
+    focusCard + connCard +
     recoveryHtml +
     '<div id="teacher-answer-cards">' + cardsHtml + '</div>';
 }
@@ -11875,15 +11917,13 @@ async function studentEnter() {
   // anche a prova iniziata, vale dalla domanda successiva.
   _listenForModeChange(code, safeName, session.mode || 'test');
 
-  // Check for local backup from a previous interrupted session
-  // FIX v2: tre bug corretti:
-  // 1) Il re-push ora usa _canonicalAnswersForServer() invece del raw S.answers
-  //    (evita scrambling con shuffleQ / versioni FILA attive)
-  // 2) Il backup non sovrascrive Firebase se Firebase ha più risposte valide
-  //    (evita che backup corrotti da rientri precedenti distruggano lo stato Firebase)
-  // 3) qIndex NON viene ripristinato dal backup se Firebase ha già risposte:
-  //    si va invece alla prima domanda senza risposta, evitando il problema
-  //    "chip già evidenziate" sul listening categorization
+  // Risposte salvate su QUESTO dispositivo (backup locale) che non sono
+  // arrivate a Firebase: rete caduta e poi pagina ricaricata, scheda chiusa
+  // dal browser, sessione riaperta. Prima si chiedeva all'alunno con un
+  // confirm() se riprendere: chi premeva "Annulla" (o non leggeva) ritrovava
+  // la prova vuota e il docente vedeva solo le risposte arrivate prima.
+  // Ora si uniscono da sole: Firebase vince dove ha una risposta, il backup
+  // riempie i buchi, e si riparte dalla prima domanda senza risposta.
   try {
     const bKey = 'llprog_' + code + '_' + safeName;
     const raw = localStorage.getItem(bKey);
@@ -11892,47 +11932,53 @@ async function studentEnter() {
     // un'altra versione: non si può rimappare, si ignora
     const _bakOk = _bakRaw && _bakRaw.canon === true && Array.isArray(_bakRaw.answers) &&
       (_bakRaw.version || 'originale') === (S.studentVersion || 'originale');
-    if (_bakOk) {
-      // Backup in ordine originale → ordine mescolato di questo ingresso
-      const bak = { ..._bakRaw, answers: _answersFromCanonical(_bakRaw.answers) };
-      const _qi = Array.isArray(S.qOrigMap) ? S.qOrigMap.indexOf(_bakRaw.qOrig) : -1;
-      bak.qIndex = _qi >= 0 ? _qi : 0;
-      const ageMin = Math.round((Date.now() - (bak.savedAt||0)) / 60000);
-      // Conta risposte valide nel backup e in Firebase
-      const bakCount = bak.answers.filter(a => a !== null && a !== undefined).length;
-      const fbCount  = S.answers.filter(a => a !== null && a !== undefined).length;
-      // Proponi ripristino solo se il backup ha ALMENO tante risposte di Firebase
-      // (evita di proporre un backup corrotto/vecchio su uno stato Firebase più completo)
-      if (ageMin < 120 && bakCount > 0 && bakCount >= fbCount) {
-        const restore = confirm('⚡ Hai un\'attività interrotta salvata ' + ageMin + ' minuti fa. Vuoi riprendere da dove eri rimasto?');
-        if (restore) {
-          // FIX #3: preferisci Firebase per ogni posizione in cui è non-null
-          // (backup integra solo le risposte mancanti in Firebase, non le sovrascrive)
-          S.answers = S.answers.map((fbAns, i) => {
-            if (fbAns !== null && fbAns !== undefined) return fbAns; // Firebase vince
-            const bAns = Array.isArray(bak.answers) ? bak.answers[i] : null;
-            return (bAns !== null && bAns !== undefined) ? bAns : fbAns;
-          });
-          S.studentScore = bak.score || S.studentScore || 0;
-          // FIX #2: non ripristinare qIndex dal backup se Firebase ha già risposte.
-          // Vai invece alla prima domanda non risposta, così lo studente non atterra
-          // di nuovo sul listening rotto con chip già piazzate.
-          if (fbCount > 0) {
-            const firstUnanswered = S.answers.findIndex(a => a === null || a === undefined);
-            S.qIndex = firstUnanswered >= 0 ? firstUnanswered : questions.length - 1;
-          } else {
-            S.qIndex = Math.min(bak.qIndex || 0, questions.length - 1);
-          }
-          // FIX #1: usa _canonicalAnswersForServer() per il re-push (rispetta qOrigMap)
-          await db.ref('livelearn/responses/' + code + '/' + safeName).update({
-            answers: _canonicalAnswersForServer(),
-            score: S.studentScore,
-            restoredAt: Date.now()
-          }).catch(e => {});
-        }
+    // Compiti assegnati: si possono riprendere anche giorni dopo
+    const _bakMaxMin = S.sessionMode === 'assigned' ? 14 * 24 * 60 : 24 * 60;
+    const _ageMin = _bakOk ? Math.round((Date.now() - (_bakRaw.savedAt || 0)) / 60000) : Infinity;
+    if (_bakOk && _ageMin < _bakMaxMin) {
+      const bakAns = _answersFromCanonical(_bakRaw.answers);
+      const _has = a => a !== null && a !== undefined;
+      let recuperate = 0;
+      S.answers = S.answers.map((fbAns, i) => {
+        if (_has(fbAns)) return fbAns;                       // Firebase vince
+        if (_has(bakAns[i])) { recuperate++; return bakAns[i]; }
+        return fbAns;
+      });
+      if (recuperate > 0) {
+        // Punteggio dalle risposte (quello del backup può riferirsi a meno risposte)
+        let sc = 0;
+        S.activity.questions.forEach((q, i) => { try { if (_has(S.answers[i])) sc += _earnedFrom(evaluateAnswer(q, S.answers[i])); } catch(e) {} });
+        S.studentScore = Math.round(sc * 100) / 100;
+        const _qi = Array.isArray(S.qOrigMap) ? S.qOrigMap.indexOf(_bakRaw.qOrig) : -1;
+        if (_qi >= 0) S.qIndex = _qi;
+        const ref = db.ref('livelearn/responses/' + code + '/' + safeName);
+        await ref.update({
+          answers: _canonicalAnswersForServer(),
+          score: S.studentScore,
+          restoredAt: Date.now(),
+          updatedAt: Date.now()
+        }).catch(e => console.warn('[recupero] invio risposte recuperate:', e.message));
+        try { ref.child('connEvents').push({ type: 'restore', at: Date.now(), n: recuperate }); } catch(e) {}
+        S._restoredMsg = '✅ Ho recuperato ' + recuperate + ' rispost' + (recuperate === 1 ? 'a' : 'e') +
+          ' salvat' + (recuperate === 1 ? 'a' : 'e') + ' su questo dispositivo: puoi continuare da dove eri.';
+        console.log('[recupero] risposte recuperate dal backup locale:', recuperate);
       }
     }
-  } catch(e) {}
+  } catch(e) { console.warn('[recupero] backup locale:', e.message); }
+
+  // Rientro con risposte già date: si riparte dalla prima domanda senza
+  // risposta, non dalla prima (nel Controllo docente decide il docente)
+  if (S.sessionMode !== 'teacher' && S.answers.some(a => a !== null && a !== undefined)) {
+    const cur = S.answers[S.qIndex];
+    if (S.qIndex === 0 || (cur !== null && cur !== undefined)) {
+      const fu = S.answers.findIndex(a => a === null || a === undefined);
+      S.qIndex = fu >= 0 ? fu : questions.length - 1;
+    }
+  }
+  if (S._restoredMsg) {
+    const _m = S._restoredMsg; S._restoredMsg = null;
+    setTimeout(() => { try { _llToast(_m, 'ok', 7000); } catch(e) {} }, 800);
+  }
 
   // Nome non riconosciuto: niente prova (nemmeno in ASSEGNA o a sessione
   // aperta) finché il docente non lo associa al nome giusto del registro.
