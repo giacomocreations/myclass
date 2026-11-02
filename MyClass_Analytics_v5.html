@@ -11856,6 +11856,34 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             const today = new Date().toISOString().split('T')[0];
             const future = allDates.filter(d=>d.data>=today);
 
+            // Compiti da portare in ogni giorno futuro = quelli assegnati nel giorno
+            // di lezione precedente (stessa regola di _compitiDaControllare, ma in
+            // un solo passaggio invece di riscansionare l'anno per ogni card).
+            const compitiPerGiorno = {};
+            const primaOraGiorno = {};
+            {
+                const piano = classe.pianificazione.piano;
+                const saltati = classe.pianificazione?.giorniSaltati || {};
+                const perGiorno = new Map();
+                allDates.forEach(s => {
+                    if (!perGiorno.has(s.data)) perGiorno.set(s.data, []);
+                    perGiorno.get(s.data).push(s);
+                });
+                let ultimi = { testo: '', data: '' };
+                [...perGiorno.keys()].sort().forEach(giorno => {
+                    const slots = perGiorno.get(giorno).sort((a, b) => a.ora - b.ora);
+                    if (giorno >= today) { compitiPerGiorno[giorno] = ultimi; primaOraGiorno[giorno] = slots[0].id; }
+                    if (saltati[giorno]) return;
+                    const lezioni = [...new Set(slots
+                        .map(ps => piano.find(l => lzMatchesSlot(l, ps)))
+                        .filter(lz => lz && !_isLezioneVuota(lz)))];
+                    if (!lezioni.length) return;   // nessuna lezione quel giorno: valgono ancora i compiti precedenti
+                    const testi = [];
+                    lezioni.forEach(lz => { const t = String(lz.compiti || '').trim(); if (t && !testi.includes(t)) testi.push(t); });
+                    ultimi = { testo: testi.join('\n'), data: giorno };
+                });
+            }
+
             let html = '';
             let lastMonth = '';
             future.forEach(slot => {
@@ -11865,7 +11893,9 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                     lastMonth = monthKey;
                     html += `<div class="piano-month-header">📅 ${monthKey}</div>`;
                 }
-                html += buildLessonCard(slot, classe, today, false);
+                // Il riquadro va solo sulla prima ora del giorno (con due ore di fila non si ripete)
+                const cpg = primaOraGiorno[slot.data] === slot.id ? compitiPerGiorno[slot.data] : null;
+                html += buildLessonCard(slot, classe, today, false, { compitiPerOggi: cpg });
             });
             container.innerHTML = html || '<p style="color:#aaa;text-align:center;padding:30px;">Nessuna lezione futura disponibile</p>';
             _updateClipboardBar();
@@ -11988,7 +12018,19 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
         // ================================================================
         // BUILD LESSON CARD
         // ================================================================
-        function buildLessonCard(slot, classe, today, isSvolteTab) {
+        /** Riquadro "Compiti per questo giorno" (assegnati nel giorno di lezione precedente) — Prossime lezioni */
+        function _compitiPerGiornoHTML(cpg) {
+            if (!cpg) return '';
+            const quando = cpg.data ? (() => { const d = new Date(cpg.data + 'T12:00:00'); return ` <span style="font-weight:400;opacity:.75;">(assegnati ${GIORNI_IT[d.getDay()]} ${d.getDate()}/${d.getMonth()+1})</span>`; })() : '';
+            const esc = t => String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            return cpg.testo
+                ? '<div class="lesson-homework" style="border-left:4px solid #f59e0b;background:#fffbeb;color:#92400e;padding:8px 12px;margin-bottom:6px;">'
+                    + '📋 <strong>Compiti per questo giorno</strong>' + quando + '<br>'
+                    + '<span style="margin-top:4px;display:block;">' + esc(cpg.testo).replace(/\n/g, '<br>') + '</span></div>'
+                : '<div class="lesson-homework" style="border-left:4px solid #d1d5db;background:#f9fafb;color:#9ca3af;font-style:italic;">📋 Nessun compito assegnato la lezione precedente</div>';
+        }
+
+        function buildLessonCard(slot, classe, today, isSvolteTab, opts) {
             const d = new Date(slot.data+'T12:00:00');
             const isPast = slot.data < today;
             const isToday = slot.data === today;
@@ -12045,9 +12087,10 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         <div class="lesson-desc">${activity.descrizione||''}</div>
                         ${(isSvolta || slot.data <= today) ? _assenzeBloccoHTML(activity, slot.id) : ''}
                         ${(()=>{
-                            // Per lezioni non oggi: mostra compiti normalmente
+                            // Per lezioni non oggi: compiti da portare quel giorno (solo Prossime lezioni) + compiti assegnati
                             if (!isToday) {
-                                return activity.compiti ? '<div class="lesson-homework">📚 Compiti assegnati: '+activity.compiti+'</div>' : '';
+                                return (isPast ? '' : _compitiPerGiornoHTML(opts?.compitiPerOggi))
+                                    + (activity.compiti ? '<div class="lesson-homework">📚 Compiti assegnati: '+activity.compiti+'</div>' : '');
                             }
                             // Per la lezione DI OGGI: mostra ENTRAMBI
                             let result = '';
@@ -12132,6 +12175,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         <div class="lesson-title" style="color:#b45309;">Lezione da preparare</div>
                         <div class="lesson-desc" style="color:#a16207;font-size:13px;">Ora in orario ancora senza argomento: aggiungi titolo, descrizione e piano</div>`
                         : `<div class="lesson-desc" style="color:#bbb;font-style:italic;">Slot libero — genera un piano unità, aggiungi manualmente, o sposta su le lezioni successive</div>`}
+                        ${!isToday ? _compitiPerGiornoHTML(opts?.compitiPerOggi) : ''}
                         ${isToday ? _assenzeBloccoHTML(_activityRaw, slot.id) : ''}
                     </div>
                     <div class="lesson-actions">
