@@ -10591,6 +10591,8 @@ function renderStudentResultsTeacher(name, response) {
     if (st === 'recovery_done') return '<span class="badge" style="background:#f59e0b;color:#fff;">🔁 Cons. Recupero</span>';
     if (st === 'recovery')      return '<span class="badge" style="background:#8b5cf6;color:#fff;">🔁 Recupero in corso…</span>';
     if (submitted && !response.aiScoringPending) return '<span class="badge badge-green">✓ Consegnato ' + new Date(submitted).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}) + '</span>';
+    // Entrato ma non ancora iniziato (in attesa del docente)
+    if (st === 'lobby') return '<span class="badge badge-gray">🕐 In attesa</span>';
     if (submitted && response.aiScoringPending)  return '<span class="badge badge-blue">🤖 Valutazione AI…</span>';
     return '<span class="badge badge-amber">⏳ In corso…</span>';
   })();
@@ -10859,6 +10861,39 @@ function renderStudentResultsTeacher(name, response) {
       '</div>';
   }
 
+  // ── Quando: inizio, ultima risposta salvata, rientri, consegna ──
+  // Sempre visibile, anche per chi non ha consegnato (prima si vedeva solo
+  // l'ora di consegna, o le uscite dalla pagina se ce n'erano).
+  let timelineCard = '';
+  {
+    const oggiStr = new Date().toDateString();
+    const quando = t => {
+      if (!t) return '—';
+      const d = new Date(t);
+      const ora = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+      if (d.toDateString() === oggiStr) return 'oggi alle ' + ora;
+      return d.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'numeric' }) + ' alle ' + ora;
+    };
+    const assegnata = S.liveMode === 'assigned';
+    const inizio = response.joinedAt || response.startedAt || null;
+    const rientri = (response.focusEvents && typeof response.focusEvents === 'object' ? fbArr(response.focusEvents) : [])
+      .filter(e => e && e.type === 'reload').length;
+    const voci = [];
+    if (inizio) voci.push('▶ ' + (assegnata ? 'Iniziato/a' : 'Entrato/a') + ' <strong>' + quando(inizio) + '</strong>');
+    if (!assegnata && response.startedAt && response.joinedAt && response.startedAt - response.joinedAt > 60000)
+      voci.push('🚦 Avviato/a ' + quando(response.startedAt));
+    if (response.updatedAt && !submitted) voci.push('🕒 Ultima risposta salvata <strong>' + quando(response.updatedAt) + '</strong>');
+    if (response.rejoinedAt) voci.push('🔁 Rientrato/a' + (rientri > 1 ? ' ' + rientri + ' volte' : '') + ' (ultima ' + quando(response.rejoinedAt) + ')');
+    if (submitted) voci.push('✓ Consegnato <strong>' + quando(submitted) + '</strong>');
+    else voci.push('<span style="color:#b45309;font-weight:700;">⏳ Non ancora consegnato</span>' +
+      (answeredCount ? ' — ' + answeredCount + '/' + questions.length + ' risposte salvate' : ' — nessuna risposta salvata'));
+    if (voci.length) timelineCard =
+      '<div style="margin-bottom:16px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:12px;padding:10px 14px;' +
+      'display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;color:#334155;">' +
+        voci.map(v => '<span>' + v + '</span>').join('') +
+      '</div>';
+  }
+
   // ── Connessione: disconnessioni del dispositivo e risposte recuperate ──
   // Serve a capire se una prova incompleta dipende dalla rete dell'alunno
   let connCard = '';
@@ -10930,7 +10965,7 @@ function renderStudentResultsTeacher(name, response) {
         pdfBtn +
       '</div>' +
     '</div>' +
-    focusCard + connCard +
+    timelineCard + focusCard + connCard +
     recoveryHtml +
     '<div id="teacher-answer-cards">' + cardsHtml + '</div>';
 }
