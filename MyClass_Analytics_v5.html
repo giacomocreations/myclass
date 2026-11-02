@@ -23047,7 +23047,7 @@ ${blocco.regole}`;
                         ? `compiti NON previsti (${reg.motivo || ''})`
                         : (l.compitiPresenti ? 'compiti già inseriti' : `compiti previsti (${reg.motivo || ''})`);
                     return `  • ${l.classe} ${l.ora}ª ora — "${l.titolo}": ${manca.length ? 'manca ' + manca.join(', ') : 'tutto pronto'} — ${notaC}`;
-                  }).join('\\n')
+                  }).join('\n')
                 : '  (nessuna lezione in orario)');
 
         return `Sei un assistente personale per il prof. Giacomo Cossu, docente di inglese scuola media italiana.
@@ -23215,13 +23215,21 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
                 prepLive = _getPreparazioneProssimaLezione();
         } catch(e) {}
         const prep = (prepLive && prepLive.lezioni?.length) ? prepLive : s.prep;
+        // Il testo discorsivo è superato se è cambiata una qualunque lezione del
+        // giorno da preparare (titolo, bozza, piano, compiti…), non solo il numero
+        // di quelle da completare: cambiare argomento lascia il conteggio uguale.
         const prepCambiata = !!(prepLive && s.prep && prepLive.data === s.prep.data
-                                && prepLive.daFare !== s.prep.daFare);
+                                && _prepFirma(prepLive) !== _prepFirma(s.prep));
 
         let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
             <span style="font-size:12px;font-weight:700;color:#7c3aed;">📅 ${lbl}</span>
             <span style="font-size:11px;color:#aaa;">${gen ? 'Aggiornato alle '+gen : ''}</span>
         </div>`;
+
+        if (window._agentDatiSuperati) {
+            const ds = window._agentDatiSuperati;
+            html += `<div style="font-size:12px;color:#991b1b;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:7px 11px;margin-bottom:10px;line-height:1.45;">⚠️ <strong>Dati non aggiornati.</strong> ${ds.da ? 'Su «' + String(ds.da).replace(/</g,'&lt;') + '»' : 'Su un altro dispositivo'} il piano è stato modificato (${_syncFmt(ds.driveMod)}) e questo dispositivo non ha ancora caricato la nuova versione: lezioni e promemoria qui sotto possono essere vecchi. ${ds.motivo === 'conflitto' ? 'Anche qui ci sono modifiche non ancora su Drive: scegli quale versione tenere.' : ds.motivo === 'modifica' ? 'Chiudi la lezione aperta in modifica: poi l\'agente carica la versione nuova.' : 'Riconnetti Google Drive (o ricarica la pagina) per aggiornarli.'}</div>`;
+        }
 
         if (store.status === 'loading') {
             html += `<div style="color:#888;font-size:14px;display:flex;align-items:center;gap:8px;"><span class="agent-spinner"></span> Generazione briefing in corso…</div>`;
@@ -23406,10 +23414,142 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
         el.innerHTML = html;
     }
 
+    /** Firma delle lezioni da preparare: cambia se cambia titolo, bozza, piano, compiti… */
+    function _prepFirma(prep) {
+        if (!prep) return '';
+        return prep.data + '|' + (prep.lezioni || []).map(l => [
+            l.classe, l.ora, l.titolo, l.bozza ? 1 : 0, l.mancaDescrizione ? 1 : 0,
+            l.mancaPiano ? 1 : 0, l.mancaCompiti ? 1 : 0, l.compitiNonServono ? 1 : 0
+        ].join('~')).join('#');
+    }
+
+    /** Il briefing salvato va (ri)generato? Sì se manca, se è per un altro giorno
+     *  o se nel frattempo è cambiato il piano del giorno da preparare. */
+    function _briefingDaRigenerare(targetIso) {
+        try {
+            const raw = localStorage.getItem('agent_briefing');
+            if (!raw) return true;
+            const b = JSON.parse(raw);
+            if (b.targetDate !== targetIso) return true;
+            if (b.status !== 'ready' && b.status !== 'no-ollama') return true;
+            const live = _getPreparazioneProssimaLezione();
+            if (_prepFirma(live) !== _prepFirma(b.structured?.prep)) {
+                console.log('[Agente] 📋 Piano del giorno da preparare cambiato dopo il briefing — lo rigenero');
+                return true;
+            }
+            return false;
+        } catch(e) { return true; }
+    }
+
+    // ── Allineamento con le modifiche fatte su un ALTRO dispositivo ──────────
+    // La scheda dell'agente resta aperta per giorni: i dati li legge da Drive
+    // solo all'apertura. Se nel frattempo il piano è stato cambiato altrove
+    // (casa ↔ scuola), l'agente lavorerebbe su lezioni vecchie: prima di ogni
+    // giro e di ogni briefing controlla se Drive ha una versione più recente
+    // e, se qui non ci sono modifiche da salvare, la carica.
+    window._agentDatiSuperati = null;
+
+    /** Versione di Drive più recente di quella su cui si basano i dati locali (ms) o 0 */
+    async function _agentVersioneRemota() {
+        const base = _syncGetBase();
+        let driveMod = 0, da = '';
+        // 1. Firebase: ogni dispositivo pubblica la versione di Drive su cui si
+        //    basa (driveBase) — funziona anche col token Drive scaduto
+        try {
+            const snap = await firebase.database().ref('myclass/_syncStatus').once('value');
+            const me = _syncDeviceId();
+            Object.entries(snap.val() || {}).forEach(([id, st]) => {
+                if (id === me || !st || !st.driveBase) return;
+                if (st.driveBase > driveMod) { driveMod = st.driveBase; da = st.label || ''; }
+            });
+        } catch(e) { console.warn('[Agente] stato altri dispositivi non leggibile:', e.message); }
+        // 2. Drive direttamente, se il token è ancora valido
+        if (_driveToken && _driveTokenExpiresAt() > Date.now() + 60000) {
+            try {
+                const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+                const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,modifiedTime)`,
+                    { headers: { Authorization: `Bearer ${_driveToken}` } });
+                if (res.ok) {
+                    const f = (await res.json()).files?.[0];
+                    const m = f ? new Date(f.modifiedTime).getTime() : 0;
+                    if (m > driveMod) driveMod = m;
+                }
+            } catch(e) {}
+        }
+        return (base && driveMod > base + 2000) ? { driveMod, da } : null;
+    }
+
+    /** Rinnovo silenzioso del token Drive (senza popup); false se non riesce */
+    function _agentRinnovaTokenDrive() {
+        if (_driveToken && _driveTokenExpiresAt() > Date.now() + 60000) return Promise.resolve(true);
+        return new Promise(resolve => {
+            const t = setTimeout(() => resolve(false), 15000);
+            try { _driveRefreshToken(ok => { clearTimeout(t); resolve(!!ok); }); }
+            catch(e) { clearTimeout(t); resolve(false); }
+        });
+    }
+
+    /**
+     * Ritorna 'reload' se sta caricando da Drive la versione più recente (la
+     * pagina si ricarica: chi chiama deve fermarsi), 'stale' se i dati locali
+     * sono superati ma non si possono aggiornare da soli, 'ok' altrimenti.
+     */
+    async function _agentAllineaDati() {
+        try {
+            if (!localStorage.getItem(DRIVE_CLIENT_ID_KEY)) return 'ok';   // Drive non in uso
+            const remoto = await _agentVersioneRemota();
+            if (!remoto) {
+                if (window._agentDatiSuperati) { window._agentDatiSuperati = null; }
+                return 'ok';
+            }
+            const modaleAperta = !!document.querySelector('.piano-edit-modal-overlay') ||
+                                 (typeof _lessonEditCtx !== 'undefined' && _lessonEditCtx);
+            if (_syncIsDirty() || window._driveConflict || modaleAperta) {
+                window._agentDatiSuperati = { ...remoto, motivo: modaleAperta ? 'modifica' : 'conflitto' };
+                console.warn('[Agente] ⚠️ Drive ha una versione più recente, ma qui ci sono modifiche non salvate — non la carico da solo');
+                // mostra la scelta una sola volta per versione, non a ogni giro
+                if (!modaleAperta && !window._driveConflict && _driveToken &&
+                    sessionStorage.getItem('agent_conflitto_mostrato') !== String(remoto.driveMod)) {
+                    sessionStorage.setItem('agent_conflitto_mostrato', String(remoto.driveMod));
+                    _driveCheckAndCompare();
+                }
+                return 'stale';
+            }
+            // Rete di sicurezza contro i ricaricamenti a ripetizione: la stessa
+            // versione si carica al massimo una volta ogni 10 minuti
+            let _ult = null;
+            try { _ult = JSON.parse(sessionStorage.getItem('agent_drive_reload') || 'null'); } catch(e) {}
+            if (_ult && _ult.mod === remoto.driveMod && Date.now() - _ult.at < 10 * 60 * 1000) {
+                window._agentDatiSuperati = { ...remoto, motivo: 'token' };
+                return 'stale';
+            }
+            if (await _agentRinnovaTokenDrive()) {
+                sessionStorage.setItem('agent_drive_reload', JSON.stringify({ mod: remoto.driveMod, at: Date.now() }));
+                console.log(`[Agente] 📥 Piano modificato su un altro dispositivo (${_syncFmt(remoto.driveMod)}) — carico la versione di Drive`);
+                await driveLoad({ silent: true, toast: '📥 L\'agente ha caricato da Drive le modifiche fatte su un altro dispositivo' });
+                return 'reload';
+            }
+            window._agentDatiSuperati = { ...remoto, motivo: 'token' };
+            console.warn('[Agente] ⚠️ Drive più recente ma sessione Drive scaduta — dati locali superati');
+            if (typeof _driveShowReconnectBanner === 'function') _driveShowReconnectBanner();
+            return 'stale';
+        } catch(e) {
+            console.warn('[Agente] allineamento con Drive non riuscito:', e.message);
+            return 'ok';
+        }
+    }
+    window._agentAllineaDati = _agentAllineaDati;
+
     /** Entry point: genera o aggiorna il briefing */
     async function agentGenerateBriefing() {
         const btn = document.getElementById('briefingRefreshBtn');
         if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+
+        // Prima di tutto: i dati sono quelli più recenti? (modifiche da altri dispositivi)
+        if (await _agentAllineaDati() === 'reload') {
+            if (btn) { btn.disabled = false; btn.textContent = '🔄 Aggiorna'; }   // se il caricamento non va a buon fine
+            return;
+        }
 
         const targetDate = _getBriefingTargetDate();
         const dateStr    = targetDate.toISOString().split('T')[0];
@@ -23481,6 +23621,10 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
     // è cambiato niente — Calendar, piano e audio sì, letture Firebase no.
     async function agentRun(opts) {
         if (window._tabBlocked) { console.log('[Agente] ⏸️ scheda in pausa — esecuzione saltata'); return; }
+        if (agentRunning) return;
+        // Piano cambiato su un altro dispositivo? Prima si caricano quei dati,
+        // altrimenti piani e briefing verrebbero preparati su lezioni vecchie.
+        if (await _agentAllineaDati() === 'reload') return;
         if (agentRunning) return;
         const _fbSkip = !!(opts && opts.skipFirebase);
         agentRunning = true;
@@ -23771,15 +23915,10 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
             // Non rigenera se esiste già un briefing 'ready'/'no-ollama' per la stessa data target.
             try {
                 const _briefingTarget = _getBriefingTargetDate().toISOString().split('T')[0];
-                let _briefingNeedsGen = true;
-                const _savedBriefing = localStorage.getItem('agent_briefing');
-                if (_savedBriefing) {
-                    const _bp = JSON.parse(_savedBriefing);
-                    if (_bp.targetDate === _briefingTarget && (_bp.status === 'ready' || _bp.status === 'no-ollama')) {
-                        _briefingNeedsGen = false;
-                        console.log('[Agente] 📋 Briefing già generato per', _briefingTarget, '— skip auto-gen');
-                    }
-                }
+                // Si rigenera anche se il piano del giorno da preparare è cambiato
+                // dopo l'ultimo briefing (lezioni sostituite, bozze, piani…)
+                const _briefingNeedsGen = _briefingDaRigenerare(_briefingTarget);
+                if (!_briefingNeedsGen) console.log('[Agente] 📋 Briefing già generato per', _briefingTarget, 'e piano invariato — skip auto-gen');
                 if (_briefingNeedsGen) {
                     console.log('[Agente] 📋 Generazione automatica briefing per', _briefingTarget, '…');
                     await agentGenerateBriefing();
@@ -25991,7 +26130,20 @@ ${sectionInstr}`;
         if (agentPeriodicTimer) return; // già attivo
         _agentWatchRequests();
         agentPeriodicTimer = setInterval(async () => {
-            if (!agentInActiveWindow()) return;
+            if (!agentInActiveWindow()) {
+                // Fuori dalla finestra attiva l'agente non lavora, ma i dati devono
+                // restare allineati: se il piano è stato cambiato su un altro
+                // dispositivo li carica, e nella finestra mattutina rifà il
+                // briefing quando il giorno da preparare è cambiato.
+                if (agentRunning || window._tabBlocked) return;
+                if (await _agentAllineaDati() === 'reload') return;
+                try {
+                    if (agentInMorningWindow() &&
+                        _briefingDaRigenerare(_getBriefingTargetDate().toISOString().split('T')[0]))
+                        agentGenerateBriefing();
+                } catch(e) {}
+                return;
+            }
             if (agentRunning) return;
             // Prima una lettura minuscola: se su Firebase non è cambiato niente
             // dall'ultimo giro completo, si saltano le letture pesanti.
@@ -26221,17 +26373,8 @@ ${sectionInstr}`;
         // agentRun() non parte in questa finestra, quindi il briefing va triggerato separatamente.
         if (agentInMorningWindow()) {
             const _mBriefTarget = _getBriefingTargetDate().toISOString().split('T')[0];
-            let _needsMorningBrief = true;
-            try {
-                const _savedMB = localStorage.getItem('agent_briefing');
-                if (_savedMB) {
-                    const _mbp = JSON.parse(_savedMB);
-                    if (_mbp.targetDate === _mBriefTarget && (_mbp.status === 'ready' || _mbp.status === 'no-ollama')) {
-                        _needsMorningBrief = false;
-                        console.log('[Agente] 📋 Briefing mattutino già presente per', _mBriefTarget, '— skip');
-                    }
-                }
-            } catch(e) {}
+            const _needsMorningBrief = _briefingDaRigenerare(_mBriefTarget);
+            if (!_needsMorningBrief) console.log('[Agente] 📋 Briefing mattutino già presente per', _mBriefTarget, 'e piano invariato — skip');
             if (_needsMorningBrief) {
                 console.log('[Agente] 🌅 Finestra mattutina — auto-briefing per', _mBriefTarget, 'tra 3s');
                 setTimeout(() => agentGenerateBriefing(), 3000);
