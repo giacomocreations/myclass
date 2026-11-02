@@ -1543,6 +1543,12 @@ const CONFIG = {
       <div style="margin-top:12px;" id="waiting-version-badge"></div>
       <!-- Nome non trovato nel registro: si aspetta l'associazione del docente -->
       <div id="waiting-unrecognized" style="display:none;margin-top:16px;background:#fffbeb;border:2px solid #f59e0b;border-radius:14px;padding:14px 18px;text-align:left;font-size:14px;line-height:1.5;color:#78350f;"></div>
+      <div style="text-align:left;"><div class="enter-rejoin-note" id="waiting-rejoin-note">
+        💡 <strong>Sei uscito/a dall'attività per sbaglio?</strong> (rete che salta, pagina chiusa o altro)<br>
+        Niente paura, non devi ricominciare: <span class="ll-sa-only">riapri l'attività dalla <strong>StudentApp</strong> o ricarica questa pagina</span><span class="ll-qo-only">ricarica questa pagina</span>,
+        rientra con <strong>lo stesso nome e lo stesso codice</strong>, possibilmente dallo <strong>stesso dispositivo</strong>, e continua da dove eri.
+        Le risposte già date restano salvate.
+      </div></div>
     </div>
 
     <!-- Revision sheet -->
@@ -7036,6 +7042,10 @@ async function openLive(code, activityId, roster, silent) {
   S.liveClassId = sess.classId || null;
   // Torneo chiuso: le consegne che contano ancora le domande non giocate si sistemano
   if (S.liveTournament && !isActive) _tourFixSession(code);
+  // Attività assegnate: postazione libera. I record legati a un dispositivo
+  // (entrati prima di questa regola) si sbloccano, così l'alunno può
+  // continuare da qualunque dispositivo.
+  if (sess.status === 'assigned') _llSbloccaAssegnata(code);
 
   // Mode badge
   const badges = { test:'<span class="mode-test">📝 Test</span>', practice:'<span class="mode-practice">🎮 Esercitazione</span>', teacher: S.liveTournament ? '<span class="mode-teacher">🏆 Torneo</span>' : '<span class="mode-teacher">🎓 Controllo docente</span>', assigned:'<span class="mode-assigned">📋 Assegnato</span>' };
@@ -8976,7 +8986,7 @@ function renderLiveSidebar(responses) {
       // Sblocco postazione: il record e' rivendicato da un dispositivo. Serve
       // quando l'alunno cambia computer a meta' lezione — senza questo resta
       // fuori, perche' le regole rifiutano la scrittura da un uid diverso.
-      const unlockBtn = (r && r.uid)
+      const unlockBtn = (r && r.uid && S.liveMode !== 'assigned')
         ? '<button title="Sblocca postazione (l\'alunno può rientrare da un altro computer)" data-action="unlock" style="background:#0f766e;color:#fff;border:0;border-radius:4px;font-size:10px;font-weight:800;padding:1px 6px;margin-left:4px;cursor:pointer;flex-shrink:0;">🔓</button>'
         : '';
       const outsideBadge = _llNeedsAlias(r) && inRoster
@@ -11876,6 +11886,13 @@ async function studentEnter() {
   //   - aggiorna solo `name` e un `rejoinedAt` per tracciare il refresh
   // Se non esiste, crea il record con i campi iniziali.
   // Riutilizza existingResp già in memoria — nessuna lettura aggiuntiva.
+  // Attività ASSEGNATE: la postazione è libera. Si fanno a casa, da qualunque
+  // dispositivo, e si può continuare da un altro: il record non si lega all'uid
+  // del dispositivo (le regole permettono la scrittura a chi entra con quel nome).
+  // Al posto del blocco, l'ultimo dispositivo entrato diventa quello attivo e
+  // gli altri si fermano (vedi _studentDeviceClaim), così non riscrivono
+  // risposte vecchie sopra quelle nuove.
+  const _liberaPost = session.status === 'assigned' || S.sessionMode === 'assigned';
   try {
     if (existingResp && !existingResp.submittedAt) {
       // Sessione in corso — riprendi da Firebase
@@ -11896,8 +11913,8 @@ async function studentEnter() {
       const _rejoin = {
         name: studentName,
         studentVersion: S.studentVersion,
-        uid: _myUid(),
-        uidAt: Date.now(),
+        uid: _liberaPost ? null : _myUid(),
+        uidAt: _liberaPost ? null : Date.now(),
         rejoinedAt: Date.now()
       };
       if (S._needsAlias) _rejoin.unrecognized = true;
@@ -11909,10 +11926,9 @@ async function studentEnter() {
         studentVersion: S.studentVersion,
         answers: [],
         score: 0,
-        uid: _myUid(),
-        uidAt: Date.now(),
         joinedAt: Date.now()
       };
+      if (!_liberaPost) { _first.uid = _myUid(); _first.uidAt = Date.now(); }
       if (S._needsAlias) _first.unrecognized = true;
       await db.ref('livelearn/responses/' + code + '/' + safeName).set(_first);
     }
@@ -11925,6 +11941,7 @@ async function studentEnter() {
   }
 
   _studentTabClaim(code, safeName);
+  if (_liberaPost) _studentDeviceClaim(code, safeName);
 
   // ── Listener di espulsione: se il docente setta removed:true, mostra schermata
   // e blocca tutte le scritture future tramite il flag S.removed ────────────
@@ -12613,12 +12630,43 @@ function _studentTabClaim(code, key) {
   window.addEventListener('storage', S._tabWatch);
 }
 
+// Attività assegnate (postazione libera): l'ultimo dispositivo o scheda entrato
+// con questo nome è quello attivo. Gli altri si fermano invece di continuare
+// a scrivere risposte superate (es. telefono rimasto aperto, poi il PC).
+function _studentDeviceClaim(code, key) {
+  if (!db) return;
+  const base = 'livelearn/responses/' + code + '/' + key;
+  if (S._devClaimOff) { try { S._devClaimOff(); } catch(e) {} S._devClaimOff = null; }
+  const ref = db.ref(base + '/activeTab');
+  db.ref(base).update({ activeTab: _STU_TAB, activeTabAt: Date.now() }).then(() => {
+    const cb = ref.on('value', snap => {
+      const v = snap.val();
+      if (!v || v === _STU_TAB || S.removed || S.submitted || S.sessionCode !== code) return;
+      S.removed = true;   // blocca ogni scrittura da qui
+      if (S.timerInterval) { clearInterval(S.timerInterval); S.timerInterval = null; }
+      try { ref.off('value', cb); } catch(e) {}
+      showStudentLocked('altroDispositivo');
+    });
+    S._devClaimOff = () => ref.off('value', cb);
+  }).catch(e => console.warn('[dispositivo attivo]', e.message));
+}
+// "Continua qui": si rientra su questo dispositivo (diventa quello attivo)
+function _continuaQui() {
+  _saveAutoResume();
+  location.reload();
+}
+
 function showStudentLocked(motivo) {
   if (S.timerInterval) { clearInterval(S.timerInterval); S.timerInterval = null; }
   const html = '<div class="view active" style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;">' +
     '<div style="max-width:520px;background:white;border-radius:20px;border:2px solid #f59e0b;padding:36px;text-align:center;box-shadow:0 10px 40px rgba(245,158,11,0.2);">' +
     '<div style="font-size:64px;margin-bottom:12px;">🔒</div>' +
-    (motivo === 'altraScheda'
+    (motivo === 'altroDispositivo'
+      ? '<h2 style="color:#b45309;margin-bottom:12px;font-size:22px;">Hai aperto l\'attività da un\'altra parte</h2>' +
+        '<p style="color:#475569;font-size:15px;line-height:1.5;margin-bottom:20px;">Stai continuando su un altro dispositivo o in un\'altra scheda: questa pagina si è fermata, così le tue risposte non si sovrascrivono.</p>' +
+        '<p style="color:#64748b;font-size:13px;line-height:1.5;margin-bottom:24px;">Vuoi continuare qui? Premi il pulsante: riprendi con le risposte già salvate e l\'altra pagina si ferma.</p>' +
+        '<button class="btn btn-primary" onclick="_continuaQui()">↻ Continua su questo dispositivo</button>'
+      : motivo === 'altraScheda'
       ? '<h2 style="color:#b45309;margin-bottom:12px;font-size:22px;">La prova è aperta in un\'altra scheda</h2>' +
         '<p style="color:#475569;font-size:15px;line-height:1.5;margin-bottom:24px;">Continua dall\'altra scheda: questa è ferma, così le tue risposte non si sovrascrivono. Puoi chiuderla.</p>'
       : '<h2 style="color:#b45309;margin-bottom:12px;font-size:22px;">Questo nome è già in uso su un altro dispositivo</h2>' +
@@ -22663,6 +22711,20 @@ function showCombinedResults() {
     if (aiEl) aiEl.style.display = 'block';
     runAIAnalysis(apiKey, questions, answers, pct, mode, false, false);
   }
+}
+
+// Sblocca tutti gli alunni di un'attività assegnata ancora legati a un dispositivo
+async function _llSbloccaAssegnata(code) {
+  try {
+    const all = (await _fbGet(db.ref('livelearn/responses/' + code), 15000)).val() || {};
+    const upd = {};
+    Object.entries(all).forEach(([k, r]) => { if (r && r.uid) { upd[k + '/uid'] = null; upd[k + '/uidAt'] = null; } });
+    const n = Object.keys(upd).length / 2;
+    if (n) {
+      await db.ref('livelearn/responses/' + code).update(upd);
+      console.log('[Assegnata] postazioni sbloccate:', n);
+    }
+  } catch(e) { console.warn('[Assegnata] sblocco postazioni:', e.message); }
 }
 
 // Teacher grants an extra recovery attempt
