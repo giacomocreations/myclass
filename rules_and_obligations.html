@@ -38,6 +38,8 @@
   #mode-switch button { border: none; background: transparent; color: #aaa; font-family: inherit; font-size: 13px; font-weight: 500; padding: 6px 12px; border-radius: 7px; cursor: pointer; }
   #mode-switch button[aria-pressed="true"] { background: var(--gold); color: var(--bg); font-weight: 700; }
   body.mode-home .class-only, body.mode-class .home-only { display: none !important; }
+  body:not(.teacher) .teacher-only { display: none !important; }
+  #lock-btn { padding: 6px 9px; }
 
   /* ── scelta della scheda ── */
   .picker { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-bottom: 14px; }
@@ -184,13 +186,15 @@
   button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 </style>
 <script src="font-zoom.js" defer></script>
+<script src="teacher-lock.js"></script>
 </head>
 <body class="mode-home">
 
 <a class="home-link" href="index.html">← Home</a>
 <div id="mode-switch" role="group" aria-label="Modalità">
   <button type="button" data-mode="home" onclick="setMode('home')">🏠 At home</button>
-  <button type="button" data-mode="class" onclick="setMode('class')">📺 Oral test</button>
+  <button type="button" data-mode="class" class="teacher-only" onclick="setMode('class')">📺 Oral test</button>
+  <button type="button" id="lock-btn" onclick="toggleLock()" title="Area docente">🔒</button>
 </div>
 
 <div class="container">
@@ -913,11 +917,24 @@ function copyGrades() {
 //  MODALITÀ E AVVIO
 // ══════════════════════════════════════════════════════════════════
 const MODE_KEY = 'roo_mode';
+// Oral test solo per l'insegnante: serve il PIN (vedi teacher-lock.js)
+function refreshLock() {
+  const ok = TeacherLock.isUnlocked();
+  document.body.classList.toggle('teacher', ok);
+  const b = document.getElementById('lock-btn');
+  b.textContent = ok ? '🔓' : '🔒';
+  b.title = ok ? "Richiudi l'Oral test: su questo computer si vedrà solo At home" : "Area docente: sblocca l'Oral test";
+}
+function toggleLock() {
+  if (TeacherLock.isUnlocked()) { TeacherLock.lock(); refreshLock(); if (state.mode === 'class') setMode('home'); toast('🔒 Oral test richiuso'); }
+  else TeacherLock.ask(() => { refreshLock(); setMode('class'); });
+}
 function setMode(m) {
+  if (m === 'class' && !TeacherLock.isUnlocked()) { TeacherLock.ask(() => { refreshLock(); setMode('class'); }); return; }
   state.mode = m;
   document.body.classList.toggle('mode-home', m === 'home');
   document.body.classList.toggle('mode-class', m === 'class');
-  document.querySelectorAll('#mode-switch button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
+  document.querySelectorAll('#mode-switch [data-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
   try { localStorage.setItem(MODE_KEY, m); } catch (e) {}
   if (m === 'class') goPart1(); else { renderStage(); renderSay(); }
 }
@@ -933,9 +950,12 @@ window.addEventListener('beforeunload', () => { try { if (teacherWin && !teacher
   const url = new URLSearchParams(location.search).get('mode');
   let m = /^(oral|test|class|classe)$/.test(url || '') ? 'class' : /^(home|casa)$/.test(url || '') ? 'home' : null;
   if (!m) { try { m = localStorage.getItem(MODE_KEY); } catch (e) {} }
+  refreshLock();
   setHint('hints');
   selectCard(CARDS[0].id, false);
-  setMode(m === 'class' ? 'class' : 'home');
+  // senza PIN si parte sempre da At home; dal link ?mode=oral compare la richiesta del PIN
+  setMode(m === 'class' && TeacherLock.isUnlocked() ? 'class' : 'home');
+  if (m === 'class' && url && !TeacherLock.isUnlocked()) setMode('class');
   renderTimer();
 })();
 </script>

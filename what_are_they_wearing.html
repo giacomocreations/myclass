@@ -38,6 +38,9 @@
   #mode-switch button { border: none; background: transparent; color: #aaa; font-family: inherit; font-size: 13px; font-weight: 500; padding: 6px 12px; border-radius: 7px; cursor: pointer; }
   #mode-switch button[aria-pressed="true"] { background: var(--gold); color: var(--bg); font-weight: 700; }
   body.mode-home .class-only, body.mode-class .home-only { display: none !important; }
+  body:not(.teacher) .teacher-only { display: none !important; }
+  #lock-btn { padding: 6px 9px; }
+  [hidden] { display: none !important; }
 
   /* ── controlli ── */
   .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; margin-bottom: 14px; }
@@ -66,6 +69,26 @@
   .chip-btn:hover { border-color: var(--accent2); transform: translateY(-1px); }
   .chip-btn:active { transform: scale(0.96); }
   .who { font-weight: 800; color: var(--gold); }
+  .target-row { width: 100%; display: flex; justify-content: center; margin-bottom: 2px; }
+  .target-row .seg button[aria-pressed="true"] { background: var(--gold); color: #1a1300; }
+
+  /* ── microfono subito sotto l'immagine (At home) ── */
+  .speak-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 14px; margin: 12px auto 0; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; }
+  .btn-mic { border: none; cursor: pointer; font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 1.5px; padding: 10px 26px 8px; border-radius: 14px; color: #fff; background: linear-gradient(135deg, var(--accent), #ff9a5c); box-shadow: 0 8px 24px rgba(255,93,143,0.35); transition: transform .15s; }
+  .btn-mic:hover { transform: translateY(-2px); }
+  .btn-mic.on { background: linear-gradient(135deg, #e63946, #b5172b); animation: pulse 1.2s ease-in-out infinite; }
+  .btn-mic:disabled { opacity: .45; cursor: default; transform: none; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 10px rgba(230,57,70,0.18); } }
+  .speak-txt { font-size: 15px; color: #ddd8ea; max-width: 520px; line-height: 1.45; }
+  .speak-bar .mic-out { width: 100%; margin-top: 0; }
+  .speak-bar .mic-out:empty { display: none; }
+  .listen-badge { position: absolute; right: 12px; top: 10px; display: none; align-items: center; gap: 8px; background: rgba(200,20,40,0.88); color: #fff; font-weight: 800; font-size: 14px; padding: 7px 12px; border-radius: 10px; border: none; font-family: inherit; cursor: pointer; }
+  .listen-badge .dot { width: 10px; height: 10px; border-radius: 50%; background: #fff; animation: blink 1s steps(2) infinite; }
+  body.listening .listen-badge { display: inline-flex; }
+
+  /* ── Your turn: esempi nascondibili ── */
+  .panel h3 .mini { margin-left: auto; font-family: 'DM Sans', sans-serif; font-size: 12.5px; font-weight: 700; letter-spacing: 0; padding: 6px 10px; border-radius: 9px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; }
+  .panel h3 .mini:hover { border-color: var(--accent2); }
 
   /* ── pannelli ── */
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
@@ -155,19 +178,23 @@
     .seg button { padding: 7px 8px; font-size: 12px; }
     .task { font-size: 17px; }
     .tap-hint { font-size: 10.5px; padding: 3px 7px; top: 6px; left: 6px; }
+    .listen-badge { font-size: 12px; padding: 4px 8px; top: 6px; right: 6px; }
+    .btn-mic { font-size: 22px; padding: 9px 20px 7px; }
     .stage-wrap { border-radius: 16px; }
   }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
   button:focus-visible, .field:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 </style>
 <script src="font-zoom.js" defer></script>
+<script src="teacher-lock.js"></script>
 </head>
 <body class="mode-home">
 
 <a class="home-link" href="index.html">← Home</a>
 <div id="mode-switch" role="group" aria-label="Modalità">
   <button type="button" data-mode="home" onclick="setMode('home')">🏠 At home</button>
-  <button type="button" data-mode="class" onclick="setMode('class')">📺 Oral test</button>
+  <button type="button" data-mode="class" class="teacher-only" onclick="setMode('class')">📺 Oral test</button>
+  <button type="button" id="lock-btn" onclick="toggleLock()" title="Area docente">🔒</button>
 </div>
 
 <div class="container">
@@ -192,9 +219,18 @@
   <div class="stage-wrap" id="stage-wrap">
     <svg id="stage" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Personaggi da descrivere"></svg>
     <div class="tap-hint">👆 Tocca un vestito per cambiarlo</div>
+    <button type="button" class="listen-badge" onclick="toggleMic()" title="Ho finito di parlare"><span class="dot"></span> Ti ascolto… ⏹ Ho finito</button>
+  </div>
+
+  <!-- AT HOME: il microfono sta subito sotto l'immagine, così mentre parlano la vedono sempre -->
+  <div class="speak-bar home-only" id="speak-bar">
+    <button type="button" class="btn-mic" id="btn-mic" onclick="toggleMic()">🎤 Parla</button>
+    <div class="speak-txt">Premi <b>🎤 Parla</b> e descrivi <span class="who" id="who-mic"></span> in inglese guardando l'immagine. Quando hai finito premi <b>⏹</b>: ti dico quali vestiti, colori e verbi hai usato. <span class="note" id="mic-note" style="display:block"></span></div>
+    <div class="mic-out" id="mic-out"></div>
   </div>
 
   <div class="change-bar">
+    <div class="target-row"><div class="seg" role="group" aria-label="Chi cambiare" id="target-seg" hidden></div></div>
     <div class="lbl">Cambia <span class="who" id="who-name"></span> con un clic:</div>
     <button type="button" class="chip-btn" onclick="cycle('top')">👕 Top</button>
     <button type="button" class="chip-btn" onclick="cycle('outer')">🧥 Jacket / Coat</button>
@@ -204,14 +240,15 @@
     <button type="button" class="chip-btn" onclick="cycle('colors')">🎨 Colours</button>
     <button type="button" class="chip-btn" onclick="cycle('action')">🏃 Action</button>
     <button type="button" class="chip-btn" onclick="cycle('person')">🔁 Boy / Girl</button>
-    <button type="button" class="chip-btn" onclick="cycle('all')">🎲 Tutto</button>
+    <button type="button" class="chip-btn" onclick="cycle('all')" id="chip-all">🎲 Tutto nuovo</button>
   </div>
 
   <div class="grid2">
     <!-- consegna + lingua -->
     <div class="panel">
-      <h3>🗣️ Your turn</h3>
+      <h3>🗣️ Your turn <button type="button" class="mini" id="btn-help" onclick="toggleHelp()">🙈 Nascondi esempi</button></h3>
       <div class="task" id="task"></div>
+      <div id="help-box">
       <div class="lang-box">
         <b>What is he / she wearing?</b><br>
         <span class="ex">He's / She's wearing</span> a red T-shirt, blue jeans and white trainers.<br>
@@ -220,6 +257,8 @@
         <span class="ex">She isn't wearing</span> a coat.
       </div>
       <div class="vocab" id="vocab"></div>
+      </div>
+      <p class="note" id="help-off" hidden>💡 Gli esempi sono nascosti. Per chi ha bisogno di un aiuto: <b>Mostra esempi</b>.</p>
     </div>
 
     <!-- descrizione modello (solo a casa: in Oral test sta nella finestra docente) -->
@@ -253,15 +292,6 @@
   <!-- ═══════════ AT HOME (allenamento) ═══════════ -->
   <div class="grid2 home-only">
     <div class="panel">
-      <h3>🎤 Speak &amp; check</h3>
-      <p>Premi il microfono e descrivi <span class="who" id="who-mic"></span> in inglese. Ti dico quali vestiti, colori e verbi hai usato.</p>
-      <div class="row">
-        <button type="button" class="btn pink" id="btn-mic" onclick="toggleMic()">🎤 Parla</button>
-      </div>
-      <div class="mic-out" id="mic-out"></div>
-      <p class="note" id="mic-note"></p>
-    </div>
-    <div class="panel">
       <h3>✅ True or false?</h3>
       <p>Guarda l'immagine e decidi: vero o falso?</p>
       <div id="tf"></div>
@@ -270,16 +300,15 @@
         <button type="button" class="btn primary" onclick="newPicture()">🎲 Nuova immagine</button>
       </div>
     </div>
-  </div>
-
-  <div class="panel home-only" style="margin-top:16px">
-    <h3>🏠 Come allenarti a casa</h3>
-    <ol>
-      <li>Premi <b>🎲 New!</b>: arriva un personaggio nuovo, con vestiti e azioni diversi.</li>
-      <li>Descrivilo <b>ad alta voce</b>: tutti i vestiti con il colore (<i>She's wearing a pink skirt…</i>) e l'azione (<i>She's flying a kite</i>).</li>
-      <li>Controlla con <b>👁 Mostra</b> e ascolta la pronuncia con <b>🔊 Ascolta</b>. Puoi anche usare il <b>🎤 microfono</b>.</li>
-      <li>Prova con <b>2 o 3 personaggi</b>: <i>Tom is wearing… Emma is wearing… They're…</i></li>
-    </ol>
+    <div class="panel">
+      <h3>🏠 Come allenarti a casa</h3>
+      <ol>
+        <li>Premi <b>🎲 New!</b>: arriva un personaggio nuovo, con vestiti e azioni diversi.</li>
+        <li>Descrivilo <b>ad alta voce</b>: tutti i vestiti con il colore (<i>She's wearing a pink skirt…</i>) e l'azione (<i>She's flying a kite</i>).</li>
+        <li>Premi <b>🎤 Parla</b>, sotto l'immagine: la vedi mentre parli. Poi controlla con <b>👁 Mostra</b> e ascolta la pronuncia con <b>🔊 Ascolta</b>.</li>
+        <li>Prova con <b>2 o 3 personaggi</b>: <i>Tom is wearing… Emma is wearing… They're…</i> Con <b>👥 Tutti</b> cambi i vestiti a tutti insieme.</li>
+      </ol>
+    </div>
   </div>
 
   <!-- ═══════════ ORAL TEST (interrogazione) ═══════════ -->
@@ -290,7 +319,9 @@
       <li>Premi <b>🖥️ Finestra docente</b> e trascina la finestra che si apre sul <b>tuo</b> schermo (con Chrome/Edge può spostarsi da sola).</li>
       <li>Chiama lo studente e premi <b>⏱ Avvia 3:00</b>: lui descrive i personaggi, poi fai una <b>❓ domanda</b>. Tu leggi le risposte e compili la griglia nella tua finestra. Allo scadere il timer diventa rosso e conta il tempo in più.</li>
       <li><b>💾 Salva e prossimo</b>: il voto resta salvato insieme al tempo usato, il timer si azzera e sulla LIM arriva subito una scena nuova.</li>
+      <li><b>Esempi di Your turn</b>: in Oral test partono nascosti. Per un alunno in difficoltà premi <b>💡 Mostra esempi</b> (qui o nella finestra docente): nel voto salvato resta la nota «con esempi», e con il prossimo alunno tornano nascosti.</li>
     </ol>
+    <p class="note">🔒 Questa modalità la vede solo chi ha il PIN: gli alunni vedono solo <b>At home</b>. Con 🔓 in alto la richiudi su questo computer.</p>
   </div>
 </div>
 
@@ -1053,7 +1084,8 @@ function drawWeather(key, W) {
 // ══════════════════════════════════════════════════════════════════
 //  GENERAZIONE DEI PERSONAGGI
 // ══════════════════════════════════════════════════════════════════
-const state = { mode: 'home', count: 3, q: null, sceneChoice: 'random', scene: 'park', chars: [], sel: 0, modelOpen: false };
+const state = { mode: 'home', count: 3, q: null, sceneChoice: 'random', scene: 'park', chars: [], sel: 0, allSel: false, modelOpen: false };
+const allTarget = () => state.allSel && state.chars.length > 1;
 
 const rulesFor = scene => RULES[SCENES[scene].season];
 const allowed = (pairs, gender, scene) => pairs.filter(p => (gender === 'girl' || !GIRL_ONLY.has(p[0])) && !(scene === 'beach' && p[0] === 'shoes'));
@@ -1299,7 +1331,7 @@ function render(pop) {
   const slotW = W / n;
   state.chars.forEach((c, i) => {
     const x = slotW * i + slotW / 2 - 100 - (n === 1 ? 20 : n === 2 ? 10 : 0);
-    o += `<g class="ch" data-i="${i}" transform="translate(${x.toFixed(1)},0)"><g${pop === i || pop === 'all' ? ' class="stage-pop"' : ''}>${drawCharacter(c, i, i === state.sel, n > 1)}</g></g>`;
+    o += `<g class="ch" data-i="${i}" transform="translate(${x.toFixed(1)},0)"><g${pop === i || pop === 'all' ? ' class="stage-pop"' : ''}>${drawCharacter(c, i, allTarget() || i === state.sel, n > 1)}</g></g>`;
   });
   o += drawWeather(state.scene, W);
   svg.innerHTML = o;
@@ -1309,7 +1341,12 @@ function render(pop) {
 function updatePanels() {
   const c = state.chars[state.sel];
   const n = state.chars.length;
-  ['who-name', 'who-mic'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = c.name; });
+  document.getElementById('who-mic').textContent = c.name;
+  document.getElementById('who-name').textContent = allTarget() ? 'tutti' : c.name;
+  document.getElementById('chip-all').textContent = allTarget() ? '🎲 Tutti nuovi' : '🎲 Tutto nuovo';
+  const ts = document.getElementById('target-seg');
+  ts.hidden = n < 2;
+  if (n > 1) ts.innerHTML = `<span class="seg-lbl">Chi cambi?</span><button type="button" aria-pressed="${allTarget()}" onclick="setTarget('all')">👥 Tutti</button>` + state.chars.map((x, i) => `<button type="button" aria-pressed="${!allTarget() && i === state.sel}" onclick="setTarget(${i})">${esc(x.name)}</button>`).join('');
   const task = document.getElementById('task');
   if (n === 1) task.innerHTML = `Look at <em>${esc(c.name)}</em>.<br>What is ${pron(c)} wearing? What is ${pron(c)} doing?`;
   else task.innerHTML = `Describe ${listJoin(state.chars.map(x => `<em>${esc(x.name)}</em>`))}.<br>What are they wearing? What are they doing?`;
@@ -1324,6 +1361,23 @@ function updatePanels() {
 
 function toggleModel() { state.modelOpen = !state.modelOpen; updatePanels(); }
 
+// Esempi di "Your turn": si possono nascondere (in Oral test partono nascosti)
+const HELP_KEY = 'wtw_help';
+const help = { home: true, class: false };
+try { const h = JSON.parse(localStorage.getItem(HELP_KEY)); if (h && typeof h.home === 'boolean') help.home = h.home; } catch (e) {}
+function applyHelp() {
+  const on = help[state.mode];
+  document.getElementById('help-box').hidden = !on;
+  document.getElementById('help-off').hidden = on;
+  document.getElementById('btn-help').textContent = on ? '🙈 Nascondi esempi' : '💡 Mostra esempi';
+  if (twOpen()) { const b = tw('t-help'); b.textContent = on ? '🙈 Nascondi gli esempi alla LIM' : '💡 Mostra gli esempi alla LIM'; b.className = on ? 'pink' : ''; tw('t-help-st').textContent = on ? 'Esempi visibili alla LIM' : 'Esempi nascosti alla LIM'; }
+}
+function toggleHelp() {
+  help[state.mode] = !help[state.mode];
+  if (state.mode === 'home') { try { localStorage.setItem(HELP_KEY, JSON.stringify({ home: help.home })); } catch (e) {} }
+  applyHelp();
+}
+
 // ══════════════════════════════════════════════════════════════════
 //  AZIONI DELL'INSEGNANTE / STUDENTE
 // ══════════════════════════════════════════════════════════════════
@@ -1334,6 +1388,12 @@ function newPicture() {
     state.scene = pick(keys);
   } else state.scene = state.sceneChoice;
   lastScene = state.scene;
+  genAll();
+  state.sel = 0; state.modelOpen = false;
+  resetAfterChange();
+  render('all');
+}
+function genAll() {
   const prev = state.chars.map(c => c.name);
   state.chars = [];
   for (let i = 0; i < state.count; i++) {
@@ -1343,17 +1403,32 @@ function newPicture() {
     do { c = genCharacter(state.scene, state.chars, g); tries++; } while (state.count === 1 && prev.includes(c.name) && tries < 5);
     state.chars.push(c);
   }
-  state.sel = 0; state.modelOpen = false;
-  resetAfterChange();
-  render('all');
 }
 
 function setCount(n) { state.count = n; newPicture(); }
 function setScene(k) { state.sceneChoice = k; newPicture(); }
 
+function setTarget(t) {
+  if (t === 'all') state.allSel = true;
+  else {
+    if (t !== state.sel) document.getElementById('mic-out').innerHTML = '';
+    state.allSel = false; state.sel = t;
+  }
+  render();
+}
+
+// cambia un pezzo: al personaggio scelto, oppure a tutti insieme (👥 Tutti)
 function cycle(slot, idx) {
-  if (idx !== undefined) state.sel = idx;
-  const c = state.chars[state.sel];
+  if (idx !== undefined) { state.sel = idx; state.allSel = false; }   // clic sull'immagine: solo quel personaggio
+  const all = allTarget();
+  if (all && slot === 'all') genAll();
+  else (all ? state.chars.map((c, i) => i) : [state.sel]).forEach(i => changeOne(i, slot));
+  state.modelOpen = false;
+  resetAfterChange();
+  render(all ? 'all' : state.sel);
+}
+function changeOne(i, slot) {
+  const c = state.chars[i];
   const others = state.chars.filter(o => o !== c);
   if (slot === 'action') genAction(c, others, true);
   else if (slot === 'colors') recolor(c);
@@ -1363,14 +1438,8 @@ function cycle(slot, idx) {
     if (c.gender === 'boy' && GIRL_ONLY.has(c.top.type)) genSlot(c, 'top', true);
     fixOutfit(c);
   } else if (slot === 'all') {
-    const nc = genCharacter(state.scene, others, null);
-    state.chars[state.sel] = nc;
-  } else if (slot === 'name') {
-    genPerson(c, others);
+    state.chars[i] = genCharacter(state.scene, others, null);
   } else genSlot(c, slot, true);
-  state.modelOpen = false;
-  resetAfterChange();
-  render(state.sel);
 }
 
 function resetAfterChange() {
@@ -1387,8 +1456,8 @@ document.getElementById('stage').addEventListener('click', e => {
   const i = +g.dataset.i;
   const s = e.target.closest('[data-slot]');
   const slot = s ? s.dataset.slot : null;
-  if (slot) cycle(slot, i);            // un clic: seleziona il personaggio e cambia quel pezzo
-  else if (i !== state.sel) { state.sel = i; render(); }
+  if (slot && slot !== 'name') cycle(slot, i);   // un clic su un vestito: seleziona il personaggio e cambia quel pezzo
+  else setTarget(i);                              // clic sul nome: scelgo solo quel personaggio
 });
 
 // ══════════════════════════════════════════════════════════════════
@@ -1421,10 +1490,24 @@ function toggleMic() {
   rec.onresult = e => { for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) text += ' ' + e.results[i][0].transcript; };
   rec.onerror = e => { document.getElementById('mic-note').textContent = e.error === 'not-allowed' ? '⚠️ Permetti l\'uso del microfono al browser.' : '⚠️ Non ho sentito bene: riprova.'; };
   rec.onend = () => { listening = false; setMicBtn(); if (text.trim()) checkSpeech(text.trim()); };
-  try { rec.start(); listening = true; setMicBtn(); document.getElementById('mic-note').textContent = 'Parla adesso… premi ⏹ quando hai finito.'; }
+  try { rec.start(); listening = true; setMicBtn(); showStageAndMic(); document.getElementById('mic-note').textContent = 'Parla adesso… premi ⏹ quando hai finito.'; }
   catch (err) { listening = false; setMicBtn(); }
 }
-function setMicBtn() { document.getElementById('btn-mic').textContent = listening ? '⏹ Ho finito' : '🎤 Parla'; }
+function setMicBtn() {
+  const b = document.getElementById('btn-mic');
+  b.textContent = listening ? '⏹ Ho finito' : '🎤 Parla';
+  b.classList.toggle('on', listening);
+  document.body.classList.toggle('listening', listening);
+}
+// mentre si parla: immagine e pulsante ⏹ devono stare tutti e due sullo schermo
+function showStageAndMic() {
+  const st = document.getElementById('stage-wrap').getBoundingClientRect();
+  const bt = document.getElementById('btn-mic').getBoundingClientRect();
+  let d = 0;
+  if (bt.bottom > window.innerHeight - 10) d = bt.bottom - window.innerHeight + 10;
+  if (st.top - d < 56) d = st.top - 56;
+  if (Math.abs(d) > 4) window.scrollBy({ top: d, behavior: 'smooth' });
+}
 
 function checkSpeech(raw) {
   const t = ' ' + raw.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\bgray\b/g, 'grey').replace(/\s+/g, ' ') + ' ';
@@ -1455,7 +1538,7 @@ function checkSpeech(raw) {
   res.push({ cls: wearing ? 'ok' : 'ko', txt: wearing ? 'is wearing ✓' : '“is wearing”' });
   res.push({ cls: verbOk && beVerb ? 'ok' : verbOk ? 'half' : 'ko', txt: verbOk ? (beVerb ? `is ${verb} ✓` : `${verb} – manca is / 's?`) : `azione: ${ACTIONS[c.action].ing}` });
   const okN = res.filter(r => r.cls === 'ok').length;
-  document.getElementById('mic-out').innerHTML = `<div class="heard">“${esc(raw)}”</div><ul class="checklist">${res.map(r => `<li class="${r.cls}">${r.cls === 'ok' ? '✅' : r.cls === 'half' ? '🟡' : '❌'} ${esc(r.txt)}</li>`).join('')}</ul><p class="note">${okN} / ${res.length} · ❌ = non l'ho sentito · 🟡 = quasi</p>`;
+  document.getElementById('mic-out').innerHTML = `<div class="heard"><b>${esc(c.name)}</b> · “${esc(raw)}”</div><ul class="checklist">${res.map(r => `<li class="${r.cls}">${r.cls === 'ok' ? '✅' : r.cls === 'half' ? '🟡' : '❌'} ${esc(r.txt)}</li>`).join('')}</ul><p class="note">${okN} / ${res.length} · ❌ = non l'ho sentito · 🟡 = quasi</p>`;
   document.getElementById('mic-note').textContent = '';
 }
 
@@ -1553,6 +1636,7 @@ td.v{font-weight:800;color:#ffd166}
 <div class="sub">Tienila sul tuo schermo: alla LIM si vedono solo i personaggi e la domanda.</div>
 <div class="tmr"><span class="tv" id="t-timer">3:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia 3:00</button><button data-act="treset" title="Azzera il timer">↺</button><span class="tl" id="t-tlbl">Tempo per l'interrogazione</span></div>
 <div class="bar"><button class="pri" data-act="new">🎲 Nuova scena</button><button data-act="q">❓ Nuova domanda</button></div>
+<div class="bar" style="margin-top:8px;align-items:center"><button id="t-help" data-act="help">💡 Mostra gli esempi alla LIM</button><span class="tl" id="t-help-st"></span></div>
 <h2>Descrizione giusta</h2><div id="t-desc"></div>
 <h2>Domanda alla LIM</h2><div id="t-q"></div>
 <h2>Valutazione · /15</h2>
@@ -1574,7 +1658,7 @@ function openTeacherWin() {
   const d = teacherWin.document;
   d.open(); d.write(TEACHER_HTML); d.close();
   d.addEventListener('click', onTeacherClick);
-  updateTeacherWin(); renderTeacherRubric(); renderTeacherSaved(); renderTimer();
+  updateTeacherWin(); renderTeacherRubric(); renderTeacherSaved(); renderTimer(); applyHelp();
   moveTeacherWinToOtherScreen();
 }
 // Chrome/Edge: con il permesso "gestione finestre" la finestra va da sola sull'altro schermo
@@ -1617,6 +1701,7 @@ function onTeacherClick(e) {
   else if (act === 'treset') timerReset();
   else if (act === 'new') newPicture();
   else if (act === 'q') newQuestion();
+  else if (act === 'help') toggleHelp();
   else if (act === 'pt') { rub[b.dataset.r] = +b.dataset.v; renderTeacherRubric(); }
   else if (act === 'reset') resetRubric();
   else if (act === 'save') saveGrade();
@@ -1635,9 +1720,11 @@ function saveGrade() {
   if (!rubDone()) { twMsg('✏️ Completa tutte le voci della griglia'); return; }
   const tot = rubTot();
   const g = loadGrades();
-  g.push({ name, cls: tw('t-class').value.trim(), voto: voto(tot), punti: tot, det: RUBRIC.map(r => rub[r.id]).join('-'), note: tw('t-note').value.trim(), date: new Date().toLocaleDateString('it-IT'), tempo: timerElapsed() ? fmtTime(timerElapsed()) : '' });
+  const nota = [tw('t-note').value.trim(), help.class ? '💡 con esempi' : ''].filter(Boolean).join(' · ');
+  g.push({ name, cls: tw('t-class').value.trim(), voto: voto(tot), punti: tot, det: RUBRIC.map(r => rub[r.id]).join('-'), note: nota, date: new Date().toLocaleDateString('it-IT'), tempo: timerElapsed() ? fmtTime(timerElapsed()) : '' });
   storeGrades(g);
   twMsg(`✅ Salvato: ${name} → ${voto(tot)}`);
+  help.class = false; applyHelp();   // prossimo alunno: esempi di nuovo nascosti
   resetRubric(); timerReset(); renderTeacherSaved(); newPicture();
 }
 function copyGrades() {
@@ -1682,15 +1769,30 @@ function toast(msg) { const t = document.getElementById('toast'); t.textContent 
 //  MODALITÀ E AVVIO
 // ══════════════════════════════════════════════════════════════════
 const MODE_KEY = 'wtw_mode';
+// Oral test solo per l'insegnante: serve il PIN (vedi teacher-lock.js)
+function refreshLock() {
+  const ok = TeacherLock.isUnlocked();
+  document.body.classList.toggle('teacher', ok);
+  const b = document.getElementById('lock-btn');
+  b.textContent = ok ? '🔓' : '🔒';
+  b.title = ok ? "Richiudi l'Oral test: su questo computer si vedrà solo At home" : "Area docente: sblocca l'Oral test";
+}
+function toggleLock() {
+  if (TeacherLock.isUnlocked()) { TeacherLock.lock(); refreshLock(); if (state.mode === 'class') setMode('home'); toast('🔒 Oral test richiuso'); }
+  else TeacherLock.ask(() => { refreshLock(); setMode('class'); });
+}
 function setMode(m) {
+  if (m === 'class' && !TeacherLock.isUnlocked()) { TeacherLock.ask(() => { refreshLock(); setMode('class'); }); return; }
+  if (m === 'class' && listening && rec) rec.stop();
   state.mode = m;
   document.body.classList.toggle('mode-home', m === 'home');
   document.body.classList.toggle('mode-class', m === 'class');
-  document.querySelectorAll('#mode-switch button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
+  document.querySelectorAll('#mode-switch [data-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
   try { localStorage.setItem(MODE_KEY, m); } catch (e) {}
   state.modelOpen = false;
   if (m === 'home' && !tfData.length) buildTF();
   updatePanels();
+  applyHelp();
 }
 
 window.addEventListener('beforeunload', () => { try { if (teacherWin && !teacherWin.closed) teacherWin.close(); } catch (e) {} });
@@ -1701,9 +1803,12 @@ window.addEventListener('beforeunload', () => { try { if (teacherWin && !teacher
   const url = new URLSearchParams(location.search).get('mode');
   let m = url === 'classe' || url === 'class' || url === 'oral' || url === 'test' ? 'class' : url === 'casa' || url === 'home' ? 'home' : null;
   if (!m) { try { m = localStorage.getItem(MODE_KEY); } catch (e) {} }
-  state.mode = m === 'class' ? 'class' : 'home';
+  refreshLock();
+  // senza PIN si parte sempre da At home; dal link ?mode=oral compare la richiesta del PIN
+  state.mode = m === 'class' && TeacherLock.isUnlocked() ? 'class' : 'home';
   newPicture();
   setMode(state.mode);
+  if (m === 'class' && url && !TeacherLock.isUnlocked()) setMode('class');
 })();
 </script>
 </body>
