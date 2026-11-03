@@ -11491,6 +11491,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         risorse: (rec.risorse || []).map(r => r.id),
                         risorseCompiti: (rec.risorse || []).filter(r => r.compito && !r.lezione).map(r => r.id),
                         risorseEntrambi: (rec.risorse || []).filter(r => r.compito && r.lezione).map(r => r.id),
+                        risorseNote: Object.fromEntries((rec.risorse || []).filter(r => r.compito && r.nota).map(r => [r.id, r.nota])),
                     });
                     changed = true;
                 });
@@ -12276,7 +12277,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                     </label>
                     <small style="display:block;color:#888;font-size:11px;margin-top:2px;">Per ogni risorsa allegata scegli <b>🏫 Lezione</b> (usata in classe), <b>📚 Compito</b> (solo per casa) o <b>🏫+📚</b> (entrambi): su StudentApp tra i compiti in Agenda compaiono solo 📚 e 🏫+📚.</small>
                     <input id="modalRisorseFiltro" type="text" placeholder="🔍 Cerca per titolo o tag..." oninput="_loadModalRisorse('${data_iso}')" style="width:100%;padding:6px 12px;border:1px solid #ddd;border-radius:20px;font-size:12px;margin:6px 0;box-sizing:border-box;">
-                    <div id="modalRisorseList" style="max-height:160px;overflow-y:auto;border:1px solid #e8eaf6;border-radius:8px;padding:8px;margin-top:4px;background:#fafbff;"></div>
+                    <div id="modalRisorseList" style="max-height:260px;overflow-y:auto;border:1px solid #e8eaf6;border-radius:8px;padding:8px;margin-top:4px;background:#fafbff;"></div>
                 </div>
                 ${(activity && activity.stato !== 'svolta' && (activity.titolo || activity.descrizione)) ? `<div id="editValidazioneBox" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:8px 12px;border-radius:10px;background:#fffbeb;border:1px solid #fde68a;">${_htmlStatoValidazione(activity, data_iso)}</div>` : ''}
                 ${(() => { const _d = durataSlotInfo(classe, isoDate, isoOra); return _d.lunga ? `<div style="margin-top:8px;font-size:12px;color:#00695c;background:#e0f2f1;border-radius:8px;padding:6px 10px;">⏱️ Lezione lunga: ${_d.orario} min da orario (circa ${_d.effettivi} effettivi) — descrizione e piano vanno pensati per ${_d.effettivi} minuti.</div>` : ''; })()}
@@ -14664,6 +14665,7 @@ Rispondi SOLO con JSON valido:
                     if (p.risorse) p.risorse = p.risorse.filter(rid => rid !== id);
                     if (p.risorseCompiti) p.risorseCompiti = p.risorseCompiti.filter(rid => rid !== id);
                     if (p.risorseEntrambi) p.risorseEntrambi = p.risorseEntrambi.filter(rid => rid !== id);
+                    if (p.risorseNote && p.risorseNote[id] != null) delete p.risorseNote[id];
                 });
             });
             saveData();
@@ -14914,7 +14916,8 @@ Rispondi SOLO con JSON valido:
                     </div>
                     ${risorse.map(r => {
                         const allegata = allegateIds.has(r.id);
-                        return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #f8f8f8;">
+                        return `<div style="padding:4px 0;border-bottom:1px solid #f8f8f8;">
+                          <div style="display:flex;align-items:center;gap:8px;">
                             <a href="${r.url}" target="_blank" style="flex:1;color:#5c6bc0;font-size:13px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.url}">${r.titolo}</a>
                             ${(r.tags||[]).slice(0,2).map(t=>`<span class="risorsa-tag">${t}</span>`).join('')}
                             ${_usoSegHtml(slotId, r.id, _usoRisorsa(lz, r.id), allegata)}
@@ -14922,6 +14925,8 @@ Rispondi SOLO con JSON valido:
                                 onclick="toggleAllegaRisorsa('${slotId}','${r.id}')">
                                 ${allegata?'✓ Allegata':'+ Allega'}
                             </button>
+                          </div>
+                          ${_notaRisorsaHtml(slotId, r.id, lz)}
                         </div>`;
                     }).join('')}
                 </div>`;
@@ -15000,6 +15005,32 @@ Rispondi SOLO con JSON valido:
             if (!seg) return;
             const allegata = (lz.risorse||[]).includes(risorsaId);
             seg.outerHTML = _usoSegHtml(seg.dataset.slot, risorsaId, _usoRisorsa(lz, risorsaId), allegata);
+            const nb = document.getElementById('notaRis_'+risorsaId);
+            if (nb) nb.style.display = (allegata && _usoRisorsa(lz, risorsaId) !== 'lezione') ? '' : 'none';
+        }
+        // Nota per gli alunni su un materiale dei compiti (es. "fai solo le
+        // sezioni Drill e Build it"): compare sotto il link in StudentApp.
+        // Vuota = non compare niente. Vale solo per questa lezione.
+        function _notaRisorsaHtml(slotId, id, lz) {
+            const vis = (lz?.risorse||[]).includes(id) && _usoRisorsa(lz, id) !== 'lezione';
+            const v = String((lz?.risorseNote||{})[id] || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+            return `<div id="notaRis_${id}" style="${vis?'':'display:none;'}margin:5px 0 2px;">
+                <input type="text" maxlength="300" value="${v}" placeholder="📝 Nota per gli alunni (facoltativa) — es. fai solo le sezioni Drill e Build it"
+                    oninput="setNotaRisorsa('${slotId}','${id}',this.value)"
+                    style="width:100%;box-sizing:border-box;padding:5px 10px;border:1px solid #fcd34d;background:#fffbeb;border-radius:8px;font-size:12px;color:#92400e;">
+            </div>`;
+        }
+        let _notaRisTimer = null;
+        function setNotaRisorsa(slotId, risorsaId, testo) {
+            const [isoDate] = slotId.split('_');
+            const classe = data.classi[currentClass];
+            const lz = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotId || (!p.ora && p.data===isoDate));
+            if (!lz) return;
+            const t = String(testo || '').trim();
+            if (t) { lz.risorseNote = lz.risorseNote || {}; lz.risorseNote[risorsaId] = t; }
+            else if (lz.risorseNote) { delete lz.risorseNote[risorsaId]; if (!Object.keys(lz.risorseNote).length) delete lz.risorseNote; }
+            clearTimeout(_notaRisTimer);
+            _notaRisTimer = setTimeout(() => saveData(), 600);
         }
 
         // ================================================================
@@ -36456,6 +36487,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
       return [lz.titolo, lz.descrizione, lz.descrizioneStudent, lz.unit, lz.pagine, lz.compiti, (lz.risorse||[]).join(',')]
         .concat(_hw.length ? [_hw.join(',')] : [])   // senza risorse per compito l'impronta resta quella di prima
         .concat(_both.length ? ['E:' + _both.join(',')] : [])
+        .concat((() => { const n = _hw.concat(_both).filter(id => (lz.risorseNote||{})[id]).map(id => id + '=' + lz.risorseNote[id]);
+                         return n.length ? ['N:' + n.join('|')] : []; })())
         .map(x => String(x || '').trim()).join('\u0001');
     }
     // Stato di pubblicazione di una lezione: 'no' | 'ok' | 'stale'
@@ -36617,6 +36650,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             const _u = _usoRisorsa(activity, r.id);
             if (_u !== 'lezione') o.compito = true;
             if (_u === 'entrambi') o.lezione = true;
+            const _nota = _u !== 'lezione' ? String((activity.risorseNote||{})[r.id] || '').trim() : '';
+            if (_nota) o.nota = _nota;
             return o;
           });
         if (risorseDettaglio.length) payload.risorse = risorseDettaglio;
@@ -36662,7 +36697,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             const safeId = String(r.id || r.url || r.titolo).replace(/[.#$\[\]/]/g, '_').slice(0, 60);
             matUpdates[matPrefix + safeId] = {
               from: 'teacher', type: 'link', visibility: 'class',
-              text: (r.compito ? '📚 Per i compiti — ' : '📎 Materiale — ') + (payload.unit || payload.titolo),
+              text: (r.compito ? '📚 Per i compiti — ' : '📎 Materiale — ') + (payload.unit || payload.titolo) + (r.nota ? '\n📝 ' + r.nota : ''),
               linkTitle: r.titolo || r.url,
               url: r.url,
               ts: Date.now()
