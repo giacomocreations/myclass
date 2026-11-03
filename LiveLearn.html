@@ -17782,10 +17782,68 @@ async function exportStudentPDF(studentName, pv) {
 </body>
 </html>`;
 
-  const win = window.open('', '_blank', 'width=1000,height=750');
-  win.document.write(html);
-  win.document.close();
+  _openDoc(html, 'width=1000,height=750', studentName + ' — ' + actTitle);
 }
+
+// ── PDF dei risultati: a tutto schermo dentro l'app su telefono/tablet ──
+// Con l'app installata (o da cellulare) window.open('') apriva una scheda
+// "about:blank" che su Android non si adattava allo schermo (pagina piccola
+// a metà). Lì la pagina si mostra dentro l'app, in un riquadro a tutto
+// schermo con ← e "Stampa / Salva PDF"; su computer resta la finestra a parte.
+function _docInApp(){
+  try {
+    return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true ||
+      matchMedia('(pointer: coarse)').matches || window.innerWidth < 900;
+  } catch(e){ return false; }
+}
+let _docViewer = null;
+function _openDoc(html, features, title){
+  if(!_docInApp()){
+    const win = window.open('', '_blank', features || '');
+    if(win){ win.document.write(html); win.document.close(); return; }
+    // popup bloccato: si mostra dentro l'app
+  }
+  const hadState = !!_docViewer;
+  if(_docViewer){ _docViewer.remove(); _docViewer = null; }
+  const ov = document.createElement('div');
+  ov.id = 'doc-viewer';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:#fff;display:flex;flex-direction:column;';
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;padding-top:max(8px,env(safe-area-inset-top));background:#6c47ff;color:#fff;font-family:system-ui,-apple-system,sans-serif;flex-shrink:0;';
+  bar.innerHTML = '<button type="button" data-a="close" aria-label="Chiudi" style="border:none;background:rgba(255,255,255,.2);color:#fff;font-size:20px;font-weight:700;border-radius:10px;width:42px;height:38px;cursor:pointer;">←</button>' +
+    '<div style="flex:1;min-width:0;font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>' +
+    '<button type="button" data-a="print" style="border:none;background:#fff;color:#6c47ff;font-size:13px;font-weight:800;border-radius:10px;padding:9px 12px;cursor:pointer;white-space:nowrap;">🖨 Stampa / PDF</button>';
+  bar.children[1].textContent = title || 'Risultati';
+  const fr = document.createElement('iframe');
+  fr.title = title || 'Risultati';
+  fr.style.cssText = 'flex:1;width:100%;border:0;display:block;background:#fff;';
+  ov.appendChild(bar); ov.appendChild(fr);
+  document.body.appendChild(ov);
+  _docViewer = ov;
+  // Via i pulsanti A−/A+ dell'app (stanno sopra a tutto) finché il PDF è aperto
+  document.documentElement.classList.add('doc-viewer-open');
+  if(!document.getElementById('doc-viewer-css')){
+    const st = document.createElement('style'); st.id = 'doc-viewer-css';
+    st.textContent = 'html.doc-viewer-open #ll-zoom, html.doc-viewer-open #s-zoom, html.doc-viewer-open #drill-zoom { display:none !important; }';
+    document.head.appendChild(st);
+  }
+  // "Chiudi" della pagina (window.close) chiude il riquadro
+  fr.addEventListener('load', ()=>{ try { fr.contentWindow.close = ()=>_closeDoc(); } catch(e){} });
+  fr.srcdoc = html;
+  bar.querySelector('[data-a=close]').onclick = ()=>_closeDoc();
+  bar.querySelector('[data-a=print]').onclick = ()=>{ try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch(e){ alert('Stampa non disponibile: ' + e.message); } };
+  // Il tasto «indietro» del telefono chiude il riquadro
+  if(!hadState){ try { history.pushState({ llDoc:1 }, ''); } catch(e){} }
+}
+function _closeDoc(){
+  if(!_docViewer) return;
+  _docViewer.remove(); _docViewer = null;
+  document.documentElement.classList.remove('doc-viewer-open');
+  if(history.state && history.state.llDoc) { try { history.back(); } catch(e){} }
+}
+window.addEventListener('popstate', ()=>{ if(_docViewer){ _docViewer.remove(); _docViewer = null; document.documentElement.classList.remove('doc-viewer-open'); } });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && _docViewer) _closeDoc(); });
+
 
 
 // ── AI scoring con Gemini ──────────────────────────────────────────────────
@@ -18617,9 +18675,7 @@ async function exportAllPDFCorretto() {
     </div>`;
   }
 
-  const win = window.open('', '_blank', 'width=1050,height=800');
-  if (!win) { alert('Popup bloccato. Consenti i popup per questa pagina.'); return; }
-  win.document.write(`<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8">
+  _openDoc(`<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>LiveLearn — Tutti i PDF — ${esc(actTitle)}</title>
 <style>
@@ -18652,8 +18708,7 @@ ${allHtml}
 <div class="no-print" style="text-align:center;margin-top:24px;border-top:1px solid #eee;padding-top:16px;font-size:11px;color:#aaa;">
   Generato da LiveLearn · ${new Date().toLocaleString('it-IT')} · ${entries.length} studenti
 </div>
-</body></html>`);
-  win.document.close();
+</body></html>`, 'width=1050,height=800', 'Tutti i PDF — ' + actTitle);
 }
 
 
