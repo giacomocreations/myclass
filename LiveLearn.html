@@ -9030,7 +9030,7 @@ function renderLiveSidebar(responses) {
       else if (inRecovery) statusPill = '<span style="font-size:9px;background:#8b5cf6;color:#fff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;">RECUPERO ('+(r.recoveryAttempt||1)+')</span>';
       else if (aiPending) statusPill = '<span title="Valutazione AI in corso. Se resta così, apri l\'alunno e usa 🔓 Sblocca valutazione AI" style="font-size:9px;background:#ede9ff;color:#6c47ff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;">AI…</span>';
       else if (done)    statusPill = r.forcedSubmit
-        ? '<span style="font-size:9px;background:#0e7490;color:#fff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;" title="Valutato automaticamente alla chiusura della sessione">⏱ FORZATO</span>'
+        ? '<span style="font-size:9px;background:#0e7490;color:#fff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;" title="' + (r.forcedByTeacher ? 'Prova chiusa dal docente: valutata con le risposte date' : 'Valutato automaticamente alla chiusura della sessione') + '">⏱ FORZATO</span>'
         : '<span style="font-size:9px;background:var(--success);color:#fff;font-weight:800;padding:1px 6px;border-radius:10px;margin-left:3px;">CONSEGNATO</span>';
       else              statusPill = '';
 
@@ -9412,6 +9412,57 @@ async function _llSetStudentMode(names, mode) {
     if (upd[p] == null) delete S.liveStudentModes[k]; else S.liveStudentModes[k] = upd[p];
   });
 }
+// ── Chiudi la prova di UN solo alunno ─────────────────────────────────────
+// Per chi si è dimenticato di consegnare o è fermo da tempo: si consegna al
+// suo posto con le risposte già arrivate (stessa valutazione della chiusura
+// della sessione), il risultato va subito nella sua cronologia (StudentApp e
+// MyClass) e il suo dispositivo smette di accettare risposte. Gli altri
+// alunni continuano normalmente.
+async function forceSubmitStudent(key) {
+  if (!db || !S.liveCode || !key) return;
+  const code = S.liveCode;
+  const ref = db.ref('livelearn/responses/' + code + '/' + key);
+  try {
+    const r = (await ref.get()).val();
+    if (!r || r.removed) { alert('Alunno non trovato in questa sessione.'); return; }
+    if (r.submittedAt || r.status === 'submitted' || r.status === 'recovery_done') { alert('Ha già consegnato.'); selectStudent(key); return; }
+    const who = r.aliasOf || r.name || key;
+    const ctx = _llLiveCtx(code);
+    const qs = ctx ? getStudentAssignedQuestions(key, r.name || key, r.aliasOf, r.studentVersion, ctx, r.answers)
+                   : (S.liveActivity?.questions || []);
+    const nRisp = fbArr(r.answers || []).filter(a => a !== null && a !== undefined && a !== '').length;
+    const eff = _llEffectiveScore(qs, r);
+    const pct = eff.maxPts > 0 ? Math.round(eff.score / eff.maxPts * 100) : 0;
+    const hasFR = qs.some((q, i) => (q.type === 'free-response' ||
+      (q.type === 'listening' && (q.subtype || q.question?.type) === 'free-response')) && (r.aiScores || {})[i] == null && (r.manualScores || {})[i] == null);
+    if (!confirm('Chiudere la prova di ' + who + '?\n\n' +
+      'Viene consegnata adesso con le risposte date finora (' + nRisp + '/' + qs.length + ').\n' +
+      'Risultato: ' + eff.score + '/' + eff.maxPts + ' punti — ' + pct + '%' +
+      (hasFR ? '\n\n⚠️ Ci sono risposte libere non ancora corrette: valgono 0 finché non le correggi (anche con l\'AI) dal suo pannello.' : '') +
+      '\n\nSul suo dispositivo la prova si chiude. Gli altri alunni continuano.')) return;
+    const at = Date.now();
+    let fatto = false;
+    await ref.transaction(cur => {
+      if (!cur) return cur;
+      const st = cur.status || (cur.submittedAt ? 'submitted' : '');
+      if (st === 'submitted' || st === 'recovery_done') return; // ha consegnato nel frattempo
+      fatto = true;
+      return { ...cur, score: eff.score, status: 'submitted', submittedAt: at,
+               forcedSubmit: true, forcedByTeacher: at, aiScoringPending: false };
+    });
+    if (!fatto) { alert(who + ' ha consegnato proprio adesso: resta la sua consegna.'); selectStudent(key); return; }
+    // Risultato subito nella cronologia dell'alunno (StudentApp / MyClass)
+    try { await _llSyncStudentHistory(code, key); }
+    catch(e2) { console.warn('[Chiudi prova] cronologia:', e2.message); }
+    _llAgentPing();
+    try { renderLiveSidebar(S._llLastResponses || {}); } catch(e3) {}
+    await selectStudent(key);
+    alert('⏹ Prova di ' + who + ' chiusa.\n\nRisultato: ' + eff.score + '/' + eff.maxPts + ' punti — ' + pct + '%');
+  } catch(e) {
+    alert('Errore nella chiusura della prova: ' + e.message);
+  }
+}
+
 // Pulsante nel pannello dell'alunno: inverte test ↔ esercitazione
 async function toggleStudentMode(key) {
   if (!db || !S.liveCode || !key || !_llCanSwitchMode()) return;
@@ -10967,6 +11018,13 @@ function renderStudentResultsTeacher(name, response) {
       (_mRST === 'test' ? '📝→🎮 Rendi esercitazione' : '🎮→📝 Rendi test') + '</button>';
   }
 
+  // Chiudi la prova solo per questo alunno (es. si è dimenticato di
+  // consegnare o è fermo da tempo): si consegna con le risposte date finora.
+  const _stRST = response.status || '';
+  const forceBtnRST = (!submitted && !response.removed && S.liveCode && _stRST !== 'recovery' && _stRST !== 'recovery_waiting_key' && _stRST !== 'recovery_done')
+    ? '<button class="btn btn-sm" style="background:#ecfeff;color:#0e7490;border-color:#67e8f9;font-weight:800;" onclick="forceSubmitStudent(S.selectedStudent)" title="Consegna al posto dell\'alunno con le risposte date finora e mostra la percentuale">⏹ Chiudi la sua prova</button>'
+    : '';
+
   main.innerHTML =
     '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px;">' +
       '<div class="flex-center gap-12" style="flex-wrap:wrap;">' +
@@ -10977,6 +11035,7 @@ function renderStudentResultsTeacher(name, response) {
         scoreBadge + pctBadgeCenter + _attemptsBadge(response) + timeBadge + focusBadgeCenter +
       '</div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+        forceBtnRST +
         aiStuckBtn +
         aiAllBtn +
         aliasBtn +
@@ -11977,6 +12036,22 @@ async function studentEnter() {
     });
   } catch(e) { console.warn('Session status listener failed:', e.message); }
 
+  // ── Prova chiusa dal docente solo per questo alunno ─────────────────────
+  try {
+    if (S.forcedCloseListener) {
+      try { db.ref(S.forcedCloseListenerPath).off('value', S.forcedCloseListener); } catch(e) {}
+      S.forcedCloseListener = null;
+    }
+    S.forcedCloseListenerPath = 'livelearn/responses/' + code + '/' + safeName + '/forcedByTeacher';
+    S.forcedCloseListener = db.ref(S.forcedCloseListenerPath).on('value', snap => {
+      if (snap.val() && !S.removed && !S.submitted) {
+        S.removed = true; // blocca ogni scrittura futura
+        if (S.timerInterval) { clearInterval(S.timerInterval); S.timerInterval = null; }
+        showStudentForceClosed();
+      }
+    });
+  } catch(e) { console.warn('Forced-close listener failed:', e.message); }
+
   // Test ↔ esercitazione per il singolo alunno: il docente può cambiarla
   // anche a prova iniziata, vale dalla domanda successiva.
   _listenForModeChange(code, safeName, session.mode || 'test');
@@ -12679,6 +12754,25 @@ function showStudentLocked(motivo) {
   if (!host) {
     host = document.createElement('div');
     host.id = 'student-locked-view';
+    document.body.appendChild(host);
+  }
+  host.innerHTML = html;
+}
+
+function showStudentForceClosed() {
+  try { localStorage.removeItem('llprog_' + S.sessionCode + '_' + S.safeName); } catch(e) {}
+  const html = '<div class="view active" style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;">' +
+    '<div style="max-width:520px;background:white;border-radius:20px;border:2px solid #0e7490;padding:36px;text-align:center;box-shadow:0 10px 40px rgba(14,116,144,0.2);">' +
+    '<div style="font-size:64px;margin-bottom:12px;">⏹️</div>' +
+    '<h2 style="color:#0e7490;margin-bottom:12px;font-size:22px;">Il/la docente ha chiuso la tua prova</h2>' +
+    '<p style="color:#475569;font-size:15px;line-height:1.5;margin-bottom:24px;">Le risposte che hai dato sono state consegnate. Trovi il risultato in StudentApp.</p>' +
+    '<button class="btn btn-primary" onclick="location.reload()">🔄 Torna alla schermata iniziale</button>' +
+    '</div></div>';
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  let host = document.getElementById('student-session-closed-view');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'student-session-closed-view';
     document.body.appendChild(host);
   }
   host.innerHTML = html;
@@ -16093,6 +16187,7 @@ async function restartAssignedActivity() {
         attempts: prev.length ? prev : null,
         submittedAt: null, status: null, answers: null, score: 0,
         aiScores: null, aiFeedbacks: null, manualScores: null, aiScoringPending: null,
+        forcedSubmit: null, forcedByTeacher: null,
         questionTimes: null, joinedAt: Date.now(), retryStartedAt: Date.now(),
         ...(_next ? { studentVersion: _next.version } : {})
       });

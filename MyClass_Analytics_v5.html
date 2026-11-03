@@ -1193,6 +1193,10 @@
         .risorsa-link:hover { text-decoration:underline; }
         .btn-allega { font-size:11px; padding:2px 8px; border-radius:8px; border:1px solid #667eea; color:#667eea; background:white; cursor:pointer; }
         .btn-allega.allegata { background:#667eea; color:white; }
+        /* Uso della risorsa allegata: usata a lezione (default) o assegnata per compito */
+        .btn-uso { font-size:11px; padding:2px 8px; border-radius:8px; border:1px solid #94a3b8; color:#475569; background:#f8fafc; cursor:pointer; white-space:nowrap; }
+        .btn-uso.compito { border-color:#d97706; color:white; background:#f59e0b; }
+        .lesson-risorsa-chip.compito, .prep-risorsa-chip.compito { background:#fef3c7; color:#92400e; border-color:#fcd34d; }
         .lesson-risorse { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; }
         .lesson-risorsa-chip { font-size:11px; background:#eef0ff; color:#5c6bc0; padding:2px 8px; border-radius:10px; text-decoration:none; border:1px solid #c5cae9; }
         .lesson-risorsa-chip:hover { background:#667eea; color:white; }
@@ -5568,7 +5572,8 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                         const slotId = lzId(lz);
                         const risorse = (lz.risorse||[]).map(id => {
                             const r = (data.risorseLezioni||[]).find(x => x.id === id);
-                            return r ? `<a class="prep-risorsa-chip" href="${r.url}" target="_blank">${TIPO_ICONS_RISORSA[r.tipo]||'🔗'} ${r.titolo}</a>` : '';
+                            const _hw = (lz.risorseCompiti||[]).includes(id);
+                            return r ? `<a class="prep-risorsa-chip${_hw?' compito':''}" href="${r.url}" target="_blank" title="${_hw?'Per i compiti':'Usata a lezione'}">${_hw?'📚':(TIPO_ICONS_RISORSA[r.tipo]||'🔗')} ${r.titolo}</a>` : '';
                         }).filter(Boolean).join('');
                         const durataLabel = hasPd && pd.durata ? `<div class="prep-durata">⏱️ ${pd.durata} min totali</div>` : '';
                         const tipoIcon = _tipoArr(lz.tipo).map(t=>_TI3[t]||'').filter(Boolean).join('') || '📖';
@@ -11480,6 +11485,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         titolo: rec.titolo, descrizione: rec.descrizione, unit: rec.unit,
                         pagine: rec.pagine, compiti: rec.compiti,
                         risorse: (rec.risorse || []).map(r => r.id),
+                        risorseCompiti: (rec.risorse || []).filter(r => r.compito).map(r => r.id),
                     });
                     changed = true;
                 });
@@ -12120,7 +12126,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                             }
                             return result;
                         })()}
-                        ${(()=>{const rr=(activity.risorse||[]).map(id=>{const r=(data.risorseLezioni||[]).find(x=>x.id===id);return r?`<a class="lesson-risorsa-chip" href="${r.url}" target="_blank" title="${r.tipo}">${TIPO_ICONS_RISORSA[r.tipo]||'🔗'} ${r.titolo}</a>`:'';}).filter(Boolean).join('');return rr?`<div class="lesson-risorse">${rr}</div>`:''})()}
+                        ${(()=>{const rr=(activity.risorse||[]).map(id=>{const r=(data.risorseLezioni||[]).find(x=>x.id===id);const _hw=(activity.risorseCompiti||[]).includes(id);return r?`<a class="lesson-risorsa-chip${_hw?' compito':''}" href="${r.url}" target="_blank" title="${_hw?'Per i compiti':'Usata a lezione'} · ${r.tipo}">${_hw?'📚':(TIPO_ICONS_RISORSA[r.tipo]||'🔗')} ${r.titolo}</a>`:'';}).filter(Boolean).join('');return rr?`<div class="lesson-risorse">${rr}</div>`:''})()}
                     </div>
                     <div class="lesson-actions">
                         ${isBozza?`<button onclick="validaBozza('${slot.id}')" title="Ho controllato la lezione: è attuabile. L'agente potrà prepararne il piano dettagliato." style="padding:4px 10px;border-radius:12px;border:1.5px solid #ca8a04;background:#fff7d6;color:#854d0e;cursor:pointer;font-size:12px;font-weight:800;">✓ Valida</button>`:''}
@@ -12263,6 +12269,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                     <label style="display:flex;align-items:center;gap:8px;">📎 Risorse allegate
                         <small style="color:#888;font-weight:400;">clicca per allegare/rimuovere dall'archivio</small>
                     </label>
+                    <small style="display:block;color:#888;font-size:11px;margin-top:2px;">Per ogni risorsa allegata scegli <b>🏫 A lezione</b> (materiale usato in classe) o <b>📚 Compito</b>: su StudentApp solo quelle 📚 compaiono tra i compiti in Agenda.</small>
                     <input id="modalRisorseFiltro" type="text" placeholder="🔍 Cerca per titolo o tag..." oninput="_loadModalRisorse('${data_iso}')" style="width:100%;padding:6px 12px;border:1px solid #ddd;border-radius:20px;font-size:12px;margin:6px 0;box-sizing:border-box;">
                     <div id="modalRisorseList" style="max-height:160px;overflow-y:auto;border:1px solid #e8eaf6;border-radius:8px;padding:8px;margin-top:4px;background:#fafbff;"></div>
                 </div>
@@ -14650,6 +14657,7 @@ Rispondi SOLO con JSON valido:
             (data.classi||[]).forEach(cl => {
                 (cl.pianificazione?.piano||[]).forEach(p => {
                     if (p.risorse) p.risorse = p.risorse.filter(rid => rid !== id);
+                    if (p.risorseCompiti) p.risorseCompiti = p.risorseCompiti.filter(rid => rid !== id);
                 });
             });
             saveData();
@@ -14865,6 +14873,7 @@ Rispondi SOLO con JSON valido:
                 return;
             }
             const allegateIds = new Set(lz?.risorse||[]);
+            const hwIds = new Set(lz?.risorseCompiti||[]);
 
             // Filtro di ricerca per titolo o tag (come nel tab Risorse)
             const filtroEl = document.getElementById('modalRisorseFiltro');
@@ -14903,6 +14912,11 @@ Rispondi SOLO con JSON valido:
                         return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #f8f8f8;">
                             <a href="${r.url}" target="_blank" style="flex:1;color:#5c6bc0;font-size:13px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.url}">${r.titolo}</a>
                             ${(r.tags||[]).slice(0,2).map(t=>`<span class="risorsa-tag">${t}</span>`).join('')}
+                            <button class="btn-uso ${hwIds.has(r.id)?'compito':''}" id="btnUso_${r.id}" style="${allegata?'':'display:none;'}"
+                                title="Clicca per cambiare: usata a lezione / assegnata per compito"
+                                onclick="toggleUsoRisorsa('${slotId}','${r.id}')">
+                                ${hwIds.has(r.id)?'📚 Compito':'🏫 A lezione'}
+                            </button>
                             <button class="btn-allega ${allegata?'allegata':''}" id="btnAllega_${r.id}"
                                 onclick="toggleAllegaRisorsa('${slotId}','${r.id}')">
                                 ${allegata?'✓ Allegata':'+ Allega'}
@@ -14923,6 +14937,11 @@ Rispondi SOLO con JSON valido:
             const idx = lz.risorse.indexOf(risorsaId);
             if (idx === -1) { lz.risorse.push(risorsaId); }
             else            { lz.risorse.splice(idx, 1);   }
+            // Una risorsa tolta dalla lezione non è più nemmeno "per compito"
+            if (lz.risorseCompiti && !lz.risorse.includes(risorsaId)) {
+                lz.risorseCompiti = lz.risorseCompiti.filter(id => id !== risorsaId);
+                if (!lz.risorseCompiti.length) delete lz.risorseCompiti;
+            }
             saveData();
             // Update button
             const btn = document.getElementById('btnAllega_'+risorsaId);
@@ -14931,11 +14950,39 @@ Rispondi SOLO con JSON valido:
                 btn.textContent = allegata ? '✓ Allegata' : '+ Allega';
                 btn.classList.toggle('allegata', allegata);
             }
+            _updBtnUso(lz, risorsaId);
             // Refresh cards if visible
             if (!document.getElementById('tabLezSvolte').classList.contains('hidden')) renderLezSvolte();
             if (!document.getElementById('tabProssime').classList.contains('hidden')) renderLezFuture();
         }
 
+
+        // Risorsa allegata: usata a lezione (default) oppure assegnata per
+        // compito. Su StudentApp solo quelle per compito compaiono tra i
+        // compiti in Agenda; quelle usate a lezione restano nel dettaglio
+        // della lezione, così gli alunni non le scambiano per compiti.
+        function toggleUsoRisorsa(slotId, risorsaId) {
+            const [isoDate] = slotId.split('_');
+            const classe = data.classi[currentClass];
+            const lz = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotId || (!p.ora && p.data===isoDate));
+            if (!lz || !(lz.risorse||[]).includes(risorsaId)) return;
+            const hw = new Set(lz.risorseCompiti||[]);
+            if (hw.has(risorsaId)) hw.delete(risorsaId); else hw.add(risorsaId);
+            if (hw.size) lz.risorseCompiti = [...hw]; else delete lz.risorseCompiti;
+            saveData();
+            _updBtnUso(lz, risorsaId);
+            if (!document.getElementById('tabLezSvolte').classList.contains('hidden')) renderLezSvolte();
+            if (!document.getElementById('tabProssime').classList.contains('hidden')) renderLezFuture();
+        }
+        function _updBtnUso(lz, risorsaId) {
+            const b = document.getElementById('btnUso_'+risorsaId);
+            if (!b) return;
+            const allegata = (lz.risorse||[]).includes(risorsaId);
+            const compito  = allegata && (lz.risorseCompiti||[]).includes(risorsaId);
+            b.style.display = allegata ? '' : 'none';
+            b.textContent = compito ? '📚 Compito' : '🏫 A lezione';
+            b.classList.toggle('compito', compito);
+        }
 
         // ================================================================
         // PIANO DETTAGLIATO LEZIONE
@@ -26292,9 +26339,31 @@ ${sectionInstr}`;
         Object.values(byCode || {}).forEach(msgs => { n += _countUnreadBoard(msgs, seen); });
         return n;
     }
+    // Prima i listener partivano 2 secondi dopo l'apertura senza aspettare
+    // l'accesso docente: se Firebase non aveva ancora ripristinato la sessione
+    // (o la password andava riscritta) la lettura veniva rifiutata, Firebase
+    // annullava il listener e non si riprovava più → nessun avviso per tutta
+    // la giornata. Ora si parte solo con l'accesso docente pronto (anche da
+    // onAuthStateChanged) e un listener annullato viene ritentato.
+    let _bachecaRetryTimer = null;
+    function _stopBachecaListener(classId) {
+        const r = _bachecaListenerRefs[classId];
+        if (!r) return;
+        try { r.ref.off('value', r.handler); } catch(e) {}
+        try { r.refPriv.off('value', r.handlerPriv); } catch(e) {}
+        delete _bachecaListenerRefs[classId];
+    }
+    function _retryBachecaListeners(ms) {
+        clearTimeout(_bachecaRetryTimer);
+        _bachecaRetryTimer = setTimeout(startBachecaListeners, ms || 30000);
+    }
     function startBachecaListeners() {
         let db; try { db = firebase.database(); } catch { return; }
+        if (typeof data === 'undefined' || !data || !Array.isArray(data.classi)) { _retryBachecaListeners(3000); return; }
+        // Senza accesso docente board_priv è illeggibile: si riparte dal login
+        if (!(window.MCAuth && window.MCAuth.isTeacher && window.MCAuth.isTeacher())) return;
         (data.classi || []).forEach(cl => {
+            if (!cl || !cl.nome) return;
             const classId = cl.nome.replace(/\s+/g, '_').toLowerCase();
             // Evita listener duplicati
             if (_bachecaListenerRefs[classId]) return;
@@ -26303,17 +26372,147 @@ ${sectionInstr}`;
                 const seen = _getBachecaSeen(classId);
                 _bachecaUnread[cl.nome] = _countUnreadBoard(st.pub, seen) + _countUnreadPriv(st.priv, seen);
                 _renderDashboardBachecaBadges();
+                _studMsgCheck(cl.nome, classId, st, seen);
             };
             const ref     = db.ref('livelearn/board/' + classId);
             const refPriv = db.ref('livelearn/board_priv/' + classId);
             const handler     = snap => { st.pub  = snap.val() || {}; recount(); };
             const handlerPriv = snap => { st.priv = snap.val() || {}; recount(); };
-            ref.on('value', handler);
-            // Il nodo padre board_priv/<classe> è leggibile solo dal docente:
-            // se la lettura fallisce, il badge conta almeno la bacheca di classe.
-            refPriv.on('value', handlerPriv, err => console.warn('[Bacheca] board_priv non leggibile:', err && err.code));
+            // Listener annullato (permessi, rete): lo si toglie e si riprova
+            const onCancel = which => err => {
+                console.warn('[Bacheca] listener ' + which + ' annullato per ' + classId + ':', err && err.code);
+                _stopBachecaListener(classId);
+                _retryBachecaListeners(30000);
+            };
+            ref.on('value', handler, onCancel('board'));
+            refPriv.on('value', handlerPriv, onCancel('board_priv'));
             _bachecaListenerRefs[classId] = { ref, handler, refPriv, handlerPriv };
         });
+    }
+
+    // ── Avviso IN EVIDENZA per i messaggi degli alunni ───────────────────
+    // Il solo badge 💬 sulla card della classe si vedeva solo in dashboard e
+    // passava inosservato. Ora ogni messaggio non letto di un alunno compare
+    // in un riquadro fisso in alto a destra (visibile in qualunque schermata)
+    // finché non si apre la bacheca di quella classe; i messaggi che arrivano
+    // con MyClass aperta suonano e, se permesso, mandano anche la notifica
+    // del browser. Al riavvio i non letti ricompaiono subito nel riquadro.
+    const _studMsgs = new Map();        // chiave messaggio → dati per l'avviso
+    const _studMsgsHidden = new Set();  // "Più tardi": nascosti fino al prossimo nuovo
+    const _studMsgStartTs = Date.now();
+    function _studMsgCheck(clNome, classId, st, seen) {
+        let nuovi = [];
+        const add = (k, m, code) => {
+            if (!m || !m.from || m.from === 'teacher' || seen.has(k)) return;
+            if (_studMsgs.has(k)) return;
+            const item = { key: k, classe: clNome, classId, code: code || m.studentCode || '',
+                autore: m.authorName || code || 'Alunno', text: String(m.text || ''), ts: m.ts || 0 };
+            _studMsgs.set(k, item);
+            nuovi.push(item);
+        };
+        Object.entries(st.pub || {}).forEach(([k, m]) => add(k, m));
+        Object.entries(st.priv || {}).forEach(([code, byKey]) => Object.entries(byKey || {}).forEach(([k, m]) => add(k, m, code)));
+        // Tolti quelli ormai letti (bacheca aperta, anche da un altro punto)
+        [..._studMsgs.values()].forEach(it => { if (it.classId === classId && seen.has(it.key)) _studMsgs.delete(it.key); });
+        // Arrivati adesso (non i vecchi non letti trovati all'avvio): suono + notifica
+        const live = nuovi.filter(it => (it.ts || 0) > _studMsgStartTs - 5000);
+        if (live.length) {
+            live.forEach(it => _studMsgsHidden.delete(it.key));
+            _studMsgSuono();
+            _studMsgBrowserNotif(live);
+        }
+        _studMsgRender();
+    }
+    function _studMsgSuono() {
+        try {
+            const C = window.AudioContext || window.webkitAudioContext;
+            if (!C) return;
+            const ctx = _studMsgSuono._ctx || (_studMsgSuono._ctx = new C());
+            if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+            [0, 0.18].forEach((t, i) => {
+                const o = ctx.createOscillator(), g = ctx.createGain();
+                o.type = 'sine'; o.frequency.value = i ? 1046 : 784;
+                g.gain.setValueAtTime(0.0001, ctx.currentTime + t);
+                g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + t + 0.02);
+                g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t + 0.16);
+                o.connect(g); g.connect(ctx.destination);
+                o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.18);
+            });
+        } catch(e) {}
+    }
+    function _studMsgBrowserNotif(items) {
+        try {
+            if (!('Notification' in window) || Notification.permission !== 'granted') return;
+            const it = items[items.length - 1];
+            const n = new Notification(items.length > 1
+                ? '💬 ' + items.length + ' nuovi messaggi dagli alunni'
+                : '💬 ' + it.autore + ' (' + it.classe + ') ti ha scritto', {
+                body: it.text.slice(0, 140), tag: 'myclass-msg-' + it.key, requireInteraction: true
+            });
+            n.onclick = () => { try { window.focus(); } catch(e) {} _studMsgApri(it.classe); n.close(); };
+        } catch(e) {}
+    }
+    function _studMsgAttivaNotifiche() {
+        if (!('Notification' in window)) { alert('Questo browser non supporta le notifiche.'); return; }
+        Notification.requestPermission().then(() => _studMsgRender());
+    }
+    function _studMsgApri(clNome) {
+        const idx = (data.classi || []).findIndex(c => c.nome === clNome);
+        if (idx < 0) return;
+        showClassTab(idx, 'bacheca');
+        setTimeout(() => { if (typeof mcBachecaSwitchTab === 'function') mcBachecaSwitchTab('msgs'); }, 150);
+    }
+    function _studMsgPiuTardi() {
+        _studMsgs.forEach((v, k) => _studMsgsHidden.add(k));
+        _studMsgRender();
+    }
+    function _studMsgRender() {
+        const tutti = [..._studMsgs.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+        const visibili = tutti.filter(it => !_studMsgsHidden.has(it.key));
+        // Titolo della scheda: il conteggio si vede anche con MyClass in secondo piano
+        const baseTitle = document.title.replace(/^\(\d+\) 💬 /, '');
+        document.title = tutti.length ? '(' + tutti.length + ') 💬 ' + baseTitle : baseTitle;
+        let box = document.getElementById('studMsgAlert');
+        if (!visibili.length) { if (box) box.remove(); return; }
+        if (!box) {
+            box = document.createElement('div');
+            box.id = 'studMsgAlert';
+            box.style.cssText = 'position:fixed;top:16px;right:16px;z-index:99990;width:360px;max-width:calc(100vw - 32px);' +
+                'background:#fff;border:3px solid #ef4444;border-radius:16px;box-shadow:0 14px 40px rgba(220,38,38,.35);' +
+                'font-family:system-ui,-apple-system,sans-serif;overflow:hidden;animation:studMsgPulse 1.6s ease-in-out 3;';
+            document.body.appendChild(box);
+            if (!document.getElementById('studMsgAlertCss')) {
+                const css = document.createElement('style');
+                css.id = 'studMsgAlertCss';
+                css.textContent = '@keyframes studMsgPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}' +
+                    '#studMsgAlert .sma-it{display:block;width:100%;text-align:left;border:none;background:#fff;padding:10px 14px;border-top:1px solid #fee2e2;cursor:pointer;font-family:inherit}' +
+                    '#studMsgAlert .sma-it:hover{background:#fef2f2}';
+                document.head.appendChild(css);
+            }
+        }
+        const esc = t => String(t || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const ora = ts => { if (!ts) return ''; const d = new Date(ts), oggi = new Date();
+            const hm = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+            return d.toDateString() === oggi.toDateString() ? hm : d.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' }) + ' ' + hm; };
+        const notifBtn = ('Notification' in window && Notification.permission === 'default')
+            ? `<button onclick="_studMsgAttivaNotifiche()" style="display:block;width:100%;border:none;background:#fff7ed;color:#9a3412;padding:8px;font-size:12px;font-weight:600;cursor:pointer;border-top:1px solid #fee2e2;">🔔 Attiva le notifiche del browser (anche con MyClass in secondo piano)</button>` : '';
+        box.innerHTML =
+            `<div style="background:#ef4444;color:#fff;padding:10px 14px;display:flex;align-items:center;gap:8px;">
+                <span style="font-size:20px;">💬</span>
+                <div style="flex:1;font-weight:800;font-size:14px;">${visibili.length === 1 ? 'Un alunno ti ha scritto' : visibili.length + ' messaggi dagli alunni'}</div>
+                <button onclick="_studMsgPiuTardi()" title="Nascondi finché non arriva un nuovo messaggio" style="border:none;background:rgba(255,255,255,.2);color:#fff;border-radius:8px;padding:4px 9px;font-size:12px;font-weight:700;cursor:pointer;">Più tardi</button>
+            </div>
+            <div style="max-height:300px;overflow-y:auto;">
+            ${visibili.slice(0, 8).map(it => `<button class="sma-it" data-classe="${esc(it.classe)}" onclick="_studMsgApri(this.dataset.classe)">
+                <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;">
+                    <b style="color:#991b1b;">${esc(it.autore)}</b>
+                    <span style="color:#64748b;white-space:nowrap;">${esc(it.classe)} · ${ora(it.ts)}</span>
+                </div>
+                <div style="font-size:13px;color:#334155;margin-top:3px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${esc(it.text)}</div>
+                <div style="font-size:11px;color:#dc2626;font-weight:700;margin-top:4px;">Apri la bacheca della classe →</div>
+            </button>`).join('')}
+            ${visibili.length > 8 ? `<div style="padding:8px 14px;font-size:12px;color:#64748b;border-top:1px solid #fee2e2;">…e altri ${visibili.length - 8}</div>` : ''}
+            </div>${notifBtn}`;
     }
 
     // Aggiorna SOLO i badge sulle card già renderizzate (senza rifare tutto il DOM)
@@ -26351,6 +26550,8 @@ ${sectionInstr}`;
             _setBachecaSeen(classId, seen);
             _bachecaUnread[cl.nome] = 0;
             _renderDashboardBachecaBadges();
+            [..._studMsgs.values()].forEach(it => { if (it.classId === classId) _studMsgs.delete(it.key); });
+            _studMsgRender();
         }).catch(() => {});
     }
 
@@ -30905,6 +31106,8 @@ ${blocchiPerAlunno}`;
           window.MCAuth.user = u;
           if (window.MCAuth.isTeacher()) {
             _mcHideLogin();
+            // Messaggi degli alunni: i listener partono solo con l'accesso pronto
+            setTimeout(function(){ if (typeof startBachecaListeners === 'function') startBachecaListeners(); }, 500);
             // Smistamento automatico all'apertura: i risultati depositati in
             // classe nel nodo di raccolta entrano nelle cronologie personali
             // senza che il docente debba ricordarsi di premere niente.
@@ -36230,7 +36433,9 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
     // cambiata dopo l'ultima pubblicazione (ed evitare notifiche doppie).
     function _lessonPubHash(lz) {
       if (!lz) return '';
+      const _hw = (lz.risorseCompiti||[]).filter(id => (lz.risorse||[]).includes(id));
       return [lz.titolo, lz.descrizione, lz.descrizioneStudent, lz.unit, lz.pagine, lz.compiti, (lz.risorse||[]).join(',')]
+        .concat(_hw.length ? [_hw.join(',')] : [])   // senza risorse per compito l'impronta resta quella di prima
         .map(x => String(x || '').trim()).join('\u0001');
     }
     // Stato di pubblicazione di una lezione: 'no' | 'ok' | 'stale'
@@ -36379,12 +36584,19 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         // e un ripasso intitolato "Mockup test" diventava una verifica.
         else if (_t.includes('ripasso')) payload.tipo = 'ripasso';
         else payload.tipo = 'lezione'; }
-      // Aggiungi risorse allegate (solo titolo + URL, niente dati sensibili)
+      // Aggiungi risorse allegate (solo titolo + URL, niente dati sensibili).
+      // compito:true = assegnata per compito (StudentApp la mostra tra i
+      // compiti in Agenda); senza = materiale usato a lezione.
       if ((activity.risorse||[]).length > 0) {
+        const _hwIds = new Set(activity.risorseCompiti||[]);
         const risorseDettaglio = (activity.risorse||[])
           .map(id => (data.risorseLezioni||[]).find(r => r.id === id))
           .filter(Boolean)
-          .map(r => ({ id: r.id, titolo: r.titolo||'', url: r.url||'', tipo: r.tipo||'altro' }));
+          .map(r => {
+            const o = { id: r.id, titolo: r.titolo||'', url: r.url||'', tipo: r.tipo||'altro' };
+            if (_hwIds.has(r.id)) o.compito = true;
+            return o;
+          });
         if (risorseDettaglio.length) payload.risorse = risorseDettaglio;
       }
       // Rimuovi campi stringa vuota per non sporcare Firebase
@@ -36428,7 +36640,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             const safeId = String(r.id || r.url || r.titolo).replace(/[.#$\[\]/]/g, '_').slice(0, 60);
             matUpdates[matPrefix + safeId] = {
               from: 'teacher', type: 'link', visibility: 'class',
-              text: '📎 Materiale — ' + (payload.unit || payload.titolo),
+              text: (r.compito ? '📚 Per i compiti — ' : '📎 Materiale — ') + (payload.unit || payload.titolo),
               linkTitle: r.titolo || r.url,
               url: r.url,
               ts: Date.now()

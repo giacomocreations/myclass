@@ -1281,7 +1281,7 @@ function renderHome(){
   if(upcoming.length){
     html += `<div class="sec-lbl">PROSSIMI EVENTI</div>`;
     upcoming.slice(0,3).forEach(e=>{
-      const borderC = e.type==='verifica'?'#E24B4A':e.type==='hw'?'#F59E0B':'#9FE1CB';
+      const borderC = e.type==='verifica'?'#E24B4A':e.type==='hw'?'#F59E0B':e.type==='ll'?'#6c47ff':'#9FE1CB';
       html += `<div class="card" style="border-left:3px solid ${borderC};border-radius:0 14px 14px 0;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div style="flex:1">
@@ -1432,6 +1432,14 @@ function getUpcomingEvents(n=10){
     });
   }
 
+  // ── Attività LiveLearn con scadenza che non fanno parte di quei compiti ──
+  { const all = _assignedAll();
+    const inHw = new Set(hw ? _llPerCompito(hw.lesson, hw.due, all).map(a=>a.code) : []);
+    all.forEach(a=>{
+      if(!a.deadline || inHw.has(a.code) || (a.done && !a.repeatable)) return;
+      events.push({type:'ll', title:a.title||'Attività LiveLearn', date:a.deadline, daysLeft:daysUntil(a.deadline), hasDeadline:true, ll:a});
+    }); }
+
   // ── Verifiche future ──────────────────────────────────────────────────────
   S.lessons.forEach(l=>{
     const isVerifica = _isVerifica(l);
@@ -1490,6 +1498,8 @@ function buildCal(){
       if(hw){ if(!evMap[hw]) evMap[hw]=[]; evMap[hw].push('hw'); }
     }
   });
+  // Scadenze delle attività LiveLearn assegnate: sono compiti anche loro
+  _assignedAll().forEach(a=>{ if(a.deadline){ if(!evMap[a.deadline]) evMap[a.deadline]=[]; evMap[a.deadline].push('hw'); } });
 
   const dotColor = {lesson:'#9FE1CB',verifica:'#E24B4A',hw:'#EF9F27'};
   let html='';
@@ -1550,6 +1560,14 @@ function renderAgendaEvents(dateStr){
       const hwDate = extractHwDate(l.compiti) || nextLessonDate(l.data); // data esplicita > nextLesson
       if(hwDate === dateStr) events.push({type:'hw', lesson:l, hasDeadline:true, date:hwDate, daysLeft:daysUntil(hwDate)});
     });
+    // Attività LiveLearn che scadono in questa data e non sono già dentro un compito
+    const all = _assignedAll();
+    const inHw = new Set();
+    events.forEach(e=>{ if(e.type==='hw') _llPerCompito(e.lesson, e.date, all).forEach(a=>inHw.add(a.code)); });
+    all.forEach(a=>{
+      if(a.deadline===dateStr && !inHw.has(a.code))
+        events.push({type:'ll', title:a.title||'Attività LiveLearn', date:a.deadline, daysLeft:daysUntil(a.deadline), hasDeadline:true, ll:a});
+    });
   } else {
     label.textContent = 'PROSSIMI EVENTI';
     if(btnReset) btnReset.style.display = 'none';
@@ -1559,15 +1577,20 @@ function renderAgendaEvents(dateStr){
     list.innerHTML='<div style="text-align:center;padding:20px 0;font-size:13px;color:var(--muted)">Nessun evento in questa data</div>';
     return;
   }
+  const _allLL = _assignedAll();
   list.innerHTML = events.map((e, idx)=>{
     const l = e.lesson;
-    const borderC = e.type==='verifica'?'#E24B4A':e.type==='hw'?'#F59E0B':'#9FE1CB';
-    const typeLabel = e.type==='verifica'?'Verifica' : e.type==='hw'?'Compiti' : 'Lezione svolta';
-    const typeColor = e.type==='verifica'?'#A32D2D':e.type==='hw'?'#854F0B':'#085041';
+    const isHwLike = e.type==='hw' || e.type==='ll';
+    const borderC = e.type==='verifica'?'#E24B4A':e.type==='hw'?'#F59E0B':e.type==='ll'?'#6c47ff':'#9FE1CB';
+    const typeLabel = e.type==='verifica'?'Verifica' : e.type==='hw'?'Compiti' : e.type==='ll'?'Compito su LiveLearn' : 'Lezione svolta';
+    const typeColor = e.type==='verifica'?'#A32D2D':e.type==='hw'?'#854F0B':e.type==='ll'?'#534AB7':'#085041';
     const titleText = e.type==='hw'
       ? (l ? (stripHwDate(l.compiti)||l.titolo) : e.title)
       : (l?.titolo || e.title || '—');
-    const clickable = l && e.type!=='hw' ? `onclick="openLesson('${_lk(l)}')"` : '';
+    const clickable = l && !isHwLike ? `onclick="openLesson('${_lk(l)}')"` : '';
+    // Compiti: materiali "per compito" della lezione + attività LiveLearn collegate
+    const extras = e.type==='hw' ? _hwExtrasHtml(_risorseHw(l), _llPerCompito(l, e.date, _allLL))
+                 : e.type==='ll' ? `<div style="margin-top:4px">${_llLinkHtml(e.ll)}</div>` : '';
 
     // Data da mostrare sul card
     const evDate = e.date || (l?.data);
@@ -1576,7 +1599,7 @@ function renderAgendaEvents(dateStr){
     // Compiti: evidenzia i più urgenti (oggi/domani = primo piano, ≤3gg = leggero highlight)
     let cardBg = '', cardBorder = `border-left:3px solid ${borderC}`;
     let urgencyBadge = '';
-    if(e.type==='hw' && dLeft!=null){
+    if(isHwLike && dLeft!=null){
       if(dLeft===0){
         cardBg='background:#FFF5F5;'; cardBorder=`border-left:4px solid #E24B4A`;
         urgencyBadge=`<span style="background:#E24B4A;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;margin-left:6px">OGGI</span>`;
@@ -1599,8 +1622,9 @@ function renderAgendaEvents(dateStr){
       <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px">${esc(titleText)}</div>
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px">
         <div>${dateDisplay}${l?.unit?`<span style="font-size:11px;color:var(--muted);margin-left:6px">${esc(l.unit)}</span>`:''}</div>
-        ${e.type==='hw'&&evDate&&dLeft!=null&&dLeft>1?`<span class="scad-badge ${dLeft<=5?'scad-presto':'scad-future'}">${dLeft} giorni</span>`:''}
+        ${isHwLike&&evDate&&dLeft!=null&&dLeft>1?`<span class="scad-badge ${dLeft<=5?'scad-presto':'scad-future'}">${dLeft} giorni</span>`:''}
       </div>
+      ${extras}
     </div>`;
   }).join('');
 }
@@ -1733,14 +1757,22 @@ function openLesson(key){
         ${hwDate?scadBadge(hwDate):''}
       </div>
       <div style="font-size:13px;color:#633806;line-height:1.6">${esc(hwText)}</div>
+      ${_hwExtrasHtml(_risorseHw(l), hwDate ? _llPerCompito(l, hwDate) : [])}
+    </div>`;
+  } else if(_risorseHw(l).length){
+    // Materiali per compito senza testo dei compiti
+    html += `<div class="card" style="border-color:#F59E0B;background:#FAEEDA;margin-bottom:12px">
+      <div class="sec-lbl" style="color:#854F0B;margin-bottom:0">COMPITI ASSEGNATI</div>
+      ${_hwExtrasHtml(_risorseHw(l), [])}
     </div>`;
   }
-  // Risorse allegate dal docente
-  if((l.risorse||[]).length > 0){
-    const TIPO_ICONS = {video:'🎬',esercizio:'📝',gioco:'🎮',audio:'🔊',documento:'📄',altro:'🔗'};
+  // Materiali usati a lezione (quelli per compito stanno sopra, nei compiti)
+  const _rLez = _risorseLez(l);
+  if(_rLez.length > 0){
+    const TIPO_ICONS = _TIPO_ICONS_RIS;
     html += `<div class="card" style="border-color:#c4b5fd;background:#f5f3ff;margin-bottom:12px">
-      <div class="sec-lbl" style="color:#6d28d9;margin-bottom:10px">📎 MATERIALI E RISORSE</div>
-      ${l.risorse.map(r=>`
+      <div class="sec-lbl" style="color:#6d28d9;margin-bottom:10px">📎 ${_risorseHw(l).length?'MATERIALI USATI A LEZIONE':'MATERIALI E RISORSE'}</div>
+      ${_rLez.map(r=>`
         <a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer"
           style="display:flex;align-items:center;gap:10px;padding:9px 10px;background:white;border-radius:10px;margin-bottom:7px;text-decoration:none;border:1px solid #e9d5ff;">
           <span style="font-size:18px;flex-shrink:0">${TIPO_ICONS[r.tipo]||'🔗'}</span>
@@ -1771,7 +1803,9 @@ function openLesson(key){
 // ancora da svolgere non c'era. Resta tra le cose da fare finché la sessione
 // è aperta, non è scaduta e l'alunno non l'ha consegnata (se è ripetibile
 // resta, segnata come già svolta).
-function _assignedTodo(){
+// Tutte le attività assegnate ancora aperte e non scadute, anche quelle già
+// consegnate (in Agenda restano visibili come "consegnata").
+function _assignedAll(){
   const today = new Date().toISOString().slice(0,10);
   const seen = new Set(), out = [];
   (S.boardMsgs||[]).forEach(m=>{
@@ -1782,13 +1816,60 @@ function _assignedTodo(){
     if(info===undefined){ _loadAssignInfo(code); return; }
     if(!info || info==='loading' || info.status!=='assigned') return;
     const done = info.done || !!S.sessions[code];
-    if(done && !info.repeatable) return;
     const deadline = info.deadline || m.deadline || null;
     if(deadline && deadline < today) return;
     out.push({ code, title: info.title || (m.text||'').split('\n')[0].replace(/^📋 Compito assegnato:\s*/,''),
-               deadline, done, url: llLinkWithName(m.url ? ensureUrl(m.url) : ('LiveLearn.html?code='+code)) });
+               deadline, done, repeatable: !!info.repeatable,
+               assigned: m.ts ? new Date(m.ts).toISOString().slice(0,10) : null,
+               url: llLinkWithName(m.url ? ensureUrl(m.url) : ('LiveLearn.html?code='+code)) });
   });
   return out.sort((a,b)=>(a.deadline||'9999').localeCompare(b.deadline||'9999'));
+}
+// Da fare (tab Test): le consegnate restano solo se ripetibili
+function _assignedTodo(){ return _assignedAll().filter(a=>!a.done || a.repeatable); }
+
+// ── COMPITI IN AGENDA: materiali e attività LiveLearn ────────────────────
+// MyClass distingue le risorse allegate a una lezione: quelle "per compito"
+// arrivano con compito:true, le altre sono materiali usati in classe e NON
+// compaiono tra i compiti (restano nel dettaglio della lezione).
+function _risorseHw(l){ return (l?.risorse||[]).filter(r=>r && r.url && r.compito===true); }
+function _risorseLez(l){ return (l?.risorse||[]).filter(r=>r && r.url && r.compito!==true); }
+// Attività LiveLearn che fanno parte dei compiti di una lezione: scadenza
+// uguale alla consegna dei compiti, oppure senza scadenza ma assegnate tra
+// il giorno della lezione e la consegna.
+function _llPerCompito(l, hwDate, all){
+  if(!l || !hwDate) return [];
+  return (all||_assignedAll()).filter(a=> a.deadline ? a.deadline===hwDate
+    : (a.assigned && a.assigned>=l.data && a.assigned<hwDate));
+}
+const _TIPO_ICONS_RIS = {video:'🎬',esercizio:'📝',gioco:'🎮',audio:'🔊',documento:'📄',altro:'🔗'};
+function _risorsaLinkHtml(r, col){
+  col = col || {bd:'#fcd34d', fg:'#92400e'};
+  return `<a href="${esc(ensureUrl(r.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()"
+    style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fff;border-radius:10px;margin-top:6px;text-decoration:none;border:1px solid ${col.bd};">
+    <span style="font-size:16px;flex-shrink:0">${_TIPO_ICONS_RIS[r.tipo]||'🔗'}</span>
+    <span style="font-size:13px;font-weight:600;color:${col.fg};flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.titolo||r.url)}</span>
+    <span style="font-size:11px;color:${col.fg};flex-shrink:0">Apri ↗</span>
+  </a>`;
+}
+function _llLinkHtml(a){
+  return `<a href="${esc(a.url).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()"
+    style="display:flex;align-items:center;gap:8px;padding:9px 10px;background:${a.done&&!a.repeatable?'#f1f5f9':'var(--purple)'};border-radius:10px;margin-top:6px;text-decoration:none;">
+    <span style="font-size:15px;flex-shrink:0">${a.done?'✅':'▶'}</span>
+    <span style="flex:1;min-width:0">
+      <span style="display:block;font-size:13px;font-weight:600;color:${a.done&&!a.repeatable?'#475569':'#fff'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.title||'Attività LiveLearn')}</span>
+      <span style="display:block;font-size:10px;color:${a.done&&!a.repeatable?'#64748b':'rgba(255,255,255,.8)'}">LiveLearn · codice ${esc(a.code)}${a.done?(a.repeatable?' · già svolta, puoi rifarla':' · consegnata'):''}</span>
+    </span>
+    ${a.done&&!a.repeatable?'':`<span style="font-size:11px;color:#fff;flex-shrink:0;font-weight:700">Svolgi ↗</span>`}
+  </a>`;
+}
+// Blocco "da fare" sotto un compito: materiali per compito + attività LiveLearn
+function _hwExtrasHtml(ris, lls){
+  if(!(ris||[]).length && !(lls||[]).length) return '';
+  let h = `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #fcd34d">`;
+  if(ris.length) h += `<div style="font-size:10px;font-weight:700;letter-spacing:.5px;color:#92400e">📚 MATERIALI PER I COMPITI</div>` + ris.map(r=>_risorsaLinkHtml(r)).join('');
+  if(lls.length) h += `<div style="font-size:10px;font-weight:700;letter-spacing:.5px;color:#534AB7;margin-top:${ris.length?'10px':'0'}">🎯 DA SVOLGERE SU LIVELEARN</div>` + lls.map(_llLinkHtml).join('');
+  return h + `</div>`;
 }
 
 async function _loadAssignInfo(code){
@@ -1805,6 +1886,11 @@ async function _loadAssignInfo(code){
   if(S._assignInfo[code] !== 'loading') return; // bacheca cambiata nel frattempo
   S._assignInfo[code] = info;
   renderCompiti();
+  // Le attività assegnate compaiono anche tra i compiti in Agenda
+  clearTimeout(_loadAssignInfo._t);
+  _loadAssignInfo._t = setTimeout(()=>{
+    if(document.getElementById('scr-agenda')?.classList.contains('active')){ buildCal(); renderAgendaEvents(S.selectedDate||null); }
+  }, 150);
 }
 
 // ── PIANI PERSONALIZZATI SVOLTI ───────────────────────────────────────────
@@ -2004,6 +2090,7 @@ function renderCompiti(){
           ${l.unit?`<div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(l.unit)}</div>`:''}
           </div>${scadBadge(hwDate)}
         </div>
+        ${_risorseHw(l).length?`<div style="margin:-2px 0 10px">${_hwExtrasHtml(_risorseHw(l), [])}</div>`:''}
         <a href="LiveLearn.html" style="display:block;padding:10px;background:var(--purple);color:#fff;border-radius:10px;text-align:center;font-size:13px;font-weight:600;text-decoration:none">Apri in LiveLearn</a>
       </div>`;
     });
