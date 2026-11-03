@@ -1243,7 +1243,7 @@ function renderHome(){
   document.getElementById('kpi-sc').textContent = mc?.mediaS != null ? mc.mediaS : '—';
   // Count pending HW
   const pending = S.lessons.filter(l=>l.compiti && computeHwDate(l)).length;
-  document.getElementById('kpi-hw').textContent = pending;
+  document.getElementById('kpi-hw').textContent = pending + _assignedOpen().length;
 
   // Next upcoming events
   const upcoming = getUpcomingEvents(5);
@@ -1257,7 +1257,7 @@ function renderHome(){
   let html = '';
 
   // Urgente: scadenze entro 2 giorni
-  const urgent = upcoming.filter(e=>e.daysLeft<=2);
+  const urgent = upcoming.filter(e=>e.daysLeft!=null && e.daysLeft<=2);
   if(urgent.length){
     html += `<div style="background:#FCEBEB;border-radius:12px;padding:12px 14px;margin-bottom:12px;border:0.5px solid #F09595">
       <div class="sec-lbl" style="color:#501313;margin-bottom:6px">IN SCADENZA PRESTO</div>
@@ -1285,10 +1285,10 @@ function renderHome(){
       html += `<div class="card" style="border-left:3px solid ${borderC};border-radius:0 14px 14px 0;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div style="flex:1">
-            <div style="font-size:11px;color:var(--muted);margin-bottom:2px">${fmtDateLong(e.date)}</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:2px">${e.date?fmtDateLong(e.date):'Da svolgere su LiveLearn · senza scadenza'}</div>
             <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(e.title)}</div>
           </div>
-          ${scadBadge(e.date)}
+          ${e.date?scadBadge(e.date):''}
         </div>
       </div>`;
     });
@@ -1432,11 +1432,15 @@ function getUpcomingEvents(n=10){
     });
   }
 
-  // ── Attività LiveLearn con scadenza che non fanno parte di quei compiti ──
-  { const all = _assignedAll();
+  // ── Test/attività LiveLearn assegnati e non ancora svolti, che non fanno
+  // parte di quei compiti: con scadenza in ordine di data, senza scadenza in
+  // fondo (sempre mostrati, non tagliati dal limite n)
+  const llNoDate = [];
+  { const all = _assignedOpen();
     const inHw = new Set(hw ? _llPerCompito(hw.lesson, hw.due, all).map(a=>a.code) : []);
     all.forEach(a=>{
-      if(!a.deadline || inHw.has(a.code) || (a.done && !a.repeatable)) return;
+      if(inHw.has(a.code)) return;
+      if(!a.deadline){ llNoDate.push({type:'ll', title:a.title||'Attività LiveLearn', date:null, daysLeft:null, hasDeadline:false, ll:a}); return; }
       events.push({type:'ll', title:a.title||'Attività LiveLearn', date:a.deadline, daysLeft:daysUntil(a.deadline), hasDeadline:true, ll:a});
     }); }
 
@@ -1449,7 +1453,7 @@ function getUpcomingEvents(n=10){
 
   events.sort((a,b)=>a.daysLeft-b.daysLeft);
   const seen = new Set();
-  return events.filter(e=>{ const k=e.date+'|'+e.title; if(seen.has(k)) return false; seen.add(k); return true; }).slice(0,n);
+  return events.filter(e=>{ const k=e.date+'|'+e.title; if(seen.has(k)) return false; seen.add(k); return true; }).slice(0,n).concat(llNoDate);
 }
 
 function renderOrarioBanner(){
@@ -1499,7 +1503,7 @@ function buildCal(){
     }
   });
   // Scadenze delle attività LiveLearn assegnate: sono compiti anche loro
-  _assignedAll().forEach(a=>{ if(a.deadline){ if(!evMap[a.deadline]) evMap[a.deadline]=[]; evMap[a.deadline].push('hw'); } });
+  _assignedOpen().forEach(a=>{ if(a.deadline){ if(!evMap[a.deadline]) evMap[a.deadline]=[]; evMap[a.deadline].push('hw'); } });
 
   const dotColor = {lesson:'#9FE1CB',verifica:'#E24B4A',hw:'#EF9F27'};
   let html='';
@@ -1561,7 +1565,7 @@ function renderAgendaEvents(dateStr){
       if(hwDate === dateStr) events.push({type:'hw', lesson:l, hasDeadline:true, date:hwDate, daysLeft:daysUntil(hwDate)});
     });
     // Attività LiveLearn che scadono in questa data e non sono già dentro un compito
-    const all = _assignedAll();
+    const all = _assignedOpen();
     const inHw = new Set();
     events.forEach(e=>{ if(e.type==='hw') _llPerCompito(e.lesson, e.date, all).forEach(a=>inHw.add(a.code)); });
     all.forEach(a=>{
@@ -1577,7 +1581,7 @@ function renderAgendaEvents(dateStr){
     list.innerHTML='<div style="text-align:center;padding:20px 0;font-size:13px;color:var(--muted)">Nessun evento in questa data</div>';
     return;
   }
-  const _allLL = _assignedAll();
+  const _allLL = _assignedOpen();
   list.innerHTML = events.map((e, idx)=>{
     const l = e.lesson;
     const isHwLike = e.type==='hw' || e.type==='ll';
@@ -1612,7 +1616,8 @@ function renderAgendaEvents(dateStr){
     }
 
     // Data formattata (giorno + mese)
-    const dateDisplay = evDate ? `<span style="font-size:11px;color:${typeColor};font-weight:600;">${fmtDateLong(evDate)}</span>` : '';
+    const dateDisplay = evDate ? `<span style="font-size:11px;color:${typeColor};font-weight:600;">${fmtDateLong(evDate)}</span>`
+      : (e.type==='ll' ? `<span style="font-size:11px;color:${typeColor};font-weight:600;">Da svolgere · senza scadenza</span>` : '');
 
     return `<div class="card ${clickable?'card-tap':''}" style="${cardBorder};border-radius:0 14px 14px 0;${cardBg}" ${clickable}>
       <div style="display:flex;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:4px">
@@ -1827,6 +1832,8 @@ function _assignedAll(){
 }
 // Da fare (tab Test): le consegnate restano solo se ripetibili
 function _assignedTodo(){ return _assignedAll().filter(a=>!a.done || a.repeatable); }
+// Compiti in Agenda: solo le attività assegnate che l'alunno non ha ancora svolto
+function _assignedOpen(){ return _assignedAll().filter(a=>!a.done); }
 
 // ── COMPITI IN AGENDA: materiali e attività LiveLearn ────────────────────
 // MyClass distingue le risorse allegate a una lezione: quelle "per compito"
@@ -1840,7 +1847,7 @@ function _risorseLez(l){ return (l?.risorse||[]).filter(r=>r && r.url && (r.comp
 // il giorno della lezione e la consegna.
 function _llPerCompito(l, hwDate, all){
   if(!l || !hwDate) return [];
-  return (all||_assignedAll()).filter(a=> a.deadline ? a.deadline===hwDate
+  return (all||_assignedOpen()).filter(a=> a.deadline ? a.deadline===hwDate
     : (a.assigned && a.assigned>=l.data && a.assigned<hwDate));
 }
 const _TIPO_ICONS_RIS = {video:'🎬',esercizio:'📝',gioco:'🎮',audio:'🔊',documento:'📄',altro:'🔗'};
