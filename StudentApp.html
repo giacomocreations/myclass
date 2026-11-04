@@ -1261,7 +1261,7 @@ function renderHome(){
   if(urgent.length){
     html += `<div style="background:#FCEBEB;border-radius:12px;padding:12px 14px;margin-bottom:12px;border:0.5px solid #F09595">
       <div class="sec-lbl" style="color:#501313;margin-bottom:6px">IN SCADENZA PRESTO</div>
-      ${urgent.map(e=>`<div style="font-size:13px;font-weight:600;color:#A32D2D;margin-bottom:3px">${esc(e.title)} — ${e.daysLeft===0?'oggi':e.daysLeft===1?'domani':'dopodomani'}</div>`).join('')}
+      ${urgent.map(e=>`<div style="font-size:13px;font-weight:600;color:#A32D2D;margin-bottom:3px">${esc(e.title)} — ${e.daysLeft<0?'in ritardo':e.daysLeft===0?'oggi':e.daysLeft===1?'domani':'dopodomani'}</div>`).join('')}
     </div>`;
   }
 
@@ -1440,8 +1440,8 @@ function getUpcomingEvents(n=10){
     const inHw = new Set(hw ? _llPerCompito(hw.lesson, hw.due, all).map(a=>a.code) : []);
     all.forEach(a=>{
       if(inHw.has(a.code)) return;
-      if(!a.deadline){ llNoDate.push({type:'ll', title:a.title||'Attività LiveLearn', date:null, daysLeft:null, hasDeadline:false, ll:a}); return; }
-      events.push({type:'ll', title:a.title||'Attività LiveLearn', date:a.deadline, daysLeft:daysUntil(a.deadline), hasDeadline:true, ll:a});
+      if(!a.due){ llNoDate.push({type:'ll', title:a.title||'Attività LiveLearn', date:null, daysLeft:null, hasDeadline:false, ll:a}); return; }
+      events.push({type:'ll', title:a.title||'Attività LiveLearn', date:a.due, daysLeft:daysUntil(a.due), hasDeadline:true, ll:a});
     }); }
 
   // ── Verifiche future ──────────────────────────────────────────────────────
@@ -1503,7 +1503,7 @@ function buildCal(){
     }
   });
   // Scadenze delle attività LiveLearn assegnate: sono compiti anche loro
-  _assignedOpen().forEach(a=>{ if(a.deadline){ if(!evMap[a.deadline]) evMap[a.deadline]=[]; evMap[a.deadline].push('hw'); } });
+  _assignedOpen().forEach(a=>{ if(a.due){ if(!evMap[a.due]) evMap[a.due]=[]; evMap[a.due].push('hw'); } });
 
   const dotColor = {lesson:'#9FE1CB',verifica:'#E24B4A',hw:'#EF9F27'};
   let html='';
@@ -1569,8 +1569,8 @@ function renderAgendaEvents(dateStr){
     const inHw = new Set();
     events.forEach(e=>{ if(e.type==='hw') _llPerCompito(e.lesson, e.date, all).forEach(a=>inHw.add(a.code)); });
     all.forEach(a=>{
-      if(a.deadline===dateStr && !inHw.has(a.code))
-        events.push({type:'ll', title:a.title||'Attività LiveLearn', date:a.deadline, daysLeft:daysUntil(a.deadline), hasDeadline:true, ll:a});
+      if(a.due===dateStr && !inHw.has(a.code))
+        events.push({type:'ll', title:a.title||'Attività LiveLearn', date:a.due, daysLeft:daysUntil(a.due), hasDeadline:true, ll:a});
     });
   } else {
     label.textContent = 'PROSSIMI EVENTI';
@@ -1604,7 +1604,10 @@ function renderAgendaEvents(dateStr){
     let cardBg = '', cardBorder = `border-left:3px solid ${borderC}`;
     let urgencyBadge = '';
     if(isHwLike && dLeft!=null){
-      if(dLeft===0){
+      if(dLeft<0){
+        cardBg='background:#FFF5F5;'; cardBorder=`border-left:4px solid #E24B4A`;
+        urgencyBadge=`<span style="background:#991b1b;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;margin-left:6px">IN RITARDO</span>`;
+      } else if(dLeft===0){
         cardBg='background:#FFF5F5;'; cardBorder=`border-left:4px solid #E24B4A`;
         urgencyBadge=`<span style="background:#E24B4A;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;margin-left:6px">OGGI</span>`;
       } else if(dLeft===1){
@@ -1823,9 +1826,17 @@ function _assignedAll(){
     const done = info.done || !!S.sessions[code];
     const deadline = info.deadline || m.deadline || null;
     if(deadline && deadline < today) return;
+    const assigned = m.ts ? new Date(m.ts).toISOString().slice(0,10) : null;
+    // Giorno in cui va fatta (dove compare tra i compiti): "da fare per"
+    // scelto in LiveLearn; altrimenti la prossima lezione dopo l'assegnazione
+    // (o la scadenza, se viene prima); altrimenti la scadenza. La scadenza
+    // dice solo fino a quando si può consegnare (anche in ritardo).
+    let due = info.dueFor || m.dueFor || null;
+    if(!due && assigned){ const nl = nextLessonDate(assigned); if(nl) due = (deadline && deadline < nl) ? deadline : nl; }
+    if(!due) due = deadline;
     out.push({ code, title: info.title || (m.text||'').split('\n')[0].replace(/^📋 Compito assegnato:\s*/,''),
-               deadline, done, repeatable: !!info.repeatable,
-               assigned: m.ts ? new Date(m.ts).toISOString().slice(0,10) : null,
+               deadline, due, done, repeatable: !!info.repeatable,
+               assigned,
                url: llLinkWithName(m.url ? ensureUrl(m.url) : ('LiveLearn.html?code='+code)) });
   });
   return out.sort((a,b)=>(a.deadline||'9999').localeCompare(b.deadline||'9999'));
@@ -1851,8 +1862,7 @@ function _llPerCompito(l, hwDate, all){
   if(!l || !hwDate) return [];
   const cur = _findCurrentHwLesson();
   const isCur = !!(cur && cur.lesson === l);
-  return (all||_assignedOpen()).filter(a=> a.deadline ? a.deadline===hwDate
-    : (isCur || (a.assigned && a.assigned>=l.data && a.assigned<hwDate)));
+  return (all||_assignedOpen()).filter(a=> a.due ? a.due===hwDate : isCur);
 }
 const _TIPO_ICONS_RIS = {video:'🎬',esercizio:'📝',gioco:'🎮',audio:'🔊',documento:'📄',altro:'🔗'};
 function _risorsaLinkHtml(r, col){
@@ -1876,7 +1886,7 @@ function _llLinkHtml(a){
     <span style="font-size:15px;flex-shrink:0">${a.done?'✅':'▶'}</span>
     <span style="flex:1;min-width:0">
       <span style="display:block;font-size:13px;font-weight:600;color:${a.done&&!a.repeatable?'#475569':'#fff'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.title||'Attività LiveLearn')}</span>
-      <span style="display:block;font-size:10px;color:${a.done&&!a.repeatable?'#64748b':'rgba(255,255,255,.8)'}">LiveLearn · codice ${esc(a.code)}${a.done?(a.repeatable?' · già svolta, puoi rifarla':' · consegnata'):''}</span>
+      <span style="display:block;font-size:10px;color:${a.done&&!a.repeatable?'#64748b':'rgba(255,255,255,.8)'}">LiveLearn · codice ${esc(a.code)}${a.done?(a.repeatable?' · già svolta, puoi rifarla':' · consegnata'):''}${!a.done&&a.deadline&&a.deadline!==a.due?' · si chiude il '+esc(fmtDate(a.deadline)):''}</span>
     </span>
     ${a.done&&!a.repeatable?'':`<span style="font-size:11px;color:#fff;flex-shrink:0;font-weight:700">Svolgi ↗</span>`}
   </a>`;
@@ -1898,7 +1908,7 @@ async function _loadAssignInfo(code){
     if(sess){
       let done = false;
       try { const r = await _leggiMiaRisposta(db, code, S.studentName, S.studentSafe); done = !!(r && r.submittedAt); } catch(e){}
-      info = { status: sess.status, deadline: sess.deadline||null, title: sess.title||'', repeatable: !!sess.repeatable, done };
+      info = { status: sess.status, deadline: sess.deadline||null, dueFor: sess.dueFor||null, title: sess.title||'', repeatable: !!sess.repeatable, done };
     }
   } catch(e){ /* sessione non leggibile: non si mostra */ }
   if(S._assignInfo[code] !== 'loading') return; // bacheca cambiata nel frattempo
@@ -2090,6 +2100,7 @@ function renderCompiti(){
             <div style="display:flex;gap:5px;margin-top:4px;flex-wrap:wrap">
               <span class="pill pill-indigo">Assegnato</span>
               <span class="pill pill-gray">Codice ${esc(a.code)}</span>
+              ${a.due?`<span class="pill pill-amber">📌 Da fare per ${esc(fmtDate(a.due))}</span>`:''}
               ${a.done?`<span class="pill pill-teal">Già svolto · puoi rifarlo</span>`:''}
             </div>
           </div>${a.deadline?scadBadge(a.deadline):''}

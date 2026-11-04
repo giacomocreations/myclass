@@ -1847,10 +1847,14 @@ const CONFIG = {
       <div style="font-size:12px;font-weight:700;color:#5b21b6;margin-bottom:10px;letter-spacing:.4px;">⚙️ OPZIONI ASSEGNAZIONE</div>
       <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;">
         <div class="form-group" style="margin-bottom:0;flex:1;min-width:140px;">
+          <label>📌 Da fare per il (consigliato)</label>
+          <input type="date" id="launch-duefor" style="width:100%;">
+        </div>
+        <div class="form-group" style="margin-bottom:0;flex:1;min-width:140px;">
           <label>📅 Scadenza (opzionale)</label>
           <input type="date" id="launch-deadline" style="width:100%;">
         </div>
-        <p class="text-muted" style="font-size:11px;margin-bottom:0;flex:2;min-width:160px;">Lascia vuota per nessuna scadenza. Gli studenti non potranno consegnare dopo la data indicata.</p>
+        <p class="text-muted" style="font-size:11px;margin-bottom:0;flex:2;min-width:160px;"><b>Da fare per</b>: il giorno in cui va fatta — in StudentApp compare tra i compiti di quel giorno. <b>Scadenza</b>: dopo questa data non si può più consegnare (lasciala più avanti per accettare i ritardi). Senza "da fare per" vale la prossima lezione dopo l'assegnazione (o la scadenza, se viene prima).</p>
       </div>
       <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;margin-top:10px;">
         <input type="checkbox" id="launch-repeatable" checked style="margin-top:3px;">
@@ -3151,6 +3155,61 @@ async function removeSessionDeadline(code) {
   } catch (e) { alert('⚠️ Non riesco a togliere la scadenza: ' + e.message); }
 }
 
+// ── "Da fare per": giorno in cui l'attività assegnata va fatta ─────────────
+// Diverso dalla scadenza (chiusura): StudentApp mette l'attività tra i
+// compiti di quel giorno, anche se resta aperta qualche giorno in più.
+function _fmtDueIt(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return String(iso || '');
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  return d.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'long' });
+}
+function _parseDueInput(t, ref) {
+  t = String(t || '').trim();
+  if (!t) return '';
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
+  if (m) return m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
+  m = /^(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2,4}))?$/.exec(t);
+  if (!m) return null;
+  let y = m[3] ? (m[3].length === 2 ? '20' + m[3] : m[3]) : String(new Date().getFullYear());
+  if (!m[3]) { // senza anno: la prossima occorrenza della data
+    const cand = y + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+    if (cand < (ref || new Date().toISOString().slice(0, 10)).slice(0, 7) + '-01') y = String(+y + 1);
+  }
+  const iso = y + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+  return isNaN(new Date(iso).getTime()) ? null : iso;
+}
+async function setSessionDueFor(code) {
+  if (!db || !code) return;
+  const row = (S._allSessions || []).find(([c]) => c === code);
+  const s = row ? row[1] : null;
+  const cur = s && s.dueFor ? s.dueFor.split('-').reverse().join('/') : '';
+  const t = prompt('Da fare per quale giorno? (es. 04/11)\n\nIn StudentApp l\'attività compare tra i compiti di quel giorno; la scadenza (chiusura) resta com\'è.\nLascia vuoto per toglierlo.', cur);
+  if (t === null) return;
+  const iso = _parseDueInput(t);
+  if (iso === null) { alert('Data non valida. Scrivi ad esempio 04/11 oppure 04/11/2026.'); return; }
+  if (iso && s && s.deadline && iso > s.deadline && !confirm('Il ' + t + ' è dopo la scadenza (' + s.deadline + '): gli alunni non potranno consegnare. Confermi lo stesso?')) return;
+  try {
+    await db.ref('livelearn/sessions/' + code + '/dueFor').set(iso || null);
+    if (s) { if (iso) s.dueFor = iso; else delete s.dueFor; }
+    if (s && s.classId) {
+      const board = (await db.ref('livelearn/board/' + s.classId).get()).val() || {};
+      const upd = {};
+      Object.entries(board).forEach(([k, m]) => {
+        if (!m || m.type !== 'avviso_quiz' || m.sessionCode !== code) return;
+        upd[k + '/dueFor'] = iso || null;
+        if (typeof m.text === 'string') {
+          let tx = m.text.replace(/\nDa fare per: [^\n]*/g, '');
+          if (iso) tx = tx.replace(/(\nCodice di accesso: [^\n]*)/, '$1\nDa fare per: ' + _fmtDueIt(iso));
+          upd[k + '/text'] = tx;
+        }
+      });
+      if (Object.keys(upd).length) await db.ref('livelearn/board/' + s.classId).update(upd);
+    }
+    renderSessionList();
+  } catch (e) { alert('⚠️ Non riesco a salvare la data: ' + e.message); }
+}
+
 // Render della lista sessioni, filtrabile per modalità, stato e ricerca titolo.
 // L'ordine resta cronologico (dal più recente al più vecchio).
 function _sessionStatusOf(s) {
@@ -3237,9 +3296,11 @@ function renderSessionList() {
       : '';
 
     // Badge scadenza per sessioni assegnate
-    const deadlineBadge = s.deadline
+    const deadlineBadge = (s.deadline
       ? `<span class="badge" style="background:#ede9fe;color:#5b21b6;">📅 scade ${s.deadline}${isAssigned ? `<button class="sess-tag-x" onclick="removeSessionDeadline('${code}')" title="Togli la scadenza: gli alunni possono svolgerla quando vogliono">✕</button>` : ''}</span>`
-      : '';
+      : '') + (isAssigned
+      ? `<button class="badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;cursor:pointer;font:inherit;font-size:11px;font-weight:700;" onclick="setSessionDueFor('${code}')" title="Il giorno in cui va fatta: in StudentApp compare tra i compiti di quel giorno">📌 ${s.dueFor ? 'da fare per ' + _fmtDueIt(s.dueFor) : 'da fare per…'}</button>`
+      : '');
 
     // Classe: grande, colorata, prima del titolo
     const classBadge = s.classId
@@ -6483,6 +6544,8 @@ async function startSession(activityId, title) {
   if (_ao) _ao.style.display = 'none';
   const _dl = document.getElementById('launch-deadline');
   if (_dl) _dl.value = '';
+  const _df = document.getElementById('launch-duefor');
+  if (_df) _df.value = '';
   // Populate class selector
   const sel = document.getElementById('start-session-class');
   sel.innerHTML = '<option value="">— Nessuna classe —</option>';
@@ -6718,6 +6781,11 @@ async function confirmStartSession() {
     // Modalità ASSEGNA: status='assigned' (studenti accedono senza lobby né docente online)
     const _isAssigned = mode === 'assigned';
     const _deadline = _isAssigned ? (document.getElementById('launch-deadline')?.value || null) : null;
+    let _dueFor = _isAssigned ? (document.getElementById('launch-duefor')?.value || null) : null;
+    if (_dueFor && _deadline && _dueFor > _deadline) {
+      if (!confirm('"Da fare per" (' + _dueFor + ') è dopo la scadenza (' + _deadline + '): dopo la scadenza non si può consegnare.\n\nUsare la scadenza come giorno in cui va fatta?')) return;
+      _dueFor = _deadline;
+    }
     const sessionPayload = {
       activityId: S.pendingActivityId, title: S.pendingActivityTitle,
       status: _isAssigned ? 'assigned' : 'active', mode, timer, shuffleQ, shuffleOpts,
@@ -6725,6 +6793,7 @@ async function confirmStartSession() {
       aiProvider: _AI_PROVIDER
     };
     if (_deadline) sessionPayload.deadline = _deadline;
+    if (_dueFor) sessionPayload.dueFor = _dueFor;
     if (_isAssigned && document.getElementById('launch-repeatable')?.checked) sessionPayload.repeatable = true;
     if (noListening) sessionPayload.noListening = true;
     if (tournament) sessionPayload.tournament = true;
@@ -6747,7 +6816,7 @@ async function confirmStartSession() {
     if (_isAssigned) {
       // Invia notifica FCM + scrivi AVVISO in bacheca
       if (classId) {
-        _sendAssignedNotification(code, classId, S.pendingActivityTitle, _deadline).catch(e =>
+        _sendAssignedNotification(code, classId, S.pendingActivityTitle, _deadline, _dueFor).catch(e =>
           console.warn('[ASSEGNA] Notifica fallita:', e.message));
       }
       _showAssignedConfirm(code, classId, S.pendingActivityTitle, _deadline);
@@ -6839,11 +6908,11 @@ async function _llSendFCMv1(projectId, token, title, body, classId, accessToken)
 }
 
 // Invia notifica FCM + AVVISO in bacheca per una sessione assegnata
-async function _sendAssignedNotification(code, classId, title, deadline) {
+async function _sendAssignedNotification(code, classId, title, deadline, dueFor) {
   if (CONFIG.soloQuiz) return;   // senza StudentApp non c'e' bacheca da avvisare
   const baseUrl = window.location.href.split('?')[0];
   const link = baseUrl + '?code=' + code;
-  const scadStr = deadline ? ' — scade il ' + deadline : '';
+  const scadStr = (dueFor ? ' — da fare per il ' + _fmtDueIt(dueFor) : '') + (deadline ? ' — scade il ' + deadline : '');
   const pushTitle = '📋 Compito assegnato: ' + (title || 'Nuova attività');
   const pushBody  = 'Codice: ' + code + scadStr + '. Accedi subito da LiveLearn.';
 
@@ -6852,13 +6921,14 @@ async function _sendAssignedNotification(code, classId, title, deadline) {
     const boardMsg = {
       from: 'teacher',
       type: 'avviso_quiz',
-      text: pushTitle + '\nCodice di accesso: ' + code + (deadline ? '\nScadenza: ' + deadline : '') + '\nEntra in LiveLearn con il codice per svolgere il compito.',
+      text: pushTitle + '\nCodice di accesso: ' + code + (dueFor ? '\nDa fare per: ' + _fmtDueIt(dueFor) : '') + (deadline ? '\nScadenza: ' + deadline : '') + '\nEntra in LiveLearn con il codice per svolgere il compito.',
       url: link,
       linkTitle: '▶ Apri LiveLearn — codice: ' + code,
       sessionCode: code,
       ts: Date.now()
     };
     if (deadline) boardMsg.deadline = deadline;
+    if (dueFor) boardMsg.dueFor = dueFor;
     try {
       await db.ref('livelearn/board/' + classId).push(boardMsg);
       console.log('[ASSEGNA] AVVISO scritto in bacheca:', classId);
