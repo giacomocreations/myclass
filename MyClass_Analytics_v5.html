@@ -31880,7 +31880,8 @@ ${blocchiPerAlunno}`;
 
     // Scrittura atomica Firebase per un'attività piano
     // I piani non hanno scadenza (scelta del docente): nessun campo deadline.
-    async function _pianoWriteFirebase({ studentSafe, studentName, code, prefix, activity, unit, voto, classeNome }) {
+    // oraleText: recupero orale con attività di speaking (testo del docente + esercizi al microfono)
+    async function _pianoWriteFirebase({ studentSafe, studentName, code, prefix, activity, unit, voto, classeNome, oraleText = null }) {
         let db;
         try { db = firebase.database(); } catch(e) { console.warn('[Piano] Firebase non disponibile'); return false; }
         // Foto riprese dalla verifica (PEI): entrano nelle domande solo adesso
@@ -31890,17 +31891,20 @@ ${blocchiPerAlunno}`;
             activity, prefix, unit, voto,
             studentName, classeNome,
             createdAt: now,
-            status: 'pending', lastScore: null, attemptCount: 0
+            status: 'pending', lastScore: null, attemptCount: 0,
+            ...(oraleText != null ? { orale: true } : {})
         };
         const planData = {
-            type: prefix === 'REC' ? 'recovery_scritto' : prefix === 'CON' ? 'consolidamento' : 'approfondimento',
+            type: oraleText != null ? 'recovery_orale' : prefix === 'REC' ? 'recovery_scritto' : prefix === 'CON' ? 'consolidamento' : 'approfondimento',
             code, unitName: unit || '', voto,
             createdAt: now,
             status: 'pending', lastScore: null, attemptCount: 0,
+            ...(oraleText != null ? { text: oraleText } : {}),
             ...(activity?.speakingPrompt ? { speakingPrompt: activity.speakingPrompt } : {})
         };
         const notifData = {
-            title: prefix === 'REC' ? '📝 Attività di recupero disponibile' :
+            title: oraleText != null ? '🗣️ Recupero orale con speaking disponibile' :
+                   prefix === 'REC' ? '📝 Attività di recupero disponibile' :
                    prefix === 'CON' ? '📚 Attività di consolidamento pronta' : '⭐ Attività di approfondimento pronta',
             body: `Unità: ${unit||'N/D'} — Codice: ${code}`,
             type: 'valutazione', ts: now, read: false
@@ -32660,6 +32664,12 @@ ${P.prompt}`;
             } catch(le) { console.warn('[Piano] Listening gen error:', le.message); }
         }
 
+        // ── Speaking: 2 frasi da dire al microfono in fondo al piano (non per i PEI) ──
+        if (_ppSpeakingNeeded(verInfo)) {
+            const spk = await _pianoGenerateSpeakingQuestions({ unit, classeNome, voto, prefix, focus: _ppSplitErrorDetails(errorDetails).testErrors || '', verInfo });
+            if (spk.length) { questions.push(...spk); console.log('[Piano] ✅ Speaking aggiunto:', spk.length); }
+        }
+
         const activity = { questions };
         if (_cov.total) activity.erroriCoperti = { n: _cov.covered, tot: _cov.total };
         if (challenge) {
@@ -32790,11 +32800,162 @@ ${P.prompt}`;
     // ⚠️ LiveLearn mostra il testo da "text", non da "question": senza questa
     // copia (es. con "Approva tutte", che non passa dall'editor) la domanda
     // arrivava all'alunno senza testo. In MyClass il campo canonico è "question".
+
+    // ═══ SPEAKING — correzione (copia di LiveLearn) ═══
+    // ═══════════════════════════════════════════════════════════════
+    // SPEAKING — correzione (funzioni pure)
+    // Domanda a voce: l'alunno parla al microfono (riconoscimento vocale del
+    // browser, en-GB) e riceve subito il riscontro. Si controlla CHE COSA dice
+    // (strutture e lessico), non la pronuncia: il riconoscimento trasforma il
+    // parlato in inglese "plausibile".
+    // Formato: { type:'speaking', text, model?, free?, minWords?, points,
+    //   targets:[{ label, say:'alt1|alt2', min? }], avoid:[{ say, tip }] }
+    // In "say" l'asterisco vale "qualunque parola o pezzo di parola"
+    // (es. "is *ing" → is wearing, is running…). Le forme contratte valgono come
+    // quelle intere (don't = do not, I'm = I am, she's = she is). Ogni errore di
+    // "avoid" sentito nella risposta conta come un obiettivo mancato.
+    // ⚠️ COPIA di LiveLearn (_spkEval): se si cambia là, va cambiato anche qui.
+    // ═══════════════════════════════════════════════════════════════
+    function _spkNorm(s) {
+      return ' ' + String(s == null ? '' : s).toLowerCase()
+        .replace(/[‘’`´]/g, "'")
+        .replace(/\bcan't\b/g, 'can not').replace(/\bcannot\b/g, 'can not')
+        .replace(/\bwon't\b/g, 'will not').replace(/\bshan't\b/g, 'shall not')
+        .replace(/n't\b/g, ' not')
+        .replace(/'m\b/g, ' am').replace(/'re\b/g, ' are').replace(/'ve\b/g, ' have')
+        .replace(/'ll\b/g, ' will').replace(/'d\b/g, ' would')
+        .replace(/\b(he|she|it|there|that|what|who|where|here|this)'s\b/g, '$1 is')
+        .replace(/[^a-z0-9'*\s]/g, ' ')
+        .replace(/\s+/g, ' ').trim() + ' ';
+    }
+    function _spkAlts(say) {
+      return (Array.isArray(say) ? say : String(say == null ? '' : say).split('|'))
+        .map(x => _spkNorm(x).trim()).filter(Boolean);
+    }
+    function _spkCount(normText, say) {
+      let n = 0;
+      _spkAlts(say).forEach(alt => {
+        const body = alt.split(' ').map(w => w.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, "[a-z0-9']*")).join(' ');
+        const m = normText.match(new RegExp(' ' + body + '(?= )', 'g'));
+        if (m) n += m.length;
+      });
+      return n;
+    }
+    function _spkArr(v) {
+      if (Array.isArray(v)) return v.filter(Boolean);
+      if (v && typeof v === 'object') return Object.keys(v).sort((a, b) => a - b).map(k => v[k]).filter(Boolean);
+      return [];
+    }
+    // → { rows:[{label,count,min,ok}], tips:[...], words, frac }
+    function _spkEval(q, raw) {
+      const t = _spkNorm(raw);
+      const words = t.trim() ? t.trim().split(' ').length : 0;
+      const rows = _spkArr(q && q.targets).map(tg => {
+        const min = Math.max(1, Number(tg.min) || 1);
+        const count = _spkCount(t, tg.say);
+        return { label: String(tg.label || String(tg.say || '').split('|')[0]), count, min, ok: count >= min };
+      });
+      const mw = Number(q && q.minWords) || 0;
+      if (mw > 0) rows.push({ label: 'almeno ' + mw + ' parole', count: words, min: mw, ok: words >= mw, words: true });
+      const tips = _spkArr(q && q.avoid).filter(av => _spkCount(t, av.say) > 0).map(av => String(av.tip || av.say));
+      // Ogni errore tipico sentito vale come un obiettivo mancato
+      const den = rows.length + tips.length;
+      const frac = !words ? 0 : den ? rows.reduce((s, r) => s + Math.min(r.count / r.min, 1), 0) / den : 1;
+      return { rows, tips, words, frac };
+    }
+    // ── SPEAKING: campi del form docente (creazione e modifica) ──
+    // Obiettivi: uno per riga, "etichetta: frase1 | frase2 x2" (etichetta e x2 facoltativi).
+    // Errori tipici: uno per riga, "errore => consiglio".
+    function _spkTargetsToText(arr) {
+      return _spkArr(arr).map(t => {
+        const say = Array.isArray(t.say) ? t.say.join(' | ') : String(t.say || '').split('|').map(x => x.trim()).join(' | ');
+        const first = say.split('|')[0].trim();
+        const lbl = t.label && t.label !== first ? t.label + ': ' : '';
+        return lbl + say + ((Number(t.min) || 1) > 1 ? ' x' + Number(t.min) : '');
+      }).join('\n');
+    }
+    function _spkTargetsFromText(txt) {
+      return String(txt || '').split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+        let min = 1;
+        const m = l.match(/\s+[x×]\s*(\d+)\s*$/i);
+        if (m) { min = Number(m[1]) || 1; l = l.slice(0, m.index).trim(); }
+        let label = '';
+        const c = l.indexOf(':');
+        if (c > 0 && !/^\s*[a-z' *]*\|/i.test(l.slice(0, c))) { label = l.slice(0, c).trim(); l = l.slice(c + 1).trim(); }
+        const say = l.split('|').map(x => x.trim()).filter(Boolean).join('|');
+        const t = { label: label || say.split('|')[0], say };
+        if (min > 1) t.min = min;
+        return t;
+      }).filter(t => t.say);
+    }
+    function _spkAvoidToText(arr) { return _spkArr(arr).map(a => (a.say || '') + (a.tip ? ' => ' + a.tip : '')).join('\n'); }
+    function _spkAvoidFromText(txt) {
+      return String(txt || '').split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+        const k = l.indexOf('=>');
+        return k >= 0 ? { say: l.slice(0, k).trim(), tip: l.slice(k + 2).trim() } : { say: l, tip: '' };
+      }).filter(a => a.say);
+    }
+
+    // ── SPEAKING: domande a voce per i piani ─────────────────────────────
+    // L'alunno le fa a casa in LiveLearn: legge la consegna, preme 🎤 e parla;
+    // il riconoscimento vocale trascrive e LiveLearn controlla subito gli
+    // "obiettivi" (strutture e lessico, non la pronuncia).
+    // orale = piano di un'interrogazione: più domande, con il parlato libero.
+    function _pianoBuildSpeakingQuestionsPrompt({ unit, classeNome = '', voto = null, prefix = 'REC', focus = '', orale = false, verInfo = null }) {
+        const y = _ppAnnoLabel(classeNome).y;
+        const lv = _ppCefr(classeNome, voto);
+        const isDsa = verInfo?.layout === 1;
+        const nGuided = orale ? 4 : 2, nFree = orale ? 1 : 0;
+        const minW = y === '1' ? 15 : y === '2' ? 20 : 30;
+        const fascia = prefix === 'REC' ? 'recupero (frasi semplici e guidate)' : prefix === 'CON' ? 'consolidamento (difficoltà media)' : 'approfondimento (contesti nuovi, un po\' più impegnativi)';
+        return `Prepara ${nGuided + nFree} esercizi di SPEAKING per LiveLearn per uno studente di scuola media italiana, livello ${lv}${isDsa ? ' (versione DSA: consegne brevissime e chiare, una sola cosa da dire)' : ''}, unità "${unit || 'English'}", piano di ${fascia}.
+L'alunno li fa a casa: legge la consegna, preme il microfono e parla in inglese. Il riconoscimento vocale del browser trascrive quello che dice e LiveLearn controlla SUBITO se nella frase ci sono gli "obiettivi". Si controlla il contenuto (strutture e lessico), non la pronuncia.
+${focus ? `\nSU COSA LAVORARE (${orale ? 'note dell\'interrogazione' : 'errori della verifica'}):\n${String(focus).slice(0, 1800)}\n` : ''}
+REGOLE
+- ${nGuided} esercizi "guidati": l'alunno dice UNA frase. Consegna in italiano, concreta (una situazione + che cosa dire), senza scrivere la frase inglese già pronta.${nFree ? `\n- ${nFree} esercizio di "parlato libero" (ultimo): "free": true e "minWords": ${minW}; l'alunno parla 30-60 secondi su un tema dell'unità; 2-3 obiettivi da usare più volte ("min": 2).` : ''}
+- "targets": 1-3 obiettivi per esercizio, cioè le strutture chiave che la frase deve contenere (il modale, il verbo al tempo giusto, la parola del lessico…). In "say" scrivi TUTTE le forme corrette accettabili separate da | (es. "have to|has to|must"). Le forme contratte valgono già come quelle intere (don't = do not, I'm = I am): scrivi quelle intere. L'asterisco vale "qualsiasi parola o pezzo di parola" (es. "is *ing"). Niente punteggiatura, niente numeri in cifre.
+- Gli obiettivi devono accettare tutte le frasi corrette ragionevoli ma NON la forma sbagliata che si vuole correggere. "label" = come l'alunno vede l'obiettivo (breve, es. "have to / must", "past simple: went").
+- "avoid": 0-2 errori tipici da intercettare (es. "must to", "he have", "did went") con "tip" = consiglio breve in italiano.
+- "model": una frase d'esempio corretta e naturale che contiene TUTTI gli obiettivi e nessun "avoid" (l'alunno la può vedere e ascoltare dopo il primo tentativo).
+- "points": 2 per i guidati${nFree ? ', 4 per il parlato libero' : ''}. "tag": "GRAMMAR", "VOCABULARY" o "FUNCTIONS".
+
+FORMATO: solo un array JSON, nessun testo fuori.
+[{"type":"speaking","text":"Di' a un amico che ogni giorno devi portare a spasso il cane.","model":"I have to walk the dog every day.","targets":[{"label":"have to / must","say":"have to|must"},{"label":"walk the dog","say":"walk the dog"}],"avoid":[{"say":"must to","tip":"Dopo must non si mette to"}],"points":2,"tag":"GRAMMAR"}${nFree ? `,
+ {"type":"speaking","free":true,"minWords":${minW},"text":"Racconta che cosa devi e non devi fare a casa durante la settimana.","model":"I have to make my bed every morning and I must tidy my room on Saturday. I don't have to cook dinner because my dad cooks.","targets":[{"label":"I have to / I must","say":"i have to|i must","min":2},{"label":"I don't have to","say":"i do not have to"}],"points":4,"tag":"FUNCTIONS"}` : ''}]`;
+    }
+    const _PP_SPK_SYS = 'Sei un docente di inglese per scuola media italiana. Rispondi SEMPRE e SOLO con un array JSON valido, senza testo aggiuntivo, senza backtick, senza spiegazioni.';
+    // Domande di speaking pronte (normalizzate e controllate), [] se non riesce
+    async function _pianoGenerateSpeakingQuestions(opts) {
+        try {
+            const raw = await _pianoAICall(_pianoBuildSpeakingQuestionsPrompt(opts), _PP_SPK_SYS);
+            const arr = _pianoParseJson(raw, '[');
+            return _ppCleanSpeaking(arr, 'generazione');
+        } catch(e) {
+            if (e && e.name === 'AbortError') throw e;
+            console.warn('[Piano] Speaking gen error:', e && e.message);
+            return [];
+        }
+    }
+    // Tiene solo le domande di speaking valide (gli scarti finiscono nel log)
+    function _ppCleanSpeaking(arr, where) {
+        if (!Array.isArray(arr)) return [];
+        const out = [];
+        arr.filter(q => q && typeof q === 'object').map(q => _ppNormalizeQuestion({ ...q, type: 'speaking' })).forEach(q => {
+            const iss = _ppValidateQuestion(q);
+            if (iss.length) console.warn(`[Piano] Speaking scartato (${where}):`, iss.join('; '), q);
+            else out.push(q);
+        });
+        return out;
+    }
+    // Speaking nei piani scritti: non per i PEI (lì solo i tipi della sua verifica)
+    function _ppSpeakingNeeded(verInfo) { return verInfo?.layout !== 2; }
+
+
     function _ppNormalizeQuestion(q) {
         if (!q || typeof q !== 'object') return q;
         const out = { ...q };
         if (typeof out.question === 'string') out.text = out.question;
-        else if (typeof out.text === 'string' && out.question == null && out.type !== 'listening') out.question = out.text;
+        else if (typeof out.text === 'string' && out.question == null && out.type !== 'listening' && out.type !== 'speaking') out.question = out.text;
         if (out.type === 'categorization') Object.assign(out, _ppNormCategorization(out));
         if (out.type === 'multiple-choice' && typeof out.correct === 'string' && /^\d+$/.test(out.correct)) out.correct = Number(out.correct);
         if (out.type === 'listening' && out.question && typeof out.question === 'object') {
@@ -32872,6 +33033,20 @@ ${P.prompt}`;
             case 'free-response':
                 if (!txt.trim()) issues.push('testo della domanda mancante');
                 break;
+            case 'speaking': {
+                if (!txt.trim()) issues.push('consegna mancante');
+                const tg = _spkArr(q.targets);
+                if (!tg.length && !(Number(q.minWords) > 0)) { issues.push('nessun obiettivo da dire ("targets")'); break; }
+                if (tg.some(t => !_spkAlts(t.say).length)) issues.push('obiettivo senza frasi accettate ("say")');
+                if (q.model) {
+                    // La frase d'esempio deve superare il controllo che vedrà l'alunno
+                    const e = _spkEval({ ...q, minWords: 0 }, q.model);
+                    const miss = e.rows.filter(r => !r.ok).map(r => r.label);
+                    if (miss.length) issues.push('la frase d\'esempio non contiene: ' + miss.join(', '));
+                    if (e.tips.length) issues.push('la frase d\'esempio contiene un errore da evitare');
+                }
+                break;
+            }
             case 'listening': {
                 if (String(q.ttsText || '').trim().split(/\s+/).length < 30) issues.push('testo da ascoltare mancante o troppo corto');
                 const inner = q.question;
@@ -33263,7 +33438,8 @@ Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markd
                 classe: classeNome || '', unit: unit || '', piano: 'ORALE',
                 voto: Math.round(Number(voto) * 100) / 100,
                 versione: null,
-                consegna_testo: prompt + '\n\nNOTA: il nome dello studente è sostituito da [NOME]. Scrivi [NOME] dove andrebbe il nome: MyClass lo rimette quando importa il testo.'
+                consegna_testo: prompt + '\n\nNOTA: il nome dello studente è sostituito da [NOME]. Scrivi [NOME] dove andrebbe il nome: MyClass lo rimette quando importa il testo.',
+                consegna_speaking_esercizi: _ppAnonymize(_pianoBuildSpeakingQuestionsPrompt({ unit, classeNome, voto, prefix: 'REC', focus: oraleDetails, orale: true }), studente)
             }
         };
     }
@@ -33296,7 +33472,8 @@ Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markd
             alert('❌ Rigenerazione non riuscita (errore AI).');
             return;
         }
-        Object.assign(item, { text, source: _ppGenProvider, oraleDetails: src.oraleDetails, dataVerifica: src.dataVerifica, regenAt: Date.now() });
+        const speaking = await _pianoGenerateSpeakingQuestions({ unit: item.unit, classeNome: item.classeNome, voto: item.voto, prefix: 'REC', focus: src.oraleDetails, orale: true });
+        Object.assign(item, { text, speaking: speaking.length ? speaking : (item.speaking || []), source: _ppGenProvider, oraleDetails: src.oraleDetails, dataVerifica: src.dataVerifica, regenAt: Date.now() });
         _ppSavOraleQueue();
         _ppOraleOpenId = id;
         renderPianoPersPanel();
@@ -33325,7 +33502,8 @@ Questo file è stato esportato da MyClass. Per OGNI elemento di "alunni":
 - se "controlli" non è null, la risposta deve superarli: almeno "errori_minimi" codici diversi di "errori_da_riprendere" (E1, E2…) nel campo "errore" delle domande, e ogni domanda con un codice esercita davvero quell'errore; con "schede_regola" fai tra "minime" e "massime" schede "scopri la regola" come spiegato nella consegna_quiz (3 domande consecutive con lo stesso "scheda": "fase" osserva = multiple-choice, regola = cloze con SOLO scelte [[a|b|c]], controllo = multiple-choice con "referenceTable"), dentro il numero di domande richiesto; con "tipi_ammessi" (alunni PEI: il piano è un ripasso della sua verifica, anche con voto alto) usa SOLO quei tipi; con "opzioni_scelta_multipla" ogni scelta multipla ha esattamente quel numero di opzioni; nessuna domanda parla di foto o immagini se non ha il campo "foto" con un numero di "foto_disponibili" (la foto della verifica viene inserita da MyClass);
 - se "consegna_listening" non è null, genera anche l'esercizio di listening seguendo quella consegna (testo scritto da te, letto poi dalla sintesi vocale);
 - se "consegna_speaking" non è null, scrivi lo speaking prompt richiesto;
-- se "piano" è "ORALE" non c'è nessun quiz: segui la sua "consegna_testo" e scrivi il testo del recupero orale (italiano, testo semplice, 200-280 parole, [NOME] al posto del nome).
+- se "consegna_speaking_esercizi" non è null, genera gli esercizi di speaking (tipo "speaking", da dire al microfono) seguendo quella consegna, nel campo "speaking";
+- se "piano" è "ORALE" non c'è nessun quiz: segui la sua "consegna_testo" e scrivi il testo del recupero orale (italiano, testo semplice, 200-280 parole, [NOME] al posto del nome), più gli esercizi di "consegna_speaking_esercizi".
 Per OGNI elemento di "sfide" genera il blocco seguendo la sua "consegna" (un solo blocco per chiave: lo ricevono tutti gli alunni che hanno quella "sfida").
 Gli alunni non hanno nomi: sono identificati solo da "ref". Non inventare nomi.
 
@@ -33334,7 +33512,8 @@ QUALITÀ — prima di consegnare ricontrolla ogni domanda come un docente madrel
 - c'è UNA sola risposta corretta: nella scelta multipla nessun distrattore è accettabile; nei "fill-blanks"/"cloze" il simbolo | separa SOLO forme ugualmente corrette (es. "didn't|did not"), mai forme sbagliate;
 - numero di spazi nel testo (___ e scelte [[a|b|c]]) = numero di risposte, e per ogni [[...]] la risposta è una delle sue opzioni; nel "drag-drop" ogni risposta compare in "words"; nel "matching" "left" e "right" hanno la stessa lunghezza; nella "categorization" "answers" ha, per ogni elemento di "items" nello stesso ordine, l'indice (da 0) della sua categoria;
 - istruzioni in italiano, contenuti in inglese (nelle schede "scopri la regola" anche domanda guida, regola e "referenceTable" in italiano), livello adatto alla fascia (REC = recupero, CON = consolidamento, APP = approfondimento) e alla versione DSA/PEI quando indicata;
-- gli esercizi lavorano sugli errori riportati nella consegna, con tipi variati e senza indizi che rendano ovvia la risposta.
+- gli esercizi lavorano sugli errori riportati nella consegna, con tipi variati e senza indizi che rendano ovvia la risposta;
+- negli esercizi "speaking" la frase "model" contiene TUTTI i "targets" (una delle forme di "say", con * = qualsiasi parola) e nessun "avoid"; i "targets" accettano tutte le frasi corrette ragionevoli.
 
 OUTPUT: crea UN file chiamato "piani_da_claude.json" (solo JSON valido, nessun testo fuori) con questa struttura:
 {
@@ -33342,8 +33521,8 @@ OUTPUT: crea UN file chiamato "piani_da_claude.json" (solo JSON valido, nessun t
   "versione": 1,
   "export_id": "<copia export_id di questo file>",
   "piani": [
-    { "ref": "<ref dell'alunno>", "questions": [ ...domande della consegna_quiz... ], "listening": { ...oggetto listening... } oppure null, "speakingPrompt": "..." oppure null },
-    { "ref": "<ref di un alunno con piano ORALE>", "testo": "Ciao [NOME], ..." }
+    { "ref": "<ref dell'alunno>", "questions": [ ...domande della consegna_quiz... ], "listening": { ...oggetto listening... } oppure null, "speakingPrompt": "..." oppure null, "speaking": [ ...esercizi speaking... ] oppure [] },
+    { "ref": "<ref di un alunno con piano ORALE>", "testo": "Ciao [NOME], ...", "speaking": [ ...esercizi speaking... ] }
   ],
   "sfide": [
     { "chiave": "<chiave della sfida>", "passageText": "...", "questions": [ ...gli esercizi richiesti dalla sua consegna... ] }
@@ -33378,6 +33557,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 consegna_quiz: P.prompt,
                 consegna_listening: lNeed.needed ? _pianoBuildListeningPrompt(unit || 'English Grammar', lNeed.level, lNeed.focus) : null,
                 consegna_speaking: prefix === 'APP' && verInfo?.layout !== 2 ? _pianoBuildSpeakingPrompt(unit, classeNome, voto) : null,
+                consegna_speaking_esercizi: _ppSpeakingNeeded(verInfo) ? _pianoBuildSpeakingQuestionsPrompt({ unit, classeNome, voto, prefix, focus: _ppSplitErrorDetails(errorDetails).testErrors || '', verInfo }) : null,
                 controlli: {
                     errori_da_riprendere: P.check.errors.map(e => e.id),
                     errori_minimi: P.check.errReq,
@@ -33541,15 +33721,19 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 let testo = String(p.testo || p.text || '').trim();
                 if (!testo) { nonTrovati.push(`${L.studentName} (testo orale vuoto)`); continue; }
                 testo = testo.replace(/\[NOME\]/g, L.nome || '');
+                // Esercizi di speaking (attività LiveLearn che accompagna il testo)
+                const spkIn = Array.isArray(p.speaking) ? p.speaking : [];
+                const speaking = _ppCleanSpeaking(spkIn, 'import Claude');
+                if (spkIn.length > speaking.length) scartate.push(`${L.studentName}: ${spkIn.length - speaking.length} esercizi di speaking non validi scartati`);
                 const target = (L.oraleId && _ppOraleQueue.find(x => x.id === L.oraleId && x.status !== 'approved'))
                     || _ppOraleQueue.find(x => x.studentSafe === L.studentSafe && x.unit === L.unit && x.status !== 'approved');
                 if (target) {
-                    Object.assign(target, { text: testo, source: 'claude', regenAt: Date.now(), oraleDetails: L.oraleDetails, dataVerifica: L.dataVerifica });
+                    Object.assign(target, { text: testo, speaking, source: 'claude', regenAt: Date.now(), oraleDetails: L.oraleDetails, dataVerifica: L.dataVerifica });
                     replaced++;
                 } else {
                     _ppOraleQueue.push({ id: 'po_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
                         studentSafe: L.studentSafe, studentName: L.studentName, unit: L.unit, voto: L.voto, classeNome: L.classeNome,
-                        text: testo, createdAt: Date.now(), status: 'pending', source: 'claude', oraleDetails: L.oraleDetails, dataVerifica: L.dataVerifica });
+                        text: testo, speaking, createdAt: Date.now(), status: 'pending', source: 'claude', oraleDetails: L.oraleDetails, dataVerifica: L.dataVerifica });
                     created++;
                 }
                 oraliN++;
@@ -33569,6 +33753,12 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             if (p.listening && typeof p.listening === 'object') {
                 const l = _ppNormalizeQuestion(p.listening);
                 if (l.type === 'listening' && !bad(l)) qs.push(l); else nBad++;
+            }
+            // Speaking in fondo (non per i PEI)
+            if (Array.isArray(p.speaking) && p.speaking.length && !Array.isArray(L.tipiAmmessi)) {
+                const spk = _ppCleanSpeaking(p.speaking, 'import Claude');
+                nBad += p.speaking.length - spk.length;
+                qs.push(...spk);
             }
             if (nBad) scartate.push(`${L.studentName}: ${nBad} esercizi non validi scartati`);
             if (!qs.length) { nonTrovati.push(`${L.studentName} (nessuna domanda valida)`); continue; }
@@ -33838,8 +34028,10 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             _ppShowGenerating(studentName, 'ORALE', unitEff);
             const text = await _pianoGenerateOraleText(studente, voto, unitEff, errorDetails, classeNome, dataVer);
             if (!text) { _ppShowError(studentName, 'Generazione testo fallita'); return { outcome: 'error', reason: 'Generazione testo fallita' }; }
+            // Attività di speaking in LiveLearn (microfono, riscontro immediato): accompagna il testo
+            const speaking = await _pianoGenerateSpeakingQuestions({ unit: unitEff, classeNome, voto, prefix: 'REC', focus: errorDetails, orale: true });
             const id = 'po_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-            _ppOraleQueue.push({ id, studentSafe, studentName, unit: unitEff, voto, classeNome, text, createdAt: Date.now(), status: 'pending', source: _ppGenProvider, oraleDetails: errorDetails, dataVerifica: dataVer });
+            _ppOraleQueue.push({ id, studentSafe, studentName, unit: unitEff, voto, classeNome, text, speaking, createdAt: Date.now(), status: 'pending', source: _ppGenProvider, oraleDetails: errorDetails, dataVerifica: dataVer });
             _ppSavOraleQueue();
             renderPianoPersPanel();
             ppSwitchTab(1);  // porta docente sul tab orale
@@ -34306,7 +34498,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         const prefixLabel = prefix === 'REC' ? 'Recupero' : prefix === 'CON' ? 'Consolidamento' : 'Approfondimento';
         const emoji = isOrale ? '🗣️' : (prefix === 'REC' ? '📝' : prefix === 'CON' ? '📚' : '⭐');
         const baseUrl = 'https://giacomocreations.github.io/myclass/StudentApp.html';
-        const deepLink = isOrale
+        const deepLink = isOrale && !code
             ? `${baseUrl}?safe=${encodeURIComponent(studentSafe)}&name=${encodeURIComponent(studentName)}&piano=orale`
             : `${baseUrl}?safe=${encodeURIComponent(studentSafe)}&name=${encodeURIComponent(studentName)}&piano=${encodeURIComponent(code)}`;
 
@@ -34326,7 +34518,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         }
 
         const msgText = isOrale
-            ? `${emoji} Piano di recupero orale — ${unit || ''}${voto ? ' · voto ' + voto : ''}${materialiText}`
+            ? `${emoji} Piano di recupero orale — ${unit || ''}${voto ? ' · voto ' + voto : ''}${code ? ' · Speaking al microfono · Codice: ' + code : ''}${materialiText}`
             : `${emoji} Piano ${prefixLabel.toLowerCase()} scritto — ${unit || ''}${voto ? ' · voto ' + voto : ''} · Codice: ${code}${materialiText}`;
         const msg = {
             from: 'teacher',
@@ -34336,7 +34528,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             ...(materialiList.length ? { pianoMateriali: materialiList.map(r => ({ titolo: r.titolo, url: r.url || '', tipo: r.tipo || '' })) } : {}),
             url: deepLink,
             visibility: 'private',
-            pianoCode: isOrale ? null : code,
+            pianoCode: code || null,
             pianoStuCode: _stuCodeBach,
             pianoPrefix: isOrale ? 'ORALE' : prefix,
             pianoUnit: unit || '',
@@ -34425,6 +34617,14 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
                 const ttsVal = _v(`ppDraftQ_${id}_${i}_tts`);
                 return { ...q,
                     ttsText: ttsVal !== null ? ttsVal : (q.ttsText || '') };
+            } else if (q.type === 'speaking') {
+                const out = { ...q, text: txt };
+                delete out.question;
+                const mVal = _v(`ppDraftQ_${id}_${i}_model`), tVal = _v(`ppDraftQ_${id}_${i}_targets`), aVal = _v(`ppDraftQ_${id}_${i}_avoid`);
+                if (mVal !== null) { if (mVal) out.model = mVal; else delete out.model; }
+                if (tVal !== null) out.targets = _spkTargetsFromText(tVal);
+                if (aVal !== null) { const a = _spkAvoidFromText(aVal); if (a.length) out.avoid = a; else delete out.avoid; }
+                return out;
             } else if (q.type === 'free-response') {
                 const hintVal = _v(`ppDraftQ_${id}_${i}_hint`);
                 return { ...q, question: txt, text: txt, hint: hintVal !== null ? hintVal : (q.hint || '') };
@@ -34652,7 +34852,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
                         const src = _ppOraleSource(x, stu);
                         const text = await _pianoGenerateOraleText(stu, x.voto, x.unit, src.oraleDetails, x.classeNome, src.dataVerifica);
                         if (!text) throw new Error('errore AI');
-                        Object.assign(x, { text, source: _ppGenProvider, oraleDetails: src.oraleDetails, dataVerifica: src.dataVerifica, regenAt: Date.now() });
+                        const speaking = await _pianoGenerateSpeakingQuestions({ unit: x.unit, classeNome: x.classeNome, voto: x.voto, prefix: 'REC', focus: src.oraleDetails, orale: true });
+                        Object.assign(x, { text, speaking: speaking.length ? speaking : (x.speaking || []), source: _ppGenProvider, oraleDetails: src.oraleDetails, dataVerifica: src.dataVerifica, regenAt: Date.now() });
                         _ppSavOraleQueue();
                     } else {
                         if (!_ppDraftScritto.some(dd => dd.id === x.id)) continue;   // già approvata o scartata
@@ -34801,6 +35002,24 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             return;
         }
 
+        // Speaking: si rigenera con il suo generatore e si tiene un esercizio dello stesso tipo
+        if (q.type === 'speaking') {
+            try {
+                const _layS = Number(draft.activity?.versionLayout?.originale) || 0;
+                const list = await _pianoGenerateSpeakingQuestions({ unit: topicOverride || draft.unit, classeNome: draft.classeNome, voto: draft.voto, prefix: draft.prefix, orale: !!q.free, verInfo: _layS ? { layout: _layS } : null });
+                const nq = list.find(x => !!x.free === !!q.free) || list[0];
+                if (!nq) throw new Error('nessun esercizio valido');
+                if (Array.isArray(draft.activity)) draft.activity[qIndex] = nq;
+                else if (draft.activity?.questions) draft.activity.questions[qIndex] = nq;
+                _ppSavDraftScritto();
+                renderPianoPersPanel();
+            } catch(e) {
+                alert('❌ Errore rigenerazione speaking: ' + e.message);
+                if (btn) { btn.disabled = false; btn.textContent = '↺ Rigenera'; }
+            }
+            return;
+        }
+
         const tipoDesc = qTypeLabels[q.type] || q.type;
         const argomento = topicOverride || draft.unit || 'English Grammar';
         const _lay = Number(draft.activity?.versionLayout?.originale) || 0;
@@ -34904,6 +35123,80 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         console.log(`[Piano Regen] ✅ Nuova bozza ${newCode} creata per ${item.studentName}`);
     }
 
+    // ── Esercizi di speaking del recupero orale: revisione ──────────────
+    // Le modifiche si salvano subito nella coda (come il testo, vedi ppOraleTextEdit).
+    function _ppOraleSpkEditor(item) {
+        const e = x => String(x ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const list = Array.isArray(item.speaking) ? item.speaking : [];
+        const genBtn = `<button id="ppOraleSpkGen_${item.id}" onclick="ppOraleSpkGen('${item.id}')" style="background:#ede9ff;color:#5b21b6;border:1.5px solid #c4b5fd;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🎤 ${list.length ? 'Rigenera gli esercizi' : 'Genera gli esercizi di speaking'}</button>`;
+        if (!list.length) return `<div style="margin-top:10px;background:#fff;border:1px dashed #FCD34D;border-radius:10px;padding:10px 12px;font-size:12px;color:#92400e;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">🎤 Nessun esercizio di speaking: l'alunno riceverà solo il testo. ${genBtn}</div>`;
+        const inp = 'width:100%;border:1px solid #e5e7eb;border-radius:6px;padding:5px 8px;font-size:13px;box-sizing:border-box;font-family:inherit;margin-top:4px;';
+        return `<div style="margin-top:10px;background:#fff;border:1px solid #FDE68A;border-radius:10px;padding:10px 12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+            <div style="font-size:12px;font-weight:800;color:#78350F;">🎤 SPEAKING IN LIVELEARN (${list.length}) <span style="font-weight:400;color:#92400e;">— l'alunno parla al microfono e ha subito il riscontro; si vede se l'ha svolto come per lo scritto</span></div>
+            ${genBtn}
+          </div>
+          ${list.map((q, i) => {
+            const iss = _ppValidateQuestion(_ppNormalizeQuestion({ ...q, type: 'speaking' }));
+            const f = (fld, val) => `onchange="ppOraleSpkEdit('${item.id}',${i},'${fld}',this.value)"`;
+            return `<div style="border-top:1px solid #FEF3C7;padding-top:8px;margin-top:8px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:700;color:#92400e;">
+                <span>${i + 1}. ${q.free ? '🗣️ Parlato libero' + (q.minWords ? ' · min ' + q.minWords + ' parole' : '') : '💬 Frase guidata'} · ${q.points || 1} pt</span>
+                <button onclick="ppOraleSpkDel('${item.id}',${i})" title="Togli questo esercizio" style="background:none;border:none;color:#DC2626;cursor:pointer;font-size:13px;">🗑</button>
+              </div>
+              <input type="text" value="${e(q.text)}" ${f('text')} placeholder="Consegna (in italiano)" style="${inp}">
+              <input type="text" value="${e(q.model)}" ${f('model')} placeholder="Frase d'esempio" style="${inp}color:#3730a3;font-style:italic;">
+              <textarea rows="2" ${f('targets')} placeholder="Obiettivi, uno per riga: etichetta: frase | alternativa x2" title="Uno per riga: etichetta: frase1 | frase2 (x2 = da dire almeno 2 volte; * = qualsiasi parola)" style="${inp}">${e(_spkTargetsToText(q.targets))}</textarea>
+              <textarea rows="1" ${f('avoid')} placeholder="Errori tipici, uno per riga: errore => consiglio" style="${inp}color:#991b1b;">${e(_spkAvoidToText(q.avoid))}</textarea>
+              ${iss.length ? `<div style="font-size:11px;color:#DC2626;margin-top:3px;">⚠️ ${e(iss.join(' · '))} — così non verrà inviato</div>` : ''}
+            </div>`;
+          }).join('')}
+        </div>`;
+    }
+    function ppOraleTextEdit(id, val) {
+        const item = _ppOraleQueue.find(x => x.id === id);
+        if (!item) return;
+        item.text = String(val || '').trim();
+        _ppSavOraleQueue();
+    }
+    function ppOraleSpkEdit(id, i, field, val) {
+        const item = _ppOraleQueue.find(x => x.id === id);
+        const q = item && item.speaking && item.speaking[i];
+        if (!q) return;
+        if (field === 'targets') q.targets = _spkTargetsFromText(val);
+        else if (field === 'avoid') { const a = _spkAvoidFromText(val); if (a.length) q.avoid = a; else delete q.avoid; }
+        else { const v = String(val || '').trim(); if (v) q[field] = v; else delete q[field]; }
+        _ppSavOraleQueue();
+        _ppOraleOpenId = id;
+        renderPianoPersPanel();
+    }
+    function ppOraleSpkDel(id, i) {
+        const item = _ppOraleQueue.find(x => x.id === id);
+        if (!item || !Array.isArray(item.speaking)) return;
+        item.speaking.splice(i, 1);
+        _ppSavOraleQueue();
+        _ppOraleOpenId = id;
+        renderPianoPersPanel();
+    }
+    async function ppOraleSpkGen(id) {
+        const item = _ppOraleQueue.find(x => x.id === id);
+        if (!item) return;
+        const btn = document.getElementById('ppOraleSpkGen_' + id);
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Genero…'; }
+        const stu = _ppFindStudent(item.classeNome, item.studentSafe);
+        const src = stu ? _ppOraleSource(item, stu) : { oraleDetails: item.oraleDetails || '' };
+        const speaking = await _pianoGenerateSpeakingQuestions({ unit: item.unit, classeNome: item.classeNome, voto: item.voto, prefix: 'REC', focus: src.oraleDetails, orale: true });
+        if (!speaking.length) {
+            if (btn) { btn.disabled = false; btn.textContent = '🎤 Riprova'; }
+            alert('❌ Esercizi di speaking non generati (errore AI). Riprova.');
+            return;
+        }
+        item.speaking = speaking;
+        _ppSavOraleQueue();
+        _ppOraleOpenId = id;
+        renderPianoPersPanel();
+    }
+
     // Approva testo orale e scrivi su Firebase
     async function ppApproveOrale(id) {
         const item = _ppOraleQueue.find(x => x.id === id);
@@ -34924,12 +35217,28 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
     async function _ppApproveOraleCore(item) {
         const editEl = document.getElementById('ppOraleEdit_' + item.id);
         if (editEl) item.text = editEl.value.trim();
-        const ok = await _pianoWriteOraleFirebase(item);
+        // Con gli esercizi di speaking il recupero orale diventa un'attività LiveLearn
+        // con codice (REC-…): si svolge e si vede come gli scritti.
+        const speaking = _ppCleanSpeaking(item.speaking || [], 'approvazione');
+        let code = null, ok;
+        if (speaking.length) {
+            code = item.code || _pianoGenCode('REC');
+            item.code = code;
+            ok = await _pianoWriteFirebase({
+                studentSafe: item.studentSafe, studentName: item.studentName, code, prefix: 'REC',
+                activity: { title: '🎤 Speaking — ' + (item.unit || 'Recupero orale'), questions: speaking },
+                unit: item.unit, voto: item.voto, classeNome: item.classeNome, oraleText: item.text
+            });
+            if (ok) {
+                _ppActiveScritto[code] = { studentSafe: item.studentSafe, stuCode: await _mcCodeOf(item.studentSafe), studentName: item.studentName, classeNome: item.classeNome, unit: item.unit, voto: item.voto, lastScore: null, attemptCount: 0, status: 'pending', orale: true };
+                _ppSavActive();
+            }
+        } else ok = await _pianoWriteOraleFirebase(item);
         if (!ok) return false;
         const classId = item.classeNome.replace(/\s+/g,'_').toLowerCase();
-        const _oraleDeepLink = `./StudentApp.html?safe=${encodeURIComponent(item.studentSafe)}&name=${encodeURIComponent(item.studentName)}&piano=orale`;
+        const _oraleDeepLink = `./StudentApp.html?safe=${encodeURIComponent(item.studentSafe)}&name=${encodeURIComponent(item.studentName)}&piano=${code ? encodeURIComponent(code) : 'orale'}`;
         // Pubblica in Bacheca
-        await _ppPianoPublishToBacheca({ classId, studentSafe: item.studentSafe, studentName: item.studentName, code: null, prefix: 'ORALE', unit: item.unit, voto: item.voto, text: item.text, isOrale: true });
+        await _ppPianoPublishToBacheca({ classId, studentSafe: item.studentSafe, studentName: item.studentName, code, prefix: 'ORALE', unit: item.unit, voto: item.voto, text: item.text, isOrale: true });
         sendPushToClass(classId, '🗣️ Recupero orale disponibile', item.studentName, 'valutazione', item.studentSafe, _oraleDeepLink).catch(() => {});
         item.status = 'approved';
         _ppSavOraleQueue();
@@ -35154,6 +35463,14 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         const qText = String(typeof q.question === 'string' ? q.question : (q.text || '')).replace(/\n/g,'<br>');
         const eSty = 'display:inline-block;background:#fff;border:1.5px solid #d1d5db;border-radius:6px;padding:3px 10px;margin:3px;font-size:15px;cursor:default;';
 
+        if (q.type === 'speaking') {
+            const tg = _spkArr(q.targets).map(t => `<li>${esc(t.label || t.say)}${(Number(t.min) || 1) > 1 ? ' ×' + Number(t.min) : ''}</li>`).join('');
+            return previewWrap(`<div style="display:inline-block;background:#ede9ff;color:#4c1d95;font-size:12px;font-weight:800;padding:2px 9px;border-radius:999px;margin-bottom:6px;">🎤 SPEAKING${q.free ? ' · parlato libero' : ''}</div>
+              <div style="font-weight:600;margin-bottom:8px;font-size:16px;">${esc(q.text)}</div>
+              <div style="text-align:center;margin:6px 0;"><span style="${eSty}background:#6c47ff;color:#fff;border-color:#6c47ff;border-radius:999px;padding:6px 16px;">🎤 Parla</span></div>
+              ${tg ? `<div style="font-size:14px;color:#555;">Obiettivi controllati:<ul style="margin:4px 0 0 18px;">${tg}</ul></div>` : ''}
+              ${q.model ? `<div style="font-size:14px;color:#3730a3;font-style:italic;margin-top:6px;">Esempio: ${esc(q.model)}</div>` : ''}`);
+        }
         if (q.type === 'multiple-choice') {
             const opts = (q.options||[]).map((o,i) => `<label style="display:block;margin:4px 0;cursor:default;font-size:16px;"><input type="radio" disabled style="margin-right:6px;width:auto;display:inline;">${esc(o)}</label>`).join('');
             return previewWrap(`<div style="font-weight:600;margin-bottom:8px;font-size:16px;">${qText}</div>${opts}`);
@@ -35431,6 +35748,13 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
       if (type === 'free-response' || type === 'free') {
         return textHtml + hint + '<div class="pq-note">✍️ Risposta aperta: la valuta l\'AI' +
           (q.hint ? ' con i criteri qui sopra.' : '. <strong style="color:#b45309;">Senza criteri di correzione.</strong>') + '</div>';
+      }
+
+      if (type === 'speaking') {
+        const tg = _spkArr(q.targets).map(t => _ppkqEsc(t.label || t.say) + ((Number(t.min) || 1) > 1 ? ' ×' + Number(t.min) : '')).join(' · ');
+        return textHtml + hint + '<div class="pq-label">🎤 Speaking' + (q.free ? ' (parlato libero)' : '') + ' — obiettivi controllati</div>' +
+          '<div class="pq-free">' + (tg || '—') + '</div>' +
+          (q.model ? '<div class="pq-bank" style="margin-top:6px;"><strong>Esempio:</strong> ' + _ppkqEsc(q.model) + '</div>' : '');
       }
 
       // Tipo sconosciuto: testo + risposta così com'è
@@ -36083,6 +36407,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     'categorization':  { label:'Cat', bg:'#fff3cd', col:'#7c5600' },
                     'listening':       { label:'🎧', bg:'#e0f2fe', col:'#0369a1' },
                     'free-response':   { label:'Aperta', bg:'#f3e8ff', col:'#7e22ce' },
+                    'speaking':        { label:'🎤 Speaking', bg:'#ede9ff', col:'#5b21b6' },
                 };
                 const _draftCard = d => {
                     const pfxLabel = d.prefix === 'REC' ? '📝 Recupero' : d.prefix === 'CON' ? '📚 Consolidamento' : '⭐ Approfondimento';
@@ -36137,6 +36462,14 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                             const subVal = q.subtype || (q.question&&q.question.type) || 'categorization';
                             extraInputs = `<textarea id="${qId}_tts" rows="4" placeholder="Testo TTS (200-230 parole in inglese, letto dal browser)" style="width:100%;border:1.5px solid #0ea5e9;border-radius:6px;padding:5px 8px;font-size:13px;box-sizing:border-box;font-family:inherit;color:#0369a1;background:#f0f9ff;">${ttsVal}</textarea>
                               <div style="font-size:12px;color:#6b7280;margin-top:2px;">Subtype attività: <strong>${subVal}</strong> · Modifica il testo TTS sopra se necessario.</div>`;
+                        } else if (q.type === 'speaking') {
+                            const e = x => String(x ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+                            const iss = _ppValidateQuestion(q);
+                            extraInputs = `<input id="${qId}_model" type="text" value="${e(q.model)}" placeholder="Frase d'esempio (l'alunno la vede/ascolta dopo il primo tentativo)" style="width:100%;border:1px solid #c4b5fd;border-radius:6px;padding:4px 7px;font-size:15px;margin-bottom:5px;box-sizing:border-box;font-family:inherit;color:#3730a3;font-style:italic;">
+                              <textarea id="${qId}_targets" rows="2" placeholder="Obiettivi, uno per riga: etichetta: frase | alternativa x2" title="Uno per riga: etichetta: frase1 | frase2 (x2 = almeno 2 volte; * = qualsiasi parola). Le forme contratte valgono come quelle intere." style="width:100%;border:1px solid #c4b5fd;border-radius:6px;padding:4px 7px;font-size:14px;margin-bottom:5px;box-sizing:border-box;font-family:inherit;">${e(_spkTargetsToText(q.targets))}</textarea>
+                              <textarea id="${qId}_avoid" rows="1" placeholder="Errori tipici, uno per riga: errore => consiglio" style="width:100%;border:1px solid #fca5a5;border-radius:6px;padding:4px 7px;font-size:14px;box-sizing:border-box;font-family:inherit;color:#991b1b;">${e(_spkAvoidToText(q.avoid))}</textarea>
+                              <div style="font-size:12px;color:#6b7280;margin-top:2px;">🎤 L'alunno la dice al microfono in LiveLearn${q.free ? ' (parlato libero' + (q.minWords ? ', almeno ' + q.minWords + ' parole' : '') + ')' : ''}; chi non può usarlo la dice ad alta voce e spunta "Non posso usare il microfono" (esce dal punteggio).</div>
+                              ${iss.length ? `<div style="font-size:12px;color:#DC2626;margin-top:2px;">⚠️ ${e(iss.join(' · '))}</div>` : ''}`;
                         } else if (q.type === 'free-response') {
                             const hintVal = String(q.hint || '').replace(/"/g,'&quot;');
                             extraInputs = `<input id="${qId}_hint" type="text" value="${hintVal}" placeholder="Criteri di correzione (li usa la valutazione automatica)" title="Criteri di correzione: li usa Haiku in LiveLearn per valutare la risposta" style="width:100%;border:1px solid #d8b4fe;border-radius:6px;padding:4px 7px;font-size:15px;box-sizing:border-box;font-family:inherit;color:#6b21a8;background:#faf5ff;">`;
@@ -36378,7 +36711,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     </div>
                     <span style="background:#FEF3C7;color:#92400E;border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;">⏳ Da approvare</span>
                   </div>
-                  ${_open ? `<textarea id="ppOraleEdit_${item.id}" style="width:100%;min-height:80px;border:1px solid #FDE68A;border-radius:8px;padding:8px;font-size:13px;line-height:1.6;font-family:inherit;resize:vertical;box-sizing:border-box;">${item.text}</textarea>
+                  ${_open ? `<textarea id="ppOraleEdit_${item.id}" onchange="ppOraleTextEdit('${item.id}', this.value)" style="width:100%;min-height:80px;border:1px solid #FDE68A;border-radius:8px;padding:8px;font-size:13px;line-height:1.6;font-family:inherit;resize:vertical;box-sizing:border-box;">${item.text}</textarea>
+                  ${_ppOraleSpkEditor(item)}
                   <div style="display:flex;gap:8px;margin-top:8px;">
                     <button id="ppOraleAppBtn_${item.id}" onclick="ppApproveOrale('${item.id}')" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">✅ Approva e invia</button>
                     <button id="ppOraleRegenBtn_${item.id}" onclick="ppRegenOrale('${item.id}')" title="Rigenera il testo con Haiku 5.5, Automatico o Claude Code" style="background:#fff7ed;color:#c2410c;border:1.5px solid #fdba74;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">↺ Rigenera</button>

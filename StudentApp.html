@@ -1968,10 +1968,12 @@ function _pianiSvolti(){
     if(!code) return;
     const rs = S.recoverySessions[code] || {};
     const item = S.personalPlan.find(p=>(p.code||p._key)===code) || {};
-    if(item.type==='recovery_orale') return;
+    // Recupero orale: solo i nuovi, che sono attività LiveLearn con codice
+    if(item.type==='recovery_orale' && !item.code) return;
     const attempts = rs.attemptCount || item.attemptCount || 0;
     const pct = _pianoPct(rs, item);
-    if(!attempts || pct==null) return;
+    // pct null con tentativi = svolto tutto a voce senza microfono
+    if(!attempts || (pct==null && !_pianoAttempts(rs).some(a=>a.noMic))) return;
     const last = _pianoBest(rs) || _pianoAttempts(rs).pop() || {};
     const type = item.type || (rs.prefix==='REC'?'recovery_scritto':rs.prefix==='CON'?'consolidamento':rs.prefix==='APP'?'approfondimento':'');
     out.push({
@@ -1980,7 +1982,8 @@ function _pianiSvolti(){
       pct, ts: rs.lastAttemptAt || item.lastAttemptAt || last.submittedAt || 0,
       score: last.score ?? null, maxPts: last.maxPts ?? null,
       numQuestions: (rs.activity?.questions||[]).length || null,
-      attemptCount: attempts
+      attemptCount: attempts,
+      noMic: Number(last.noMic)||0
     });
   });
   return out;
@@ -2018,9 +2021,12 @@ function openPianoResult(code, back){
 
   const durSec = (last.submittedAt && last.startedAt) ? Math.round((last.submittedAt-last.startedAt)/1000) : 0;
   let html = `<div style="text-align:center;padding:20px 0 16px">
-    <div style="font-size:48px;font-weight:700;color:${pctColor(p)}">${p}%</div>
+    ${sess.pct==null
+      ? `<div style="font-size:30px;font-weight:800;color:#92400e">✅ Svolto</div>`
+      : `<div style="font-size:48px;font-weight:700;color:${pctColor(p)}">${p}%</div>`}
     <div style="font-size:13px;color:var(--muted);margin-top:4px">${sess.attemptCount>1?'Tentativo migliore · '+sess.attemptCount+' tentativi':'Risultato'}</div>
   </div>
+  ${last.noMic ? `<div style="background:#fffbeb;border:1.5px solid #f59e0b;border-radius:12px;padding:10px 12px;margin-bottom:14px;font-size:13px;color:#92400e;line-height:1.5">🚫🎤 ${Number(last.noMic)===1?'Una domanda a voce è stata svolta':Number(last.noMic)+' domande a voce sono state svolte'} senza microfono: non si sa cosa hai detto, quindi ${Number(last.noMic)===1?'non entra':'non entrano'} nel punteggio.</div>` : ''}
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
     <div style="background:#f5f4ff;border-radius:12px;padding:12px;text-align:center">
       <div style="font-size:22px;font-weight:700;color:var(--purple)">${sess.score!=null?Math.round(sess.score*10)/10:'—'}/${sess.maxPts||'?'}</div>
@@ -2068,7 +2074,7 @@ function openPianoResult(code, back){
       const d = a.submittedAt ? fmtDate(new Date(a.submittedAt).toISOString().substring(0,10)) : '';
       html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px solid #f0eeff">
         <span style="font-size:12px;color:var(--text);flex:1">Tentativo ${a.n||''}${d?' · '+d:''}${a===last?' ⭐':''}</span>
-        <span style="font-size:12px;font-weight:700;color:${pctColor(a.pct||0)}">${a.pct!=null?a.pct+'%':'—'}</span>
+        <span style="font-size:12px;font-weight:700;color:${pctColor(a.pct||0)}">${a.pct!=null?a.pct+'%':(a.noMic?'🚫🎤 a voce':'—')}</span>
         ${a.answers?`<button onclick="openPianoPdf('${esc(code).replace(/'/g,'')}',${Number(a.n)||0})" style="background:#f5f4ff;color:var(--purple);border:none;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">📄 PDF</button>`:''}
       </div>`;
     });
@@ -2362,6 +2368,13 @@ function renderPianoCard(){
   const renderOraleRow = (item) => {
     const isRead = !!item.readAt;
     const c = _pianoColor('recovery_orale');
+    // Recupero orale nuovo: indicazioni + attività di speaking in LiveLearn
+    if(item.code){
+      return `<div style="padding:10px 0 0;">
+        ${item.text?`<div style="font-size:13px;color:${c.sub};line-height:1.6;margin-bottom:8px;background:#FFFBEB;border-radius:8px;padding:10px 12px;">${fmtLessonDesc(item.text)}</div>`:''}
+        ${renderActivityRow(Object.assign({}, item, { unitName: '🎤 Speaking · ' + (item.unitName||'Recupero orale') }))}
+      </div>`;
+    }
     return `<div style="padding:10px 0;border-bottom:0.5px solid ${c.border};">
       <div style="font-size:13px;font-weight:700;color:${c.title};margin-bottom:6px;">${esc(item.unitName||'Recupero orale')}</div>
       <div style="font-size:13px;color:${c.sub};line-height:1.6;margin-bottom:8px;background:#FFFBEB;border-radius:8px;padding:10px 12px;">${fmtLessonDesc(item.text||'')}</div>
@@ -2514,7 +2527,9 @@ function _pianoEsitoHtml(code){
   const sess = safe ? _pianiSvolti().find(x=>x.sessionCode===safe) : null;
   if(!sess) return `<span style="display:inline-block;background:#F3F4F6;color:#6B7280;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;">⏳ Non ancora svolto</span>`;
   const p = sess.pct||0;
-  return `<button onclick="openPianoResult('${safe}','scr-piani')" style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1.5px solid ${pctColor(p)};color:${pctColor(p)};border-radius:20px;padding:3px 10px;font-size:11px;font-weight:800;cursor:pointer;font-family:inherit;">✅ Svolto · ${p}%${sess.attemptCount>1?' · '+sess.attemptCount+' tent.':''}<span style="font-weight:600;opacity:0.85">Vedi risultati ›</span></button>`;
+  const col = sess.pct==null ? '#92400e' : pctColor(p);
+  const esito = sess.pct==null ? 'a voce senza microfono' : p+'%'+(sess.noMic?' · 🚫🎤':'');
+  return `<button onclick="openPianoResult('${safe}','scr-piani')" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;background:#fff;border:1.5px solid ${col};color:${col};border-radius:20px;padding:3px 10px;font-size:11px;font-weight:800;cursor:pointer;font-family:inherit;text-align:left;">✅ Svolto · ${esito}${sess.attemptCount>1?' · '+sess.attemptCount+' tent.':''}<span style="font-weight:600;opacity:0.85">Vedi risultati ›</span></button>`;
 }
 // Tab dedicato: le attività del piano (personal_plan) e i messaggi "piano"
 // del docente, che prima stavano tra i messaggi della bacheca.
@@ -3710,6 +3725,68 @@ function _llEvalCategorization(correctAnswers, a, pts) {
   });
   return _llRes(n, total, pts);
 }
+// ═══════════════════════════════════════════════════════════════
+// SPEAKING — correzione (funzioni pure)
+// Domanda a voce: l'alunno parla al microfono (riconoscimento vocale del
+// browser, en-GB) e riceve subito il riscontro. Si controlla CHE COSA dice
+// (strutture e lessico), non la pronuncia: il riconoscimento trasforma il
+// parlato in inglese "plausibile".
+// Formato: { type:'speaking', text, model?, free?, minWords?, points,
+//   targets:[{ label, say:'alt1|alt2', min? }], avoid:[{ say, tip }] }
+// In "say" l'asterisco vale "qualunque parola o pezzo di parola"
+// (es. "is *ing" → is wearing, is running…). Le forme contratte valgono come
+// quelle intere (don't = do not, I'm = I am, she's = she is). Ogni errore di
+// "avoid" sentito nella risposta conta come un obiettivo mancato.
+// ⚠️ COPIA di LiveLearn (_spkEval): se si cambia là, va cambiato anche qui.
+// ═══════════════════════════════════════════════════════════════
+function _spkNorm(s) {
+  return ' ' + String(s == null ? '' : s).toLowerCase()
+    .replace(/[‘’`´]/g, "'")
+    .replace(/\bcan't\b/g, 'can not').replace(/\bcannot\b/g, 'can not')
+    .replace(/\bwon't\b/g, 'will not').replace(/\bshan't\b/g, 'shall not')
+    .replace(/n't\b/g, ' not')
+    .replace(/'m\b/g, ' am').replace(/'re\b/g, ' are').replace(/'ve\b/g, ' have')
+    .replace(/'ll\b/g, ' will').replace(/'d\b/g, ' would')
+    .replace(/\b(he|she|it|there|that|what|who|where|here|this)'s\b/g, '$1 is')
+    .replace(/[^a-z0-9'*\s]/g, ' ')
+    .replace(/\s+/g, ' ').trim() + ' ';
+}
+function _spkAlts(say) {
+  return (Array.isArray(say) ? say : String(say == null ? '' : say).split('|'))
+    .map(x => _spkNorm(x).trim()).filter(Boolean);
+}
+function _spkCount(normText, say) {
+  let n = 0;
+  _spkAlts(say).forEach(alt => {
+    const body = alt.split(' ').map(w => w.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, "[a-z0-9']*")).join(' ');
+    const m = normText.match(new RegExp(' ' + body + '(?= )', 'g'));
+    if (m) n += m.length;
+  });
+  return n;
+}
+function _spkArr(v) {
+  if (Array.isArray(v)) return v.filter(Boolean);
+  if (v && typeof v === 'object') return Object.keys(v).sort((a, b) => a - b).map(k => v[k]).filter(Boolean);
+  return [];
+}
+// → { rows:[{label,count,min,ok}], tips:[...], words, frac }
+function _spkEval(q, raw) {
+  const t = _spkNorm(raw);
+  const words = t.trim() ? t.trim().split(' ').length : 0;
+  const rows = _spkArr(q && q.targets).map(tg => {
+    const min = Math.max(1, Number(tg.min) || 1);
+    const count = _spkCount(t, tg.say);
+    return { label: String(tg.label || String(tg.say || '').split('|')[0]), count, min, ok: count >= min };
+  });
+  const mw = Number(q && q.minWords) || 0;
+  if (mw > 0) rows.push({ label: 'almeno ' + mw + ' parole', count: words, min: mw, ok: words >= mw, words: true });
+  const tips = _spkArr(q && q.avoid).filter(av => _spkCount(t, av.say) > 0).map(av => String(av.tip || av.say));
+  // Ogni errore tipico sentito vale come un obiettivo mancato
+  const den = rows.length + tips.length;
+  const frac = !words ? 0 : den ? rows.reduce((s, r) => s + Math.min(r.count / r.min, 1), 0) / den : 1;
+  return { rows, tips, words, frac };
+}
+
 function _llEvaluate(q, a) {
   const pts = q.points || 1;
   const t = q.type;
@@ -3719,6 +3796,13 @@ function _llEvaluate(q, a) {
   if (t === 'reorder')        return _llEvalReorder(q.sentences || [], a, pts);
   if (t === 'matching')       return _llEvalMatching(q.left || [], q.right || [], a, pts);
   if (t === 'categorization') return _llEvalCategorization(q.answers || [], a, pts);
+  if (t === 'speaking') {
+    if (a && typeof a === 'object' && a.noMic) return { scorable: false, correct: false, points: 0, noMic: true };
+    const raw = typeof a === 'string' ? a : '';
+    const e = _spkEval(q, raw), okN = e.rows.filter(r => r.ok).length;
+    const earned = Math.round(e.frac * pts * 100) / 100;
+    return { scorable: true, correct: e.frac >= 1, points: pts, earnedPoints: earned, partial: earned > 0 && e.frac < 1, correctCount: okN, totalCount: e.rows.length };
+  }
   if (t === 'listening') {
     const inner = q.question || {};
     let sub = q.subtype || inner.type;
@@ -3747,6 +3831,7 @@ function _evalSimple(q, a, manualScore, aiScore) {
 
   let r;
   try { r = _llEvaluate(q, a); } catch(e) { r = { scorable: true, correct: false, points: maxPts }; }
+  if (r.noMic) return { pts: 0, maxPts: 0, label: '🚫🎤 Senza microfono', color: '#92400e', bg: '#fffbeb' };
   if (!r.scorable) return { pts: '?', maxPts, label: 'Aperta', color: '#555', bg: '#fafafa' };
   if (r.correct) return { pts: maxPts, maxPts, label: '✓ Corretta', color: '#059669', bg: '#f0fdf4' };
   if (r.partial && typeof r.earnedPoints === 'number' && r.earnedPoints > 0) {
@@ -3978,6 +4063,24 @@ function _pdfqBody(q, type, a) {
     return textHtml + hint + '<div class="pq-label">Risposta dell\'alunno</div>' +
       (_pdfqEmpty(a) ? '<div class="pq-free">' + _PDFQ_NONE + '</div>'
                      : '<div class="pq-free">' + _pdfqEsc(typeof a === 'object' ? (_pdfqArr(a) || []).join(' ') : a).replace(/\n/g, '<br>') + '</div>');
+  }
+
+  if (type === 'speaking') {
+    // Trascrizione di quello che il riconoscimento vocale ha sentito + obiettivi
+    const noMic = !!(a && typeof a === 'object' && a.noMic);
+    const raw = typeof a === 'string' ? a : '';
+    let res;
+    if (noMic) res = '<div class="pq-free">🚫🎤 Svolta ad alta voce senza microfono: non si sa cosa ha detto, non entra nel punteggio.</div>';
+    else if (_pdfqEmpty(raw)) res = '<div class="pq-free">' + _PDFQ_NONE + '</div>';
+    else {
+      const e = _spkEval(q, raw);
+      res = '<div class="pq-free">🎤 “' + _pdfqEsc(raw) + '”</div>' +
+        (e.rows.length || e.tips.length ? '<div class="pq-hint" style="margin-top:6px;">' +
+          e.rows.map(r => (r.ok ? '✅ ' : r.count ? '🟡 ' : '❌ ') + _pdfqEsc(r.label) + (r.min > 1 || r.words ? ' (' + r.count + '/' + r.min + ')' : '')).join(' · ') +
+          e.tips.map(t => ' · ⚠️ ' + _pdfqEsc(t)).join('') + '</div>' : '');
+    }
+    return textHtml + hint + '<div class="pq-label">🎤 Speaking — risposta dell\'alunno</div>' + res +
+      (q.model ? '<div class="pq-bank" style="margin-top:6px;"><strong>Esempio:</strong> ' + _pdfqEsc(q.model) + '</div>' : '');
   }
 
   // Tipo sconosciuto: testo + risposta così com'è
