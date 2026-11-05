@@ -3659,7 +3659,7 @@ function filterActivities(f) {
 function typeTags(questions) {
   if (!questions || !questions.length) return '';
   const types = [...new Set(questions.map(q => q.type))];
-  const icons = { 'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️' };
+  const icons = { 'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️','speaking':'🎤' };
   const typePills = types.map(t => `<span class="tag">${icons[t]||'❓'} ${typeLabel(t)}</span>`).join('');
   // Content tags
   const contentTags = [...new Set(questions.map(q => q.tag).filter(Boolean))];
@@ -5058,7 +5058,7 @@ function renderQList() {
     c.innerHTML = pasteBar + `<div class="empty-state"><div class="es-icon">📝</div><p>Nessuna domanda ancora.<br><small>Aggiungine una dal pannello a destra.</small></p></div>`;
     return;
   }
-  const icons = { 'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️' };
+  const icons = { 'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️','speaking':'🎤' };
   const tagColors = { 'GRAMMAR':'#dbeafe:#1e3a8a', 'VOCABULARY':'#d1fae5:#065f46', 'FUNCTIONS':'#fef3c7:#92400e', 'LISTENING':'#ede9ff:#4c1d95', 'READING':'#fce7f3:#9d174d', 'WRITING':'#e0f2fe:#075985' };
   c.innerHTML = pasteBar + S.questions.map((q, i) => {
     const isEditing = S.editingQIndex === i;
@@ -5672,7 +5672,7 @@ function qPreview(q) {
   if (q.type === 'drag-drop') return imgTag + '🎯 ' + (q.sentences||[]).length + ' frase/i · parole: ' + (q.words||[]).join(', ');
   if (q.type === 'fill-blanks') { const t = _qText(q); return imgTag + '📝 ' + esc(t).substring(0,60) + (t.length>60?'…':''); }
   if (q.type === 'reorder') return imgTag + '🔀 ' + (q.sentences||[]).length + ' frase/i da riordinare';
-  if (q.type === 'speaking') return imgTag + '🎤 ' + esc(q.text || '');
+  if (q.type === 'speaking') return imgTag + '🎤 ' + esc(String(q.text || '').replace(/\*\*/g, ''));
   return '';
 }
 
@@ -14514,6 +14514,7 @@ function buildTagBreakdown(questions, answers, aiScores, manualScores, styleMode
     const tag = q.tag;
     if (!tag || _qIsPoll(q)) return;
     if (excluded && excluded[i]) return;
+    if (q.type === 'speaking' && _spkIsNoMic(answers && answers[i])) return;   // senza microfono: fuori punteggio
     if (!tagData[tag]) tagData[tag] = { earned: 0, total: 0, hasPending: false };
     const pts = _qPts(q);
     tagData[tag].total += pts;
@@ -16250,7 +16251,7 @@ function backToReview() {
 function renderReviewList() {
   const questions = S.activity.questions;
   const el = document.getElementById('review-list');
-  const icons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️'};
+  const icons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️','speaking':'🎤'};
   el.innerHTML = questions.map((q, i) => {
     const a = S.answers[i];
     const isSkipped = S.skipped.includes(i);
@@ -16260,6 +16261,7 @@ function renderReviewList() {
     if (q.type === 'multiple-choice' && typeof a === 'number') ansText = q.options[a] || '—';
     else if ((q.type === 'cloze' || q.type === 'fill-blanks') && Array.isArray(a)) ansText = a.join(', ');
     else if (q.type === 'free-response' && a) ansText = '"' + String(a).substring(0,60) + '"';
+    else if (q.type === 'speaking' && a) ansText = _spkIsNoMic(a) ? '🚫🎤 detta ad alta voce senza microfono' : '🎤 "' + String(a).substring(0,60) + '"';
     else if (q.type === 'matching') ansText = 'Collegamento effettuato';
     else if (q.type === 'drag-drop' && Array.isArray(a)) ansText = a.filter(Boolean).join(' / ');
     else if (q.type === 'reorder' && Array.isArray(a)) ansText = a[0] ? a[0].substring(0,40)+'…' : '';
@@ -16272,7 +16274,7 @@ function renderReviewList() {
         <div style="font-size:12px;font-weight:800;color:var(--muted);">${icons[q.type]||''} Dom. ${i+1} · ${pts} pt</div>
         <div style="font-size:11px;font-weight:800;">${status}</div>
       </div>
-      <div style="font-size:14px;font-weight:700;margin-bottom:${ansText?'4px':'0'};color:var(--text);">${esc(_qText(q, a).substring(0,80))}</div>
+      <div style="font-size:14px;font-weight:700;margin-bottom:${ansText?'4px':'0'};color:var(--text);">${esc(_qText(q, a).replace(/\*\*/g,'').substring(0,80))}</div>
       ${ansText ? `<div style="font-size:12px;color:var(--muted);">→ ${esc(ansText)}</div>` : ''}
     </div>`;
   }).join('');
@@ -16384,7 +16386,7 @@ async function showStudentDone() {
     ? earnedPts + ' / ' + totalPts + ' punti (' + pct + '% accuracy)'
     : 'Il professore valuterà le tue risposte.';
 
-  const icons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️'};
+  const icons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️','speaking':'🎤'};
   document.getElementById('student-results-breakdown').innerHTML =
     buildTagBreakdown(questions, answers, S.aiScores||{}, null, 'student');
   document.getElementById('student-results-detail').innerHTML =
@@ -16416,6 +16418,7 @@ async function showStudentDone() {
           ? 'coppie'
           : (q.type === 'reorder' || (q.type === 'listening' && (q.subtype||q.question?.type)==='reorder'))
           ? 'frasi'
+          : q.type === 'speaking' ? 'obiettivi'
           : 'spazi';
         si = '🔶';
         ptsLabel = (r.correctCount != null ? r.correctCount+'/'+r.totalCount+' '+unit+' — ' : '') + r.earnedPoints+'/'+pts+' pt';
@@ -16427,6 +16430,12 @@ async function showStudentDone() {
         bg = 'var(--danger-light)';
         bdr = 'var(--danger)';
       }
+    } else if (r.noMic) {
+      // Speaking svolto senza microfono: fuori dal punteggio
+      si = '🚫🎤';
+      ptsLabel = 'fuori punteggio';
+      bg = '#fffbeb';
+      bdr = '#f59e0b';
     } else {
       // Risposta libera senza AI (es. nessuna API key)
       si = '📝';
@@ -16443,6 +16452,7 @@ async function showStudentDone() {
     else if (q.type === 'matching') ans = 'Collegamento effettuato';
     else if (q.type === 'drag-drop') ans = Array.isArray(a) ? a.map(esc).join(' / ') : '—';
     else if (q.type === 'reorder') ans = Array.isArray(a) ? a.map(esc).join(' | ') : '—';
+    else if (q.type === 'speaking') ans = _spkIsNoMic(a) ? '🚫🎤 detta ad alta voce senza microfono' : (a ? '🎤 "' + esc(String(a).substring(0,160)) + '"' : '—');
     else if (q.type === 'listening') {
       const sub = q.subtype||q.question?.type;
       if (sub==='multiple-choice' && typeof a==='number') ans = esc((q.question?.options||[])[a]||'—');
@@ -16461,7 +16471,7 @@ async function showStudentDone() {
       (ptsLabel?'<span style="font-size:11px;font-weight:800;color:'+(bdr.includes('success')?'var(--success)':bdr.includes('warning')?'var(--warning)':'var(--danger)')+';">'+ptsLabel+'</span>':'') +
       '<span style="font-size:11px;color:var(--muted);">🔍</span>' +
       '</div>' +
-      '<div style="font-size:14px;font-weight:700;margin-bottom:3px;color:var(--text);">'+esc(_qText(q, a).substring(0,80))+'</div>' +
+      '<div style="font-size:14px;font-weight:700;margin-bottom:3px;color:var(--text);">'+esc(_qText(q, a).replace(/\*\*/g,'').substring(0,80))+'</div>' +
       '<div style="font-size:12px;color:var(--muted);">Risposta: <em>'+ans+'</em>'+(r.scorable&&!r.correct&&!aiPts?' · '+r.detail:'')+'</div>' +
       aiFeedbackHtml +
       '</div>';
@@ -17949,7 +17959,7 @@ async function exportStudentPDF(studentName, pv) {
   const sessionCode = pv ? pv.code : (S.liveCode || '');
 
   // Build answer rows HTML
-  const typeIcons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','drag-drop':'🔀','reorder':'🔢','categorization':'🗂️'};
+  const typeIcons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','drag-drop':'🔀','reorder':'🔢','categorization':'🗂️','speaking':'🎤'};
   function evalResult(q, a, qi) {
     if ((entry.excludedQuestions || {})[qi]) return { label: '🚫 Escluso', color: '#64748b', pts: 'non valutato' };
     const manual = manualScoresData[qi];
@@ -18927,7 +18937,7 @@ async function exportAllPDFCorretto() {
   const fmtDt  = ts => ts ? new Date(ts).toLocaleString('it-IT') : '—';
   const fmtSec = s  => s == null ? '—' : s >= 60 ? Math.floor(s/60)+'m '+(s%60)+'s' : s+'s';
   const typeIcons = {'multiple-choice':'📋','cloze':'✏️','fill-blanks':'📝','matching':'🔗',
-                     'drag-drop':'🔀','reorder':'🔢','free-response':'💬','listening':'🎧','categorization':'🗂️'};
+                     'drag-drop':'🔀','reorder':'🔢','free-response':'💬','listening':'🎧','categorization':'🗂️','speaking':'🎤'};
 
   let allHtml = '';
 
@@ -20804,7 +20814,7 @@ function switchVersionTab(tab, el) {
 }
 
 function renderVersionPreview(qs, tab) {
-  const icons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️'};
+  const icons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️','speaking':'🎤'};
   const label = tab.toUpperCase();
   let h = '<div class="alert alert-success" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
     '<span>✅ <strong>' + qs.length + ' domande</strong> nella versione ' + label + '</span>' +
@@ -23121,7 +23131,7 @@ function showCombinedResults() {
     (S.recoveryAttempt ? S.recoveryAttempt + ' recupero/i effettuati' : '');
 
   const icons = { 'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬',
-    'listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️' };
+    'listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️','speaking':'🎤' };
 
   // ── Original results ──────────────────────────────────────
   const origRows = questions.map((q, i) => {
@@ -24579,6 +24589,10 @@ function _qdRenderDetail(q, i, answer, opts) {
       statusLabel = '0/' + pts + ' pt';
       statusColor = 'var(--danger)';
     }
+  } else if (r.noMic) {
+    statusIcon = '🚫🎤';
+    statusLabel = 'Detta ad alta voce senza microfono · fuori punteggio';
+    statusColor = '#92400e';
   } else {
     statusIcon = '📝';
     statusLabel = 'In attesa di valutazione';
@@ -24589,7 +24603,7 @@ function _qdRenderDetail(q, i, answer, opts) {
   const _icBold = v => '**' + v + '**';
   const _icAns = answer == null ? [] : answer;
   const qText = _icText(q.text || q.question?.text || '', q, _icAns, _icBold);
-  const icons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️'};
+  const icons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️','speaking':'🎤'};
 
   // Header
   let h = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding:10px 14px;background:var(--surface2);border-radius:10px;">' +
@@ -24747,6 +24761,10 @@ function _qdFormatCorrect(q) {
   if (q.type === 'matching') return q.left && q.right ? q.left.map((l, i) => esc(l) + ' → <strong>' + esc(q.right[i] || '?') + '</strong>').join('<br>') : '—';
   if (q.type === 'drag-drop') return Array.isArray(q.answers) ? q.answers.map(esc).join(' / ') : '—';
   if (q.type === 'reorder') return Array.isArray(q.sentences) ? q.sentences.map((s, i) => '<strong>Frase ' + (i+1) + ':</strong> ' + esc(s)).join('<br>') : '—';
+  if (q.type === 'speaking') {
+    const tg = _spkArr(q.targets).map(t => esc(t.label || t.say) + ((Number(t.min) || 1) > 1 ? ' ×' + Number(t.min) : '')).join(' · ');
+    return (q.model ? '<strong>Esempio:</strong> <em>' + esc(q.model) + '</em><br>' : '') + (tg ? '<strong>Da dire:</strong> ' + tg : '') || '—';
+  }
   if (q.type === 'categorization') {
     if (!Array.isArray(q.answers) || !Array.isArray(q.categories) || !Array.isArray(q.items)) return '—';
     return q.items.map((item, ii) => esc(item) + ' → <strong>' + esc(q.categories[q.answers[ii]] || '?') + '</strong>').join('<br>');
