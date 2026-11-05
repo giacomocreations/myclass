@@ -32420,7 +32420,7 @@ Le regole di questa sezione PREVALGONO sui tipi, sulla distribuzione e sul livel
         // Sfide (alunni da 9,5, poche domande): al massimo una scheda, facoltativa.
         const rules = isPei ? null
             : opts.level ? (errList.length ? { min: 0, max: 1 } : null)
-            : errList.length || prefix !== 'APP' ? { min: 1, max: prefix === 'APP' ? 2 : 3 }
+            : errList.length || prefix !== 'APP' ? { min: 1, max: nQ <= 10 ? 1 : prefix === 'APP' ? 2 : 3 }
             : null;
         const _ruleEx = prefix === 'REC' ? '2-3' : '1-2';
         const regoleSection = !rules ? '' : `
@@ -32528,6 +32528,7 @@ Per le domande sulle unit precedenti: usa strutture grammaticali e lessico di qu
             : isDsa ? 'DISTRIBUZIONE: 9 multiple-choice + 3 matching + 3 drag-drop = 15 totali.'
             : opts.level ? 'DISTRIBUZIONE: ' + opts.level.dist
             : nQ === 10 ? 'DISTRIBUZIONE: 3 multiple-choice + 3 fill-blanks + 2 cloze + 1 matching + 1 drag-drop = 10 totali.'
+            : nQ === 8 ? 'DISTRIBUZIONE: 2 multiple-choice + 2 fill-blanks + 2 cloze + 1 matching + 1 drag-drop = 8 totali.'
             : 'DISTRIBUZIONE: 4 multiple-choice + 4 fill-blanks + 3 cloze + 2 matching + 2 drag-drop = 15 totali.';
         const _has = t => _types.includes(t);
         const prompt = `Sei un docente esperto di inglese per scuola media italiana.
@@ -32895,18 +32896,21 @@ ${P.prompt}`;
     // il riconoscimento vocale trascrive e LiveLearn controlla subito gli
     // "obiettivi" (strutture e lessico, non la pronuncia).
     // orale = piano di un'interrogazione: più domande, con il parlato libero.
-    function _pianoBuildSpeakingQuestionsPrompt({ unit, classeNome = '', voto = null, prefix = 'REC', focus = '', orale = false, verInfo = null }) {
+    // nGuided/nFree: quanti esercizi guidati e di parlato libero (piano solo orale: 6 + 2;
+    // piano unico scritto + orale: 5 + 2; frasi aggiunte a uno scritto su richiesta: 2 + 0)
+    function _pianoBuildSpeakingQuestionsPrompt({ unit, classeNome = '', voto = null, prefix = 'REC', focus = '', orale = false, verInfo = null, nGuided = null, nFree = null }) {
         const y = _ppAnnoLabel(classeNome).y;
         const lv = _ppCefr(classeNome, voto);
-        const isDsa = verInfo?.layout === 1;
-        const nGuided = orale ? 4 : 2, nFree = orale ? 1 : 0;
+        const isDsa = verInfo?.layout === 1, isPei = verInfo?.layout === 2;
+        if (nGuided == null) nGuided = orale ? 6 : 2;
+        if (nFree == null) nFree = orale ? 2 : 0;
         const minW = y === '1' ? 15 : y === '2' ? 20 : 30;
         const fascia = prefix === 'REC' ? 'recupero (frasi semplici e guidate)' : prefix === 'CON' ? 'consolidamento (difficoltà media)' : 'approfondimento (contesti nuovi, un po\' più impegnativi)';
-        return `Prepara ${nGuided + nFree} esercizi di SPEAKING per LiveLearn per uno studente di scuola media italiana, livello ${lv}${isDsa ? ' (versione DSA: consegne brevissime e chiare, una sola cosa da dire)' : ''}, unità "${unit || 'English'}", piano di ${fascia}.
+        return `Prepara ${nGuided + nFree} esercizi di SPEAKING per LiveLearn per uno studente di scuola media italiana, livello ${lv}${isDsa ? ' (versione DSA: consegne brevissime e chiare, una sola cosa da dire)' : isPei ? ' (versione PEI: frasi cortissime, lessico di base, un solo obiettivo per esercizio)' : ''}, unità "${unit || 'English'}", piano di ${fascia}.
 L'alunno li fa a casa: legge la consegna, preme il microfono e parla in inglese. Il riconoscimento vocale del browser trascrive quello che dice e LiveLearn controlla SUBITO se nella frase ci sono gli "obiettivi". Si controlla il contenuto (strutture e lessico), non la pronuncia.
 ${focus ? `\nSU COSA LAVORARE (${orale ? 'note dell\'interrogazione' : 'errori della verifica'}):\n${String(focus).slice(0, 1800)}\n` : ''}
 REGOLE
-- ${nGuided} esercizi "guidati": l'alunno dice UNA frase. Consegna in italiano, concreta (una situazione + che cosa dire), senza scrivere la frase inglese già pronta.${nFree ? `\n- ${nFree} esercizio di "parlato libero" (ultimo): "free": true e "minWords": ${minW}; l'alunno parla 30-60 secondi su un tema dell'unità; 2-3 obiettivi da usare più volte ("min": 2).` : ''}
+- ${nGuided} esercizi "guidati": l'alunno dice UNA frase (o due frasi brevi). Consegna in italiano, concreta (una situazione + che cosa dire), senza scrivere la frase inglese già pronta. Varia le strutture: affermativa, negativa, domanda con risposta breve, terza persona e plurale quando l'unità le prevede.${nFree ? `\n- ${nFree === 1 ? '1 esercizio' : nFree + ' esercizi'} di "parlato libero" (in fondo): "free": true e "minWords": ${isPei ? Math.round(minW / 2) : minW}; l'alunno parla 30-60 secondi su un tema dell'unità; 2-3 obiettivi da usare più volte ("min": 2).` : ''}
 - "targets": 1-3 obiettivi per esercizio, cioè le strutture chiave che la frase deve contenere (il modale, il verbo al tempo giusto, la parola del lessico…). In "say" scrivi TUTTE le forme corrette accettabili separate da | (es. "have to|has to|must"). Le forme contratte valgono già come quelle intere (don't = do not, I'm = I am): scrivi quelle intere. L'asterisco vale "qualsiasi parola o pezzo di parola" (es. "is *ing"). Niente punteggiatura, niente numeri in cifre.
 - Gli obiettivi devono accettare tutte le frasi corrette ragionevoli ma NON la forma sbagliata che si vuole correggere. "label" = come l'alunno vede l'obiettivo (breve, es. "have to / must", "past simple: went").
 - "avoid": 0-2 errori tipici da intercettare (es. "must to", "he have", "did went") con "tip" = consiglio breve in italiano.
@@ -33494,7 +33498,7 @@ Questo file è stato esportato da MyClass. Per OGNI elemento di "alunni":
 - se "controlli" non è null, la risposta deve superarli: almeno "errori_minimi" codici diversi di "errori_da_riprendere" (E1, E2…) nel campo "errore" delle domande, e ogni domanda con un codice esercita davvero quell'errore; con "schede_regola" fai tra "minime" e "massime" schede "scopri la regola" come spiegato nella consegna_quiz (3 domande consecutive con lo stesso "scheda": "fase" osserva = multiple-choice, regola = cloze con SOLO scelte [[a|b|c]], controllo = multiple-choice con "referenceTable"), dentro il numero di domande richiesto; con "tipi_ammessi" (alunni PEI: il piano è un ripasso della sua verifica, anche con voto alto) usa SOLO quei tipi; con "opzioni_scelta_multipla" ogni scelta multipla ha esattamente quel numero di opzioni; nessuna domanda parla di foto o immagini se non ha il campo "foto" con un numero di "foto_disponibili" (la foto della verifica viene inserita da MyClass);
 - se "consegna_listening" non è null, genera anche l'esercizio di listening seguendo quella consegna (testo scritto da te, letto poi dalla sintesi vocale);
 - se "consegna_speaking" non è null, scrivi lo speaking prompt richiesto;
-- se "consegna_speaking_esercizi" non è null, genera gli esercizi di speaking (tipo "speaking", da dire al microfono) seguendo quella consegna, nel campo "speaking";
+- se "consegna_speaking_esercizi" non è null, genera gli esercizi di speaking (tipo "speaking", da dire al microfono) seguendo quella consegna, nel campo "speaking" (c'è quando in calendario è prevista l'interrogazione: piano solo orale, con "questions" vuoto, oppure piano unico scritto + orale, con meno domande scritte);
 - se "piano" è "ORALE" non c'è nessun quiz: segui la sua "consegna_testo" e scrivi il testo del recupero orale (italiano, testo semplice, 200-280 parole, [NOME] al posto del nome), più gli esercizi di "consegna_speaking_esercizi".
 Per OGNI elemento di "sfide" genera il blocco seguendo la sua "consegna" (un solo blocco per chiave: lo ricevono tutti gli alunni che hanno quella "sfida").
 Gli alunni non hanno nomi: sono identificati solo da "ref". Non inventare nomi.
@@ -33529,10 +33533,11 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
     var _ppExportCollector = null;
 
     // Voce dell'export: "local" resta in questo browser (nomi, codici), "file" va a Claude (senza nomi).
-    async function _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix, voto, code, errorDetails = '', tagBreakdown = {}, verInfo = null, challenge = false, draftId = null }) {
+    // nQ: domande scritte (piano unico scritto + orale: 8); speaking: specifica degli esercizi al microfono
+    async function _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix, voto, code, errorDetails = '', tagBreakdown = {}, verInfo = null, challenge = false, draftId = null, nQ = null, speaking = null }) {
         const _lv = challenge ? _ppChallengeLevel(classeNome) : null;
         const photoCtx = verInfo?.layout === 2 ? null : await _ppTestPhotoCtx(studentSafe, unit);
-        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, { ...(_lv ? { nQ: _lv.nQ, level: _lv } : {}), photoCtx });
+        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, { ...(_lv ? { nQ: _lv.nQ, level: _lv } : nQ ? { nQ } : {}), photoCtx });
         const lNeed = _ppListeningNeed(prefix, errorDetails, tagBreakdown, verInfo);
         const sfida = challenge ? _ppChallengeKey(classeNome, unit) : null;
         return {
@@ -33549,8 +33554,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 consegna_quiz: P.prompt,
                 consegna_listening: lNeed.needed ? _pianoBuildListeningPrompt(unit || 'English Grammar', lNeed.level, lNeed.focus) : null,
                 consegna_speaking: prefix === 'APP' && verInfo?.layout !== 2 ? _pianoBuildSpeakingPrompt(unit, classeNome, voto) : null,
-                // Speaking al microfono: di default solo nei piani orali (negli scritti solo se il docente lo chiede a Claude)
-                consegna_speaking_esercizi: null,
+                // Speaking al microfono: solo con l'interrogazione in calendario (negli scritti solo se il docente lo chiede a Claude)
+                consegna_speaking_esercizi: speaking ? _pianoBuildSpeakingQuestionsPrompt(speaking) : null,
                 controlli: {
                     errori_da_riprendere: P.check.errors.map(e => e.id),
                     errori_minimi: P.check.errReq,
@@ -33747,8 +33752,9 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 const l = _ppNormalizeQuestion(p.listening);
                 if (l.type === 'listening' && !bad(l)) qs.push(l); else nBad++;
             }
-            // Speaking in fondo: negli scritti solo se il docente l'ha chiesto a Claude (non per i PEI)
-            if (Array.isArray(p.speaking) && p.speaking.length && !Array.isArray(L.tipiAmmessi)) {
+            // Speaking in fondo: piani con l'interrogazione in calendario; negli scritti solo se il
+            // docente l'ha chiesto a Claude (e non per i PEI)
+            if (Array.isArray(p.speaking) && p.speaking.length && (!Array.isArray(L.tipiAmmessi) || L.misto || L.soloOrale)) {
                 const spk = _ppCleanSpeaking(p.speaking, 'import Claude');
                 nBad += p.speaking.length - spk.length;
                 qs.push(...spk);
@@ -33777,9 +33783,13 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 activity.versionLayout = { originale: L.layout };
             }
             if (typeof p.speakingPrompt === 'string' && p.speakingPrompt.trim()) activity.speakingPrompt = p.speakingPrompt.trim();
+            if (L.misto) activity.misto = L.misto;
+            if (L.soloOrale) activity.title = '🎤 Speaking — ' + (L.unit || '');
+            const _kind = { ...(L.misto ? { misto: L.misto } : {}), ...(L.soloOrale ? { soloOrale: true } : {}) };
             const target = (L.draftId && _ppDraftScritto.find(x => x.id === L.draftId))
                 || _ppDraftScritto.find(x => x.studentSafe === L.studentSafe && x.unit === L.unit && x.prefix === L.prefix);
             if (target) {
+                Object.assign(target, _kind);
                 if (!activity.speakingPrompt && target.activity?.speakingPrompt && L.layout !== 2) activity.speakingPrompt = target.activity.speakingPrompt;
                 target.activity = activity;
                 target.source = 'claude';
@@ -33790,7 +33800,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 _ppDraftScritto.push({ id: 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
                     studentSafe: L.studentSafe, studentName: L.studentName, code: L.code, prefix: L.prefix, activity,
                     unit: L.unit, voto: L.voto, classeNome: L.classeNome, createdAt: Date.now(),
-                    tagBreakdown: L.tagBreakdown || {}, source: 'claude', ...(L.versione ? { versione: L.versione } : {}) });
+                    tagBreakdown: L.tagBreakdown || {}, source: 'claude', ..._kind, ...(L.versione ? { versione: L.versione } : {}) });
                 created++;
             }
             _ppDeferredQueue.forEach(i => {
@@ -33855,6 +33865,129 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         }
     }
 
+    // ══ PIANO SECONDO LE VERIFICHE IN CALENDARIO ══════════════════════════
+    // Per la unit si guarda che cosa è previsto nel calendario della classe:
+    //  · solo verifica scritta      → piano scritto, come sempre;
+    //  · solo interrogazione        → piano di speaking (sotto 6: testo + speaking;
+    //                                 da 6: consolidamento / approfondimento di speaking, 8 esercizi);
+    //  · scritta + interrogazione   → piano UNICO, lungo come uno normale: 8 domande scritte
+    //                                 (fascia dal voto scritto) + 7 di speaking (fascia dal voto
+    //                                 orale). Parte quando ci sono tutti e due i voti.
+    //  · niente in calendario       → come prima.
+    function _ppUnitEq(a, b) {
+        if (!a || !b) return false;
+        const A = String(a).toLowerCase().trim(), B = String(b).toLowerCase().trim();
+        const nA = A.match(/\b(?:unit|unità|unita|u)\s*\.?\s*(\d+)/), nB = B.match(/\b(?:unit|unità|unita|u)\s*\.?\s*(\d+)/);
+        if (nA && nB) return nA[1] === nB[1];
+        return A === B || A.includes(B) || B.includes(A);
+    }
+    function _ppPlannedTests(classeNome, unit) {
+        const out = { scritto: false, orale: false };
+        const cls = (data.classi || []).find(c => c.nome === classeNome);
+        (cls?.pianificazione?.piano || []).forEach(p => {
+            if (!p || !_ppUnitEq(p.unit, unit)) return;
+            const t = (Array.isArray(p.tipo) ? p.tipo : [p.tipo]).map(x => String(x || '').toLowerCase());
+            if (t.some(x => x.includes('verifica_scritta'))) out.scritto = true;
+            if (t.some(x => x.includes('verifica_orale')) || /interroga/i.test(p.titolo || '')) out.orale = true;
+        });
+        return out;
+    }
+    function _ppLatestGrade(studente, tipo, unit) {
+        return (studente?.[tipo] || []).filter(g => g && g.voto != null && (_ppUnitEq(g.unit, unit) || _ppUnitEq(g.titolo, unit)))
+            .sort((a, b) => new Date(b.data) - new Date(a.data))[0] || null;
+    }
+    function _ppFascia(voto) { return voto < 6 ? 'REC' : voto < 8 ? 'CON' : 'APP'; }
+    const _PP_FASCIA_LBL = { REC: 'Recupero', CON: 'Consolidamento', APP: 'Approfondimento' };
+    // Note dell'interrogazione per lo speaking: valutazione del docente + punteggi della griglia
+    function _ppOralNotes(g, given = '') {
+        const righe = [];
+        if (given) righe.push(given);
+        else if (g?.nota) righe.push('VALUTAZIONE DOCENTE:\n' + g.nota);
+        if (Array.isArray(g?.punteggi) && g.punteggi.length)
+            righe.push('PUNTEGGI DELLA GRIGLIA (lavora soprattutto sulle aree più basse):\n' + g.punteggi.map(x => `- ${x.nome}: ${x.voto}/${x.max}`).join('\n'));
+        if (g?.voto != null) righe.push('Voto dell\'interrogazione: ' + g.voto);
+        return righe.join('\n\n');
+    }
+    // C'è già un piano (bozza o inviato) per questo alunno e questa unit?
+    function _ppPlanExistsFor(studentSafe, unit) {
+        return _ppDraftScritto.some(x => x.studentSafe === studentSafe && _ppUnitEq(x.unit, unit))
+            || Object.values(_ppActiveScritto).some(x => x.studentSafe === studentSafe && _ppUnitEq(x.unit, unit) && x.status !== 'expired');
+    }
+    // Voce dell'export per Claude di un piano solo orale (nessuna domanda scritta)
+    function _ppBuildSpeakingExportEntry({ studentSafe, studentName, classeNome, unit, prefix, voto, code, spec }) {
+        return {
+            local: { studentSafe, studentName, classeNome, unit, prefix, voto, code, layout: 0, versione: null, tagBreakdown: {},
+                     soloOrale: true, fotoCheck: { photos: [] }, foto: null },
+            file: {
+                classe: classeNome || '', unit: unit || '', piano: prefix,
+                voto: Math.round(Number(voto) * 100) / 100, versione: null,
+                consegna_quiz: 'Piano SOLO ORALE (è prevista solo l\'interrogazione): nessuna domanda scritta. Restituisci "questions": [] e metti gli esercizi di "consegna_speaking_esercizi" nel campo "speaking".',
+                consegna_listening: null, consegna_speaking: null,
+                consegna_speaking_esercizi: _pianoBuildSpeakingQuestionsPrompt(spec),
+                controlli: null, sfida: null
+            }
+        };
+    }
+    async function _ppOralSpeakingPlan(studente, unit, classeNome, voto, errorDetails = '') {
+        const prefix = _ppFascia(voto);
+        const studentSafe = _mcToSafe(`${studente.cognome} ${studente.nome}`);
+        const studentName = `${studente.cognome} ${studente.nome}`.trim();
+        if (_ppPlanExistsFor(studentSafe, unit)) return { outcome: 'skipped', reason: 'Piano già presente per questa unit (bozza o inviato)' };
+        const g = _ppLatestGrade(studente, 'orale', unit);
+        const spec = { unit, classeNome, voto, prefix, focus: _ppOralNotes(g, errorDetails), orale: true, nGuided: 6, nFree: 2 };
+        const code = _pianoGenCode(prefix);
+        if (_ppExportCollector) {
+            _ppExportCollector.push(_ppBuildSpeakingExportEntry({ studentSafe, studentName, classeNome, unit, prefix, voto, code, spec }));
+            return { outcome: 'exported' };
+        }
+        _ppShowGenerating(studentName, prefix, unit);
+        const qs = await _pianoGenerateSpeakingQuestions(spec);
+        if (!qs.length) { _ppShowError(studentName, 'Generazione speaking fallita'); return { outcome: 'error', reason: 'Generazione esercizi di speaking fallita' }; }
+        const id = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+        _ppDraftScritto.push({ id, studentSafe, studentName, code, prefix, activity: { title: '🎤 Speaking — ' + unit, questions: qs },
+            unit, voto, classeNome, createdAt: Date.now(), source: _ppGenProvider, soloOrale: true });
+        _ppSavDraftScritto();
+        ppSwitchTab(0);
+        renderPianoPersPanel();
+        return { outcome: 'generated' };
+    }
+    async function _ppMixedPlan(studente, unit, classeNome, tipo, errorDetails = '', tagBreakdown = {}) {
+        const studentSafe = _mcToSafe(`${studente.cognome} ${studente.nome}`);
+        const studentName = `${studente.cognome} ${studente.nome}`.trim();
+        const gS = _ppLatestGrade(studente, 'scritto', unit), gO = _ppLatestGrade(studente, 'orale', unit);
+        if (!gS || !gO) return { outcome: 'skipped', reason: `Piano unico scritto + orale: aspetta il voto ${!gS ? 'della verifica scritta' : 'dell\'interrogazione'}` };
+        if (_ppPlanExistsFor(studentSafe, unit)) return { outcome: 'skipped', reason: 'Piano già presente per questa unit (bozza o inviato)' };
+        const pS = _ppFascia(gS.voto), pO = _ppFascia(gO.voto);
+        const ord = { REC: 0, CON: 1, APP: 2 };
+        const prefix = ord[pS] <= ord[pO] ? pS : pO;   // codice e titolo: la fascia più bassa
+        const misto = { scritto: pS, orale: pO, votoScritto: gS.voto, votoOrale: gO.voto };
+        const voto = Math.round((Number(gS.voto) + Number(gO.voto)) / 2 * 100) / 100;
+        const code = _pianoGenCode(prefix);
+        const errS = await _ppPlanErrorDetails(studente, studentSafe, classeNome, unit, pS, tipo === 'scritto' ? errorDetails : '');
+        const verInfo = await _ppDetectTestVersion(studente, studentSafe, unit);
+        const spec = { unit, classeNome, voto: gO.voto, prefix: pO, focus: _ppOralNotes(gO, tipo === 'orale' ? errorDetails : ''), orale: true, nGuided: 5, nFree: 2, verInfo };
+        if (_ppExportCollector) {
+            const e = await _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix: pS, voto: gS.voto, code, errorDetails: errS, tagBreakdown, verInfo, nQ: 8, speaking: spec });
+            e.local.prefix = prefix; e.local.voto = voto; e.local.misto = misto;
+            _ppExportCollector.push(e);
+            return { outcome: 'exported' };
+        }
+        _ppShowGenerating(studentName, prefix, unit);
+        const activity = await _pianoGenerateActivity(studente, gS.voto, unit, pS, errS, tagBreakdown, classeNome, verInfo, { nQ: 8 });
+        if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return { outcome: 'error', reason: 'Generazione della parte scritta fallita' }; }
+        const spk = await _pianoGenerateSpeakingQuestions(spec);
+        if (!spk.length) console.warn('[Piano] Piano unico: speaking non generato per', studentName);
+        activity.questions = [...activity.questions, ...spk.map(q => (verInfo ? { ...q, dsaLargeText: true } : q))];
+        activity.misto = misto;
+        const id = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+        _ppDraftScritto.push({ id, studentSafe, studentName, code, prefix, activity, unit, voto, classeNome, createdAt: Date.now(),
+            tagBreakdown: tagBreakdown || {}, source: _ppGenProvider, misto, ...(verInfo ? { versione: verInfo.label } : {}) });
+        _ppSavDraftScritto();
+        ppSwitchTab(0);
+        renderPianoPersPanel();
+        return { outcome: 'generated' };
+    }
+
     // Trigger principale — chiamato dopo ogni salvataggio voto.
     // force=true salta la guard "giorno con verifiche" (usato dal worker differito).
     async function _pianoCheckTrigger(studente, tipo, unit, classeNome, force = false, errorDetails = '', tagBreakdown = {}) {
@@ -33906,6 +34039,11 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
             return;
         }
+
+        // ── Che cosa è previsto in calendario per questa unit ──
+        const _prev = _ppPlannedTests(classeNome, unitEff);
+        if (_prev.scritto && _prev.orale) return await _ppMixedPlan(studente, unitEff, classeNome, tipo, errorDetails, tagBreakdown);
+        if (_prev.orale && !_prev.scritto && tipo === 'orale' && voto >= 6) return await _ppOralSpeakingPlan(studente, unitEff, classeNome, voto, errorDetails);
 
         if (tipo === 'scritto') {
             // Trigger scritto — diretto senza approvazione
@@ -34480,7 +34618,8 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
     }
 
     // Scrive un messaggio tipo "piano" nella Bacheca per l'alunno
-    async function _ppPianoPublishToBacheca({ classId, studentSafe, studentName, code, prefix, unit, voto, text, isOrale }) {
+    // kind: 'orale' = piano solo di speaking, 'misto' = scritto + speaking (piano unico)
+    async function _ppPianoPublishToBacheca({ classId, studentSafe, studentName, code, prefix, unit, voto, text, isOrale, kind = null }) {
         let db2; try { db2 = firebase.database(); } catch(e) { return; }
         const _stuCodeBach = await _mcCodeOf(studentSafe);
         if (!_stuCodeBach) {
@@ -34512,7 +34651,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
 
         const msgText = isOrale
             ? `${emoji} Piano di recupero orale — ${unit || ''}${voto ? ' · voto ' + voto : ''}${code ? ' · Speaking al microfono · Codice: ' + code : ''}${materialiText}`
-            : `${emoji} Piano ${prefixLabel.toLowerCase()} scritto — ${unit || ''}${voto ? ' · voto ' + voto : ''} · Codice: ${code}${materialiText}`;
+            : `${kind === 'orale' ? '🎤' : emoji} Piano ${prefixLabel.toLowerCase()} ${kind === 'orale' ? 'orale (speaking al microfono)' : kind === 'misto' ? 'scritto + orale (con speaking al microfono)' : 'scritto'} — ${unit || ''}${voto ? ' · voto ' + voto : ''} · Codice: ${code}${materialiText}`;
         const msg = {
             from: 'teacher',
             type: 'piano',
@@ -34687,7 +34826,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         const classId = item.classeNome.replace(/\s+/g,'_').toLowerCase();
         const deepLink = `./StudentApp.html?safe=${encodeURIComponent(item.studentSafe)}&name=${encodeURIComponent(item.studentName)}&piano=${encodeURIComponent(item.code)}`;
         // Pubblica in Bacheca
-        await _ppPianoPublishToBacheca({ classId, studentSafe: item.studentSafe, studentName: item.studentName, code: item.code, prefix: item.prefix, unit: item.unit, voto: item.voto });
+        await _ppPianoPublishToBacheca({ classId, studentSafe: item.studentSafe, studentName: item.studentName, code: item.code, prefix: item.prefix, unit: item.unit, voto: item.voto, kind: item.soloOrale ? 'orale' : item.misto ? 'misto' : null });
         // Push notifica
         sendPushToClass(classId,
             item.prefix === 'REC' ? '📝 Recupero disponibile' : (item.prefix === 'CON' ? '📚 Consolidamento pronto' : '⭐ Approfondimento pronto'),
@@ -34703,7 +34842,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         if (item.llEditAt) _ppLLStop(id);
         _ppDraftSel.delete(id);
         // Il piano è partito: la sua voce esce dalla coda approvazione
-        _ppDeferredDropFor(item.studentSafe, item.unit, item.prefix === 'APP' ? null : ['scritto']);
+        _ppDeferredDropFor(item.studentSafe, item.unit, item.misto || item.prefix === 'APP' ? null : item.soloOrale ? ['orale'] : ['scritto']);
         return true;
     }
 
@@ -36403,7 +36542,9 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     'speaking':        { label:'🎤 Speaking', bg:'#ede9ff', col:'#5b21b6' },
                 };
                 const _draftCard = d => {
-                    const pfxLabel = d.prefix === 'REC' ? '📝 Recupero' : d.prefix === 'CON' ? '📚 Consolidamento' : '⭐ Approfondimento';
+                    const pfxLabel = (d.prefix === 'REC' ? '📝 Recupero' : d.prefix === 'CON' ? '📚 Consolidamento' : '⭐ Approfondimento')
+                        + (d.misto ? ` · piano unico: 📝 scritto ${_PP_FASCIA_LBL[d.misto.scritto].toLowerCase()} (${d.misto.votoScritto}) + 🎤 orale ${_PP_FASCIA_LBL[d.misto.orale].toLowerCase()} (${d.misto.votoOrale})`
+                           : d.soloOrale ? ' · 🎤 solo orale (speaking)' : '');
                     const pfxBg = d.prefix === 'REC' ? '#FEE2E2' : d.prefix === 'CON' ? '#DCFCE7' : '#DBEAFE';
                     const pfxCol = d.prefix === 'REC' ? '#991B1B' : d.prefix === 'CON' ? '#14532D' : '#1E3A5F';
                     const qList = Array.isArray(d.activity) ? d.activity : (d.activity?.questions || []);
@@ -36484,7 +36625,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     const _msgPreview = (() => {
                         const emoji = d.prefix === 'REC' ? '📝' : d.prefix === 'CON' ? '📚' : '⭐';
                         const prefixLbl = d.prefix === 'REC' ? 'recupero' : d.prefix === 'CON' ? 'consolidamento' : 'approfondimento';
-                        let msgTxt = `${emoji} Piano ${prefixLbl} scritto — ${d.unit||''} · voto ${d.voto} · Codice: ${d.code}`;
+                        let msgTxt = `${d.soloOrale ? '🎤' : emoji} Piano ${prefixLbl} ${d.soloOrale ? 'orale (speaking al microfono)' : d.misto ? 'scritto + orale (con speaking al microfono)' : 'scritto'} — ${d.unit||''} · voto ${d.voto} · Codice: ${d.code}`;
                         // Materiali unit (REC + CON, cioè risultati sotto l'80%)
                         // I materiali si cercano in lezioni, bacheca e archivio (asincrono): riquadro riempito dopo il render
                         let materialeHtml = '';
