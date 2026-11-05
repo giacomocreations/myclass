@@ -32664,12 +32664,6 @@ ${P.prompt}`;
             } catch(le) { console.warn('[Piano] Listening gen error:', le.message); }
         }
 
-        // ── Speaking: 2 frasi da dire al microfono in fondo al piano (non per i PEI) ──
-        if (_ppSpeakingNeeded(verInfo)) {
-            const spk = await _pianoGenerateSpeakingQuestions({ unit, classeNome, voto, prefix, focus: _ppSplitErrorDetails(errorDetails).testErrors || '', verInfo });
-            if (spk.length) { questions.push(...spk); console.log('[Piano] ✅ Speaking aggiunto:', spk.length); }
-        }
-
         const activity = { questions };
         if (_cov.total) activity.erroriCoperti = { n: _cov.covered, tot: _cov.total };
         if (challenge) {
@@ -32947,8 +32941,6 @@ FORMATO: solo un array JSON, nessun testo fuori.
         });
         return out;
     }
-    // Speaking nei piani scritti: non per i PEI (lì solo i tipi della sua verifica)
-    function _ppSpeakingNeeded(verInfo) { return verInfo?.layout !== 2; }
 
 
     function _ppNormalizeQuestion(q) {
@@ -33557,7 +33549,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 consegna_quiz: P.prompt,
                 consegna_listening: lNeed.needed ? _pianoBuildListeningPrompt(unit || 'English Grammar', lNeed.level, lNeed.focus) : null,
                 consegna_speaking: prefix === 'APP' && verInfo?.layout !== 2 ? _pianoBuildSpeakingPrompt(unit, classeNome, voto) : null,
-                consegna_speaking_esercizi: _ppSpeakingNeeded(verInfo) ? _pianoBuildSpeakingQuestionsPrompt({ unit, classeNome, voto, prefix, focus: _ppSplitErrorDetails(errorDetails).testErrors || '', verInfo }) : null,
+                // Speaking al microfono: di default solo nei piani orali (negli scritti solo se il docente lo chiede a Claude)
+                consegna_speaking_esercizi: null,
                 controlli: {
                     errori_da_riprendere: P.check.errors.map(e => e.id),
                     errori_minimi: P.check.errReq,
@@ -33754,7 +33747,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 const l = _ppNormalizeQuestion(p.listening);
                 if (l.type === 'listening' && !bad(l)) qs.push(l); else nBad++;
             }
-            // Speaking in fondo (non per i PEI)
+            // Speaking in fondo: negli scritti solo se il docente l'ha chiesto a Claude (non per i PEI)
             if (Array.isArray(p.speaking) && p.speaking.length && !Array.isArray(L.tipiAmmessi)) {
                 const spk = _ppCleanSpeaking(p.speaking, 'import Claude');
                 nBad += p.speaking.length - spk.length;
