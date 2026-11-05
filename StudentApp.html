@@ -230,6 +230,15 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
       <div class="scroll-body" id="val-body"><div class="loading"><div class="spinner"></div>Caricamento...</div></div>
     </div>
 
+    <!-- ════ PIANI PERSONALI ════ -->
+    <div id="scr-piani" class="screen">
+      <div class="hdr">
+        <div class="hdr-title">Piani Personali</div>
+        <div class="hdr-sub" id="piani-class-sub">Classe</div>
+      </div>
+      <div class="scroll-body" id="piani-body"><div class="loading"><div class="spinner"></div>Caricamento...</div></div>
+    </div>
+
     <!-- ════ AGENDA ════ -->
     <div id="scr-agenda" class="screen active">
       <div class="hdr">
@@ -318,7 +327,7 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
     <div id="scr-pdf" class="screen">
       <div class="hdr">
         <div class="hdr-row">
-          <button class="back-btn" onclick="goBack('scr-compiti')">←</button>
+          <button class="back-btn" onclick="goBack(S._pdfBack||'scr-compiti')">←</button>
           <div><div class="hdr-title" id="pdf-title">—</div><div class="hdr-sub" id="pdf-sub">—</div></div>
         </div>
       </div>
@@ -402,7 +411,12 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
       <div class="tab-badge" id="val-badge" style="display:none"></div>
       Valutazioni
     </button>
-    <button class="tab-btn" id="tb-4" onclick="navTab(4,'scr-board')" style="position:relative">
+    <button class="tab-btn" id="tb-4" onclick="navTab(4,'scr-piani')" style="position:relative">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></svg>
+      <div class="tab-badge" id="piani-badge" style="display:none"></div>
+      Piani
+    </button>
+    <button class="tab-btn" id="tb-5" onclick="navTab(5,'scr-board')" style="position:relative">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       <div class="tab-badge" id="board-badge" style="display:none"></div>
       Bacheca
@@ -470,7 +484,7 @@ const S = {
   code: null, studentName: null, studentSafe: null, studentSafeInv: null,
   classId: null, className: null,
   sessions: {}, myclass: null, summary: null,
-  lessons: [], feedback: [], boardMsgs: [], boardTab: 'materiale',
+  lessons: [], feedback: [], boardMsgs: [], pianoMsgs: [], boardTab: 'materiale',
   personalPlan: [], recoverySessions: {}, _pianoSeen: new Set(), _assignInfo: {},
   autoval: {}, _autovalOff: false,
   homeworkFilter: 'all', statFilter: 'all',
@@ -843,7 +857,7 @@ function doLogout(){
   S.code=null; S.studentName=null; S.studentSafe=null;
   S.classId=null; S.className=null;
   S.sessions={}; S.myclass=null; S.summary=null;
-  S.lessons=[]; S.feedback=[]; S.boardMsgs=[];
+  S.lessons=[]; S.feedback=[]; S.boardMsgs=[]; S.pianoMsgs=[];
   S._analisiRequest=null;
   S.personalPlan=[]; S.recoverySessions={}; S._pianoSeen=new Set(); S._assignInfo={};
   Object.keys(S.chartInstances).forEach(id=>destroyChart(id));
@@ -940,8 +954,13 @@ function setupRealtimeListeners(){
   // proprio, quindi i messaggi dei compagni non arrivano mai sul dispositivo.
   S._boardPub = []; S._boardPriv = [];
   const _boardMerge = () => {
-    S.boardMsgs = S._boardPub.concat(S._boardPriv)
+    const all = S._boardPub.concat(S._boardPriv)
       .sort((a,b)=>{ if(a.pinned&&!b.pinned)return -1; if(!a.pinned&&b.pinned)return 1; return(b.ts||0)-(a.ts||0); });
+    // I messaggi dei piani personali stanno nel tab Piani, non in bacheca
+    S.pianoMsgs = all.filter(m=>m.type==='piano').sort((a,b)=>(b.ts||0)-(a.ts||0));
+    S.boardMsgs = all.filter(m=>m.type!=='piano');
+    _updatePianiBadge();
+    if(document.getElementById('scr-piani')?.classList.contains('active')) renderPiani();
     const unread = _boardVisible(S.boardMsgs).filter(m=>!m.readBy?.[S.code]).length;
     document.getElementById('board-badge').style.display = unread>0?'block':'none';
     renderBoard();
@@ -1060,11 +1079,9 @@ function setupRealtimeListeners(){
     S.personalPlan = Object.entries(raw)
       .map(([k,v])=>({...v,_key:k}))
       .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
-    // Badge rosso se ci sono item nuovi non ancora visti
-    const unseen = S.personalPlan.filter(p=>!S._pianoSeen.has(p._key));
-    const vbadge = document.getElementById('val-badge');
-    if(vbadge) vbadge.style.display = (S.feedback.length>0||unseen.length>0)?'block':'none';
-    if(document.getElementById('scr-valutazioni')?.classList.contains('active')) renderValutazioni();
+    // Badge rosso sul tab Piani se ci sono item nuovi non ancora visti
+    _updatePianiBadge();
+    if(document.getElementById('scr-piani')?.classList.contains('active')) renderPiani();
     renderCompiti();
   };
   ppRef.on('value', ppFn);
@@ -1081,7 +1098,7 @@ function setupRealtimeListeners(){
   const rsRef = db.ref('livelearn/recovery_sessions/'+S.code);
   const rsFn = snap => {
     S.recoverySessions = snap.val()||{};
-    if(document.getElementById('scr-valutazioni')?.classList.contains('active')) renderValutazioni();
+    if(document.getElementById('scr-piani')?.classList.contains('active')) renderPiani();
     renderCompiti();
   };
   rsRef.on('value', rsFn);
@@ -1096,6 +1113,7 @@ async function bootApp(){
   document.getElementById('board-class-sub').textContent   = 'Classe ' + S.className;
   document.getElementById('lessons-class-sub').textContent = 'Classe ' + S.className;
   if(document.getElementById('val-class-sub')) document.getElementById('val-class-sub').textContent = 'Classe ' + S.className;
+  document.getElementById('piani-class-sub').textContent = 'Classe ' + S.className;
   // Saluto personalizzato in Agenda
   const rawFirst = S.studentName ? S.studentName.split(' ').pop() : '';
   const firstName = rawFirst ? rawFirst.charAt(0).toUpperCase() + rawFirst.slice(1).toLowerCase() : S.studentName;
@@ -1122,6 +1140,7 @@ async function bootApp(){
     });
   } catch(e) { /* silenzioso — non blocca il boot */ }
 
+  _pianoSeenLoad();
   buildCal();
   await loadAllData();
   setupRealtimeListeners();
@@ -1129,6 +1148,7 @@ async function bootApp(){
   renderStats();
   renderBoard();
   renderValutazioni();
+  renderPiani();
   renderAgendaEvents(null);
   renderOrarioBanner();
   renderObiettiviCard();
@@ -1138,7 +1158,7 @@ async function bootApp(){
 
   // ── Navigazione a attività Piano Personalizzato da link MyClass ──────────
   // Se l'app è stata aperta tramite link ?safe=...&piano=REC-BV4J generato
-  // da MyClass_Analytics, naviga al tab Valutazioni e apre la card giusta.
+  // da MyClass_Analytics, naviga al tab Piani ed evidenzia l'attività giusta.
   (function _navigateToPendingPiano() {
     const pendingCode = sessionStorage.getItem('_pendingPiano');
     if (!pendingCode) return;
@@ -1147,19 +1167,8 @@ async function bootApp(){
     sessionStorage.removeItem('_pendingName');
     // Delay: lascia finire il render iniziale
     setTimeout(() => {
-      navTab(3, 'scr-valutazioni');
+      navTab(4, 'scr-piani');
       setTimeout(() => {
-        // Espandi il piano card se è collassato
-        const pianoBody = document.getElementById('piano-body');
-        const pianoChev = document.getElementById('piano-chevron');
-        if (pianoBody && pianoBody.style.display === 'none') {
-          pianoBody.style.display = 'block';
-          if (pianoChev) pianoChev.style.transform = 'rotate(180deg)';
-          // Segna tutte le attività come viste
-          S.personalPlan.forEach(p => S._pianoSeen.add(p._key));
-          const vbadge = document.getElementById('val-badge');
-          if (vbadge) vbadge.style.display = S.feedback.length > 0 ? 'block' : 'none';
-        }
         // Scrolla e evidenzia l'attività specifica (se non è "orale" generico)
         if (pendingCode !== 'orale') {
           const actEl = document.querySelector('[data-piano-code="' + pendingCode + '"]');
@@ -1210,13 +1219,14 @@ async function loadAllData(){
 }
 
 // ── NAV ───────────────────────────────────────────────────────────────────
-const TAB_SCREENS = ['scr-agenda','scr-compiti','scr-stats','scr-valutazioni','scr-board'];
+const TAB_SCREENS = ['scr-agenda','scr-compiti','scr-stats','scr-valutazioni','scr-piani','scr-board'];
 function navTab(idx, scrId){
   S.curTabIndex = idx;
   document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active',i===idx));
   showScreen(scrId);
   if(scrId==='scr-compiti') renderCompiti();
   if(scrId==='scr-valutazioni') renderValutazioni();
+  if(scrId==='scr-piani') renderPiani();
   if(scrId==='scr-stats'){ destroyChart('ll-trend-chart'); destroyChart('radar-chart'); destroyChart('grades-chart'); destroyChart('spark-chart'); renderStats(); }
 }
 function showScreen(id){
@@ -1311,7 +1321,7 @@ function renderHome(){
   // Bacheca preview
   if(latestBoard){
     html += `<div class="sec-lbl" style="margin-top:4px">BACHECA</div>
-    <div class="card card-tap" onclick="navTab(4,'scr-board')">
+    <div class="card card-tap" onclick="navTab(5,'scr-board')">
       <div style="display:flex;gap:8px;align-items:flex-start">
         <div class="avatar">${latestBoard.from==='teacher'?'GC':esc(S.studentName.substring(0,2).toUpperCase())}</div>
         <div style="flex:1;min-width:0">
@@ -1995,9 +2005,10 @@ function openPianoPdf(code, n){
 }
 
 // Dettaglio di un piano svolto: stessa schermata dei test, dati dal tentativo migliore
-function openPianoResult(code){
+function openPianoResult(code, back){
   const sess = _pianiSvolti().find(s=>s.sessionCode===code);
   if(!sess){ alert('Risultato non disponibile.'); return; }
+  S._pdfBack = back || 'scr-compiti';
   const rs = S.recoverySessions[code] || {};
   const attempts = _pianoAttempts(rs);
   const last = _pianoBest(rs) || attempts[attempts.length-1] || {};
@@ -2177,6 +2188,7 @@ function setHwFilter(f){ S.homeworkFilter=f; renderCompiti(); }
 function openPdf(sessionCode){
   const sess = S.sessions[sessionCode];
   if(!sess){ alert('PDF non disponibile.'); return; }
+  S._pdfBack = 'scr-compiti';
   document.getElementById('pdf-title').textContent = sess.activityTitle||'Risultati';
   document.getElementById('pdf-sub').textContent = fmtDateTime(sess.ts);
   const p = sess.pct||0;
@@ -2309,7 +2321,6 @@ function renderPianoPills(){
 
 function renderPianoCard(){
   if(!S.personalPlan.length) return '';
-  const allSeen = S.personalPlan.every(p=>S._pianoSeen.has(p._key));
   const unseenCount = S.personalPlan.filter(p=>!S._pianoSeen.has(p._key)).length;
   const pillsHtml = renderPianoPills();
 
@@ -2325,7 +2336,6 @@ function renderPianoCard(){
   const renderActivityRow = (item) => {
     const rs = S.recoverySessions[item.code]||{};
     const attempts = rs.attemptCount||0;
-    const score = attempts ? _pianoPct(rs, null) : null;
     const status = rs.status||item.status||'pending';
     const c = _pianoColor(item.type);
 
@@ -2333,10 +2343,7 @@ function renderPianoCard(){
     let actionHtml = '';
     if(status==='completed'){
       // Si può rifare quante volte si vuole: resta il risultato e c'è il pulsante per ripeterla
-      actionHtml = `<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;">
-        <span style="font-size:11px;color:#059669;font-weight:700;">✅ ${score!=null?score+'%':''} ${attempts>1?'('+attempts+' tent.)':''}</span>
-        <button onclick="openRecoveryActivity('${item.code||''}')" style="background:#fff;color:${c.title};border:1.5px solid ${c.title};border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🔁 Rifai</button>
-      </div>`;
+      actionHtml = `<button onclick="openRecoveryActivity('${item.code||''}')" style="background:#fff;color:${c.title};border:1.5px solid ${c.title};border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0;">🔁 Rifai</button>`;
     } else {
       // Cliccabile
       actionHtml = `<button onclick="openRecoveryActivity('${item.code||''}')" style="background:${c.title};color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">${attempts>0?'🔄 Riprova':'▶ Inizia'}</button>`;
@@ -2345,7 +2352,7 @@ function renderPianoCard(){
     return `<div data-piano-code="${item._key||item.code||''}" style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:0.5px solid ${c.border};">
       <div style="flex:1;min-width:0;">
         <div style="font-size:13px;font-weight:700;color:${c.title};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(item.unitName||item.title||'Attività')}</div>
-        ${score!=null&&attempts>0?`<div style="font-size:11px;color:${c.sub};margin-top:1px;">Ultimo: ${score}%</div>`:''}
+        <div style="margin-top:4px;">${_pianoEsitoHtml(item.code||item._key)}</div>
       </div>
       ${actionHtml}
     </div>`;
@@ -2410,50 +2417,47 @@ function renderPianoCard(){
   }
 
   return `<div id="piano-card" style="margin-bottom:16px;">
-    <button onclick="_togglePianoCard()" style="width:100%;background:linear-gradient(135deg,#667EEA,#764BA2);border:none;border-radius:14px;padding:14px 16px;cursor:pointer;font-family:inherit;text-align:left;color:#fff;display:flex;justify-content:space-between;align-items:center;">
+    <div style="width:100%;background:linear-gradient(135deg,#667EEA,#764BA2);border-radius:14px;padding:14px 16px;color:#fff;display:flex;justify-content:space-between;align-items:center;box-sizing:border-box;">
       <div style="display:flex;align-items:center;gap:10px;">
         <span style="font-size:18px;">📋</span>
         <div>
-          <div style="font-size:14px;font-weight:800;letter-spacing:0.3px;">Il tuo piano personalizzato</div>
+          <div style="font-size:14px;font-weight:800;letter-spacing:0.3px;">Le tue attività</div>
           <div style="font-size:11px;opacity:0.85;margin-top:1px;">${pillsHtml||''}</div>
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        ${unseenCount>0?`<span style="background:#EF4444;color:#fff;border-radius:20px;padding:2px 8px;font-size:11px;font-weight:800;">${unseenCount} nuov${unseenCount===1?'o':'i'}</span>`:''}
-        <span id="piano-chevron" style="font-size:16px;transition:transform 0.25s;">▼</span>
-      </div>
-    </button>
-    <div id="piano-body" style="padding:0 4px 4px;display:none;overflow:hidden;">
+      ${unseenCount>0?`<span style="background:#EF4444;color:#fff;border-radius:20px;padding:2px 8px;font-size:11px;font-weight:800;">${unseenCount} nuov${unseenCount===1?'o':'i'}</span>`:''}
+    </div>
+    <div id="piano-body" style="padding:0 4px 4px;">
       <div style="padding-top:12px;">${fasceHtml}</div>
     </div>
   </div>`;
 }
 
-function _togglePianoCard(){
-  const body=document.getElementById('piano-body');
-  const chev=document.getElementById('piano-chevron');
-  if(!body) return;
-  const open = body.style.display!=='none';
-  body.style.display = open?'none':'block';
-  if(chev) chev.style.transform = open?'':'rotate(180deg)';
-  if(!open){
-    // Segna tutti come visti
-    S.personalPlan.forEach(p=>S._pianoSeen.add(p._key));
-    // Aggiorna badge
-    const vbadge=document.getElementById('val-badge');
-    if(vbadge) vbadge.style.display = S.feedback.length>0?'block':'none';
-    // Aggiorna markRead su Firebase (per orale)
-    S.personalPlan.filter(p=>p.type==='recovery_orale'&&!p.readAt&&S._pianoSeen.has(p._key)).forEach(p=>{
-      db.ref('studentapp/personal_plan/'+S.code+'/'+p._key+'/readAt').set(Date.now()).catch(()=>{});
-    });
-  }
+// Piani già visti: si ricordano sul dispositivo, così il pallino rosso
+// del tab Piani compare solo per quelli nuovi.
+function _pianoSeenLoad(){
+  try{
+    const a = JSON.parse(localStorage.getItem('piani_seen_'+S.code)||'[]');
+    S._pianoSeen = new Set(Array.isArray(a)?a:[]);
+  }catch(e){ S._pianoSeen = new Set(); }
+}
+function _pianoSeenSave(){
+  try{ localStorage.setItem('piani_seen_'+S.code, JSON.stringify([...S._pianoSeen].slice(-300))); }catch(e){}
+}
+
+function _updatePianiBadge(){
+  const b = document.getElementById('piani-badge');
+  if(!b) return;
+  const unseen = S.personalPlan.some(p=>!S._pianoSeen.has(p._key));
+  const unread = (S.pianoMsgs||[]).some(m=>!m.readBy?.[S.code]);
+  b.style.display = (unseen||unread) ? 'block' : 'none';
 }
 
 async function markOraleRead(key){
   if(!key) return;
-  S._pianoSeen.add(key);
+  S._pianoSeen.add(key); _pianoSeenSave();
   try{ await db.ref('studentapp/personal_plan/'+S.code+'/'+key+'/readAt').set(Date.now()); }catch(e){}
-  renderValutazioni();
+  renderPiani();
 }
 
 function openRecoveryActivity(code){
@@ -2470,16 +2474,20 @@ function renderValutazioni(){
   if(!body) return;
   // Badge aggiornato
   const vbadge=document.getElementById('val-badge');
-  const unseenPiano = S.personalPlan.filter(p=>!S._pianoSeen.has(p._key)).length;
-  if(vbadge) vbadge.style.display=(S.feedback.length>0||unseenPiano>0)?'block':'none';
+  if(vbadge) vbadge.style.display=S.feedback.length>0?'block':'none';
 
-  if(!S.feedback.length && !S.personalPlan.length){
+  if(!S.feedback.length){
     body.innerHTML='<div style="text-align:center;padding:40px 20px;color:var(--muted);font-size:13px;">Nessuna valutazione disponibile ancora.</div>';
     return;
   }
   let html='';
-  // Piano personalizzato in cima
-  html += renderPianoCard();
+  // Il piano personalizzato ora ha un tab tutto suo
+  if(S.personalPlan.length || (S.pianoMsgs||[]).length){
+    html+=`<div onclick="navTab(4,'scr-piani')" style="background:linear-gradient(135deg,#667EEA,#764BA2);color:#fff;border-radius:12px;padding:11px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
+      <div style="font-size:13px;font-weight:700;">📋 Hai un piano personale</div>
+      <div style="font-size:12px;opacity:0.9;">Vai ai Piani →</div>
+    </div>`;
+  }
   // Valutazioni standard
   S.feedback.forEach(fb=>{
     const date=fb.date?new Date(fb.date+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'long',year:'numeric'}):'—';
@@ -2496,12 +2504,87 @@ function renderValutazioni(){
     </div>`;
   });
   body.innerHTML=html;
-  // Stato di espansione piano: se c'è qualcosa di nuovo, apri subito
-  if(unseenPiano>0){
-    const pb=document.getElementById('piano-body');
-    const ch=document.getElementById('piano-chevron');
-    if(pb){ pb.style.display='block'; if(ch) ch.style.transform='rotate(180deg)'; }
+}
+
+// ── PIANI PERSONALI ───────────────────────────────────────────────────────
+// Esito di un'attività del piano: se è stata svolta mostra il risultato
+// (tocca per il dettaglio, come per i test), altrimenti "Non ancora svolto".
+function _pianoEsitoHtml(code){
+  const safe = String(code||'').replace(/[^A-Za-z0-9_-]/g,'');
+  const sess = safe ? _pianiSvolti().find(x=>x.sessionCode===safe) : null;
+  if(!sess) return `<span style="display:inline-block;background:#F3F4F6;color:#6B7280;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;">⏳ Non ancora svolto</span>`;
+  const p = sess.pct||0;
+  return `<button onclick="openPianoResult('${safe}','scr-piani')" style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1.5px solid ${pctColor(p)};color:${pctColor(p)};border-radius:20px;padding:3px 10px;font-size:11px;font-weight:800;cursor:pointer;font-family:inherit;">✅ Svolto · ${p}%${sess.attemptCount>1?' · '+sess.attemptCount+' tent.':''}<span style="font-weight:600;opacity:0.85">Vedi risultati ›</span></button>`;
+}
+// Tab dedicato: le attività del piano (personal_plan) e i messaggi "piano"
+// del docente, che prima stavano tra i messaggi della bacheca.
+function _pianoMsgCard(msg){
+  const pfxLabel = msg.pianoPrefix === 'ORALE' ? '🗣️ Recupero orale' : msg.pianoPrefix === 'REC' ? '📝 Recupero scritto' : msg.pianoPrefix === 'CON' ? '📚 Consolidamento' : '⭐ Approfondimento';
+  const pfxBg = msg.pianoPrefix === 'REC' ? '#FEE2E2' : msg.pianoPrefix === 'CON' ? '#DCFCE7' : msg.pianoPrefix === 'APP' ? '#DBEAFE' : '#F3E8FF';
+  const pfxCol = msg.pianoPrefix === 'REC' ? '#991B1B' : msg.pianoPrefix === 'CON' ? '#14532D' : msg.pianoPrefix === 'APP' ? '#1E3A5F' : '#6B21A8';
+  const timeStr = msg.ts?new Date(msg.ts).toLocaleDateString('it-IT',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'';
+  const testo = msg.htmlText ? _safeHtml(msg.htmlText) : linkifyText(pianoTextSenzaMateriali(msg.text));
+  const mats = pianoMateriali(msg);
+  const matsHtml = !mats.length ? '' : `<div style="background:white;border-radius:8px;padding:10px;margin-bottom:10px;">
+      <div style="font-size:12px;font-weight:700;color:#3730a3;margin-bottom:6px;">📚 Rivedi i materiali di questa unit</div>
+      ${mats.map(m => m.url
+        ? `<a href="${esc(ensureUrl(m.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-top:6px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;text-decoration:none;color:#3C3489;font-size:13px;font-weight:600;min-width:0;"><span style="flex-shrink:0">🔗</span><span style="flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word">${esc(m.titolo||m.url)}</span><span style="flex-shrink:0;font-size:11px;color:#7c3aed">Apri ›</span></a>`
+        : `<div style="padding:6px 10px;margin-top:6px;font-size:13px;color:#3C3489;overflow-wrap:anywhere">• ${esc(m.titolo)}</div>`).join('')}
+    </div>`;
+  // Il link del messaggio riporta a questa app: dentro il tab si apre
+  // direttamente l'attività in LiveLearn.
+  const code = String(msg.pianoCode||'').replace(/[^A-Za-z0-9_-]/g,'');
+  let action = '';
+  if(code) action = `<button onclick="openRecoveryActivity('${code}')" style="display:block;width:100%;text-align:center;padding:10px 20px;background:#5b21b6;color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">▶ Accedi all'attività</button>`;
+  else if(msg.url && !/StudentApp\.html/i.test(msg.url)) action = `<a href="${esc(llLinkWithName(ensureUrl(msg.url))).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" style="display:block;text-align:center;padding:10px 20px;background:#5b21b6;color:#fff;border-radius:10px;font-size:13px;font-weight:700;text-decoration:none;">▶ Accedi all'attività</a>`;
+  return `<div class="card" style="background:#EEEDFE;border-color:#AFA9EC;margin-bottom:10px">
+    <div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:13px;font-weight:600;color:#3C3489;margin-right:4px">Prof. Cossu</span>
+      <span style="font-size:10px;color:var(--faint)">${timeStr}</span>
+    </div>
+    <div style="font-size:13px;color:#3C3489;line-height:1.5;overflow-wrap:anywhere;word-break:break-word;${msg.htmlText?'':'white-space:pre-line;'}">${testo}</div>
+    <div style="margin-top:10px;background:#f5f3ff;border:1.5px solid #c4b5fd;border-radius:10px;padding:12px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+        <span style="background:${pfxBg};color:${pfxCol};border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;">${pfxLabel}</span>
+        ${msg.pianoUnit?`<span style="font-size:11px;color:#555;">${esc(msg.pianoUnit)}</span>`:''}
+        ${msg.pianoVoto!=null?`<span style="font-size:11px;color:#888;">· voto ${esc(msg.pianoVoto)}</span>`:''}
+      </div>
+      ${code?`<div style="font-size:11px;color:#7c3aed;margin-bottom:8px;">Codice: <code style="font-weight:700;letter-spacing:1px;">${esc(code)}</code></div>
+      <div style="margin-bottom:10px;">${_pianoEsitoHtml(code)}</div>`:''}
+      ${msg.pianoText?`<div style="font-size:12px;color:#3730a3;line-height:1.6;background:white;border-radius:8px;padding:10px;margin-bottom:10px;max-height:120px;overflow:hidden;">${esc(msg.pianoText.slice(0,300))}${msg.pianoText.length>300?'…':''}</div>`:''}
+      ${matsHtml}
+      ${action}
+    </div>
+  </div>`;
+}
+
+function renderPiani(){
+  const body = document.getElementById('piani-body');
+  if(!body) return;
+  const msgs = S.pianoMsgs||[];
+  let html = `<div style="background:#f0edff;border:1px solid #d9d2ff;border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#3C3489;line-height:1.5;">
+    📋 Il piano personale è scelto dal docente in base all'andamento delle verifiche e delle lezioni ed è <strong>sempre disponibile</strong>.
+  </div>`;
+  if(!S.personalPlan.length && !msgs.length){
+    html += '<div style="text-align:center;padding:32px 20px;color:var(--muted);font-size:13px;">Al momento non hai piani personali.</div>';
+  } else {
+    html += renderPianoCard();
+    if(msgs.length){
+      html += '<div class="sec-lbl" style="margin-top:4px">MESSAGGI DEL PROF.</div>';
+      msgs.forEach(m=>{ html += _pianoMsgCard(m); });
+    }
   }
+  body.innerHTML = html;
+  // Se il tab è aperto, tutto quello che c'è è stato visto
+  if(document.getElementById('scr-piani')?.classList.contains('active')){
+    let changed = false;
+    S.personalPlan.forEach(p=>{ if(!S._pianoSeen.has(p._key)){ S._pianoSeen.add(p._key); changed = true; } });
+    if(changed) _pianoSeenSave();
+    msgs.forEach(m=>{
+      if(m._key && !m.readBy?.[S.code]) db.ref((m._base||('livelearn/board/'+S.classId))+'/'+m._key+'/readBy/'+S.code).set(true).catch(()=>{});
+    });
+  }
+  _updatePianiBadge();
 }
 
 function getBestWorstTag(sessions,which){
@@ -3130,7 +3213,7 @@ function buildStatCharts(){
 }
 
 // ── BACHECA ───────────────────────────────────────────────────────────────
-// Materiale = ha url/link oppure type==='link' (escluso tipo piano che va in messaggi)
+// Materiale = ha url/link oppure type==='link' (i messaggi di tipo piano stanno nel tab Piani)
 function _boardIsMat(msg){ return msg.type !== 'piano' && (!!(msg.url || msg.link) || msg.type === 'link'); }
 
 // Messaggi da mostrare. Due cose restano fuori:
@@ -3202,7 +3285,6 @@ function renderBoard(){
     const timeStr = msg.ts?new Date(msg.ts).toLocaleDateString('it-IT',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—';
      const isVal = msg.type==='feedback';
      const isQuiz = msg.type==='avviso_quiz';
-     const isPiano = msg.type==='piano';
      const quizCode = isQuiz && msg.sessionCode ? msg.sessionCode : '';
      const quizLink = llLinkWithName((msg.url||msg.link) ? ensureUrl(msg.url||msg.link) : 'LiveLearn.html'+(quizCode?'?code='+quizCode:''));
      const quizBlock = isQuiz && quizCode ? `
@@ -3213,30 +3295,6 @@ function renderBoard(){
          <a href="${quizLink}" target="_blank" rel="noopener noreferrer"
            style="display:inline-block;padding:9px 20px;background:#5b21b6;color:#fff;border-radius:8px;font-size:13px;font-weight:700;text-decoration:none">▶ Apri LiveLearn</a>
        </div>` : '';
-     // Blocco piano personalizzato
-     const pianoBlock = isPiano ? (() => {
-       const pfxLabel = msg.pianoPrefix === 'ORALE' ? '🗣️ Recupero orale' : msg.pianoPrefix === 'REC' ? '📝 Recupero scritto' : msg.pianoPrefix === 'CON' ? '📚 Consolidamento' : '⭐ Approfondimento';
-       const pfxBg = msg.pianoPrefix === 'REC' ? '#FEE2E2' : msg.pianoPrefix === 'CON' ? '#DCFCE7' : msg.pianoPrefix === 'APP' ? '#DBEAFE' : '#F3E8FF';
-       const pfxCol = msg.pianoPrefix === 'REC' ? '#991B1B' : msg.pianoPrefix === 'CON' ? '#14532D' : msg.pianoPrefix === 'APP' ? '#1E3A5F' : '#6B21A8';
-       return `<div style="margin-top:10px;background:#f5f3ff;border:1.5px solid #c4b5fd;border-radius:10px;padding:12px;">
-         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
-           <span style="background:${pfxBg};color:${pfxCol};border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;">${pfxLabel}</span>
-           ${msg.pianoUnit?`<span style="font-size:11px;color:#555;">${esc(msg.pianoUnit)}</span>`:''}
-           ${msg.pianoVoto!=null?`<span style="font-size:11px;color:#888;">· voto ${msg.pianoVoto}</span>`:''}
-         </div>
-         ${msg.pianoCode?`<div style="font-size:11px;color:#7c3aed;margin-bottom:8px;">Codice: <code style="font-weight:700;letter-spacing:1px;">${esc(msg.pianoCode)}</code></div>`:''}
-         ${msg.pianoText?`<div style="font-size:12px;color:#3730a3;line-height:1.6;background:white;border-radius:8px;padding:10px;margin-bottom:10px;max-height:120px;overflow:hidden;">${esc(msg.pianoText.slice(0,300))}${msg.pianoText.length>300?'…':''}</div>`:''}
-         ${(() => { const mats = pianoMateriali(msg); if(!mats.length) return '';
-           return `<div style="background:white;border-radius:8px;padding:10px;margin-bottom:10px;">
-             <div style="font-size:12px;font-weight:700;color:#3730a3;margin-bottom:6px;">📚 Rivedi i materiali di questa unit</div>
-             ${mats.map(m => m.url
-               ? `<a href="${esc(ensureUrl(m.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-top:6px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;text-decoration:none;color:#3C3489;font-size:13px;font-weight:600;min-width:0;"><span style="flex-shrink:0">🔗</span><span style="flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word">${esc(m.titolo||m.url)}</span><span style="flex-shrink:0;font-size:11px;color:#7c3aed">Apri ›</span></a>`
-               : `<div style="padding:6px 10px;margin-top:6px;font-size:13px;color:#3C3489;overflow-wrap:anywhere">• ${esc(m.titolo)}</div>`).join('')}
-           </div>`; })()}
-         ${msg.url?`<a href="${esc(llLinkWithName(ensureUrl(msg.url))).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer"
-           style="display:block;text-align:center;padding:10px 20px;background:#5b21b6;color:#fff;border-radius:10px;font-size:13px;font-weight:700;text-decoration:none;">▶ Accedi all'attività</a>`:''}
-       </div>`;
-     })() : '';
      // Popola la mappa per evitare apostrofi rotti nell'onclick
      if(msg._key) S._boardReplyTexts[msg._key] = msg.text || '';
      html += `<div class="card" style="${bg};margin-bottom:10px">
@@ -3248,8 +3306,8 @@ function renderBoard(){
              ${isVal&&msg.voto!=null?`<div style="font-size:20px;font-weight:700;color:#3C3489">${msg.voto}</div>`:''}
            </div>
            <div style="display:flex;gap:4px;margin:3px 0 5px;flex-wrap:wrap">${privBadge}<span style="font-size:10px;color:var(--faint)">${timeStr}</span></div>
-           <div style="font-size:13px;color:${isTeacher?'#3C3489':isMine?'#085041':'var(--text)'};line-height:1.5;overflow-wrap:anywhere;word-break:break-word;${msg.htmlText?'':'white-space:pre-line;'}">${msg.htmlText ? _safeHtml(msg.htmlText) : (msg.from==='teacher') ? linkifyText(isPiano ? pianoTextSenzaMateriali(msg.text) : (msg.text||'')) : esc(linguaccia(msg.text||'').masked)}</div>
-           ${isPiano ? pianoBlock : isQuiz ? quizBlock : (msg.url||msg.link?`<div style="margin-top:8px;background:var(--bg);border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:8px">
+           <div style="font-size:13px;color:${isTeacher?'#3C3489':isMine?'#085041':'var(--text)'};line-height:1.5;overflow-wrap:anywhere;word-break:break-word;${msg.htmlText?'':'white-space:pre-line;'}">${msg.htmlText ? _safeHtml(msg.htmlText) : (msg.from==='teacher') ? linkifyText(msg.text||'') : esc(linguaccia(msg.text||'').masked)}</div>
+           ${isQuiz ? quizBlock : (msg.url||msg.link?`<div style="margin-top:8px;background:var(--bg);border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:8px">
              <div style="width:28px;height:28px;background:#FCEBEB;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#E24B4A" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
              </div>
@@ -3257,7 +3315,7 @@ function renderBoard(){
            </div>`:'' )}
          </div>
        </div>
-       ${isTeacher&&!isMine&&!isQuiz&&!isPiano?`<button onclick="showCompose('${msg._key}')" style="width:100%;margin-top:10px;padding:7px;background:rgba(83,74,183,0.1);border:0.5px solid #AFA9EC;border-radius:8px;font-size:12px;color:#3C3489;cursor:pointer;font-family:inherit">Rispondi</button>`:''}
+       ${isTeacher&&!isMine&&!isQuiz?`<button onclick="showCompose('${msg._key}')" style="width:100%;margin-top:10px;padding:7px;background:rgba(83,74,183,0.1);border:0.5px solid #AFA9EC;border-radius:8px;font-size:12px;color:#3C3489;cursor:pointer;font-family:inherit">Rispondi</button>`:''}
      </div>`;
   });
   document.getElementById('board-body').innerHTML = html;
@@ -4508,7 +4566,7 @@ if(navigator.serviceWorker){
     if(event.data?.type === 'NOTIFICATION_CLICK'){
       const {type} = event.data.data || {};
       if(type === 'valutazione') navTab(3,'scr-valutazioni');
-      if(type === 'bacheca' || type === 'avviso_quiz')     navTab(4,'scr-board');
+      if(type === 'bacheca' || type === 'avviso_quiz')     navTab(5,'scr-board');
       if(type === 'sessione')    switchToClassMode();
     }
   });
