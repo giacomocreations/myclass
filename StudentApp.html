@@ -263,10 +263,14 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
           <div style="text-align:center;font-size:10px;color:rgba(255,255,255,0.6)">D</div>
         </div>
         <div class="cal-grid" id="cal-grid"></div>
-        <div style="display:flex;gap:14px;justify-content:center;margin-top:8px">
+        <div id="cal-legend" style="display:flex;gap:14px;justify-content:center;margin-top:8px">
           <div style="display:flex;align-items:center;gap:4px"><div style="width:6px;height:6px;border-radius:50%;background:#E24B4A"></div><span style="font-size:10px;color:rgba(255,255,255,0.7)">Verifica</span></div>
           <div style="display:flex;align-items:center;gap:4px"><div style="width:6px;height:6px;border-radius:50%;background:#EF9F27"></div><span style="font-size:10px;color:rgba(255,255,255,0.7)">Compiti</span></div>
           <div style="display:flex;align-items:center;gap:4px"><div style="width:6px;height:6px;border-radius:50%;background:#9FE1CB"></div><span style="font-size:10px;color:rgba(255,255,255,0.7)">Lezione</span></div>
+        </div>
+        <!-- Riduci / espandi il calendario: in versione ridotta si vede una settimana -->
+        <div style="display:flex;justify-content:center;margin-top:6px">
+          <button id="cal-compact-btn" onclick="toggleCalCompact()" style="background:rgba(255,255,255,0.16);border:none;color:#fff;border-radius:999px;padding:4px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">▲ Riduci calendario</button>
         </div>
       </div>
       <div id="orario-banner" style="display:none;margin:6px 12px 0;background:#f0edff;border-radius:10px;padding:8px 12px;">
@@ -1517,6 +1521,23 @@ function buildCal(){
 
   const dotColor = {lesson:'#9FE1CB',verifica:'#E24B4A',hw:'#EF9F27'};
   let html='';
+  // Calendario ridotto: una sola settimana (lun-dom) attorno a S.calAnchor
+  const compact = _calCompactOn();
+  _calCompactUi(compact);
+  if(compact){
+    const anc = _calAnchorDate();
+    const mon = new Date(anc); mon.setDate(anc.getDate() - ((anc.getDay()+6)%7));
+    for(let k=0;k<7;k++){
+      const dd = new Date(mon); dd.setDate(mon.getDate()+k);
+      const dateStr = dd.getFullYear()+'-'+String(dd.getMonth()+1).padStart(2,'0')+'-'+String(dd.getDate()).padStart(2,'0');
+      const isToday=dateStr===todayStr, isSel=dateStr===S.selectedDate;
+      const dots=[...new Set(evMap[dateStr]||[])].map(e=>`<span style="background:${dotColor[e]}"></span>`).join('');
+      const cls=['cal-day-btn',isToday&&!isSel?'today':'',isSel?'selected':'',dd.getMonth()!==mo?'other-month':''].filter(Boolean).join(' ');
+      html+=`<button class="${cls}" onclick="selectCalDay('${dateStr}')"><span class="cdn">${dd.getDate()}</span><div class="dot-row">${dots}</div></button>`;
+    }
+    document.getElementById('cal-grid').innerHTML=html;
+    return;
+  }
   // Prev month days
   for(let i=0;i<startOffset;i++){
     const d=daysInPrev-startOffset+1+i;
@@ -1538,11 +1559,45 @@ function buildCal(){
   document.getElementById('cal-grid').innerHTML=html;
 }
 
-function prevMonth(){ if(S.calMonth===0){S.calMonth=11;S.calYear--;}else S.calMonth--; buildCal(); renderAgendaEvents(null); }
-function nextMonth(){ if(S.calMonth===11){S.calMonth=0;S.calYear++;}else S.calMonth++; buildCal(); renderAgendaEvents(null); }
+function prevMonth(){ if(_calCompactOn()) return _calShiftWeek(-7); if(S.calMonth===0){S.calMonth=11;S.calYear--;}else S.calMonth--; buildCal(); renderAgendaEvents(null); }
+function nextMonth(){ if(_calCompactOn()) return _calShiftWeek(7); if(S.calMonth===11){S.calMonth=0;S.calYear++;}else S.calMonth++; buildCal(); renderAgendaEvents(null); }
+
+// ── Calendario ridotto (una settimana) ── la scelta resta sul dispositivo
+function _calCompactOn(){ try{ return localStorage.getItem('sa_cal_compact')==='1'; }catch(e){ return false; } }
+function _calCompactUi(on){
+  const b=document.getElementById('cal-compact-btn'); if(b) b.textContent = on ? '▼ Mostra tutto il mese' : '▲ Riduci calendario';
+  const l=document.getElementById('cal-legend'); if(l) l.style.display = on ? 'none' : 'flex';
+}
+// Giorno attorno a cui si mostra la settimana: quello scelto, oppure oggi se è nel
+// mese che si sta guardando, altrimenti il primo del mese
+function _calAnchorDate(){
+  if(S.calAnchor) return new Date(S.calAnchor+'T12:00:00');
+  if(S.selectedDate) return new Date(S.selectedDate+'T12:00:00');
+  const t=new Date();
+  return (t.getFullYear()===S.calYear && t.getMonth()===S.calMonth) ? t : new Date(S.calYear,S.calMonth,1,12);
+}
+function _calSetAnchor(d){
+  S.calAnchor = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  S.calYear = d.getFullYear(); S.calMonth = d.getMonth();
+}
+function _calShiftWeek(days){
+  const d=_calAnchorDate(); d.setDate(d.getDate()+days);
+  _calSetAnchor(d);
+  buildCal(); renderAgendaEvents(null);
+}
+function toggleCalCompact(){
+  const on=!_calCompactOn();
+  try{ localStorage.setItem('sa_cal_compact', on?'1':'0'); }catch(e){}
+  S.calAnchor=null;
+  if(on) _calSetAnchor(_calAnchorDate());
+  buildCal();
+}
 
 function selectCalDay(dateStr){
   S.selectedDate = dateStr;
+  S.calAnchor = null;
+  // Settimana a cavallo di due mesi: il titolo segue il giorno scelto
+  if(_calCompactOn()){ const d=new Date(dateStr+'T12:00:00'); S.calYear=d.getFullYear(); S.calMonth=d.getMonth(); }
   buildCal();
   renderAgendaEvents(dateStr);
 }
