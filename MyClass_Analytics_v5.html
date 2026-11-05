@@ -12153,6 +12153,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         <button class="btn-ai-improve" onclick="openStoricoPicker('${slot.id}')" title="Copia una lezione dallo storico fatta in una data simile (±10 giorni, anno/i precedenti)">📚 Storico</button>
                         <button class="btn-piano ${activity.pianoDettagliato?'has-piano':''}" onclick="openPianoDettagliato('${slot.id}')" title="${activity.pianoDettagliato?'Piano dettagliato presente — clicca per modificare':'Crea piano dettagliato della lezione'}">📋${activity.pianoDettagliato?' Piano':' Piano'}</button>${activity.pianoDettagliato?.pianoB?'<span title="Piano B presente" style="font-size:11px;background:#fce4ec;color:#880e4f;border-radius:8px;padding:1px 6px;font-weight:700;margin-left:2px;">⚡B</span>':''}
                         <button onclick="showArgoTextModal('${slot.id}', false)" style="padding:4px 10px;border-radius:12px;border:1.5px solid #00897b;background:white;color:#00897b;cursor:pointer;font-size:12px;font-weight:700;" title="Genera testo da copiare su Argo">📋 Argo</button>
+                        ${(String(activity.descrizione||'').trim()||String(activity.descrizioneStudent||'').trim())?`<button data-genpiano="${slot.id}" onclick="generaPianoDaDescrizione('${slot.id}')" style="padding:4px 10px;border-radius:12px;border:1.5px solid #1565c0;background:white;color:#1565c0;cursor:pointer;font-size:12px;font-weight:700;" title="Dalla descrizione della lezione genera il piano dettagliato, seguendo fedelmente quello che c'è scritto">📝 Piano dalla descrizione</button>`:''}
                         ${activity.pianoDettagliato?`<button data-gendesc="${slot.id}" onclick="generaDescDaCard('${slot.id}')" style="padding:4px 10px;border-radius:12px;border:1.5px solid #9c27b0;background:white;color:#9c27b0;cursor:pointer;font-size:12px;font-weight:700;" title="Dal piano dettagliato genera la descrizione breve per Argo e quella più dettagliata per la StudentApp">✨ Descrizioni dal piano</button>`:''}
                         <button class="btn-copy" onclick="copySingleLesson('${slot.id}')" title="Copia questa lezione negli appunti">📋 Copia</button>
                         ${!isSvolta?`<button class="btn-swap" onclick="frecciaLezione('${slot.id}','prev')" title="Scambia con lezione precedente (con più lezioni selezionate: sposta indietro tutte le selezionate)">↑</button>
@@ -13072,6 +13073,36 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
         }
 
         // ================================================================
+        // PIANO DALLA DESCRIZIONE — il contrario di "Descrizioni dal piano":
+        // la lezione è già scritta (descrizione / descrizione dettagliata) e
+        // l'AI la organizza in piano dettagliato seguendola fedelmente.
+        // ================================================================
+        async function generaPianoDaDescrizione(slotId) {
+            const classe = data.classi[currentClass];
+            const [isoDate] = slotId.split('_');
+            const lz = (classe?.pianificazione?.piano||[]).find(p => lzId(p)===slotId || (!p.ora && p.data===isoDate));
+            if (!lz) { alert('Lezione non trovata.'); return; }
+            if (!String(lz.descrizione || '').trim() && !String(lz.descrizioneStudent || '').trim()) {
+                alert('La lezione non ha ancora una descrizione.\nScrivila con "✏️ Modifica" e poi genera il piano.'); return;
+            }
+            const pd0 = lz.pianoDettagliato;
+            if (_pdHasPianoA(pd0) && !confirm('La lezione ha già un piano dettagliato.\nLo sostituisco con uno nuovo costruito dalla descrizione?\n(Il Piano B, se c\'è, resta.)')) return;
+            const btn = document.querySelector('[data-genpiano="' + slotId + '"]');
+            const orig = btn?.textContent;
+            if (btn) { btn.textContent = '⏳ Genero il piano…'; btn.disabled = true; }
+            const task = { id: 'pianodesc_' + Date.now(), type: 'piano', classe: classe.nome, slotId: lzId(lz), fromDesc: true };
+            try { await agentTaskPiano(task); }
+            finally { if (btn) { btn.textContent = orig; btn.disabled = false; } }
+            if (task.status !== 'ready' || !task.pianoData) { alert('❌ ' + (task.error || 'Piano non generato.')); return; }
+            lz.pianoDettagliato = { ...task.pianoData, ...(pd0?.pianoB ? { pianoB: pd0.pianoB } : {}) };
+            saveData();
+            try { renderLezFuture(); } catch(e) {}
+            try { if (typeof renderLezSvolte === 'function' && !document.getElementById('tabSvolte')?.classList.contains('hidden')) renderLezSvolte(); } catch(e) {}
+            // Si apre subito il piano per rivederlo
+            openPianoDettagliato(lzId(lz));
+            if (typeof _mcToast === 'function') _mcToast('✅ Piano dettagliato generato dalla descrizione: controllalo');
+        }
+
         // DESCRIZIONI DAL PIANO — direttamente dalla card lezione
         // ================================================================
         async function generaDescDaCard(slotId) {
@@ -22392,12 +22423,15 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
     // una lezione senza piano non ha proposte.
     let _agentParallelaDiag = null;
 
-    /** Controllo per il giorno target dell'agente (domani; nella notte, oggi) */
-    function agentProponiParalleleOra() {
+    /** Controllo per il giorno target dell'agente (domani; nella notte, oggi).
+     *  force = richiesta del docente prima delle 19: si guarda il prossimo giorno con lezioni. */
+    function agentProponiParalleleOra(force = false) {
         try {
             const d = new Date();
             if (d.getHours() >= 8) d.setDate(d.getDate() + 1);
-            const n = agentProponiParallele(d.toISOString().split('T')[0]);
+            let dateStr = d.toISOString().split('T')[0];
+            if (force) dateStr = _agentProssimoGiornoConLezioni(dateStr) || dateStr;
+            const n = agentProponiParallele(dateStr, force);
             if (n) console.log(`[Agente] 👥 ${n} lezioni senza piano: proposta la lezione della classe parallela`);
             return n;
         } catch(e) {
@@ -22406,9 +22440,31 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
         }
     }
 
-    function agentProponiParallele(dateStr) {
+    // Primo giorno da dateStr in poi (max 10 giorni) con almeno un'ora in orario e non sospeso
+    function _agentProssimoGiornoConLezioni(dateStr) {
+        const d = new Date(dateStr + 'T12:00:00');
+        for (let i = 0; i < 10; i++, d.setDate(d.getDate() + 1)) {
+            const iso = d.toISOString().split('T')[0];
+            if (GIORNI_SOSPESI.has(iso)) continue;
+            const dow = d.getDay();
+            if ((data.classi || []).some(c => !c.pianificazione?.giorniSaltati?.[iso] && (c.pianificazione?.orario || []).some(s => s.giornoNum === dow))) return iso;
+        }
+        return null;
+    }
+
+    /** Forza subito le proposte dalle classi parallele (di solito partono dalle 19) */
+    function agentForzaParallele() {
+        const n = agentProponiParalleleOra(true);
+        agentBadgeUpdate();
+        agentRenderPanel();
+        const d = _agentParallelaDiag;
+        if (typeof _mcToast === 'function') _mcToast(n ? `👥 ${n} propost${n === 1 ? 'a' : 'e'} dalle classi parallele` : (d && !d.senzaPiano ? '👥 Le lezioni hanno già tutte il piano' : '👥 Nessuna nuova proposta: vedi il riquadro in cima alla coda'));
+    }
+    window.agentForzaParallele = agentForzaParallele;
+
+    function agentProponiParallele(dateStr, force = false) {
         const h = new Date().getHours();
-        if (h < AGENT_PARALLELA_ORA && h >= 8) { _agentParallelaDiag = null; return 0; }
+        if (!force && h < AGENT_PARALLELA_ORA && h >= 8) { _agentParallelaDiag = null; return 0; }
         const diag = { data: dateStr, at: new Date().toISOString(), lezioni: 0, senzaPiano: 0, proposte: 0, motivi: [] };
         _agentParallelaDiag = diag;
         const oggi = new Date().toISOString().split('T')[0];
@@ -22548,12 +22604,14 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
     /** Riquadro in cima alla coda task: lezioni di domani senza piano e senza proposta */
     function _agentParallelaDiagHtml() {
         const d = _agentParallelaDiag;
-        if (!d) return '';
+        const btn = `<button onclick="agentForzaParallele()" title="Di solito l'agente propone il piano dalle classi parallele dalle ${AGENT_PARALLELA_ORA}:00. Così lo fa subito, per il prossimo giorno con lezioni." style="margin-left:8px;padding:3px 10px;border-radius:10px;border:1.5px solid #3949ab;background:white;color:#3949ab;cursor:pointer;font-size:11px;font-weight:700;">${d ? '🔄 Ricontrolla' : '👥 Proponi adesso'}</button>`;
+        if (!d) return `<div style="margin-bottom:10px;padding:8px 12px;background:#f8f9ff;border:1.5px dashed #c5cae9;border-radius:10px;font-size:12px;color:#555;">
+            <strong style="color:#3949ab;">👥 Piano dalle classi parallele</strong>: l'agente lo propone dalle ${AGENT_PARALLELA_ORA}:00 per le lezioni di domani ancora senza piano.${btn}</div>`;
         const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
         const gg = new Date(d.data + 'T12:00:00');
         const lbl = ['dom','lun','mar','mer','gio','ven','sab'][gg.getDay()] + ' ' + gg.getDate() + '/' + (gg.getMonth() + 1);
         return `<div style="margin-bottom:10px;padding:10px 12px;background:#f8f9ff;border:1.5px solid #c5cae9;border-radius:10px;font-size:12px;color:#444;">
-            <strong style="color:#3949ab;">👥 Classi parallele, ${lbl}:</strong>
+            <strong style="color:#3949ab;">👥 Classi parallele, ${lbl}:</strong>${btn}<br>
             ${!d.lezioni ? 'nessuna lezione in orario.'
               : !d.senzaPiano ? `tutte le ${d.lezioni} lezioni hanno già il piano.`
               : `${d.senzaPiano} lezion${d.senzaPiano === 1 ? 'e' : 'i'} senza piano, ${d.proposte} con proposta qui sotto.`}
@@ -22686,18 +22744,28 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
             pdSucc: _bInfo.lzSucc?.pianoDettagliato ? null : _pdDaTask(_bInfo.slotSucc),
         });
 
+        // Piano dalla descrizione (bottone sulla card): la lezione è già scritta,
+        // il piano la segue fedelmente invece di inventarne una nuova
+        const _descStu = String(lz.descrizioneStudent || '').trim();
+        const fedele = task.fromDesc ? `
+PIANO DALLA DESCRIZIONE — la lezione è GIÀ DECISA dal docente: è quella scritta nella descrizione qui sopra${_descStu ? ' (e nella descrizione dettagliata)' : ''}.
+- Il piano deve seguire FEDELMENTE le attività descritte, nello stesso ordine: non sostituirle, non aggiungerne di nuove importanti, non cambiare argomento, pagine o materiali.
+- Il tuo compito è organizzarle in fasi (avvio, attività principale, chiusura) con i tempi, le istruzioni concrete per il docente e i dettagli pratici (consegne, modalità di lavoro, domande da fare).
+- Se la descrizione lascia buchi (tempi, saluto, chiusura, exit ticket), completali con attività brevi e coerenti, senza snaturare la lezione.
+- Gli obiettivi si ricavano da quello che la lezione fa davvero.
+` : '';
         const prompt = `Sei un docente esperto di inglese per scuola secondaria di primo grado italiana.
 Crea un piano dettagliato per questa lezione. Tutto in ITALIANO tranne i termini tecnici in inglese.
 
 LEZIONE:
 - Titolo: ${lz.titolo||'—'}
-- Descrizione: ${lz.descrizione||'—'}
+- Descrizione: ${lz.descrizione||'—'}${task.fromDesc && _descStu ? `\n- Descrizione dettagliata: ${_descStu}` : ''}
 - Unità: ${lz.unit||'—'} ${unitInfo ? '| '+unitInfo : ''}
 - Tipo: ${lz.tipo||'normal'}
 - Pagine: ${lz.pagine||'—'}
 - Compiti previsti: ${lz.compiti||'—'}
 - Classe: ${classe.nome}
-${contestoClasse}${blocco.contesto}
+${fedele}${contestoClasse}${blocco.contesto}
 ${blocco.durata}
 Ogni attività su una riga con "- ", sotto-dettagli con "  > ", durata con (X min).
 
