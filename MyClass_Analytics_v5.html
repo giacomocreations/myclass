@@ -32898,7 +32898,9 @@ ${P.prompt}`;
     // orale = piano di un'interrogazione: più domande, con il parlato libero.
     // nGuided/nFree: quanti esercizi guidati e di parlato libero (piano solo orale: 6 + 2;
     // piano unico scritto + orale: 5 + 2; frasi aggiunte a uno scritto su richiesta: 2 + 0)
-    function _pianoBuildSpeakingQuestionsPrompt({ unit, classeNome = '', voto = null, prefix = 'REC', focus = '', orale = false, verInfo = null, nGuided = null, nFree = null }) {
+    // challenge: alunno da 9,5 in su all'interrogazione (i suoi esercizi sono più impegnativi;
+    // in coda arriva il blocco "Sfida orale" uguale per la classe, vedi _pianoGetOralChallengeBlock)
+    function _pianoBuildSpeakingQuestionsPrompt({ unit, classeNome = '', voto = null, prefix = 'REC', focus = '', orale = false, verInfo = null, nGuided = null, nFree = null, challenge = false }) {
         const y = _ppAnnoLabel(classeNome).y;
         const lv = _ppCefr(classeNome, voto);
         const isDsa = verInfo?.layout === 1, isPei = verInfo?.layout === 2;
@@ -32908,7 +32910,7 @@ ${P.prompt}`;
         const fascia = prefix === 'REC' ? 'recupero (frasi semplici e guidate)' : prefix === 'CON' ? 'consolidamento (difficoltà media)' : 'approfondimento (contesti nuovi, un po\' più impegnativi)';
         return `Prepara ${nGuided + nFree} esercizi di SPEAKING per LiveLearn per uno studente di scuola media italiana, livello ${lv}${isDsa ? ' (versione DSA: consegne brevissime e chiare, una sola cosa da dire)' : isPei ? ' (versione PEI: frasi cortissime, lessico di base, un solo obiettivo per esercizio)' : ''}, unità "${unit || 'English'}", piano di ${fascia}.
 L'alunno li fa a casa: legge la consegna, preme il microfono e parla in inglese. Il riconoscimento vocale del browser trascrive quello che dice e LiveLearn controlla SUBITO se nella frase ci sono gli "obiettivi". Si controlla il contenuto (strutture e lessico), non la pronuncia.
-${focus ? `\nSU COSA LAVORARE (${orale ? 'note dell\'interrogazione' : 'errori della verifica'}):\n${String(focus).slice(0, 1800)}\n` : ''}
+${focus ? `\nSU COSA LAVORARE (${orale ? 'note dell\'interrogazione' : 'errori della verifica'}):\n${String(focus).slice(0, 1800)}\n` : ''}${challenge ? `\nALUNNO ECCELLENTE (almeno 9,5 all'interrogazione): esercizi più impegnativi del normale approfondimento. Consegne brevi e senza aiuti (niente parole inglesi suggerite), contesti nuovi e realistici, frasi più lunghe con connettivi (and, but, because, so, while), domande da formulare, risposte con più informazioni; 2-3 obiettivi per esercizio.\n` : ''}
 REGOLE
 - ${nGuided} esercizi "guidati": l'alunno dice UNA frase (o due frasi brevi). Consegna in italiano, concreta (una situazione + che cosa dire), senza scrivere la frase inglese già pronta. Varia le strutture: affermativa, negativa, domanda con risposta breve, terza persona e plurale quando l'unità le prevede.${nFree ? `\n- ${nFree === 1 ? '1 esercizio' : nFree + ' esercizi'} di "parlato libero" (in fondo): "free": true e "minWords": ${isPei ? Math.round(minW / 2) : minW}; l'alunno parla 30-60 secondi su un tema dell'unità; 2-3 obiettivi da usare più volte ("min": 2).` : ''}
 - "targets": 1-3 obiettivi per esercizio, cioè le strutture chiave che la frase deve contenere (il modale, il verbo al tempo giusto, la parola del lessico…). In "say" scrivi TUTTE le forme corrette accettabili separate da | (es. "have to|has to|must"). Le forme contratte valgono già come quelle intere (don't = do not, I'm = I am): scrivi quelle intere. L'asterisco vale "qualsiasi parola o pezzo di parola" (es. "is *ing"). Niente punteggiatura, niente numeri in cifre.
@@ -33276,6 +33278,68 @@ FORMATO JSON ESATTO:
 ${esempio.join(',\n')}]}
 Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markdown.`;
     }
+    // ── SFIDA ORALE: alunni da 9,5 in su all'interrogazione ─────────────────
+    // Come la Sfida scritta: un blocco uguale per tutti questi alunni della classe
+    // (riusato dalla cache), livellato per anno. 3 prove di speaking più impegnative:
+    // ascolta e rispondi, confronto tra due situazioni, monologo di 60-90 secondi.
+    function _ppOralChallengeEligible(studente, unit, verInfo) {
+        if (verInfo) return false;   // DSA / PEI: il loro approfondimento è già adattato
+        const g = _ppLatestGrade(studente, 'orale', unit);
+        return !!g && Number(g.voto) >= 9.5;
+    }
+    function _ppOralChallengeKey(classeNome, unit) { return 'orale:' + _ppChallengeKey(classeNome, unit); }
+    function _pianoBuildOralChallengePrompt(unit, classeNome = '') {
+        const A = _ppAnnoLabel(classeNome);
+        const L = A.y === '1' ? { lv: 'A1', w: [20, 25, 35], frasi: 'frasi brevi e lessico noto di una prima media' }
+                : A.y === '2' ? { lv: 'A2', w: [25, 35, 50], frasi: 'frasi di media lunghezza, lessico di una seconda media' }
+                : { lv: 'B1', w: [35, 45, 70], frasi: '' };
+        return `Sei un docente di inglese per la scuola media italiana. Prepara il blocco "SFIDA ORALE" per gli alunni che hanno preso almeno 9,5 nell'interrogazione dell'unità "${unit}"${classeNome ? `, classe ${classeNome} (${A.label})` : ''}. Lo stesso blocco andrà a tutti questi alunni della classe: niente riferimenti a un singolo alunno.
+Sono esercizi di SPEAKING per LiveLearn: l'alunno preme il microfono e parla; il riconoscimento vocale trascrive e LiveLearn controlla subito gli "obiettivi" (strutture e lessico, non la pronuncia). Livello ${L.lv}${L.frasi ? ` (${L.frasi})` : ''}${A.y === '1' || A.y === '2' ? `, senza strutture che una ${A.anno} non ha ancora studiato` : ''}: stimolante ma alla portata dell'anno.
+
+ESATTAMENTE 3 esercizi "speaking", in quest'ordine, tutti con "sfida": true, "free": true e la consegna (in italiano) che inizia con "🏆 **Sfida** — ":
+a) ASCOLTA E RISPONDI: in "ttsText" una domanda o una breve situazione in inglese (2-3 frasi) che la sintesi vocale legge all'alunno e che NON va scritta nella consegna; la consegna dice solo di ascoltare e rispondere in inglese con 2-3 frasi complete. "minWords": ${L.w[0]}, "points": 4.
+b) CONFRONTO: due situazioni legate all'unità da mettere a confronto usando due strutture diverse (es. che cosa fa di solito / che cosa sta facendo adesso; ieri / oggi; io / un amico). "minWords": ${L.w[1]}, "points": 4; obiettivi per tutte e due le strutture (con "min") e un connettivo ("but|while|however|whereas").
+c) MONOLOGO di 60-90 secondi in un contesto nuovo e concreto (descrivere una scena immaginaria, raccontare un evento, presentare qualcosa a un pubblico…) che richiede le strutture dell'unità. "minWords": ${L.w[2]}, "points": 6; 3 obiettivi con "min" e almeno un connettivo ("because|so|but|while").
+
+Per ogni esercizio: "targets" con "label" (breve) e "say" (tutte le forme corrette separate da |; le contratte valgono come le intere; * = qualsiasi parola, es. "is *ing"; niente punteggiatura né numeri in cifre); "avoid" 0-2 errori tipici con "tip" in italiano; "model" = risposta modello naturale, lunga almeno quanto "minWords", che contiene TUTTI gli obiettivi (rispettando "min") e nessun "avoid"; "tag": "FUNCTIONS".
+
+FORMATO: solo un array JSON di 3 oggetti, nessun testo fuori.
+[{"type":"speaking","sfida":true,"free":true,"minWords":${L.w[0]},"text":"🏆 **Sfida** — Ascolta e rispondi in inglese con 2-3 frasi complete.","ttsText":"...","model":"...","targets":[{"label":"...","say":"...|..."}],"avoid":[{"say":"...","tip":"..."}],"points":4,"tag":"FUNCTIONS"}, ...]`;
+    }
+    async function _pianoGetOralChallengeBlock(classeNome, unit) {
+        const key = _ppOralChallengeKey(classeNome, unit);
+        const cached = _ppChallengeCacheGet(key);
+        if (cached?.questions?.length) { console.log(`[Piano] Sfida orale ${key}: riuso il blocco già generato`); return cached.questions; }
+        try {
+            const raw = await _pianoAICall(_pianoBuildOralChallengePrompt(unit || 'English', classeNome), _PP_SPK_SYS);
+            const qs = _ppCleanSpeaking(_pianoParseJson(raw, '['), 'sfida orale').map(q => ({ ...q, sfida: true }));
+            if (qs.length < 2) throw new Error('troppi esercizi della sfida orale scartati');
+            _ppChallengeCacheSet(key, { passageText: '', questions: qs });
+            console.log(`[Piano] ✅ Sfida orale ${key} generata (${qs.length} esercizi)`);
+            return JSON.parse(JSON.stringify(qs));
+        } catch(e) {
+            if (e && e.name === 'AbortError') throw e;
+            console.warn('[Piano] Sfida orale non generata:', e && e.message);
+            return null;
+        }
+    }
+    // Esercizi di speaking dell'alunno + (da 9,5) la Sfida orale in coda.
+    // n = quanti in tutto; con la sfida: n-3 guidati più impegnativi + 3 della sfida.
+    async function _pianoSpeakingWithChallenge(spec, challenge, classeNome, unit, n) {
+        if (!challenge) return await _pianoGenerateSpeakingQuestions(spec);
+        const own = await _pianoGenerateSpeakingQuestions({ ...spec, nGuided: n - 3, nFree: 0, challenge: true });
+        const block = await _pianoGetOralChallengeBlock(classeNome, unit);
+        if (block && block.length >= 3) return [...own, ...block];
+        if (block && block.length) {
+            // Sfida con un esercizio scartato al controllo: si completa con uno guidato impegnativo
+            const fill = await _pianoGenerateSpeakingQuestions({ ...spec, nGuided: 3 - block.length, nFree: 0, challenge: true });
+            return [...own, ...block, ...fill];
+        }
+        // Sfida non disponibile: si completa con esercizi normali di parlato libero
+        const extra = await _pianoGenerateSpeakingQuestions({ ...spec, nGuided: 1, nFree: 2, challenge: true });
+        return [...own, ...extra];
+    }
+
     async function _pianoGetChallengeBlock(classeNome, unit) {
         const key = _ppChallengeKey(classeNome, unit);
         const cached = _ppChallengeCacheGet(key);
@@ -33500,7 +33564,7 @@ Questo file è stato esportato da MyClass. Per OGNI elemento di "alunni":
 - se "consegna_speaking" non è null, scrivi lo speaking prompt richiesto;
 - se "consegna_speaking_esercizi" non è null, genera gli esercizi di speaking (tipo "speaking", da dire al microfono) seguendo quella consegna, nel campo "speaking" (c'è quando in calendario è prevista l'interrogazione: piano solo orale, con "questions" vuoto, oppure piano unico scritto + orale, con meno domande scritte);
 - se "piano" è "ORALE" non c'è nessun quiz: segui la sua "consegna_testo" e scrivi il testo del recupero orale (italiano, testo semplice, 200-280 parole, [NOME] al posto del nome), più gli esercizi di "consegna_speaking_esercizi".
-Per OGNI elemento di "sfide" genera il blocco seguendo la sua "consegna" (un solo blocco per chiave: lo ricevono tutti gli alunni che hanno quella "sfida").
+Per OGNI elemento di "sfide" genera il blocco seguendo la sua "consegna" (un solo blocco per chiave: lo ricevono tutti gli alunni che hanno quella "sfida"). Le sfide ORALI (chiave che inizia con "orale:") sono solo esercizi "speaking": "passageText" resta "".
 Gli alunni non hanno nomi: sono identificati solo da "ref". Non inventare nomi.
 
 QUALITÀ — prima di consegnare ricontrolla ogni domanda come un docente madrelingua:
@@ -33642,9 +33706,10 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             manifest[ref] = e.local;
             return { ref, ...e.file };
         });
-        const sfide = [...new Set(entries.map(e => e.local.sfida).filter(Boolean))].map(k => {
-            const unit = k.slice(k.indexOf('|') + 1);
-            return { chiave: k, classe: k.slice(0, k.indexOf('|')), unit, consegna: _pianoBuildChallengePrompt(unit || 'English', k.slice(0, k.indexOf('|'))) };
+        const sfide = [...new Set(entries.flatMap(e => [e.local.sfida, e.local.sfidaOrale]).filter(Boolean))].map(k => {
+            const orale = k.startsWith('orale:'), kk = orale ? k.slice(6) : k;
+            const classe = kk.slice(0, kk.indexOf('|')), unit = kk.slice(kk.indexOf('|') + 1);
+            return { chiave: k, classe, unit, consegna: orale ? _pianoBuildOralChallengePrompt(unit || 'English', classe) : _pianoBuildChallengePrompt(unit || 'English', classe) };
         });
         _ppSaveClaudeManifest(exportId, manifest);
         const fileObj = { formato: 'myclass-piani-export', versione: 1, export_id: exportId, creato: new Date().toISOString(),
@@ -33705,6 +33770,12 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
 
         const sfide = {};
         for (const sf of (fileData.sfide || [])) {
+            // Sfida orale: solo esercizi di speaking, nessun testo da leggere
+            if (sf?.chiave && String(sf.chiave).startsWith('orale:') && Array.isArray(sf.questions)) {
+                const qs = _ppCleanSpeaking(sf.questions, 'import sfida orale').map(q => ({ ...q, sfida: true }));
+                if (qs.length) { sfide[sf.chiave] = { passageText: '', questions: qs }; _ppChallengeCacheSet(sf.chiave, sfide[sf.chiave]); }
+                continue;
+            }
             if (!sf?.chiave || !String(sf.passageText || '').trim() || !Array.isArray(sf.questions)) continue;
             const qs = sf.questions.filter(q => q && typeof q === 'object').map(_ppNormalizeQuestion).filter(q => !bad(q));
             if (qs.length) { sfide[sf.chiave] = { passageText: String(sf.passageText).trim(), questions: qs }; _ppChallengeCacheSet(sf.chiave, sfide[sf.chiave]); }
@@ -33783,6 +33854,11 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 activity.versionLayout = { originale: L.layout };
             }
             if (typeof p.speakingPrompt === 'string' && p.speakingPrompt.trim()) activity.speakingPrompt = p.speakingPrompt.trim();
+            if (L.sfidaOrale) {
+                const b = sfide[L.sfidaOrale] || _ppChallengeCacheGet(L.sfidaOrale);
+                if (b?.questions?.length) { activity.questions = [...activity.questions, ...JSON.parse(JSON.stringify(b.questions))]; activity.challengeOrale = true; }
+                else scartate.push(`${L.studentName}: Sfida orale non trovata nel file`);
+            }
             if (L.misto) activity.misto = L.misto;
             if (L.soloOrale) activity.title = '🎤 Speaking — ' + (L.unit || '');
             const _kind = { ...(L.misto ? { misto: L.misto } : {}), ...(L.soloOrale ? { soloOrale: true } : {}) };
@@ -33934,17 +34010,23 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         const studentName = `${studente.cognome} ${studente.nome}`.trim();
         if (_ppPlanExistsFor(studentSafe, unit)) return { outcome: 'skipped', reason: 'Piano già presente per questa unit (bozza o inviato)' };
         const g = _ppLatestGrade(studente, 'orale', unit);
-        const spec = { unit, classeNome, voto, prefix, focus: _ppOralNotes(g, errorDetails), orale: true, nGuided: 6, nFree: 2 };
+        const verInfo = await _ppDetectTestVersion(studente, studentSafe, unit);
+        const challenge = _ppOralChallengeEligible(studente, unit, verInfo);
+        const spec = { unit, classeNome, voto, prefix, focus: _ppOralNotes(g, errorDetails), orale: true, nGuided: 6, nFree: 2, verInfo };
         const code = _pianoGenCode(prefix);
         if (_ppExportCollector) {
-            _ppExportCollector.push(_ppBuildSpeakingExportEntry({ studentSafe, studentName, classeNome, unit, prefix, voto, code, spec }));
+            const e = _ppBuildSpeakingExportEntry({ studentSafe, studentName, classeNome, unit, prefix, voto, code,
+                spec: challenge ? { ...spec, nGuided: 5, nFree: 0, challenge: true } : spec });
+            if (challenge) e.local.sfidaOrale = _ppOralChallengeKey(classeNome, unit);
+            _ppExportCollector.push(e);
             return { outcome: 'exported' };
         }
         _ppShowGenerating(studentName, prefix, unit);
-        const qs = await _pianoGenerateSpeakingQuestions(spec);
+        if (challenge) console.log(`[Piano] ${studentName}: almeno 9,5 all'interrogazione → speaking con Sfida orale`);
+        const qs = await _pianoSpeakingWithChallenge(spec, challenge, classeNome, unit, 8);
         if (!qs.length) { _ppShowError(studentName, 'Generazione speaking fallita'); return { outcome: 'error', reason: 'Generazione esercizi di speaking fallita' }; }
         const id = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-        _ppDraftScritto.push({ id, studentSafe, studentName, code, prefix, activity: { title: '🎤 Speaking — ' + unit, questions: qs },
+        _ppDraftScritto.push({ id, studentSafe, studentName, code, prefix, activity: { title: '🎤 Speaking — ' + unit, questions: qs, ...(challenge ? { challengeOrale: true } : {}) },
             unit, voto, classeNome, createdAt: Date.now(), source: _ppGenProvider, soloOrale: true });
         _ppSavDraftScritto();
         ppSwitchTab(0);
@@ -33966,17 +34048,21 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         const errS = await _ppPlanErrorDetails(studente, studentSafe, classeNome, unit, pS, tipo === 'scritto' ? errorDetails : '');
         const verInfo = await _ppDetectTestVersion(studente, studentSafe, unit);
         const spec = { unit, classeNome, voto: gO.voto, prefix: pO, focus: _ppOralNotes(gO, tipo === 'orale' ? errorDetails : ''), orale: true, nGuided: 5, nFree: 2, verInfo };
+        const challengeO = _ppOralChallengeEligible(studente, unit, verInfo);
         if (_ppExportCollector) {
-            const e = await _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix: pS, voto: gS.voto, code, errorDetails: errS, tagBreakdown, verInfo, nQ: 8, speaking: spec });
+            const e = await _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix: pS, voto: gS.voto, code, errorDetails: errS, tagBreakdown, verInfo, nQ: 8,
+                speaking: challengeO ? { ...spec, nGuided: 4, nFree: 0, challenge: true } : spec });
             e.local.prefix = prefix; e.local.voto = voto; e.local.misto = misto;
+            if (challengeO) e.local.sfidaOrale = _ppOralChallengeKey(classeNome, unit);
             _ppExportCollector.push(e);
             return { outcome: 'exported' };
         }
         _ppShowGenerating(studentName, prefix, unit);
         const activity = await _pianoGenerateActivity(studente, gS.voto, unit, pS, errS, tagBreakdown, classeNome, verInfo, { nQ: 8 });
         if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return { outcome: 'error', reason: 'Generazione della parte scritta fallita' }; }
-        const spk = await _pianoGenerateSpeakingQuestions(spec);
+        const spk = await _pianoSpeakingWithChallenge(spec, challengeO, classeNome, unit, 7);
         if (!spk.length) console.warn('[Piano] Piano unico: speaking non generato per', studentName);
+        if (challengeO) activity.challengeOrale = true;
         activity.questions = [...activity.questions, ...spk.map(q => (verInfo ? { ...q, dsaLargeText: true } : q))];
         activity.misto = misto;
         const id = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
@@ -36544,7 +36630,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 const _draftCard = d => {
                     const pfxLabel = (d.prefix === 'REC' ? '📝 Recupero' : d.prefix === 'CON' ? '📚 Consolidamento' : '⭐ Approfondimento')
                         + (d.misto ? ` · piano unico: 📝 scritto ${_PP_FASCIA_LBL[d.misto.scritto].toLowerCase()} (${d.misto.votoScritto}) + 🎤 orale ${_PP_FASCIA_LBL[d.misto.orale].toLowerCase()} (${d.misto.votoOrale})`
-                           : d.soloOrale ? ' · 🎤 solo orale (speaking)' : '');
+                           : d.soloOrale ? ' · 🎤 solo orale (speaking)' : '')
+                        + (d.activity?.challengeOrale ? ' · 🏆 Sfida orale' : '');
                     const pfxBg = d.prefix === 'REC' ? '#FEE2E2' : d.prefix === 'CON' ? '#DCFCE7' : '#DBEAFE';
                     const pfxCol = d.prefix === 'REC' ? '#991B1B' : d.prefix === 'CON' ? '#14532D' : '#1E3A5F';
                     const qList = Array.isArray(d.activity) ? d.activity : (d.activity?.questions || []);
