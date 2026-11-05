@@ -13658,11 +13658,15 @@ function _spkState(i) {
   const k = _spkKey(i);
   return { k, noMic: !!S.spkNoMic[k] || _spkIsNoMic(S.answers && S.answers[i]), tries: S.spkTries[k] || 0 };
 }
+function _spkMicLabel(q, i) {
+  const a = S.answers && S.answers[i];
+  return '🎤 ' + (typeof a === 'string' && a ? 'Riprova' : q.free ? 'Inizia a parlare' : 'Parla');
+}
 function _spkQuestionHTML(q, i, qLabel, qImg) {
   const st = _spkState(i);
   const canMic = !!_SpkRec;
   const micBtn = canMic && !st.noMic
-    ? `<button type="button" id="spk-mic" class="btn btn-primary" onclick="spkToggleMic(${i})" style="font-size:16px;padding:12px 22px;border-radius:999px;">🎤 ${q.free ? 'Inizia a parlare' : 'Parla'}</button>`
+    ? `<button type="button" id="spk-mic" class="btn btn-primary" onclick="spkToggleMic(${i})" style="font-size:16px;padding:12px 22px;border-radius:999px;">${_spkMicLabel(q, i)}</button>`
     : '';
   const noSupport = canMic ? '' : `<div style="background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;padding:10px 12px;font-size:13px;color:#92400e;margin-top:10px;">⚠️ Questo browser non riconosce la voce: usa <b>Chrome</b> o <b>Safari</b>. Se proprio non puoi, spunta la casella qui sotto e scrivi la risposta.</div>`;
   const help = q.free
@@ -13694,7 +13698,7 @@ function _spkQuestionHTML(q, i, qLabel, qImg) {
     </div>` : ''}
   </div>`;
 }
-function _spkResultHTML(q, raw) {
+function _spkResultHTML(q, raw, tries) {
   if (_spkIsNoMic(raw)) return `<div style="border:1.5px solid #f59e0b;background:#fffbeb;border-radius:12px;padding:12px 14px;font-size:14px;font-weight:700;color:#92400e;">✅ Svolta ad alta voce senza microfono · non entra nel punteggio</div>`;
   const e = _spkEval(q, raw);
   const all = e.frac >= 1;
@@ -13709,7 +13713,8 @@ function _spkResultHTML(q, raw) {
     <div style="font-size:15px;font-style:italic;color:#1e293b;margin-bottom:8px;">“${esc(raw)}”</div>
     ${rows ? `<ul style="list-style:none;padding:0;margin:0;font-size:14px;font-weight:700;">${rows}</ul>` : ''}
     ${tips}
-    <div style="margin-top:8px;font-size:13px;font-weight:800;color:${all ? '#166534' : '#92400e'};">${all ? '🎉 Ottimo!' : 'Puoi riprovare quante volte vuoi: conta l\'ultima.'}</div>
+    <div style="margin-top:8px;font-size:13px;font-weight:800;color:${all ? '#166534' : '#92400e'};">${all ? '🎉 Ottimo!' : 'Premi 🎤 Riprova quante volte vuoi: conta l\'ultima risposta.'}</div>
+    ${tries > 1 ? `<div style="margin-top:4px;font-size:11px;color:var(--muted);">Tentativo n. ${tries}${all ? ' · puoi comunque riprovare se vuoi migliorarla' : ''}</div>` : (all ? '<div style="margin-top:4px;font-size:11px;color:var(--muted);">Se vuoi migliorarla puoi sempre riprovare.</div>' : '')}
   </div>`;
 }
 function _spkSetAnswer(i, raw) {
@@ -13719,7 +13724,7 @@ function _spkSetAnswer(i, raw) {
   S.answers[i] = raw;
   S.skipped = (S.skipped || []).filter(x => x !== i);
   const out = document.getElementById('spk-out');
-  if (out) out.innerHTML = _spkResultHTML(q, raw);
+  if (out) out.innerHTML = _spkResultHTML(q, raw, S.spkTries[st.k]);
   const mb = document.getElementById('spk-model-box');
   if (mb) mb.style.display = '';
   try { pushProgress(); updateNavButtons(); } catch(e) {}
@@ -13746,12 +13751,13 @@ function spkToggleMic(i) {
     };
     _spkRec.onend = () => {
       _spkBusy = false;
-      const b = document.getElementById('spk-mic');
-      if (b) b.textContent = '🎤 ' + (q.free ? 'Inizia a parlare' : 'Parla');
       if (text.trim()) {
         const n = document.getElementById('spk-note'); if (n) n.textContent = '';
         if (S.qIndex === i) _spkSetAnswer(i, text.trim());
       }
+      // Dopo la risposta il pulsante diventa "Riprova"
+      const b = document.getElementById('spk-mic');
+      if (b) b.textContent = _spkMicLabel(q, i);
     };
     _spkRec.start(); _spkBusy = true;
   } catch(e) { _spkBusy = false; if (note) note.textContent = '⚠️ Microfono non disponibile.'; return; }
@@ -13779,7 +13785,7 @@ function spkSpeak(i) {
 // Ripristino quando si torna sulla domanda
 function _spkRestore(i, a) {
   const out = document.getElementById('spk-out');
-  if (out && a) out.innerHTML = _spkResultHTML(S.activity.questions[i], a);
+  if (out && a) out.innerHTML = _spkResultHTML(S.activity.questions[i], a, _spkState(i).tries);
 }
 // Indici (ordine di svolgimento) delle domande a voce fatte senza microfono
 function _spkNoMicIdx() {
