@@ -404,8 +404,9 @@
         .back-btn {
             background: #95a5a6;
             border: none;
-            padding: 8px 16px;
-            font-size: 12px;
+            padding: 10px 20px;
+            font-size: 16px;
+            font-weight: 700;
         }
         
         .form-group {
@@ -2648,8 +2649,8 @@
             <div id="studentDetailView" class="hidden">
                 <div style="padding:8px 0 4px 0; display:flex; align-items:center; justify-content:space-between;">
                     <div style="display:flex;align-items:center;gap:8px;">
-                        <button class="back-btn" onclick="showDashboard()" style="font-size:14px;padding:6px 18px;">⌂ Dashboard</button>
-                        <button class="back-btn" onclick="backToClass()" style="font-size:14px;padding:6px 18px;">← Torna alla Classe</button>
+                        <button class="back-btn" onclick="showDashboard()" style="font-size:16px;font-weight:700;padding:8px 20px;">⌂ Dashboard</button>
+                        <button class="back-btn" onclick="backToClass()" style="font-size:16px;font-weight:700;padding:8px 20px;">← Torna alla Classe</button>
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;">
                         <button onclick="navigateStudent(-1)" title="Studente precedente"
@@ -22402,6 +22403,38 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
         return c;
     }
 
+    /** Più ore nello stesso giorno (es. 1G con 2 ore): ogni ora prende una lezione
+     *  DIVERSA della classe parallela, in ordine. Con n ore, come "prima" le ultime n
+     *  lezioni prima del giorno (la 1ª ora la più vecchia, l'ultima la più recente),
+     *  come "dopo" le prime n lezioni dopo. Si usa una sola classe parallela per lato
+     *  (quella con la lezione più vicina), così le ore seguono la sua sequenza e non
+     *  la stessa lezione fatta da due classi parallele. → [{ prima, dopo }] per ora */
+    function _lezioniParalleleBlocco(classe, dateStr, ore) {
+        const key = (d, o) => d + '_' + String(parseInt(o) || 1).padStart(2, '0');
+        const kFirst = key(dateStr, ore[0]), kLast = key(dateStr, ore[ore.length - 1]);
+        const n = ore.length;
+        let bestPrima = null, bestDopo = null;
+        _classiParallele(classe).forEach(cl => {
+            const saltati = cl.pianificazione?.giorniSaltati || {};
+            const lst = (cl.pianificazione?.piano || [])
+                .filter(p => p.data && !saltati[p.data] && _pdHasPianoA(p.pianoDettagliato))
+                .map(p => ({ cl, lz: p, k: key(p.data, p.ora) }))
+                .sort((a, b) => a.k < b.k ? -1 : a.k > b.k ? 1 : 0);
+            const prima = lst.filter(x => x.k < kFirst), dopo = lst.filter(x => x.k > kLast);
+            if (prima.length && (!bestPrima || prima[prima.length - 1].k > bestPrima[bestPrima.length - 1].k)) bestPrima = prima;
+            if (dopo.length && (!bestDopo || dopo[0].k < bestDopo[0].k)) bestDopo = dopo;
+        });
+        return ore.map((_, i) => {
+            let prima = null, dopo = null;
+            if (bestPrima) {
+                const j = bestPrima.length - n + i;   // meno lezioni che ore: le prime ore prendono quelle che ci sono
+                prima = bestPrima[j >= 0 ? j : i] || null;
+            }
+            if (bestDopo) dopo = bestDopo[i] || null;
+            return { prima, dopo };
+        });
+    }
+
     /** Lezioni con piano delle classi parallele più vicine a lz: { prima, dopo } */
     function _lezioniParalleleVicine(classe, lz) {
         const key = (d, o) => d + '_' + String(parseInt(o) || 1).padStart(2, '0');
@@ -22481,7 +22514,11 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
         (data.classi || []).forEach(classe => {
             if (classe.pianificazione?.giorniSaltati?.[dateStr]) return;
             const piano = classe.pianificazione?.piano || [];
-            (classe.pianificazione?.orario || []).filter(s => s.giornoNum === dow).forEach(s => {
+            // Ore della classe in quel giorno, in ordine: ognuna riceve una lezione parallela diversa
+            const oreGiorno = (classe.pianificazione?.orario || []).filter(s => s.giornoNum === dow)
+                .sort((a, b) => (parseInt(a.ora) || 1) - (parseInt(b.ora) || 1));
+            const blocco = oreGiorno.length > 1 ? _lezioniParalleleBlocco(classe, dateStr, oreGiorno.map(s => s.ora)) : null;
+            oreGiorno.forEach((s, iOra) => {
                 const sid = slotId(dateStr, s.ora);
                 const lz = piano.find(p => lzMatchesSlot(p, { id: sid, data: dateStr, ora: s.ora }))
                         || { data: dateStr, ora: s.ora };
@@ -22498,7 +22535,7 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
                 const par = _classiParallele(classe);
                 if (!_annoClasse(classe.nome)) { perche(classe, s.ora, `dal nome "${classe.nome}" non si capisce l'anno`); return; }
                 if (!par.length) { perche(classe, s.ora, 'nessuna classe parallela (stesso anno) in MyClass'); return; }
-                const { prima, dopo } = _lezioniParalleleVicine(classe, lz);
+                const { prima, dopo } = blocco ? blocco[iOra] : _lezioniParalleleVicine(classe, lz);
                 if (!prima && !dopo) { perche(classe, s.ora, `nessuna lezione con piano in ${par.map(c => c.nome).join(', ')}`); return; }
                 diag.proposte++;
                 const opz = (lato, v) => v && {
