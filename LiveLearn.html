@@ -8250,9 +8250,9 @@ function _solRender() {
     live += '<div class="sol-stats"><span class="sol-stat">✅ Giusto: ' + st.ok + '</span>' +
       (st.part ? '<span class="sol-stat">🔶 In parte: ' + st.part + '</span>' : '') +
       '<span class="sol-stat">❌ Sbagliato: ' + st.ko + '</span>' +
-      (st.none ? '<span class="sol-stat">⏳ Senza risposta: ' + st.none + '</span>' : '') + '</div>' + _solNoneHTML(st);
+      (st.none ? '<span class="sol-stat">⏳ Non completata: ' + st.none + '</span>' : '') + '</div>' + _solNoneHTML(st);
   } else {
-    live += '<div class="sol-stats"><span class="sol-stat">✍️ Risposte: ' + (st.tot - st.none) + '/' + st.tot + '</span>' +
+    live += '<div class="sol-stats"><span class="sol-stat">✍️ Completate: ' + (st.tot - st.none) + '/' + st.tot + '</span>' +
       (S.liveTimer > 0 ? '<span class="sol-stat" id="sol-clock"></span>' : '') + '</div>' + _solNoneHTML(st) +
       '<div class="sol-wait">' + (sol ? 'La soluzione compare qui e sugli schermi degli alunni quando premi “👁 Mostra la soluzione”.'
         : 'Domanda senza soluzione da mostrare (sondaggio o risposta aperta).') + '</div>';
@@ -8286,11 +8286,11 @@ function _solRender() {
   if (shown) _solMarkCard(ov.querySelector('.sol-card'), q);
   _solTick();
 }
-// Chi non ha ancora risposto (nome del registro se associato), in ordine alfabetico
+// Chi non ha ancora completato la domanda (nome del registro se associato), in ordine alfabetico
 function _solNoneHTML(st) {
   if (!st.noneNames.length) return '';
   const nomi = st.noneNames.map(n => String(n).trim()).sort((a, b) => a.localeCompare(b, 'it'));
-  return '<div class="sol-none"><div class="h">⏳ Non hanno ancora risposto (' + nomi.length + ')</div>' +
+  return '<div class="sol-none"><div class="h">⏳ Devono ancora completare la domanda (' + nomi.length + ')</div>' +
     nomi.map(n => '<span class="sol-none-n">' + esc(n) + '</span>').join('') + '</div>';
 }
 function _solTick() {
@@ -8302,19 +8302,48 @@ function _solTick() {
 
 // ══════════════════════════════════════════════════════════════
 // AIUTO BLOCCATO (q.lockedHint, solo Controllo docente)
-// L'aiuto della domanda resta chiuso finché tutti hanno scritto una risposta
+// L'aiuto della domanda resta chiuso finché tutti hanno completato la risposta
 // (nel torneo: i giocatori ancora in gara nel turno), poi il docente lo apre
 // scrivendo control/<codice>/hintQ = indice domanda. L'alunno che lo usa lo
 // segna in tourHint: nel torneo quella risposta vale mezzo punto.
 // ══════════════════════════════════════════════════════════════
+// Ha risposto = ha completato la domanda (tutti gli spazi, tutte le coppie, tutte
+// le parole…), non basta averla iniziata. Valutato sulla versione dell'alunno.
 function _hintAnswered(resp, i, key) {
   if (!resp) return false;
   // Torneo: conta solo chi ha inviato (✓ Invia risposta, clic su un'opzione o tempo scaduto)
   if (S.liveTournament) return fbArr(resp.tourDone)[_tourQ(S._tour, key, i)] === true;
   const a = fbArr(resp.answers)[i];
+  let q = null;
+  try { q = getStudentAssignedQuestions(key, resp.name, resp.aliasOf, resp.studentVersion, null, resp.answers)[i]; } catch(e) {}
+  return _answerComplete(q || (S.liveActivity?.questions || [])[i], a);
+}
+// La risposta a copre tutte le parti della domanda q? (senza q: basta che non sia vuota)
+function _answerComplete(q, a) {
+  const filled = x => x != null && String(x).trim() !== '';
   if (a == null) return false;
-  if (typeof a === 'object') return fbArr(a).some(x => String(x == null ? '' : x).trim() !== '');
-  return String(a).trim() !== '';
+  if (typeof a !== 'object') { if (!filled(a)) return false; }
+  else if (!Array.isArray(a) && a.noMic) return true;           // speaking senza microfono
+  const { kind, inner } = _qKind(q);
+  if (!q || !inner) return typeof a === 'object' ? fbArr(a).some(filled) : true;
+  const arr = typeof a === 'object' ? fbArr(a) : [a];
+  const all = n => { for (let x = 0; x < Math.max(1, n); x++) if (!filled(arr[x])) return false; return true; };
+  switch (kind) {
+    case 'cloze': case 'fill-blanks':
+      return all(_countBlanks(inner.text) || (inner.answers || []).length);
+    case 'drag-drop':
+      return all((inner.answers || []).length ||
+        (inner.sentences || []).reduce((n, s) => n + ((String(s).match(/___/g) || []).length || 1), 0));
+    case 'matching': return all((inner.left || []).length);
+    case 'categorization': return all((inner.items || inner.answers || []).length);
+    case 'reorder': {
+      // Ogni frase con tutte le sue parole messe in fila
+      const ss = inner.sentences || [];
+      return all(ss.length) && ss.every((s, x) =>
+        String(arr[x]).trim().split(/\s+/).length >= String(s).split(' ').filter(Boolean).length);
+    }
+    default: return typeof a === 'object' ? fbArr(a).some(filled) : true;
+  }
 }
 function _hintPlayers() {
   const resp = S._liveResp || {};

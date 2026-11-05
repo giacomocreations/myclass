@@ -1875,7 +1875,8 @@ function openLesson(key){
 // mostrava le sessioni concluse e i compiti delle lezioni, quindi l'attività
 // ancora da svolgere non c'era. Resta tra le cose da fare finché la sessione
 // è aperta, non è scaduta e l'alunno non l'ha consegnata (se è ripetibile
-// resta, segnata come già svolta).
+// resta, segnata come già svolta). Svolta = consegnata: chi l'ha iniziata e
+// non l'ha consegnata la ritrova tra le cose da fare con "Concludi".
 // Tutte le attività assegnate ancora aperte e non scadute, anche quelle già
 // consegnate (in Agenda restano visibili come "consegnata").
 function _assignedAll(){
@@ -1900,7 +1901,7 @@ function _assignedAll(){
     if(!due && assigned){ const nl = nextLessonDate(assigned); if(nl) due = (deadline && deadline < nl) ? deadline : nl; }
     if(!due) due = deadline;
     out.push({ code, title: info.title || (m.text||'').split('\n')[0].replace(/^📋 Compito assegnato:\s*/,''),
-               deadline, due, done, repeatable: !!info.repeatable,
+               deadline, due, done, started: !done && !!info.started, repeatable: !!info.repeatable,
                assigned,
                url: llLinkWithName(m.url ? ensureUrl(m.url) : ('LiveLearn.html?code='+code)) });
   });
@@ -1948,12 +1949,12 @@ function _risorsaLinkOnly(r, col){
 function _llLinkHtml(a){
   return `<a href="${esc(a.url).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()"
     style="display:flex;align-items:center;gap:8px;padding:9px 10px;background:${a.done&&!a.repeatable?'#f1f5f9':'var(--purple)'};border-radius:10px;margin-top:6px;text-decoration:none;">
-    <span style="font-size:15px;flex-shrink:0">${a.done?'✅':'▶'}</span>
+    <span style="font-size:15px;flex-shrink:0">${a.done?'✅':a.started?'⏸':'▶'}</span>
     <span style="flex:1;min-width:0">
       <span style="display:block;font-size:13px;font-weight:600;color:${a.done&&!a.repeatable?'#475569':'#fff'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.title||'Attività LiveLearn')}</span>
-      <span style="display:block;font-size:10px;color:${a.done&&!a.repeatable?'#64748b':'rgba(255,255,255,.8)'}">LiveLearn · codice ${esc(a.code)}${a.done?(a.repeatable?' · già svolta, puoi rifarla':' · consegnata'):''}${!a.done&&a.deadline&&a.deadline!==a.due?' · si chiude il '+esc(fmtDate(a.deadline)):''}</span>
+      <span style="display:block;font-size:10px;color:${a.done&&!a.repeatable?'#64748b':'rgba(255,255,255,.8)'}">LiveLearn · codice ${esc(a.code)}${a.done?(a.repeatable?' · già svolta, puoi rifarla':' · consegnata'):a.started?' · iniziata, non ancora consegnata':''}${!a.done&&a.deadline&&a.deadline!==a.due?' · si chiude il '+esc(fmtDate(a.deadline)):''}</span>
     </span>
-    ${a.done&&!a.repeatable?'':`<span style="font-size:11px;color:#fff;flex-shrink:0;font-weight:700">Svolgi ↗</span>`}
+    ${a.done&&!a.repeatable?'':`<span style="font-size:11px;color:#fff;flex-shrink:0;font-weight:700">${a.started?'Concludi':'Svolgi'} ↗</span>`}
   </a>`;
 }
 // Blocco "da fare" sotto un compito: materiali per compito + attività LiveLearn
@@ -1965,18 +1966,30 @@ function _hwExtrasHtml(ris, lls){
   return h + `</div>`;
 }
 
-async function _loadAssignInfo(code){
-  S._assignInfo[code] = 'loading';
+// Risposte salvate (array o oggetto di Firebase): ce n'è almeno una non vuota?
+function _haRisposte(ans){
+  if(!ans || typeof ans!=='object') return false;
+  return Object.values(ans).some(a=> a!=null && (typeof a==='object' ? _haRisposte(a) || a.noMic===true : String(a).trim()!==''));
+}
+// refresh: rilettura con l'attività già in elenco, che resta com'era finché
+// non arriva lo stato nuovo (niente sparizioni a ogni rientro nell'app)
+async function _loadAssignInfo(code, refresh){
+  const mark = refresh ? (S._assignInfo[code] = Object.assign({}, S._assignInfo[code])) : (S._assignInfo[code] = 'loading');
   let info = null;
   try {
     const sess = (await db.ref('livelearn/sessions/'+code).get()).val();
     if(sess){
-      let done = false;
-      try { const r = await _leggiMiaRisposta(db, code, S.studentName, S.studentSafe); done = !!(r && r.submittedAt); } catch(e){}
-      info = { status: sess.status, deadline: sess.deadline||null, dueFor: sess.dueFor||null, title: sess.title||'', repeatable: !!sess.repeatable, done };
+      let done = false, started = false;
+      try {
+        const r = await _leggiMiaRisposta(db, code, S.studentName, S.studentSafe);
+        done = !!(r && r.submittedAt);
+        // Iniziata ma non consegnata: almeno una risposta salvata
+        started = !done && !!r && _haRisposte(r.answers);
+      } catch(e){}
+      info = { status: sess.status, deadline: sess.deadline||null, dueFor: sess.dueFor||null, title: sess.title||'', repeatable: !!sess.repeatable, done, started };
     }
   } catch(e){ /* sessione non leggibile: non si mostra */ }
-  if(S._assignInfo[code] !== 'loading') return; // bacheca cambiata nel frattempo
+  if(S._assignInfo[code] !== mark) return; // bacheca cambiata nel frattempo
   S._assignInfo[code] = info;
   renderCompiti();
   // Le attività assegnate compaiono anche tra i compiti in Agenda
@@ -2174,10 +2187,11 @@ function renderCompiti(){
               <span class="pill pill-gray">Codice ${esc(a.code)}</span>
               ${a.due?`<span class="pill pill-amber">📌 Da fare per ${esc(fmtDate(a.due))}</span>`:''}
               ${a.done?`<span class="pill pill-teal">Già svolto · puoi rifarlo</span>`:''}
+              ${a.started?`<span class="pill pill-amber">⏸ Iniziato · da concludere</span>`:''}
             </div>
           </div>${a.deadline?scadBadge(a.deadline):''}
         </div>
-        <a href="${esc(a.url).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" style="display:block;padding:10px;background:var(--purple);color:#fff;border-radius:10px;text-align:center;font-size:13px;font-weight:600;text-decoration:none">▶ Svolgi in LiveLearn</a>
+        <a href="${esc(a.url).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" style="display:block;padding:10px;background:var(--purple);color:#fff;border-radius:10px;text-align:center;font-size:13px;font-weight:600;text-decoration:none">${a.started?'⏸ Concludi in LiveLearn':'▶ Svolgi in LiveLearn'}</a>
       </div>`;
     });
   }
@@ -4713,6 +4727,11 @@ setInterval(() => _checkPageVersion(true), 10 * 60 * 1000);
 document.addEventListener('visibilitychange', () => {
   if(document.visibilityState !== 'visible') { if(_updPending) _tryAutoReload(); return; }
   _checkPageVersion(false);
+  // Di ritorno da LiveLearn: un'attività assegnata può essere stata iniziata o consegnata
+  if(S.code && db) Object.keys(S._assignInfo||{}).forEach(c=>{
+    const v = S._assignInfo[c];
+    if(v && v!=='loading' && v.status==='assigned') _loadAssignInfo(c, true);
+  });
   if(_updPending) _tryAutoReload();
   navigator.serviceWorker?.getRegistration?.().then(reg => reg && reg.update()).catch(() => {});
 });
