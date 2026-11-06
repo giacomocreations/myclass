@@ -1528,8 +1528,8 @@ const CONFIG = {
     <div style="text-align:center;margin-bottom:24px;">
       <div style="font-size:52px;margin-bottom:12px;animation:pulse 2s infinite;">✋</div>
       <h2 style="font-size:22px;font-weight:800;margin-bottom:6px;color:var(--primary);">Sei dentro!</h2>
-      <p style="font-size:14px;color:var(--text);font-weight:600;margin-bottom:4px;">Aspetta che il professore avvii la sessione.</p>
-      <p class="text-muted" style="font-size:12px;">La prova parte in automatico — non ricaricare la pagina.</p>
+      <p id="waiting-sub" style="font-size:14px;color:var(--text);font-weight:600;margin-bottom:4px;">Aspetta che il professore avvii la sessione.</p>
+      <p id="waiting-hint" class="text-muted" style="font-size:12px;">La prova parte in automatico — non ricaricare la pagina.</p>
       <div style="display:inline-flex;align-items:center;gap:16px;margin-top:16px;background:white;border:2px solid var(--border);border-radius:14px;padding:12px 24px;box-shadow:var(--shadow);">
         <div>
           <div style="font-size:10px;font-weight:700;color:var(--muted);letter-spacing:0.5px;">CODICE</div>
@@ -1544,7 +1544,7 @@ const CONFIG = {
       <div style="margin-top:12px;" id="waiting-version-badge"></div>
       <!-- Nome non trovato nel registro: si aspetta l'associazione del docente -->
       <div id="waiting-unrecognized" style="display:none;margin-top:16px;background:#fffbeb;border:2px solid #f59e0b;border-radius:14px;padding:14px 18px;text-align:left;font-size:14px;line-height:1.5;color:#78350f;"></div>
-      <div style="text-align:left;"><div class="enter-rejoin-note" id="waiting-rejoin-note">
+      <div id="waiting-rejoin-wrap" style="text-align:left;"><div class="enter-rejoin-note" id="waiting-rejoin-note">
         💡 <strong>Sei uscito/a dall'attività per sbaglio?</strong> (rete che salta, pagina chiusa o altro)<br>
         Niente paura, non devi ricominciare: <span class="ll-sa-only">riapri l'attività dalla <strong>StudentApp</strong> o ricarica questa pagina</span><span class="ll-qo-only">ricarica questa pagina</span>,
         rientra con <strong>lo stesso nome e lo stesso codice</strong>, possibilmente dallo <strong>stesso dispositivo</strong>, e continua da dove eri.
@@ -6837,9 +6837,12 @@ async function confirmStartSession() {
       return;
     }
 
-    // ── Scheda di ripasso in lobby ──────────────────────────────────────────
-    const _actData = (await _actGet(S.pendingActivityId)) || {};
-    if (_actData.revisionSheet) {
+    // ── Scheda di ripasso in lobby: solo se qualcuno fa il test (nelle altre
+    // modalità la sala d'attesa mostra solo l'avviso di attesa) ────────────────
+    const _rsServe = mode === 'test' || Object.values(studentModes).includes('test');
+    const _actData = _rsServe ? ((await _actGet(S.pendingActivityId)) || {}) : {};
+    if (!_rsServe) { /* niente scheda */ }
+    else if (_actData.revisionSheet) {
       await db.ref('livelearn/sessions/' + code + '/revisionSheet').set(_actData.revisionSheet).catch(()=>{});
     } else {
       const _rsKey = _tchrKey || localStorage.getItem('gemini_api_key');
@@ -8579,13 +8582,15 @@ function _trCollect() {
 }
 function _trDictKey(t) { return t.replace(/^[^A-Za-zÀ-ÿ]+/, '').trim(); }
 
-// AI della sessione, nell'ordine: AI locale del docente (relay "🤖 AI Locale", passa da
-// Firebase al PC del docente), Gemini con la chiave condivisa dalla sessione, Anthropic.
-// Gemini va con la fetch nativa: quella intercettata la bloccherebbe se la sessione usa l'AI locale.
+// Traduzione con Claude Haiku, come il feedback dopo il test: la chiave Anthropic
+// arriva dalla sessione (sharedAnthropicKey). Mai l'AI locale del docente: passava
+// dal suo PC e poteva restare in attesa fino a 3 minuti. Solo se manca la chiave
+// Anthropic (o Haiku non risponde) si prova Gemini con la chiave della sessione,
+// con la fetch nativa (quella intercettata la manderebbe all'AI locale).
 async function _trAI(prompt) {
-  if (_AI_RELAY_ENABLED) {
-    try { const t = await _firebaseRelay(prompt); if (t) return t; }
-    catch(e) { console.warn('[traduzione] AI locale:', e.message); }
+  if (localStorage.getItem('anthropic_api_key')) {
+    try { const t = await _callHaikuStudent(prompt, 1500); if (t) return t; }
+    catch(e) { console.warn('[traduzione] Haiku:', e.message); }
   }
   const gk = localStorage.getItem('gemini_api_key');
   if (gk) {
@@ -8598,10 +8603,7 @@ async function _trAI(prompt) {
       } else console.warn('[traduzione] Gemini HTTP', res.status);
     } catch(e) { console.warn('[traduzione] Gemini:', e.message); }
   }
-  let t = null;
-  try { t = await _callHaikuStudent(prompt, 1500); } catch(e) { console.warn('[traduzione] Anthropic:', e.message); }
-  if (!t) throw new Error('AI non disponibile (né AI locale attiva, né chiave Gemini/Anthropic nella sessione)');
-  return t;
+  throw new Error('AI non disponibile (nessuna chiave Anthropic o Gemini nella sessione)');
 }
 
 // Nomi confrontati come nel riconoscimento del registro: senza accenti e maiuscole,
@@ -8647,7 +8649,7 @@ async function openTranslateSettings(classId) {
   ov.className = 'modal-overlay';
   ov.innerHTML = '<div class="modal-box" style="max-width:480px;max-height:88vh;overflow-y:auto;">' +
     '<h2>🌐 Traduzione della consegna · ' + esc(cl.nome || classId) + '</h2>' +
-    '<p class="text-muted" style="font-size:12px;margin-bottom:12px;">Solo gli alunni con una lingua vedono il menu 🌐 nelle attività: traduce la consegna e i messaggi in italiano, mai l\'esercizio in inglese. Le consegne scritte da te usano l\'AI della sessione (una volta per consegna, poi resta sul PC dell\'alunno).</p>' +
+    '<p class="text-muted" style="font-size:12px;margin-bottom:12px;">Solo gli alunni con una lingua vedono il menu 🌐 nelle attività: traduce la consegna e i messaggi in italiano, mai l\'esercizio in inglese. Le consegne scritte da te si traducono con Claude Haiku, come il feedback dopo il test: serve la chiave Anthropic nelle impostazioni AI (una volta per consegna, poi resta sul PC dell\'alunno).</p>' +
     rows +
     '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;"><button class="btn btn-ghost btn-sm" onclick="document.getElementById(\'modal-translate\').remove()">Annulla</button>' +
     '<button class="btn btn-primary btn-sm" onclick="saveTranslateSettings(\'' + esc(classId) + '\')">💾 Salva</button></div></div>';
@@ -8676,7 +8678,7 @@ function _trRender(lang, segs, map, failed) {
   box.dir = lang === 'ar' ? 'rtl' : 'ltr';
   box.innerHTML = '<div class="tr-head">🌐 ' + _TR_LANGS[lang] + '</div>' + lines +
     (failed ? '<div class="tr-line tr-wait">⚠️ Translation not available right now.</div>' +
-      '<div class="tr-line tr-wait" style="font-size:12px;">Per il prof: attiva 🤖 AI Locale nella sessione, oppure imposta la chiave Gemini prima di avviarla.</div>' : '');
+      '<div class="tr-line tr-wait" style="font-size:12px;">Per il prof: imposta la chiave Anthropic (Haiku) nelle impostazioni AI prima di avviare la sessione.</div>' : '');
   box.style.display = '';
 }
 async function _trRefresh() {
@@ -12244,6 +12246,7 @@ async function studentEnter() {
     document.getElementById('waiting-name').textContent = studentName;
     const _wvB = document.getElementById('waiting-version-badge');
     if (_wvB) _wvB.innerHTML = '';
+    _setWaitingMode(S.sessionMode, null);
     showView('student-waiting');
     try {
       await db.ref('livelearn/responses/' + code + '/' + safeName).update({ status: 'lobby', lobbyAt: Date.now(), unrecognized: true });
@@ -12277,11 +12280,11 @@ async function studentEnter() {
   if (_wvBadge) _wvBadge.innerHTML = '';
   showView('student-waiting');
 
-  // ── Carica scheda di ripasso ──────────────────────────────────────────────
-  _loadLobbyRevisionSheet(code);
+  // ── Scheda di ripasso (solo nel test) ─────────────────────────────────────
+  _setWaitingMode(S.sessionMode, code);
   // ── Carica mini-dashboard storico per lo studente ──────────────────────
   // PERF FIX 2c: passa session.classId già in memoria (evita GET ridondante dentro _loadLobbyStats)
-  _loadLobbyStats(code, session.classId || null);
+  if (S.sessionMode === 'test') _loadLobbyStats(code, session.classId || null);
 
   if (S.sessionMode === 'teacher') {
     // Modalità teacher: aspetta che il docente avanzi la domanda via Firebase
@@ -12584,10 +12587,14 @@ function _loadLobbyRevisionSheet(code) {
       rsCont.style.display = 'block';
       rsCont.innerHTML     = _renderRevisionSheet(val);
     } else {
-      // Ancora non disponibile: mostra lo spinner di attesa
+      // Ancora non disponibile: mostra lo spinner di attesa. Se dopo 40s non c'è
+      // (sessione nata come esercitazione e alunno passato al test: la scheda
+      // non si genera) lo spinner sparisce invece di restare per sempre.
       rsBox.style.display  = 'block';
       rsLoad.style.display = 'block';
       rsCont.style.display = 'none';
+      clearTimeout(S._rsWaitTimer);
+      S._rsWaitTimer = setTimeout(() => { if (rsCont.style.display === 'none') rsBox.style.display = 'none'; }, 40000);
     }
   }, err => { console.warn('revisionSheet listener error:', err.message); });
 
@@ -12641,7 +12648,26 @@ function _listenForModeChange(code, safeName, baseMode) {
     S.sessionMode = m;
     const actView = document.getElementById('view-student-activity');
     if (actView && actView.classList.contains('active')) renderQuestion();
+    // Ancora in sala d'attesa: consigli del test solo se ora è un test
+    const waitView = document.getElementById('view-student-waiting');
+    if (waitView && waitView.classList.contains('active')) _setWaitingMode(m, code);
   });
+}
+
+// Sala d'attesa secondo la modalità: nel test i consigli e la scheda di ripasso;
+// in esercitazione, Controllo docente e nelle altre modalità solo l'avviso che
+// il docente tra poco fa entrare nell'attività (i consigli del test non c'entrano).
+function _setWaitingMode(mode, code) {
+  const test = mode === 'test';
+  const set = (id, show) => { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; };
+  const sub = document.getElementById('waiting-sub');
+  if (sub) sub.textContent = test ? 'Aspetta che il professore avvii la sessione.' : 'Il docente tra poco ti farà entrare nell\'attività.';
+  set('waiting-hint', test);
+  set('waiting-rejoin-wrap', test);
+  if (test) { if (code) _loadLobbyRevisionSheet(code); return; }
+  _stopLobbyRevisionListener();
+  set('lobby-revision-sheet', false);
+  set('lobby-stats-panel', false);
 }
 
 // Riquadro della sala d'attesa per chi ha scritto un nome che non è nel registro
@@ -12651,9 +12677,9 @@ function _setWaitingUnrecognized(on, associated) {
   if (!on) { box.style.display = 'none'; box.innerHTML = ''; return; }
   box.style.display = 'block';
   box.innerHTML = associated
-    ? '<strong>✅ Il prof ti ha riconosciuto.</strong><br>Aspetta l\'avvio: la prova parte da sola.'
+    ? '<strong>✅ Il prof ti ha riconosciuto.</strong><br>Aspetta l\'avvio: l\'attività parte da sola.'
     : '<strong>⏸ Il tuo nome non è nella lista della classe.</strong><br>' +
-      'Non ricaricare la pagina e alza la mano: il prof ti collega al tuo nome e la prova parte da sola. ' +
+      'Non ricaricare la pagina e alza la mano: il prof ti collega al tuo nome e l\'attività parte da sola. ' +
       'Così ricevi il compito giusto per te.';
 }
 
@@ -23859,7 +23885,6 @@ function _startRelayConfigListener() {
 
     // Se il relay si è appena ATTIVATO e c'era un errore quota pendente → riprova
     if (_AI_RELAY_ENABLED && !wasEnabled) {
-      S._trFail = {}; if (S._trAllowed) _trSoon(); // traduzione della consegna rimasta in sospeso
       if (typeof S._relayPendingRetry === 'function') {
         const fn=S._relayPendingRetry; S._relayPendingRetry=null; setTimeout(fn,500);
       }
