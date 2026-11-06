@@ -7669,66 +7669,141 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
         // ================================================================
         // PEER TUTORING
         // ================================================================
-        function renderPeerTutoring(comp, btn) {
-            // Update active button
-            document.querySelectorAll('#peerTabs .comp-year-btn').forEach(b => b.classList.remove('active'));
-            if (btn) btn.classList.add('active');
+        // Tutti gli alunni della classe vengono disposti: ordinati per media (chi
+        // non ha voti in fondo), la metà alta fa da tutor e la metà bassa da
+        // tutee, nello stesso ordine (1° con il 1° della metà bassa, 2° con il
+        // 2°…). Se sono dispari, l'ultimo va nel gruppo del primo tutor: un
+        // gruppo da 3. I gruppi scelti a mano dal docente (classe.peerFissi,
+        // elenchi di chiavi "cognome nome") restano come sono e valgono per
+        // tutte le competenze; gli altri alunni si ridispongono da soli.
+        function _peerKey(s) { return (s.cognome + ' ' + s.nome).toLowerCase(); }
+        function _peerScore(s, comp) {
+            const _oe = _effectiveGrades(s.orale || []);
+            const _se = _effectiveGrades(s.scritto || []);
+            const og = _oe.length ? _oe.reduce((a,b)=>a+b.voto,0)/_oe.length : null;
+            const sg = _se.length ? _se.reduce((a,b)=>a+b.voto,0)/_se.length : null;
+            if (comp === 'orale') return og;
+            if (comp === 'scritto') return sg;
+            return (og!=null&&sg!=null) ? (og+sg)/2 : (og ?? sg);
+        }
+        // Gruppi fissati a mano, ripuliti: solo alunni ancora in classe, ognuno
+        // in un gruppo solo, gruppi di almeno 2
+        function _peerFissi(classe) {
+            const inClasse = new Set((classe.studenti || []).map(_peerKey));
+            const visti = new Set();
+            return (Array.isArray(classe.peerFissi) ? classe.peerFissi : []).map(g =>
+                (Array.isArray(g) ? g : []).filter(k => inClasse.has(k) && !visti.has(k) && visti.add(k))
+            ).filter(g => g.length >= 2);
+        }
+        function _peerGruppi(classe, comp) {
+            const cmp = (a, b) => (a.score == null) - (b.score == null) || (b.score - a.score) || a.nome.localeCompare(b.nome, 'it');
+            const tutti = (classe.studenti || []).map(s => ({ s, key: _peerKey(s), nome: s.nome + ' ' + s.cognome, score: _peerScore(s, comp) }));
+            const perKey = new Map(tutti.map(x => [x.key, x]));
+            const gruppi = _peerFissi(classe).map(g => ({ membri: g.map(k => perKey.get(k)).sort(cmp), fisso: true }));
+            const fissati = new Set(gruppi.flatMap(g => g.membri.map(m => m.key)));
+            const liberi = tutti.filter(x => !fissati.has(x.key)).sort(cmp);
+            const p = Math.floor(liberi.length / 2);
+            const auto = [];
+            for (let i = 0; i < p; i++) auto.push({ membri: [liberi[i], liberi[p + i]], fisso: false });
+            if (liberi.length % 2) {
+                const ultimo = liberi[liberi.length - 1];
+                if (auto.length) auto[0].membri.push(ultimo);
+                else if (gruppi.length) gruppi.reduce((a, b) => b.membri.length < a.membri.length ? b : a).membri.push(Object.assign({ aggiunto: true }, ultimo));
+                else auto.push({ membri: [ultimo], fisso: false });
+            }
+            return gruppi.concat(auto);
+        }
 
+        let _peerComp = 'orale', _peerSel = null;
+        function renderPeerTutoring(comp, btn) {
+            if (comp) _peerComp = comp; else comp = _peerComp;
+            if (btn) {
+                document.querySelectorAll('#peerTabs .comp-year-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            }
             const classe = data.classi[currentClass];
             const container = document.getElementById('peerTutoringList');
-            if (!container) return;
-
-            // Compute score per student based on comp
-            const studenti = classe.studenti.map(s => {
-                const _oe = _effectiveGrades(s.orale);
-                const _se = _effectiveGrades(s.scritto);
-                const og = _oe.length ? _oe.reduce((a,b)=>a+b.voto,0)/_oe.length : null;
-                const sg = _se.length ? _se.reduce((a,b)=>a+b.voto,0)/_se.length : null;
-                let score;
-                if (comp === 'orale') score = og;
-                else if (comp === 'scritto') score = sg;
-                else score = (og!=null&&sg!=null) ? (og+sg)/2 : (og ?? sg);
-                return { nome: s.nome + ' ' + s.cognome, score, og, sg };
-            }).filter(s => s.score != null).sort((a,b) => b.score - a.score);
-
-            if (studenti.length < 4) {
-                container.innerHTML = '<p style="color:#aaa;font-size:13px;">Servono almeno 4 studenti con valutazioni per suggerire coppie.</p>';
+            if (!container || !classe) return;
+            const nStud = (classe.studenti || []).length;
+            if (nStud < 2) {
+                container.innerHTML = '<p style="color:#aaa;font-size:13px;">Servono almeno 2 studenti per formare le coppie.</p>';
                 return;
             }
-
-            // Split into top 33% (tutor) and bottom 33% (tutee)
-            const n = Math.max(2, Math.floor(studenti.length * 0.33));
-            const tutors = studenti.slice(0, n);
-            const tutees = studenti.slice(-n);
-
+            const gruppi = _peerGruppi(classe, comp);
+            if (_peerSel && !gruppi.some(g => g.membri.some(m => m.key === _peerSel))) _peerSel = null;
             const compLabel = comp==='orale'?'Orale':comp==='scritto'?'Scritto':'Totale';
             const compIcon  = comp==='orale'?'🗣️':comp==='scritto'?'✍️':'⚖️';
-
-            let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;">';
-            tutors.forEach((tutor, i) => {
-                const tutee = tutees[i % tutees.length];
-                const delta = (tutor.score - tutee.score).toFixed(1);
-                html += '<div style="background:white;border-radius:12px;padding:14px 16px;box-shadow:0 2px 8px rgba(0,0,0,0.08);border-left:4px solid #667eea;">'
-                    + '<div style="font-size:11px;font-weight:700;color:#5c6bc0;text-transform:uppercase;margin-bottom:8px;">' + compIcon + ' Coppia ' + (i+1) + ' — ' + compLabel + '</div>'
-                    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
-                    +   '<div style="background:#e8f5e9;border-radius:8px;padding:6px 10px;flex:1;">'
-                    +     '<div style="font-size:11px;color:#2e7d32;font-weight:700;">TUTOR</div>'
-                    +     '<div style="font-weight:700;color:#1b5e20;">' + tutor.nome + '</div>'
-                    +     '<div style="font-size:12px;color:#388e3c;">Media ' + compLabel + ': <strong>' + tutor.score.toFixed(1) + '</strong></div>'
-                    +   '</div>'
-                    +   '<div style="font-size:20px;color:#ccc;">→</div>'
-                    +   '<div style="background:#fce4ec;border-radius:8px;padding:6px 10px;flex:1;">'
-                    +     '<div style="font-size:11px;color:#c62828;font-weight:700;">TUTEE</div>'
-                    +     '<div style="font-weight:700;color:#b71c1c;">' + tutee.nome + '</div>'
-                    +     '<div style="font-size:12px;color:#c62828;">Media ' + compLabel + ': <strong>' + tutee.score.toFixed(1) + '</strong></div>'
-                    +   '</div>'
+            const voto = m => m.score != null ? m.score.toFixed(1) : '—';
+            const selM = _peerSel && gruppi.flatMap(g => g.membri).find(m => m.key === _peerSel);
+            const chip = (m, ruolo) => {
+                const tutor = ruolo === 'TUTOR', sel = m.key === _peerSel;
+                const bg = tutor ? '#e8f5e9' : '#fce4ec', fg = tutor ? '#1b5e20' : '#b71c1c', lb = tutor ? '#2e7d32' : '#c62828';
+                return '<div onclick="_peerClick(\'' + encodeURIComponent(m.key).replace(/'/g, '%27') + '\')" title="' + (selM && !sel ? 'Metti ' + _escH(m.nome) + ' con ' + _escH(selM.nome) : 'Clicca per scegliere con chi metterlo') + '"'
+                    + ' style="background:' + bg + ';border-radius:8px;padding:6px 10px;flex:1;min-width:110px;cursor:pointer;'
+                    + (sel ? 'outline:3px solid #667eea;box-shadow:0 0 0 5px rgba(102,126,234,.25);' : selM ? 'outline:1px dashed #9fa8da;' : '') + '">'
+                    + '<div style="font-size:11px;color:' + lb + ';font-weight:700;">' + ruolo + (m.aggiunto ? ' · aggiunto' : '') + '</div>'
+                    + '<div style="font-weight:700;color:' + fg + ';">' + _escH(m.nome) + '</div>'
+                    + '<div style="font-size:12px;color:' + lb + ';">' + (m.score != null ? 'Media ' + compLabel + ': <strong>' + voto(m) + '</strong>' : 'Nessun voto ' + compLabel.toLowerCase()) + '</div>'
+                    + '</div>';
+            };
+            let html = '';
+            html += selM
+                ? '<div style="background:#ede7f6;border:1px solid #b39ddb;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:13px;color:#4527a0;">👉 Hai scelto <strong>' + _escH(selM.nome) + '</strong>: clicca l\'alunno da mettere con lui/lei. Gli altri si ridispongono da soli. <a href="#" onclick="_peerClick(null);return false;" style="color:#4527a0;font-weight:700;">Annulla</a></div>'
+                : '<div style="font-size:12px;color:#777;margin-bottom:10px;">✋ Per cambiare: clicca un alunno, poi quello da mettere con lui/lei. Puoi aggiungerne anche più di uno allo stesso gruppo.</div>';
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;">';
+            gruppi.forEach((g, gi) => {
+                const tre = g.membri.length > 2;
+                const titolo = tre ? 'Gruppo ' + (gi + 1) + ' (' + g.membri.length + ' alunni)' : g.membri.length === 2 ? 'Coppia ' + (gi + 1) : 'Da abbinare';
+                const sc = g.membri.filter(m => m.score != null);
+                const delta = sc.length >= 2 ? (sc[0].score - sc[sc.length-1].score).toFixed(1) : null;
+                html += '<div style="background:white;border-radius:12px;padding:14px 16px;box-shadow:0 2px 8px rgba(0,0,0,0.08);border-left:4px solid ' + (g.fisso ? '#ff9800' : '#667eea') + ';">'
+                    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">'
+                    +   '<div style="font-size:11px;font-weight:700;color:#5c6bc0;text-transform:uppercase;">' + compIcon + ' ' + titolo + ' — ' + compLabel + '</div>'
+                    +   (g.fisso ? '<button onclick="_peerSciogli(' + gi + ')" title="Questo gruppo l\'hai fatto tu: sciogli e torna alla disposizione automatica" style="border:1px solid #ffcc80;background:#fff3e0;color:#e65100;border-radius:12px;font-size:11px;font-weight:700;padding:2px 8px;cursor:pointer;">📌 Scelto da te ✕</button>' : '')
                     + '</div>'
-                    + '<div style="font-size:11px;color:#888;text-align:right;">Differenza: <strong>' + delta + ' pt</strong></div>'
+                    + '<div style="display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;margin-bottom:6px;">'
+                    +   g.membri.map((m, mi) => chip(m, mi === 0 && g.membri.length > 1 ? 'TUTOR' : 'TUTEE')).join('<div style="align-self:center;font-size:18px;color:#ccc;">' + (tre ? '+' : '→') + '</div>')
+                    + '</div>'
+                    + (delta != null ? '<div style="font-size:11px;color:#888;text-align:right;">Differenza: <strong>' + delta + ' pt</strong></div>' : '')
                     + '</div>';
             });
             html += '</div>';
-            html += '<p style="font-size:11px;color:#aaa;margin-top:10px;">Top ' + n + ' studenti come tutor, bottom ' + n + ' come tutee. Le coppie ruotano se ci sono più tutor che tutee.</p>';
+            const nFissi = gruppi.filter(g => g.fisso).length;
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;">'
+                + '<p style="font-size:11px;color:#aaa;margin:0;">' + nStud + ' alunni disposti: la metà più alta per media fa da tutor, la metà più bassa da tutee; con un numero dispari c\'è un gruppo da 3. I gruppi 📌 scelti da te valgono per Orale, Scritto e Totale.</p>'
+                + (nFissi ? '<button class="comp-year-btn" onclick="_peerAzzera()">↺ Tutto automatico</button>' : '')
+                + '</div>';
             container.innerHTML = html;
+        }
+        // Primo clic: l'alunno che resta; secondo clic: l'alunno che va nel suo gruppo
+        function _peerClick(encKey) {
+            if (encKey == null) { _peerSel = null; renderPeerTutoring(); return; }
+            const key = decodeURIComponent(encKey);
+            if (!_peerSel || _peerSel === key) { _peerSel = _peerSel === key ? null : key; renderPeerTutoring(); return; }
+            const classe = data.classi[currentClass];
+            const fissi = _peerFissi(classe).map(g => g.filter(k => k !== key));
+            let g = fissi.find(x => x.includes(_peerSel));
+            if (g) g.push(key); else fissi.push([_peerSel, key]);
+            classe.peerFissi = fissi.filter(x => x.length >= 2);
+            _peerSel = null;
+            saveData();
+            renderPeerTutoring();
+        }
+        function _peerSciogli(gi) {
+            const classe = data.classi[currentClass];
+            const fissi = _peerFissi(classe);
+            fissi.splice(gi, 1);
+            classe.peerFissi = fissi;
+            _peerSel = null;
+            saveData();
+            renderPeerTutoring();
+        }
+        function _peerAzzera() {
+            if (!confirm('Tornare alla disposizione automatica? I gruppi scelti da te in questa classe vengono tolti.')) return;
+            data.classi[currentClass].peerFissi = [];
+            _peerSel = null;
+            saveData();
+            renderPeerTutoring();
         }
 
         // ================================================================
@@ -17131,9 +17206,10 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 };
             }).sort((a,b)=>{if(a.isSospeso&&!b.isSospeso)return -1;if(!a.isSospeso&&b.isSospeso)return 1;return a.cognome.localeCompare(b.cognome);});
 
-            const con=[...studentiDati].filter(s=>s.mediaOrale!==null).sort((a,b)=>parseFloat(b.mediaOrale)-parseFloat(a.mediaOrale));
-            const nC=Math.max(2,Math.floor(con.length*0.33));
-            const coppie=con.slice(0,nC).map((t,i)=>({tutor:t,tutee:con.slice(-nC)[i%nC]}));
+            // Coppie peer tutoring: le stesse della Dashboard (tutti gli alunni,
+            // gruppo da 3 se dispari, gruppi scelti dal docente), sull'orale
+            const _datiPerKey=new Map(studentiDati.map(s=>[(s.cognome+' '+s.nome).toLowerCase(),s]));
+            const coppie=(classe.studenti||[]).length>=2?_peerGruppi(classe,'orale').map(g=>g.membri.map(m=>_datiPerKey.get(m.key)).filter(Boolean)).filter(g=>g.length):[];
 
             const griglie=data.griglie||[];
             // Selezione griglia: 1) grigliaId esplicito nel piano, 2) prima griglia se verifica orale, 3) null
@@ -18350,7 +18426,8 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             }
             function lvRendCop(){
                 const el=q('lv-cop-list');if(!el)return;
-                el.innerHTML=coppie.map(c=>`<div class="lv-copcard"><div style="font-size:calc(16px*var(--lv-z,1));font-weight:700;">${c.tutor.cognome} ${c.tutor.nome} <span style="opacity:.5;font-weight:400;">↔</span> ${c.tutee.cognome} ${c.tutee.nome}</div><div style="font-size:calc(14px*var(--lv-z,1));opacity:.5;">🗣️ ${c.tutor.mediaOrale||'—'} ↔ ${c.tutee.mediaOrale||'—'}</div></div>`).join('');
+                const sep='<span style="opacity:.5;font-weight:400;"> ↔ </span>';
+                el.innerHTML=coppie.map(g=>`<div class="lv-copcard"><div style="font-size:calc(16px*var(--lv-z,1));font-weight:700;">${g.map(m=>_escH(m.cognome+' '+m.nome)).join(sep)}</div><div style="font-size:calc(14px*var(--lv-z,1));opacity:.5;">🗣️ ${g.map(m=>m.mediaOrale||'—').join(' ↔ ')}</div></div>`).join('');
             }
 
             // ── Attività: togli / riordina / aggiungi al volo ───────────────
@@ -22796,23 +22873,13 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
             return media < 6;
         }).filter(s => !s.supporto); // esclude già citati sopra
 
-        // 3. Coppie tutor→tutee (top 33% / bottom 33% per media complessiva)
-        const studConVoti = (classe.studenti||[]).map(s => {
-            const og = _effectiveGrades(s.orale);
-            const sg = _effectiveGrades(s.scritto);
-            const all = [...og, ...sg];
-            if (!all.length) return null;
-            const media = all.reduce((a,b) => a + b.voto, 0) / all.length;
-            return { nome: _nomeS(s), media };
-        }).filter(Boolean).sort((a,b) => b.media - a.media);
-
+        // 3. Coppie tutor→tutee: le stesse della Dashboard (tutta la classe,
+        //    gruppo da 3 se dispari, gruppi scelti dal docente), media complessiva
         let coppieBlock = '';
-        if (studConVoti.length >= 4) {
-            const n = Math.max(2, Math.floor(studConVoti.length * 0.33));
-            const tutors = studConVoti.slice(0, n);
-            const tutees = studConVoti.slice(-n);
-            const coppie = tutors.map((t, i) => `${t.nome} → ${tutees[i % tutees.length].nome}`);
-            coppieBlock = `- Coppie tutor→tutee suggerite: ${coppie.join(' | ')}`;
+        if ((classe.studenti||[]).length >= 4) {
+            const coppie = _peerGruppi(classe, 'totale').filter(g => g.membri.length >= 2)
+                .map(g => `${_nomeS(g.membri[0].s)} → ${g.membri.slice(1).map(m => _nomeS(m.s)).join(', ')}`);
+            if (coppie.length) coppieBlock = `- Coppie tutor→tutee suggerite: ${coppie.join(' | ')}`;
         }
 
         // 4. Componi il blocco contesto (solo se c'è qualcosa da dire)
