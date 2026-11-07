@@ -31895,6 +31895,30 @@ ${blocchiPerAlunno}`;
         _ppSavDeferred();
         if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
     }
+    // Esito di _pianoCheckTrigger → stato della voce in coda. Prima un risultato
+    // vuoto (nessun voto trovato per la unit) diventava "fatto" senza aver generato
+    // niente, e la voce spariva dalla coda in silenzio.
+    function _ppEsitoCoda(res) {
+        const o = res?.outcome;
+        if (o === 'generated') return { ppStatus: 'done', ppReason: '' };
+        if (o === 'exported') return { ppStatus: 'exported', ppReason: 'Esportato per Claude — in attesa del file' };
+        if (o === 'error') return { ppStatus: 'error', ppReason: res.reason || 'Generazione fallita' };
+        if (o) return { ppStatus: 'skipped', ppReason: res.reason || o };
+        return { ppStatus: 'skipped', ppReason: 'Nessun voto trovato per questa unit: niente da generare' };
+    }
+    // Riepilogo alla fine: il docente vede sempre che cosa è successo, anche
+    // quando la generazione si ferma prima di chiamare l'AI (piano già presente,
+    // in attesa del voto orale, voto alto senza media da approfondimento…)
+    function _ppRiepilogoCoda(esiti) {
+        if (!esiti.length) return;
+        const fatti = esiti.filter(e => e.ppStatus === 'done');
+        const altri = esiti.filter(e => e.ppStatus !== 'done');
+        const icona = { skipped: '⏭️', error: '❌', exported: '🟣' };
+        let msg = fatti.length ? `✅ ${fatti.length === 1 ? 'Piano generato' : fatti.length + ' piani generati'}: ${fatti.map(e => e.nome).join(', ')}.\nLi trovi tra le bozze da approvare.` : '⚠️ Nessun piano generato.';
+        if (altri.length) msg += '\n\n' + altri.map(e => `${icona[e.ppStatus] || '•'} ${e.nome}${e.unit ? ' (' + e.unit + ')' : ''}: ${e.ppReason}`).join('\n');
+        alert(msg);
+    }
+
     // Ritenta la generazione di un singolo item in errore senza toccare il resto della coda
     async function _ppDeferredRetryOne(idx) {
         const item = _ppDeferredQueue[idx];
@@ -31919,14 +31943,14 @@ ${blocchiPerAlunno}`;
         }
         try {
             const result = await _pianoCheckTrigger(stu, item.tipo, item.unit, item.classeNome, true, item.errorDetails || '', item.tagBreakdown || {});
-            item.ppStatus = result?.outcome === 'generated' ? 'done' : (result?.outcome || 'done');
-            item.ppReason = result?.reason || '';
+            Object.assign(item, _ppEsitoCoda(result));
         } catch(e) {
             item.ppStatus = 'error';
             item.ppReason = e.message || 'Errore sconosciuto';
         }
         _ppSavDeferred();
         if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
+        _ppRiepilogoCoda([{ nome: item.studentName, unit: item.unit, ppStatus: item.ppStatus, ppReason: item.ppReason }]);
     }
     // Elabora solo gli item NON esclusi (rispetta la selezione persistente)
     async function _ppProcessSelected() {
@@ -31959,6 +31983,7 @@ ${blocchiPerAlunno}`;
         if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
         _ppDeferredRunning = true;
         console.log(`[Piano] ▶️ Elabora selezionati: ${toProcess.length} attività`);
+        const esiti = [];
         try {
             for (const item of toProcess) {
                 // Riferimento live all'item in coda (aggiornato durante il loop)
@@ -31967,9 +31992,10 @@ ${blocchiPerAlunno}`;
                 const stu = classe?.studenti?.find(s =>
                     _mcToSafe(`${s.cognome} ${s.nome}`) === item.studentSafe ||
                     _mcToSafe(`${s.nome} ${s.cognome}`) === item.studentSafe);
+                let esito;
                 if (!stu) {
                     console.warn(`[Piano] Selezionati: studente ${item.studentName} non trovato — saltato`);
-                    if (qItem) { qItem.ppStatus = 'skipped'; qItem.ppReason = 'Studente non trovato nei dati'; }
+                    esito = { ppStatus: 'skipped', ppReason: 'Studente non trovato nei dati' };
                 } else {
                     // Render immediato con stato 'processing' così lo spinner è visibile
                     _ppSavDeferred();
@@ -31977,24 +32003,15 @@ ${blocchiPerAlunno}`;
                     try {
                         _ppSetGenProvider(pick(item));
                         const res = await _pianoCheckTrigger(stu, item.tipo, item.unit, item.classeNome, true, item.errorDetails || '', item.tagBreakdown || {});
-                        if (qItem) {
-                            if (res?.outcome === 'generated') {
-                                qItem.ppStatus = 'done'; qItem.ppReason = '';
-                            } else if (res?.outcome === 'error') {
-                                qItem.ppStatus = 'error'; qItem.ppReason = res.reason || 'Generazione fallita';
-                                console.warn(`[Piano] ❌ ${item.studentName} (${item.unit}) — ${res.reason || 'errore'}`);
-                            } else if (res?.outcome) {
-                                qItem.ppStatus = 'skipped'; qItem.ppReason = res.reason || res.outcome;
-                                console.log(`[Piano] ⏭️ ${item.studentName} (${item.unit}) — ${res.reason || res.outcome}`);
-                            } else {
-                                qItem.ppStatus = 'done'; qItem.ppReason = '';
-                            }
-                        }
+                        esito = _ppEsitoCoda(res);
+                        if (esito.ppStatus !== 'done') console.log(`[Piano] ${esito.ppStatus === 'error' ? '❌' : '⏭️'} ${item.studentName} (${item.unit}) — ${esito.ppReason}`);
                     } catch(e) {
                         console.warn(`[Piano] Selezionati: errore su ${item.studentName}:`, e.message);
-                        if (qItem) { qItem.ppStatus = 'error'; qItem.ppReason = e.message; }
+                        esito = { ppStatus: 'error', ppReason: e.message || 'Errore sconosciuto' };
                     }
                 }
+                if (qItem) Object.assign(qItem, esito);
+                esiti.push({ nome: item.studentName, unit: item.unit, ...esito });
                 _ppSavDeferred();
                 if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
             }
@@ -32003,6 +32020,7 @@ ${blocchiPerAlunno}`;
             _ppDeferredRunning = false;
             if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
         }
+        _ppRiepilogoCoda(esiti);
     }
     // Toglie dalla coda le voci di un alunno+unit il cui piano è stato approvato o scartato.
     // tipi: null = qualsiasi tipo (approfondimento: il trigger può essere scritto o orale).
@@ -34391,12 +34409,28 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
                 }
                 return { outcome: 'skipped', reason: `Voto ${voto} > 7 → APP (attende orale)` };
             }
-            // ── CONTROLLO DUPLICATI (locale + Firebase) ───────────────────
-            const dupLocal = Object.values(_ppActiveScritto).some(x =>
+            // ── PIANO GIÀ INVIATO PER QUESTA UNIT ──────────────────────────
+            // Un piano già inviato per la unit blocca il nuovo ("già attivo"),
+            // TRANNE quando l'ultimo voto della unit nello storico è segnato come
+            // recupero (fa media, è incluso o è escluso dalla media: basta che
+            // sia un recupero): il piano nuovo parte da lì.
+            //  • il vecchio non è stato ancora svolto → la bozza lo sostituisce
+            //    (all'approvazione il vecchio sparisce da StudentApp);
+            //  • il vecchio è stato svolto → resta, con i suoi risultati, e il
+            //    nuovo si aggiunge.
+            const dopoRecupero = !!ultimiFallback[0]?.recupero;
+            let replaces = null;
+            const oldPlan = Object.entries(_ppActiveScritto).find(([, x]) =>
                 x.studentSafe === studentSafe && x.unit === unitEff && x.status !== 'expired');
-            if (dupLocal) {
-                console.log(`[Piano] ⏭️ ${prefix} già attivo per ${studentName} (${unitEff}) — skip duplicato`);
-                return { outcome: 'skipped', reason: `${prefix} già attivo in locale` };
+            if (oldPlan && !dopoRecupero) {
+                console.log(`[Piano] ⏭️ ${studentName} (${unitEff}): piano ${oldPlan[0]} già inviato e l'ultimo voto non è un recupero — skip`);
+                return { outcome: 'skipped', reason: `C'è già il piano ${oldPlan[0]} inviato per questa unit. Per farne uno nuovo segna nello storico il voto come recupero, oppure togli il vecchio dal tab 📋 Attività inviate.` };
+            }
+            if (oldPlan) {
+                const [oldCode, old] = oldPlan;
+                const svolto = (old.attemptCount || 0) > 0 || old.lastScore != null || old.status === 'completed';
+                if (!svolto) replaces = oldCode;
+                console.log(`[Piano] ${studentName} (${unitEff}): c'è già il piano ${oldCode}${svolto ? ' (svolto: resta)' : ' (non svolto: la nuova bozza lo sostituisce)'} — genero il nuovo ${prefix} sul voto di recupero ${voto}`);
             }
             // Bozza già generata e non ancora approvata: non se ne genera un'altra (token sprecati).
             // Per rifarla c'è ↺ Rigenera sulla bozza.
@@ -34410,11 +34444,13 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
                 if (!_dupCode) throw new Error('nessun codice personale');
                 const snapDup = await dbDup.ref('livelearn/recovery_sessions/' + _dupCode).get();
                 const sessDup = snapDup.val() || {};
-                const dupFb = Object.values(sessDup).some(s =>
-                    s && s.unit === unitEff && s.prefix === prefix && s.status !== 'expired' && s.status !== 'completed');
+                // Piani noti in locale li ha già gestiti il controllo sopra; dopo un
+                // recupero si genera comunque il piano nuovo
+                const dupFb = !dopoRecupero && Object.entries(sessDup).some(([c, s]) =>
+                    s && !_ppActiveScritto[c] && s.unit === unitEff && s.prefix === prefix && s.status !== 'expired' && s.status !== 'completed');
                 if (dupFb) {
                     console.log(`[Piano] ⏭️ ${prefix} già presente su Firebase per ${studentName} (${unitEff}) — skip`);
-                    return { outcome: 'skipped', reason: `${prefix} già presente su Firebase` };
+                    return { outcome: 'skipped', reason: `C'è già un piano ${prefix} per questa unit (inviato da un altro dispositivo). Per farne uno nuovo segna nello storico il voto come recupero.` };
                 }
             } catch(e) { /* Firebase non disponibile: prosegui comunque */ }
 
@@ -34444,7 +34480,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return { outcome: 'error', reason: 'Generazione quiz fallita' }; }
             // ── BOZZA: salva per anteprima docente prima dell'invio ──────────
             const draftId = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-            _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix, activity, unit: unitEff, voto, classeNome, createdAt: Date.now(), tagBreakdown: tagBreakdown || {}, source: _ppGenProvider, ...(verInfo ? { versione: verInfo.label } : {}) });
+            _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix, activity, unit: unitEff, voto, classeNome, createdAt: Date.now(), tagBreakdown: tagBreakdown || {}, source: _ppGenProvider, ...(verInfo ? { versione: verInfo.label } : {}), ...(replaces ? { replaces } : {}) });
             _ppSavDraftScritto();
             ppSwitchTab(0);  // porta docente sul tab scritto
             renderPianoPersPanel();
@@ -37058,8 +37094,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     if (st === 'processing') stBadge = `<span title="In elaborazione…" style="background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;">⏳</span>`;
                     else if (st === 'exported') stBadge = `<span title="Esportato per Claude Code: importa il file di Claude per creare la bozza" style="background:#f3e8ff;color:#7e22ce;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;">🟣 in attesa di Claude</span>`;
                     else if (st === 'done')  stBadge = `<span title="Generato con successo" style="background:#dcfce7;color:#14532d;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;">✅</span>`;
-                    else if (st === 'skipped') stBadge = `<span title="${(item.ppReason||'Saltato').replace(/"/g,'&quot;')}" style="background:#f3f4f6;color:#6b7280;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;cursor:help;">⏭️</span><span style="font-size:10px;color:#9ca3af;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle;"> ${(item.ppReason||'').replace(/</g,'&lt;')}</span>`;
-                    else if (st === 'error')   stBadge = `<span title="${(item.ppReason||'Errore').replace(/"/g,'&quot;')}" style="background:#fee2e2;color:#991b1b;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;cursor:help;">❌</span><span style="font-size:10px;color:#991b1b;margin-left:4px;">${(item.ppReason||'').replace(/</g,'&lt;').slice(0,60)}</span>`;
+                    else if (st === 'skipped') stBadge = `<span title="${(item.ppReason||'Saltato').replace(/"/g,'&quot;')}" style="background:#f3f4f6;color:#6b7280;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;cursor:help;">⏭️</span><span style="font-size:11px;color:#92400e;font-weight:600;display:block;max-width:260px;white-space:normal;line-height:1.3;margin-top:2px;">${(item.ppReason||'').replace(/</g,'&lt;')}</span>`;
+                    else if (st === 'error')   stBadge = `<span title="${(item.ppReason||'Errore').replace(/"/g,'&quot;')}" style="background:#fee2e2;color:#991b1b;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;cursor:help;">❌</span><span style="font-size:11px;color:#991b1b;font-weight:600;display:block;max-width:260px;white-space:normal;line-height:1.3;margin-top:2px;">${(item.ppReason||'').replace(/</g,'&lt;')}</span>`;
                     const isProcessed = st === 'done' || st === 'skipped' || st === 'error';
                     return `<tr style="border-bottom:0.5px solid #fed7aa;${isProcessed?'opacity:.65;':!checked?'opacity:.55;':''}">
                       <td style="padding:6px 4px;text-align:center;">
