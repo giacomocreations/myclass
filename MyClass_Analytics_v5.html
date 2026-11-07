@@ -32155,8 +32155,7 @@ ${blocchiPerAlunno}`;
             code, unitName: unit || '', voto,
             createdAt: now,
             status: 'pending', lastScore: null, attemptCount: 0,
-            ...(oraleText != null ? { text: oraleText } : {}),
-            ...(activity?.speakingPrompt ? { speakingPrompt: activity.speakingPrompt } : {})
+            ...(oraleText != null ? { text: oraleText } : {})
         };
         const notifData = {
             title: oraleText != null ? '🗣️ Recupero orale con speaking disponibile' :
@@ -33826,7 +33825,6 @@ Questo file è stato esportato da MyClass. Per OGNI elemento di "alunni":
 - genera l'array di domande seguendo ESATTAMENTE la sua "consegna_quiz" (numero di domande, tipi, livello, errori su cui lavorare, regole DSA/PEI);
 - se "controlli" non è null, la risposta deve superarli: almeno "errori_minimi" codici diversi di "errori_da_riprendere" (E1, E2…) nel campo "errore" delle domande, e ogni domanda con un codice esercita davvero quell'errore; con "schede_regola" fai tra "minime" e "massime" schede "scopri la regola" come spiegato nella consegna_quiz (3 domande consecutive con lo stesso "scheda": "fase" osserva = multiple-choice, regola = cloze con SOLO scelte [[a|b|c]], controllo = multiple-choice con "referenceTable"), dentro il numero di domande richiesto; con "tipi_ammessi" (alunni PEI: il piano è un ripasso della sua verifica, anche con voto alto) usa SOLO quei tipi; con "opzioni_scelta_multipla" ogni scelta multipla ha esattamente quel numero di opzioni; nessuna domanda parla di foto o immagini se non ha il campo "foto" con un numero di "foto_disponibili" (la foto della verifica viene inserita da MyClass);
 - se "consegna_listening" non è null, genera anche l'esercizio di listening seguendo quella consegna (testo scritto da te, letto poi dalla sintesi vocale);
-- se "consegna_speaking" non è null, scrivi lo speaking prompt richiesto;
 - se "consegna_speaking_esercizi" non è null, genera gli esercizi di speaking (tipo "speaking", da dire al microfono) seguendo quella consegna, nel campo "speaking" (c'è quando in calendario è prevista l'interrogazione: piano solo orale, con "questions" vuoto, oppure piano unico scritto + orale, con meno domande scritte);
 - se "piano" è "ORALE" non c'è nessun quiz: segui la sua "consegna_testo" e scrivi il testo del recupero orale (italiano, testo semplice, 200-280 parole, [NOME] al posto del nome), più gli esercizi di "consegna_speaking_esercizi".
 Per OGNI elemento di "sfide" genera il blocco seguendo la sua "consegna" (un solo blocco per chiave: lo ricevono tutti gli alunni che hanno quella "sfida"). Le sfide ORALI (chiave che inizia con "orale:") sono solo esercizi "speaking": "passageText" resta "".
@@ -33846,7 +33844,7 @@ OUTPUT: crea UN file chiamato "piani_da_claude.json" (solo JSON valido, nessun t
   "versione": 1,
   "export_id": "<copia export_id di questo file>",
   "piani": [
-    { "ref": "<ref dell'alunno>", "questions": [ ...domande della consegna_quiz... ], "listening": { ...oggetto listening... } oppure null, "speakingPrompt": "..." oppure null, "speaking": [ ...esercizi speaking... ] oppure [] },
+    { "ref": "<ref dell'alunno>", "questions": [ ...domande della consegna_quiz... ], "listening": { ...oggetto listening... } oppure null, "speaking": [ ...esercizi speaking... ] oppure [] },
     { "ref": "<ref di un alunno con piano ORALE>", "testo": "Ciao [NOME], ...", "speaking": [ ...esercizi speaking... ] }
   ],
   "sfide": [
@@ -33882,7 +33880,6 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 versione: verInfo?.label || null,
                 consegna_quiz: P.prompt,
                 consegna_listening: lNeed.needed ? _pianoBuildListeningPrompt(unit || 'English Grammar', lNeed.level, lNeed.focus) : null,
-                consegna_speaking: prefix === 'APP' && verInfo?.layout !== 2 ? _pianoBuildSpeakingPrompt(unit, classeNome, voto) : null,
                 // Speaking al microfono: solo con l'interrogazione in calendario (negli scritti solo se il docente lo chiede a Claude)
                 consegna_speaking_esercizi: speaking ? _pianoBuildSpeakingQuestionsPrompt(speaking) : null,
                 controlli: {
@@ -33985,7 +33982,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             const L = manifest[al.ref];
             const stu = _ppFindStudent(L.classeNome, L.studentSafe);
             if (!stu) continue;
-            for (const k of ['consegna_quiz', 'consegna_listening', 'consegna_speaking', 'consegna_testo']) {
+            for (const k of ['consegna_quiz', 'consegna_listening', 'consegna_testo']) {
                 if (typeof al[k] === 'string') al[k] = _ppAnonymize(al[k], stu);
             }
         }
@@ -34119,7 +34116,6 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 activity.questions.forEach(q => { if (q && typeof q === 'object') q.dsaLargeText = true; });
                 activity.versionLayout = { originale: L.layout };
             }
-            if (typeof p.speakingPrompt === 'string' && p.speakingPrompt.trim()) activity.speakingPrompt = p.speakingPrompt.trim();
             if (L.sfidaOrale) {
                 const b = sfide[L.sfidaOrale] || _ppChallengeCacheGet(L.sfidaOrale);
                 if (b?.questions?.length) { activity.questions = [...activity.questions, ...JSON.parse(JSON.stringify(b.questions))]; activity.challengeOrale = true; }
@@ -34133,7 +34129,6 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
                 || _ppDraftScritto.find(x => x.studentSafe === L.studentSafe && x.unit === L.unit && x.prefix === L.prefix);
             if (target) {
                 Object.assign(target, _kind);
-                if (!activity.speakingPrompt && target.activity?.speakingPrompt && L.layout !== 2) activity.speakingPrompt = target.activity.speakingPrompt;
                 target.activity = activity;
                 target.source = 'claude';
                 target.regenAt = Date.now();
@@ -34182,28 +34177,6 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             return text.trim();
         } catch(e) {
             console.warn('[Piano] Orale text gen error:', e.message);
-            return null;
-        }
-    }
-
-    // Genera speaking prompt per approfondimento via Haiku
-    // Livello dell'alunno (anno + voto, vedi _ppCefr): B1 solo in terza da 9 in su
-    function _pianoBuildSpeakingPrompt(unit, classeNome = '', voto = null) {
-        const y = _ppAnnoLabel(classeNome).y;
-        const lv = _ppCefr(classeNome, voto);
-        const cfg = y === '1' ? { max: 20, durata: '30-60 secondi', extra: 'Parole semplicissime e una domanda diretta sulla vita quotidiana dello studente (sé stesso, famiglia, gusti, scuola).' }
-                  : y === '2' ? { max: 30, durata: '1 minuto circa', extra: 'Parole semplici, una domanda concreta legata alla sua esperienza.' }
-                  : lv.startsWith('B1') ? { max: 40, durata: '1-2 minuti', extra: '' }
-                  : { max: 35, durata: '1 minuto circa', extra: 'Domanda concreta, senza richiedere opinioni astratte.' };
-        return `Scrivi UN breve speaking prompt (massimo ${cfg.max} parole, in inglese) per uno studente di scuola media italiana di livello ${lv} sull'unità "${unit}". 
-Deve essere una domanda aperta che richiede ${cfg.durata} di parlato.${cfg.extra ? '\n' + cfg.extra : ''}
-Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
-    }
-    async function _pianoGenerateSpeakingPrompt(unit, classeNome = '', voto = null) {
-        const prompt = _pianoBuildSpeakingPrompt(unit, classeNome, voto);
-        try {
-            return (await _pianoAICall(prompt, null)).trim();
-        } catch(e) {
             return null;
         }
     }
@@ -34265,7 +34238,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
                 classe: classeNome || '', unit: unit || '', piano: prefix,
                 voto: Math.round(Number(voto) * 100) / 100, versione: null,
                 consegna_quiz: 'Piano SOLO ORALE (è prevista solo l\'interrogazione): nessuna domanda scritta. Restituisci "questions": [] e metti gli esercizi di "consegna_speaking_esercizi" nel campo "speaking".',
-                consegna_listening: null, consegna_speaking: null,
+                consegna_listening: null,
                 consegna_speaking_esercizi: _pianoBuildSpeakingQuestionsPrompt(spec),
                 controlli: null, sfida: null
             }
@@ -34659,11 +34632,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         }
         if (challenge) console.log(`[Piano] ${studentName}: almeno 9,5 nella verifica → APP con blocco Sfida`);
         const activity = await _pianoGenerateActivity(studente, media, unit, 'APP', appContext, {}, classeNome, verInfo, { challenge });
-        // PEI: il piano è un ripasso della verifica, niente speaking prompt
-        const speaking = verInfo?.layout === 2 ? null : await _pianoGenerateSpeakingPrompt(unit, classeNome, media);
         if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return 'error'; }
-        // Aggiungi speaking prompt come item extra nel piano (incluso nella bozza)
-        if (speaking) activity.speakingPrompt = speaking;
         // ── BOZZA: come per REC/CON, passa per approvazione docente prima dell'invio ──
         const draftId = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
         _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix: 'APP', activity, unit: unit, voto: media, classeNome, createdAt: Date.now(), source: _ppGenProvider, ...(verInfo ? { versione: verInfo.label } : {}) });
@@ -35066,7 +35035,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
     }
 
     // Attività della bozza con le domande aggiornate, senza perdere gli altri campi
-    // (versionLayout della versione DSA/PEI, speakingPrompt dell'approfondimento).
+    // (versionLayout della versione DSA/PEI, testo della Sfida…).
     function _ppWithQuestions(activity, questions) {
         const base = (activity && !Array.isArray(activity) && typeof activity === 'object') ? activity : {};
         return { ...base, questions };
@@ -35296,8 +35265,6 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         const challenge = d.prefix === 'APP' && _ppChallengeEligible(stu, d.unit, verInfo);
         const activity = await _pianoGenerateActivity(stu, d.voto, d.unit, d.prefix, errorDetails, d.tagBreakdown || {}, d.classeNome, verInfo, { challenge, ...(d.dopoRecupero ? { nQ: 10, soloErrori: true } : {}) });
         if (!activity) throw new Error('generazione quiz fallita (errore AI)');
-        const old = (d.activity && !Array.isArray(d.activity)) ? d.activity : {};
-        if (old.speakingPrompt && verInfo?.layout !== 2) activity.speakingPrompt = old.speakingPrompt;
         d.activity = activity;
         d.source = _ppGenProvider;
         if (verInfo) d.versione = verInfo.label; else delete d.versione;
