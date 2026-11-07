@@ -136,6 +136,10 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
 @keyframes hwBlink{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,0)}50%{box-shadow:0 0 0 4px rgba(245,158,11,.45)}}
 .hw-blink{animation:hwBlink 1.6s ease-in-out infinite}
 .hw-blink-t{animation:obvBlinkTxt 1.6s ease-in-out infinite}
+/* Piani personali non ancora svolti: lampeggiano il pulsante (alone del colore
+   della fascia, --pp) e la scritta «Non ancora svolto» */
+@keyframes ppBlink{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--pp,#534AB7) 40%,transparent)}}
+.pp-blink{animation:ppBlink 1.6s ease-in-out infinite}
 /* Niente eccezione per "riduci animazioni": molti telefoni e tablet la attivano da soli
    (risparmio energetico) e lì non lampeggiava. È solo colore, lento: sicuro. */
 
@@ -2324,6 +2328,11 @@ function _pianoEntry(att){
     manualScores: att.manualScores||{}, questionMaxOverrides: att.questionMaxOverrides||{}, excludedQuestions: att.excludedQuestions||{},
     questionTimes: _llFbArr(att.questionTimes), joinedAt: att.startedAt || null, submittedAt: att.submittedAt || null };
 }
+// C'è almeno un'attività del piano non ancora svolta (o un recupero orale non letto)?
+function _pianiDaFare(){
+  const fatti = new Set(_pianiSvolti().map(x=>x.sessionCode));
+  return (S.personalPlan||[]).some(p => (p.type==='recovery_orale' && !p.code) ? !p.readAt : !fatti.has(p.code||p._key));
+}
 function _pianiSvolti(){
   const out = [];
   const codes = new Set([...S.personalPlan.map(p=>p.code||p._key), ...Object.keys(S.recoverySessions||{})]);
@@ -2717,7 +2726,8 @@ function renderPianoCard(){
       actionHtml = `<button onclick="openRecoveryActivity('${item.code||''}')" style="background:#fff;color:${c.title};border:1.5px solid ${c.title};border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0;">🔁 Rifai</button>`;
     } else {
       // Cliccabile
-      actionHtml = `<button onclick="openRecoveryActivity('${item.code||''}')" style="background:${c.title};color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">${attempts>0?'🔄 Riprova':'▶ Inizia'}</button>`;
+      const nonSvolto = !_pianiSvolti().some(x=>x.sessionCode===String(item.code||item._key||'').replace(/[^A-Za-z0-9_-]/g,''));
+      actionHtml = `<button class="${nonSvolto?'pp-blink':''}" onclick="openRecoveryActivity('${item.code||''}')" style="--pp:${c.title};background:${c.title};color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">${attempts>0?'🔄 Riprova':'▶ Inizia'}</button>`;
     }
 
     return `<div data-piano-code="${item._key||item.code||''}" style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:0.5px solid ${c.border};">
@@ -2744,7 +2754,7 @@ function renderPianoCard(){
     return `<div style="padding:10px 0;border-bottom:0.5px solid ${c.border};">
       <div style="font-size:13px;font-weight:700;color:${c.title};margin-bottom:6px;">${esc(item.unitName||'Recupero orale')}</div>
       <div style="font-size:13px;color:${c.sub};line-height:1.6;margin-bottom:8px;background:#FFFBEB;border-radius:8px;padding:10px 12px;">${fmtLessonDesc(item.text||'')}</div>
-      ${!isRead?`<button onclick="markOraleRead('${item._key||''}')" style="background:${c.title};color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">✓ Ho letto</button>`:`<span style="font-size:11px;color:#9CA3AF;">✅ Letto</span>`}
+      ${!isRead?`<button class="pp-blink" onclick="markOraleRead('${item._key||''}')" style="--pp:${c.title};background:${c.title};color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">✓ Ho letto</button>`:`<span style="font-size:11px;color:#9CA3AF;">✅ Letto</span>`}
     </div>`;
   };
 
@@ -2885,7 +2895,7 @@ function renderValutazioni(){
   let html='';
   // Il piano personalizzato ora ha un tab tutto suo
   if(S.personalPlan.length || (S.pianoMsgs||[]).length){
-    html+=`<div onclick="navTab(4,'scr-piani')" style="background:linear-gradient(135deg,#667EEA,#764BA2);color:#fff;border-radius:12px;padding:11px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
+    html+=`<div class="${_pianiDaFare()?'pp-blink':''}" onclick="navTab(4,'scr-piani')" style="--pp:#764BA2;background:linear-gradient(135deg,#667EEA,#764BA2);color:#fff;border-radius:12px;padding:11px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
       <div style="font-size:13px;font-weight:700;">📋 Hai un piano personale</div>
       <div style="font-size:12px;opacity:0.9;">Vai ai Piani →</div>
     </div>`;
@@ -2914,7 +2924,7 @@ function renderValutazioni(){
 function _pianoEsitoHtml(code){
   const safe = String(code||'').replace(/[^A-Za-z0-9_-]/g,'');
   const sess = safe ? _pianiSvolti().find(x=>x.sessionCode===safe) : null;
-  if(!sess) return `<span style="display:inline-block;background:#F3F4F6;color:#6B7280;border-radius:20px;padding:6px 14px;font-size:15px;font-weight:700;">⏳ Non ancora svolto</span>`;
+  if(!sess) return `<span class="hw-blink-t" style="display:inline-block;background:#F3F4F6;color:#6B7280;border-radius:20px;padding:6px 14px;font-size:15px;font-weight:700;">⏳ Non ancora svolto</span>`;
   const p = sess.pct||0;
   const col = sess.pct==null ? '#92400e' : pctColor(p);
   const esito = sess.pct==null ? 'a voce senza microfono' : p+'%'+(sess.noMic?' · 🚫🎤':'');
