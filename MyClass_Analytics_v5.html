@@ -32040,19 +32040,19 @@ ${blocchiPerAlunno}`;
             ..._ppDraftScritto.map(d => key(d.studentSafe, d.unit)),
             ..._ppOraleQueue.filter(o => o.status !== 'approved').map(o => key(o.studentSafe, o.unit))
         ]);
-        const inviatiScritto = new Set(Object.values(_ppActiveScritto).map(a => key(a.studentSafe, a.unit)));
-        const inviatiOrale = new Set(_ppOraleQueue.filter(o => o.status === 'approved').map(o => key(o.studentSafe, o.unit)));
         const before = _ppDeferredQueue.length;
+        // Le voci esportate per Claude restano finché non si importa il file (allora
+        // diventano "fatte" e seguono la bozza): prima sparivano subito se l'alunno
+        // aveva già un piano inviato per la unit, come dopo un recupero.
+        const tolte = [];
         _ppDeferredQueue = _ppDeferredQueue.filter(i => {
             const k = key(i.studentSafe, i.unit);
-            if (i.ppStatus === 'done' && !inAttesa.has(k)) return false;
-            if ((i.ppStatus === 'done' || i.ppStatus === 'exported') && !inAttesa.has(k)
-                && (i.tipo === 'orale' ? (inviatiOrale.has(k) || inviatiScritto.has(k)) : inviatiScritto.has(k))) return false;
+            if (i.ppStatus === 'done' && !inAttesa.has(k)) { tolte.push(i.studentName); return false; }
             return true;
         });
         if (_ppDeferredQueue.length !== before) {
             _ppSavDeferred();
-            console.log(`[Piano] 🧹 Coda: tolte ${before - _ppDeferredQueue.length} voci già approvate/scartate`);
+            console.log(`[Piano] 🧹 Coda: tolte ${before - _ppDeferredQueue.length} voci già approvate/scartate: ${tolte.join(', ')}`);
         }
     }
 
