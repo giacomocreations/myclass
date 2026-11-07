@@ -35983,6 +35983,8 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
     ].map(([id,yr,n,ic,t]) => ({ id, yr, n, ic, t }));
     const _MCQT_COORTI = { '1':{yr:1,n:0}, '2':{yr:1,n:6}, '3':{yr:2,n:5} };
     const _MCQT_PARTI = ['Vocabulary','Grammar','Functions','Listening','Writing','Final task'];
+    // Le 12 lettere dell'Architetto (FRAGMENTS del gioco): [id, anno, quest di quell'anno che servono]
+    const _MCQT_LETTERE = [['f1',1,2],['f2',1,4],['f3',1,6],['f4',1,8],['f5',2,2],['f6',2,4],['f7',2,6],['f8',2,8],['f9',3,2],['f10',3,3],['f11',3,4],['f12',3,5]];
     let _mcqt = { cls:'', at:0, rows:null, cur:null, err:'', busy:false, sort:'accesso' };
     const _mcqtNorm = x => String(x || '').toUpperCase().replace(/\s+/g, '');
 
@@ -36000,8 +36002,9 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             const y = Number(yr), u = Number(n);
             _mcqt.cur = (isFinite(y) && isFinite(u) && y >= 1 && y <= 3 && u >= 0) ? { yr:y, n:u, cloud:true } : Object.assign({ cloud:false }, _MCQT_COORTI[cls.charAt(0)] || { yr:1, n:0 });
             _mcqt.rows = await Promise.all(codes.map(async code => {
-                const [agg, prog] = await Promise.all([rd('englishtown/progress/' + code + '/agg'), rd('englishtown/progress/' + code + '/dati/et_progress')]);
-                return { code, name: String(studs[code].name || code).trim(), agg: Number(agg) || 0, prog: (prog && typeof prog === 'object') ? prog : {}, letto: agg !== undefined };
+                const [agg, prog, frags] = await Promise.all([rd('englishtown/progress/' + code + '/agg'), rd('englishtown/progress/' + code + '/dati/et_progress'), rd('englishtown/progress/' + code + '/dati/et_frags/got')]);
+                return { code, name: String(studs[code].name || code).trim(), agg: Number(agg) || 0, prog: (prog && typeof prog === 'object') ? prog : {}, letto: agg !== undefined,
+                         lettere: (frags && typeof frags === 'object') ? frags : {} };
             }));
             _mcqt.cls = cls; _mcqt.at = Date.now();
         } catch(e) {
@@ -36021,8 +36024,11 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         // i piani inviati a questo alunno (Attività inviate) e le stelle prese in QuestTown
         const piani = Object.entries(_ppActiveScritto || {}).filter(([, it]) => it && it.stuCode === r.code)
             .map(([pc, it]) => ({ code: pc, status: it.status, best: it.bestScore ?? it.lastScore, stelle: Number(given['piano:' + pc]) || 0 }));
+        const fatteAnno = y => rows.filter(u => u.yr === y && u.done).length;
+        const lettere = _MCQT_LETTERE.filter(([id]) => r.lettere && r.lettere[id]).length;
+        const indizi = _MCQT_LETTERE.filter(([id, y, thr]) => !(r.lettere && r.lettere[id]) && fatteAnno(y) >= thr).length;
         return {
-            rows, unit, giorni, stelle: Number(st.tot) || 0, piani,
+            rows, unit, giorni, stelle: Number(st.tot) || 0, piani, lettere, indizi,
             giocato: r.agg > 0 || Object.keys(P).some(k => /^u\d/.test(k)),
             fatte: rows.filter(u => u.done),
             inCorso: open.filter(u => !u.done && u.step > 0),
@@ -36066,7 +36072,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         else S.sort((a, b) => ordAcc(b) - ordAcc(a) || a.r.name.localeCompare(b.r.name, 'it'));
         const th = t => `<th style="padding:6px;text-align:left;font-size:11px;color:#555;">${t}</th>`;
         h += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">
-            <thead><tr style="background:#f5f3ff;">${th('Alunno')}${th('Ultimo accesso')}${th('Quest della unit')}${th('In corso / da fare')}${th('Completate')}${th('⭐')}${th('Piano con Miss Grace')}</tr></thead><tbody>`;
+            <thead><tr style="background:#f5f3ff;">${th('Alunno')}${th('Ultimo accesso')}${th('Quest della unit')}${th('In corso / da fare')}${th('Completate')}${th('📜 Lettere')}${th('⭐')}${th('Piano con Miss Grace')}</tr></thead><tbody>`;
         S.forEach(s => {
             const g = s.giorni;
             const accCol = !s.giocato ? '#9ca3af' : g == null ? '#6b7280' : g <= 1 ? '#059669' : g < 4 ? '#b45309' : '#dc2626';
@@ -36085,6 +36091,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 <td style="padding:6px;">${u.ic} ${unitTxt}</td>
                 <td style="padding:6px;">${inCorso}</td>
                 <td style="padding:6px;text-align:center;" title="${esc(s.fatte.map(x => x.t).join(', '))}">${s.fatte.length}</td>
+                <td style="padding:6px;white-space:nowrap;" title="Lettere dell'Architetto trovate (missione principale)">${s.lettere}/12${s.indizi ? ` <span style="color:#b45309;font-weight:700;" title="Lettere già sbloccate ma non ancora raccolte">· 🔎 ${s.indizi} da prendere</span>` : ''}</td>
                 <td style="padding:6px;text-align:right;">${s.stelle || '—'}</td>
                 <td style="padding:6px;font-size:12px;">${piano}</td>
               </tr>`;

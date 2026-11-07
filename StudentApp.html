@@ -2788,7 +2788,21 @@ const QT_SYL = [
 ];
 const QT_PARTI = ['Vocabulary','Grammar','Functions','Listening','Writing','Final task'];
 const QT_COORTI = { '1':{yr:1,n:0}, '2':{yr:1,n:6}, '3':{yr:2,n:5} };
-const QT_GIORNI_AVVISO = 4;     // da quanti giorni senza entrare scatta il richiamo
+const QT_GIORNI_AVVISO = 4;
+// Le 12 lettere dell'Architetto (la missione principale): COPIA di FRAGMENTS
+// del gioco (id, anno, quante quest di quell'anno servono, dove si trova).
+// Una lettera è «da prendere» quando le quest completate del suo anno
+// arrivano alla soglia e non è ancora stata raccolta (Frag.available).
+const QT_LETTERE = [
+  ['f1',1,2,'dietro la Town School'], ['f2',1,4,'su una panchina del parco, vicino alla Torre dell\'Orologio'],
+  ['f3',1,6,'sulla QuestTown Gazette, all\'edicola di High Street'], ['f4',1,8,'dietro il Market'],
+  ['f5',2,2,'in un vicolo dietro l\'ODEON Cinema'], ['f6',2,4,'su una panchina vicino al lago, ma solo di notte'],
+  ['f7',2,6,'sulla QuestTown Gazette, edizione Downtown'], ['f8',2,8,'in una foto della City Life Plaza'],
+  ['f9',3,2,'nel piazzale dietro la Job Centre Tower'], ['f10',3,3,'all\'altoparlante della fermata New District, in metropolitana'],
+  ['f11',3,4,'sulla QuestTown Gazette, edizione New District, all\'edicola di High Street'], ['f12',3,5,'nell\'archivio del City Hospital']
+].map(([id,yr,thr,dove]) => ({ id, yr, thr, dove }));
+// Photo Challenges del gioco (PHOTO_MISSIONS): si sbloccano finendo la quest indicata
+const QT_FOTO = [['u5','la Torre dell\'Orologio'],['u6','il Market'],['u2_3','il lago'],['u2_8','la City Life Plaza'],['u3_1','la Job Centre Tower'],['u3_4','la Weather Station']];     // da quanti giorni senza entrare scatta il richiamo
 S.qt = null;                    // { prog, agg, cur, cls, at }  (null = non ancora letto o non leggibile)
 
 function _qtCls(){ return String(S.className||'').toUpperCase().replace(/\s+/g,''); }
@@ -2807,14 +2821,16 @@ async function qtLoad(force){
   try{
     const base = 'englishtown/progress/'+code;
     const okCls = /^[1-3][A-Z]{1,2}$/.test(cls);
-    const [prog, agg, yr, n] = await Promise.all([
+    const [prog, agg, yr, n, frags] = await Promise.all([
       rd(base+'/dati/et_progress'), rd(base+'/agg'),
       okCls ? rd('englishtown/classi/'+cls+'/yr').catch(()=>null) : null,
-      okCls ? rd('englishtown/classi/'+cls+'/n').catch(()=>null) : null
+      okCls ? rd('englishtown/classi/'+cls+'/n').catch(()=>null) : null,
+      rd(base+'/dati/et_frags/got').catch(()=>null)
     ]);
     if(code !== String(S.code||'').trim().toUpperCase()) return;    // cambio di account nel frattempo
     const cur = _qtCursore(yr, n) || QT_COORTI[cls.charAt(0)] || { yr:1, n:0 };
-    S.qt = { prog: (prog && typeof prog==='object') ? prog : {}, agg: Number(agg)||0, cur, cls, at: Date.now() };
+    S.qt = { prog: (prog && typeof prog==='object') ? prog : {}, agg: Number(agg)||0, cur, cls, at: Date.now(),
+             lettere: (frags && typeof frags==='object') ? frags : {} };
   } catch(e){
     console.warn('[QuestTown] progressi non leggibili:', e && e.message);
   } finally { S._qtBusy = false; }
@@ -2840,8 +2856,12 @@ function _qtStato(){
     const g = new Date(q.agg); g.setHours(0,0,0,0);
     giorni = Math.max(0, Math.round((oggi - g)/864e5));
   }
+  const fattePerAnno = y => rows.filter(r=>r.yr===y && r.done).length;
+  const L = q.lettere || {};
+  const lettere = QT_LETTERE.filter(f=>L[f.id]).length;
+  const indizi = QT_LETTERE.filter(f=>!L[f.id] && fattePerAnno(f.yr)>=f.thr);
   return {
-    rows, open, unit, giocato, giorni, anno: Number(_qtCls().charAt(0))||1,
+    rows, open, unit, giocato, giorni, anno: Number(_qtCls().charAt(0))||1, lettere, indizi,
     stelle: Number(st.tot)||0,
     fatte:  rows.filter(r=>r.done),
     inCorso: open.filter(r=>!r.done && r.step>0),
@@ -2901,6 +2921,8 @@ function _qtAgendaHtml(){
   if(s.giorni!=null && s.giorni>=QT_GIORNI_AVVISO && prox){
     h += `<div style="${_QT_ALERT}">⏰ <b>Sono ${s.giorni} giorni che non entri in QuestTown.</b> Entra e svolgi la quest ${_qtNome(prox)}${prox.step?` (ti mancano ${esc(_qtMancano(prox))})`:''}!</div>`;
   }
+  // Indizio della missione principale da raccogliere
+  if(s.indizi.length) h += `<div style="margin:-2px 0 8px;">${_qtIndizioHtml(s)}</div>`;
   // Quest completate
   h += `<div style="font-size:14px;line-height:1.5;color:var(--text);margin-bottom:6px;">✅ ${s.fatte.length
     ? `Hai completato ${s.fatte.length===1?'la quest':`${s.fatte.length} quest`}: ${s.fatte.map(_qtNome).join(', ')}.`
@@ -2931,12 +2953,38 @@ function _qtPianoAperto(){
   return (S.personalPlan||[]).some(p=>p.code && p.type!=='recovery_orale'
     && ((S.recoverySessions||{})[p.code]?.status || p.status || 'pending')!=='completed');
 }
+// L'ultima verifica (non i piani) con i punteggi per abilità: serve a
+// consigliare Mr. Oakley a chi è andato male negli ascolti, l'indovinello a
+// chi è andato male nel lessico.
+function _qtUltimaVerifica(){
+  const L = Object.entries(S.sessions||{})
+    .filter(([k,v])=>v && v.tagBreakdown && !/^(REC|CON|APP)-/.test(k) && !v._piano && ((v.mode||'test')==='test'))
+    .map(([,v])=>v).sort((a,b)=>(b.ts||0)-(a.ts||0));
+  return L[0] || null;
+}
+const QT_SOGLIA_ABILITA = 60;   // sotto questa percentuale l'attività diventa «consigliata per te»
 // Le attività fuori dalle quest, secondo quello che l'alunno ha già aperto
 // (stessi sblocchi del gioco).
 function _qtLibere(s){
   const aperta = id => !!s.rows.find(r=>r.id===id && r.open);
   const finita = id => !!s.rows.find(r=>r.id===id && r.done);
   const L = [];
+  const ver = _qtUltimaVerifica(), tb = (ver && ver.tagBreakdown) || {};
+  const lis = tb.LISTENING, voc = tb.VOCABULARY;
+  const debole = v => v!=null && Number(v) < QT_SOGLIA_ABILITA;
+  const consiglio = (v, cosa) => debole(v) ? `Consigliata per te: nell'ultima verifica ${cosa} erano al ${Math.round(v)}%.` : '';
+  L.push({ ic:'📖', t:'Le storie di Mr. Oakley, sotto il grande pino del parco', top:debole(lis), cons:consiglio(lis,'gli ascolti'),
+    d:'Siediti sulla panchina davanti a lui: ti racconta una storia (solo da ascoltare) e ti fa 3 domande. Una storia nuova al giorno: 1 ⭐ per risposta giusta, +2 se sono tutte giuste. È l\'allenamento per il listening.' });
+  L.push({ ic:'🧩', t:'L\'indovinello del giorno, nel gazebo del parco', top:debole(voc), cons:consiglio(voc,'le domande di lessico'),
+    d:'Ogni giorno un indovinello sulle parole delle unit che hai già fatto, con 4 risposte: 3 ⭐ se indovini al primo colpo. Ripassi il vocabulary.' });
+  L.push({ ic:'👀', t:'Park watcher, sulle panchine del parco',
+    d: aperta('u8') ? 'Siediti su una panchina: ti chiedono che cosa stanno facendo le persone nella foto («She\'s playing the guitar») e rispondi con le tessere. Ripassi il present continuous: 3 domande al giorno.'
+                    : 'Siediti su una panchina: ti chiedono che cosa hanno le persone nella foto («She has got a guitar») e rispondi con le tessere. 3 domande al giorno; dalla Unit 8 diventa present continuous.' });
+  if(finita('u6')) L.push({ ic:'🛒', t:'Fare la spesa al Market', d:'Prendi un carrello, scegli quello che vuoi dagli scaffali e paga alla cassa da Anna, in inglese.' });
+  else if(aperta('u6')) L.push({ ic:'🛒', t:'Fare la spesa al Market', d:'Si sblocca quando finisci la quest del Market.', lock:true });
+  const foto = QT_FOTO.filter(([u])=>finita(u));
+  if(foto.length) L.push({ ic:'📷', t:'Photo Challenges', d:`Fotografa ${foto.map(f=>f[1]).join(', ')} e scrivi la didascalia in inglese: 15 ⭐ a foto, una volta sola.` });
+  else L.push({ ic:'📷', t:'Photo Challenges', d:'La prima foto da scattare si sblocca finendo la quest della Clock Tower.', lock:true });
   L.push({ ic:'⚽', t:'Punizioni al campo sportivo', d:'Calcia il pallone sul foglietto con la frase scritta in modo corretto: +3 ⭐ a colpo (fino a 15 ⭐ al giorno).' });
   L.push({ ic:'🎤', t:'Speakers\' Corner, al parco vicino alla fontana', d:'Sali sulla cassetta e parla al microfono sul tema del giorno, legato alla tua unit: fino a 30 ⭐ al giorno.' });
   // v544 del gioco: sing-along al concerto e Dance & say allo skatepark (per tutti)
@@ -2953,7 +3001,23 @@ function _qtLibere(s){
   // totale sopra il 9 (scelta del docente, 7 nov)
   const media = _mediaTotale(S.myclass);
   if(media!=null && media>9) L.push({ ic:'🔥', t:'Gara di freestyle con la crew dello skatepark', d:'Dalle 15 chiedi a uno dei ragazzi che ballano «Can you rap?»: tre round a tempo, in cui scrivi o dici tu parole e frasi in rima. Una sfida al giorno, fino a 80 ⭐: è difficile, è per chi se la sente!' });
-  return L;
+  // prima le attività consigliate per i punti deboli dell'ultima verifica
+  return L.filter(a=>a.top).concat(L.filter(a=>!a.top));
+}
+// La missione principale: la storia, le lettere trovate e l'indizio da prendere
+function _qtMissioneHtml(s){
+  const ind = s.indizi[0];
+  return `<div style="background:#fff;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:14px;line-height:1.5;">
+    📜 <b>La missione principale</b>: l'Architetto ha progettato QuestTown, ma nessuno l'ha mai visto. Ha nascosto per te <b>12 lettere</b> in città: in ognuna c'è una <b>parola speciale</b>, l'indizio. Le lettere si aprono man mano che completi le quest del tuo anno (4 in prima, 4 in seconda, 4 in terza). Trova tutte e 12 le parole, dille all'ascensore della Job Centre Tower… e scoprirai chi è l'Architetto!
+    <div style="margin-top:6px;font-weight:700;color:#1d2a32;">Lettere trovate: ${s.lettere} / 12</div>
+    ${ind?_qtIndizioHtml(s):''}
+  </div>`;
+}
+function _qtIndizioHtml(s){
+  const ind = s.indizi[0]; if(!ind) return '';
+  return `<div style="background:#FFF4E5;border:1.5px solid #F5C77E;color:#7A4B00;border-radius:10px;padding:8px 10px;margin-top:6px;font-size:14px;line-height:1.45;">
+    🔎 <b>Hai un indizio da prendere!</b> Una lettera dell'Architetto ti aspetta ${esc(ind.dove)}.${s.indizi.length>1?` E non è l'unica: ne hai <b>${s.indizi.length}</b> da prendere.`:''} Leggila e rispondi alla domanda per raccogliere la parola.
+  </div>`;
 }
 function _qtPianiHtml(){
   const s = _qtStato(); if(!s) return '';
@@ -2976,12 +3040,14 @@ function _qtPianiHtml(){
   } else {
     h += `<div style="background:#fff;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:14px;line-height:1.5;color:#1D7A55;">🎉 <b>Hai completato tutte le quest aperte.</b></div>`;
   }
-  // 3. Attività libere
+  // 3. La missione principale (e l'indizio da prendere)
+  if(s.giocato) h += _qtMissioneHtml(s);
+  // 4. Attività libere
   const L = _qtLibere(s);
   h += `<div style="font-size:12px;font-weight:800;color:#1d2a32;letter-spacing:.4px;margin:12px 0 4px;">FUORI DALLE QUEST PUOI ANCHE…</div>`
     + L.map(a=>`<div style="display:flex;gap:9px;align-items:flex-start;padding:6px 0;border-top:0.5px solid #cfe5da;${a.lock?'opacity:.6;':''}">
         <span style="font-size:19px;line-height:1.3;flex-shrink:0;">${a.lock?'🔒':a.ic}</span>
-        <div style="font-size:14px;line-height:1.45;"><b>${esc(a.t)}</b><div style="color:var(--muted);">${esc(a.d)}</div></div>
+        <div style="font-size:14px;line-height:1.45;"><b>${esc(a.t)}</b>${a.cons?`<div style="color:#c2572e;font-weight:700;">⭐ ${esc(a.cons)}</div>`:''}<div style="color:var(--muted);">${esc(a.d)}</div></div>
       </div>`).join('');
   return `<div style="${_QT_BOX}margin-top:0;margin-bottom:14px;">${_qtTesta('Allenati giocando: lezione, quest e attività libere')}${h}${_qtBtn('Vai in QuestTown')}${_qtAiutoHtml()}</div>`;
 }
