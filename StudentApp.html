@@ -304,6 +304,8 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
           <button id="btn-reset-day" onclick="resetCalDay()" style="display:none;background:none;border:none;color:var(--purple);font-size:11px;font-weight:600;cursor:pointer;padding:0;font-family:inherit">← Prossimi eventi</button>
         </div>
         <div id="day-events-list"><div class="loading"><div class="spinner"></div></div></div>
+        <!-- QuestTown: a che punto sei con le quest (vedi renderQuestTown) -->
+        <div id="qt-agenda"></div>
       </div>
     </div>
 
@@ -883,6 +885,7 @@ function doLogout(){
   S.lessons=[]; S.feedback=[]; S.boardMsgs=[]; S.pianoMsgs=[];
   S._analisiRequest=null;
   S.personalPlan=[]; S.recoverySessions={}; S._pianoSeen=new Set(); S._assignInfo={};
+  S.qt=null; renderQuestTown();
   Object.keys(S.chartInstances).forEach(id=>destroyChart(id));
   document.getElementById('code-input').value='';
   document.getElementById('login-err').style.display='none';
@@ -1176,6 +1179,7 @@ async function bootApp(){
   renderOrarioBanner();
   renderObiettiviCard();
   navTab(0,'scr-agenda');
+  qtLoad(true);
   maybeShowInstallBanner();
   maybeRequestPushPermission();
 
@@ -2674,9 +2678,11 @@ function renderPiani(){
     📋 Il piano personale è scelto dal docente in base all'andamento delle verifiche e delle lezioni ed è <strong>sempre disponibile</strong>.
   </div>`;
   if(!S.personalPlan.length && !msgs.length){
-    html += '<div style="text-align:center;padding:32px 20px;color:var(--muted);font-size:13px;">Al momento non hai piani personali.</div>';
+    html += '<div style="text-align:center;padding:20px 20px 24px;color:var(--muted);font-size:13px;">Al momento non hai piani personali.</div>';
+    html += `<div id="qt-piani">${_qtPianiHtml()}</div>`;
   } else {
     html += renderPianoCard();
+    html += `<div id="qt-piani">${_qtPianiHtml()}</div>`;
     if(msgs.length){
       html += '<div class="sec-lbl" style="margin-top:4px">MESSAGGI DEL PROF.</div>';
       msgs.forEach(m=>{ html += _pianoMsgCard(m); });
@@ -2739,6 +2745,231 @@ async function requestAnalisiDidattica(){
   } catch(e){
     alert('Errore nell\'invio della richiesta: '+e.message);
   }
+}
+
+// ── QUESTTOWN: promemoria in Agenda e scheda nei Piani ───────────────────
+// Il gioco (english-town, stessa origine: entra da solo con il codice di
+// StudentApp) salva i progressi in englishtown/progress/<CODICE>:
+//   agg                = ora dell'ultimo salvataggio (apertura del gioco o
+//                        ultima attività): da qui «sono X giorni che non entri»;
+//   dati.et_progress   = { <unit>: {step, done}, __stars:{tot}, … }.
+// La unit aperta dal docente per la classe è il cursore englishtown/classi/
+// <CLASSE> {yr, n}; senza cursore vale la tabella COORTI del gioco.
+// Sono tutte letture permesse a qualunque alunno: niente scritture.
+// ⚠️ QT_SYL e QT_COORTI sono una COPIA di SYLLABUS e COORTI di
+// english-town/index.html: se lì si aggiunge una unit, va aggiunta anche qui.
+const QT_URL  = 'https://giacomocreations.github.io/english-town/';
+const QT_ICON = QT_URL + 'et-icons/icon-192.png';
+const QT_SYL = [
+  {id:'u0',yr:1,n:0,ic:'🏫',t:'Town School'},      {id:'u1',yr:1,n:1,ic:'✈️',t:'City Airport'},
+  {id:'u2',yr:1,n:2,ic:'👪',t:'Town Hall'},        {id:'u3',yr:1,n:3,ic:'🏠',t:'Home'},
+  {id:'u4',yr:1,n:4,ic:'🛒',t:'Corner Shop'},      {id:'u5',yr:1,n:5,ic:'🕐',t:'Clock Tower'},
+  {id:'u6',yr:1,n:6,ic:'🥪',t:'The Market'},       {id:'u7',yr:1,n:7,ic:'⚽',t:'Sports Field'},
+  {id:'u8',yr:1,n:8,ic:'👕',t:'Clothes Shop'},
+  {id:'u2_1',yr:2,n:1,ic:'💇',t:'Style Salon'},    {id:'u2_2',yr:2,n:2,ic:'🎵',t:'The Beat Club'},
+  {id:'u2_3',yr:2,n:3,ic:'🌦️',t:'Weather Station'},{id:'u2_4',yr:2,n:4,ic:'🎬',t:'ODEON Cinema'},
+  {id:'u2_5',yr:2,n:5,ic:'🚆',t:'Central Station'},{id:'u2_6',yr:2,n:6,ic:'♻️',t:'Eco Point'},
+  {id:'u2_7',yr:2,n:7,ic:'🧹',t:'At home'},        {id:'u2_8',yr:2,n:8,ic:'🏙️',t:'City Life Plaza'},
+  {id:'u3_1',yr:3,n:1,ic:'💼',t:'Job Centre Tower'},{id:'u3_2',yr:3,n:2,ic:'💻',t:'TechLab'},
+  {id:'u3_3',yr:3,n:3,ic:'⛺',t:"Hikers' Camp"},   {id:'u3_4',yr:3,n:4,ic:'🔥',t:'Climate & Fire Station'},
+  {id:'u3_5',yr:3,n:5,ic:'🏥',t:'City Hospital'}
+];
+const QT_PARTI = ['Vocabulary','Grammar','Functions','Listening','Writing','Final task'];
+const QT_COORTI = { '1':{yr:1,n:0}, '2':{yr:1,n:6}, '3':{yr:2,n:5} };
+const QT_GIORNI_AVVISO = 4;     // da quanti giorni senza entrare scatta il richiamo
+S.qt = null;                    // { prog, agg, cur, cls, at }  (null = non ancora letto o non leggibile)
+
+function _qtCls(){ return String(S.className||'').toUpperCase().replace(/\s+/g,''); }
+function _qtCursore(yr, n){
+  yr = Number(yr); n = Number(n);
+  if(isFinite(yr) && isFinite(n) && yr>=1 && yr<=3 && n>=0 && n<=20) return { yr:Math.floor(yr), n:Math.floor(n) };
+  return null;
+}
+async function qtLoad(force){
+  if(!S.code || typeof db==='undefined' || !db) return;
+  if(!force && S.qt && Date.now()-S.qt.at < 60000) return;
+  if(S._qtBusy) return;
+  S._qtBusy = true;
+  const code = String(S.code).trim().toUpperCase(), cls = _qtCls();
+  const rd = p => db.ref(p).once('value').then(s=>s.val());
+  try{
+    const base = 'englishtown/progress/'+code;
+    const okCls = /^[1-3][A-Z]{1,2}$/.test(cls);
+    const [prog, agg, yr, n] = await Promise.all([
+      rd(base+'/dati/et_progress'), rd(base+'/agg'),
+      okCls ? rd('englishtown/classi/'+cls+'/yr').catch(()=>null) : null,
+      okCls ? rd('englishtown/classi/'+cls+'/n').catch(()=>null) : null
+    ]);
+    if(code !== String(S.code||'').trim().toUpperCase()) return;    // cambio di account nel frattempo
+    const cur = _qtCursore(yr, n) || QT_COORTI[cls.charAt(0)] || { yr:1, n:0 };
+    S.qt = { prog: (prog && typeof prog==='object') ? prog : {}, agg: Number(agg)||0, cur, cls, at: Date.now() };
+  } catch(e){
+    console.warn('[QuestTown] progressi non leggibili:', e && e.message);
+  } finally { S._qtBusy = false; }
+  renderQuestTown();
+}
+// Lo stato delle quest per l'alunno: aperte (unit sbloccate o già finite),
+// completate, in corso, da fare; la quest della unit della classe.
+function _qtStato(){
+  const q = S.qt; if(!q) return null;
+  const P = q.prog || {}, ord = u => u.yr*100+u.n, cOrd = ord(q.cur);
+  const rows = QT_SYL.map(u=>{
+    const p = P[u.id] || {}, done = !!p.done;
+    const step = done ? 6 : Math.min(5, Math.max(0, Math.floor(Number(p.step)||0)));
+    return Object.assign({}, u, { step, done, open: done || ord(u)<=cOrd });
+  });
+  const open = rows.filter(r=>r.open);
+  const unit = rows.filter(r=>ord(r)<=cOrd).pop() || rows[0];
+  const giocato = q.agg>0 || Object.keys(P).some(k=>/^u\d/.test(k));
+  const st = P.__stars || {};
+  let giorni = null;
+  if(q.agg>0){
+    const oggi = new Date(); oggi.setHours(0,0,0,0);
+    const g = new Date(q.agg); g.setHours(0,0,0,0);
+    giorni = Math.max(0, Math.round((oggi - g)/864e5));
+  }
+  return {
+    rows, open, unit, giocato, giorni, anno: Number(_qtCls().charAt(0))||1,
+    stelle: Number(st.tot)||0,
+    fatte:  rows.filter(r=>r.done),
+    inCorso: open.filter(r=>!r.done && r.step>0),
+    daFare:  open.filter(r=>!r.done)
+  };
+}
+// La quest su cui insistere: in prima lo Starter finché non è finito; poi
+// quella della unit della classe se non è finita,
+// altrimenti quella in corso più avanti, altrimenti la prima ancora da fare.
+function _qtProssima(s){
+  // in prima si comincia dallo Starter: la lezione di Miss Grace si apre solo dopo
+  const u0 = s.rows[0];
+  if(s.anno<2 && !u0.done) return u0;
+  if(!s.unit.done) return s.unit;
+  return s.inCorso[s.inCorso.length-1] || s.daFare[0] || null;
+}
+function _qtNome(u){ return `${u.ic} <b>${esc(u.t)}</b>`; }
+function _qtBarra(u){
+  const pct = Math.round(u.step/6*100);
+  return `<div style="display:flex;align-items:center;gap:8px;margin-top:5px;">
+    <div style="flex:1;height:6px;border-radius:3px;background:#e3eef2;overflow:hidden;"><div style="width:${pct}%;height:100%;background:#2e9d6a;"></div></div>
+    <span style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap;">${u.step} parti su 6</span>
+  </div>`;
+}
+function _qtMancano(u){ return QT_PARTI.slice(u.step).join(', '); }
+function _qtQuando(g){
+  if(g==null) return '';
+  return g===0 ? 'oggi' : g===1 ? 'ieri' : g+' giorni fa';
+}
+function _qtBtn(label){
+  return `<a href="${QT_URL}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;background:#1d2a32;color:#fff;text-decoration:none;border-radius:10px;padding:9px 14px;font-size:13px;font-weight:800;">
+    <img src="${QT_ICON}" alt="" width="20" height="20" style="border-radius:5px;" onerror="this.remove()"> ${label}
+  </a>`;
+}
+function _qtTesta(sotto){
+  return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+    <img src="${QT_ICON}" alt="" width="36" height="36" style="border-radius:9px;flex-shrink:0;background:#1d2a32;" onerror="this.outerHTML='<span style=&quot;font-size:28px;line-height:36px;&quot;>🏘️</span>'">
+    <div style="min-width:0;">
+      <div style="font-size:14px;font-weight:800;color:#1d2a32;">QuestTown</div>
+      ${sotto?`<div style="font-size:11px;color:var(--muted);">${sotto}</div>`:''}
+    </div>
+  </div>`;
+}
+const _QT_BOX = 'background:#f1f7f4;border:1px solid #cfe5da;border-radius:14px;padding:12px 14px;margin:12px 0 4px;';
+const _QT_ALERT = 'background:#FFF4E5;border:1px solid #F5C77E;color:#7A4B00;border-radius:10px;padding:8px 10px;font-size:12.5px;line-height:1.45;margin-bottom:8px;';
+
+// ── Agenda: a che punto sei con le quest ─────────────────────────────────
+function _qtAgendaHtml(){
+  const s = _qtStato(); if(!s) return '';
+  const prox = _qtProssima(s);
+  if(!s.giocato){
+    return `<div style="${_QT_BOX}">${_qtTesta('Il gioco per imparare l\'inglese esplorando una città')}
+      <div style="${_QT_ALERT}">🚪 <b>Non hai ancora mai giocato a QuestTown!</b> Entra (ti riconosce da solo con il tuo codice) e comincia dalla quest ${_qtNome(prox||s.unit)}.</div>
+      ${_qtBtn('Entra in QuestTown')}</div>`;
+  }
+  let h = '';
+  if(s.giorni!=null && s.giorni>=QT_GIORNI_AVVISO && prox){
+    h += `<div style="${_QT_ALERT}">⏰ <b>Sono ${s.giorni} giorni che non entri in QuestTown.</b> Entra e svolgi la quest ${_qtNome(prox)}${prox.step?` (ti mancano ${esc(_qtMancano(prox))})`:''}!</div>`;
+  }
+  // Quest completate
+  h += `<div style="font-size:12.5px;line-height:1.5;color:var(--text);margin-bottom:6px;">✅ ${s.fatte.length
+    ? `Hai completato ${s.fatte.length===1?'la quest':`${s.fatte.length} quest`}: ${s.fatte.map(_qtNome).join(', ')}.`
+    : 'Non hai ancora completato nessuna quest.'}</div>`;
+  // La quest a cui sei arrivato
+  const cur = s.inCorso[s.inCorso.length-1] || null;
+  if(cur){
+    h += `<div style="background:#fff;border-radius:10px;padding:8px 10px;margin-bottom:6px;font-size:12.5px;line-height:1.45;">
+      📍 Sei alla quest ${_qtNome(cur)}: ti mancano <b>${esc(_qtMancano(cur))}</b>.${_qtBarra(cur)}</div>`;
+  }
+  // Ancora da svolgere
+  const resto = s.daFare.filter(u=>u!==cur);
+  if(resto.length){
+    const vis = resto.slice(0,4);
+    h += `<div style="font-size:12.5px;line-height:1.5;color:var(--text);">⏳ Devi ancora svolgere: ${vis.map(u=>_qtNome(u)+(u===s.unit?' <span style="color:#c2572e;font-weight:700;">(la tua unit)</span>':'')).join(', ')}${resto.length>vis.length?` e altre ${resto.length-vis.length}`:''}.</div>`;
+  } else if(!cur){
+    h += `<div style="font-size:12.5px;line-height:1.5;color:#1D7A55;font-weight:700;">🎉 Hai completato tutte le quest aperte! La prossima si apre con la nuova unit.</div>`;
+  }
+  const quando = _qtQuando(s.giorni);
+  return `<div style="${_QT_BOX}">${_qtTesta((quando?'Ultimo accesso: '+quando:'')+(s.stelle?` · ⭐ ${s.stelle}`:''))}${h}${_qtBtn(s.daFare.length?'Vai in QuestTown e continua':'Vai in QuestTown')}</div>`;
+}
+
+// ── Piani: lezione di Miss Grace, quest da fare, attività libere ─────────
+// Le stelle del piano: il gioco le dà (una volta sola) per le attività che
+// Miss Grace ha consegnato alla Town School, finite con almeno il 60%:
+// 50 ⭐ al 60%, fino a 200 ⭐ al 100% (pianoStelle in english-town).
+function _qtPianoAperto(){
+  return (S.personalPlan||[]).some(p=>p.code && p.type!=='recovery_orale'
+    && ((S.recoverySessions||{})[p.code]?.status || p.status || 'pending')!=='completed');
+}
+// Le attività fuori dalle quest, secondo quello che l'alunno ha già aperto
+// (stessi sblocchi del gioco).
+function _qtLibere(s){
+  const aperta = id => !!s.rows.find(r=>r.id===id && r.open);
+  const finita = id => !!s.rows.find(r=>r.id===id && r.done);
+  const L = [];
+  L.push({ ic:'⚽', t:'Punizioni al campo sportivo', d:'Calcia il pallone sul foglietto con la frase scritta in modo corretto: +3 ⭐ a colpo (fino a 15 ⭐ al giorno).' });
+  L.push({ ic:'🎤', t:'Speakers\' Corner, al parco vicino alla fontana', d:'Sali sulla cassetta e parla al microfono sul tema del giorno, legato alla tua unit: fino a 30 ⭐ al giorno.' });
+  if(aperta('u6')) L.push({ ic:'☕', t:'Ordinare al café o al Sunny Side Diner', d:'Siediti, ordina dal menu da bere e da mangiare, poi chiedi il conto e paga.' });
+  if(finita('u8')) L.push({ ic:'👕', t:'Comprare vestiti al Clothes Shop', d:'Chiedi la taglia e il prezzo, prova i vestiti in camerino e decidi se prenderli.' });
+  else if(aperta('u8')) L.push({ ic:'👕', t:'Comprare vestiti al Clothes Shop', d:'Si sblocca quando finisci la quest del Clothes Shop.', lock:true });
+  if(aperta('u2_4')) L.push({ ic:'🎬', t:'Un film all\'ODEON', d:'Alle 17 e alle 20 guarda un cortometraggio, poi racconta che cosa è successo rispondendo alle domande al passato.' });
+  if(finita('u8') || s.stelle>=1000) L.push({ ic:'🛹', t:'Skate allo skatepark', d:'Con lo skate (lo compri al Corner Shop) passa sulle parole scritte giuste: +1 ⭐ (fino a 20 al giorno). Attento: quelle sbagliate tolgono una stella!' });
+  else L.push({ ic:'🛹', t:'Skate allo skatepark', d:'Si sblocca finendo l\'Anno 1 oppure arrivando a 1000 ⭐'+(s.stelle?` (ne hai ${s.stelle})`:'')+': poi passi sulle parole scritte giuste per prendere stelle.', lock:true });
+  return L;
+}
+function _qtPianiHtml(){
+  const s = _qtStato(); if(!s) return '';
+  const u0 = s.rows.find(r=>r.id==='u0');
+  let h = '';
+  // 1. La lezione con Miss Grace sugli errori dell'ultima verifica
+  const prima = s.anno<2 && !u0.done;
+  h += `<div style="background:#fff;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:12.5px;line-height:1.5;">
+    🍎 <b>Vai alla Town School e fai la lezione con Miss Grace</b>: ripassa con lei gli errori che hai fatto nell'ultima verifica.
+    ${prima?'<div style="color:var(--muted);margin-top:3px;">La lezione si apre quando finisci la quest della Town School.</div>':''}
+    ${_qtPianoAperto()?`<div style="background:#FFF8E6;border-radius:8px;padding:6px 9px;margin-top:6px;color:#7A5A12;font-weight:600;">⭐ Alla Town School Miss Grace ti consegna anche il tuo <b>piano personalizzato</b>: se lo svolgi con almeno il 60% ricevi da <b>50 ⭐</b> (con il 60%) fino a <b>200 ⭐</b> (con il 100%). Le stelle arrivano una volta sola; su LiveLearn puoi rifarlo quante volte vuoi.</div>`:''}
+  </div>`;
+  // 2. La quest da svolgere (prima quella della unit della classe)
+  const prox = _qtProssima(s);
+  if(prox){
+    h += `<div style="background:#fff;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:12.5px;line-height:1.5;">
+      🗺️ <b>Quest da svolgere:</b> ${_qtNome(prox)}${prox===s.unit?' <span style="color:#c2572e;font-weight:700;">(la tua unit)</span>':''}${prox.step?` — ti mancano ${esc(_qtMancano(prox))}${_qtBarra(prox)}`:' — non l\'hai ancora cominciata.'}
+      ${s.daFare.length>1?`<div style="color:var(--muted);margin-top:3px;">Poi ti restano ancora ${s.daFare.length-1} quest: le trovi in Agenda.</div>`:''}
+    </div>`;
+  } else {
+    h += `<div style="background:#fff;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:12.5px;line-height:1.5;color:#1D7A55;">🎉 <b>Hai completato tutte le quest aperte.</b></div>`;
+  }
+  // 3. Attività libere
+  const L = _qtLibere(s);
+  h += `<div style="font-size:11px;font-weight:800;color:#1d2a32;letter-spacing:.4px;margin:10px 0 4px;">FUORI DALLE QUEST PUOI ANCHE…</div>`
+    + L.map(a=>`<div style="display:flex;gap:9px;align-items:flex-start;padding:6px 0;border-top:0.5px solid #cfe5da;${a.lock?'opacity:.6;':''}">
+        <span style="font-size:17px;line-height:1.3;flex-shrink:0;">${a.lock?'🔒':a.ic}</span>
+        <div style="font-size:12.5px;line-height:1.45;"><b>${esc(a.t)}</b><div style="color:var(--muted);">${esc(a.d)}</div></div>
+      </div>`).join('');
+  return `<div style="${_QT_BOX}margin-top:0;margin-bottom:14px;">${_qtTesta('Allenati giocando: lezione, quest e attività libere')}${h}${_qtBtn('Vai in QuestTown')}</div>`;
+}
+function renderQuestTown(){
+  const a = document.getElementById('qt-agenda');
+  if(a) a.innerHTML = _qtAgendaHtml();
+  const p = document.getElementById('qt-piani');
+  if(p) p.innerHTML = _qtPianiHtml();
 }
 
 // ── OBIETTIVI DI APPRENDIMENTO ────────────────────────────────────────────
@@ -4766,6 +4997,8 @@ document.addEventListener('visibilitychange', () => {
     const v = S._assignInfo[c];
     if(v && v!=='loading' && v.status==='assigned') _loadAssignInfo(c, true);
   });
+  // Di ritorno da QuestTown: quest e ultimo accesso possono essere cambiati
+  if(S.code) qtLoad(false);
   if(_updPending) _tryAutoReload();
   navigator.serviceWorker?.getRegistration?.().then(reg => reg && reg.update()).catch(() => {});
 });
