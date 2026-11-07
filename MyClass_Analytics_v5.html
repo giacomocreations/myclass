@@ -2001,10 +2001,12 @@
                         <button id="ppTab0" onclick="ppSwitchTab(0)" style="flex:1;padding:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:#6c47ff;color:#fff;font-family:inherit;">📝 Scritto</button>
                         <button id="ppTab1" onclick="ppSwitchTab(1)" style="flex:1;padding:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:#f0eeff;color:#6c47ff;font-family:inherit;">🗣️ Orale (approvazione)</button>
                         <button id="ppTab2" onclick="ppSwitchTab(2)" style="flex:1;padding:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:#f0eeff;color:#6c47ff;font-family:inherit;">📋 Attività inviate</button>
+                        <button id="ppTab3" onclick="ppSwitchTab(3)" title="A che punto è ogni alunno in QuestTown: ultimo accesso, quest, stelle del piano" style="flex:1;padding:9px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:#f0eeff;color:#6c47ff;font-family:inherit;">🏘️ QuestTown</button>
                     </div>
                     <div id="ppBody0"></div>
                     <div id="ppBody1" style="display:none;"></div>
                     <div id="ppBody2" style="display:none;"></div>
+                    <div id="ppBody3" style="display:none;"></div>
                 </div>
                 </div><!-- /pane piano -->
 
@@ -35951,13 +35953,159 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
 
     function ppSwitchTab(idx) {
         _ppTabActive = idx;
-        [0, 1, 2].forEach(i => {
+        [0, 1, 2, 3].forEach(i => {
             const btn = document.getElementById('ppTab' + i);
             const body = document.getElementById('ppBody' + i);
             if (btn) { btn.style.background = i === idx ? '#6c47ff' : '#f0eeff'; btn.style.color = i === idx ? '#fff' : '#6c47ff'; }
             if (body) body.style.display = i === idx ? 'block' : 'none';
         });
         renderPianoPersPanel();
+    }
+
+    // ── 🏘️ QUESTTOWN NEI PIANI (Giacomo, 7 nov: «aggiungi questo su piani»):
+    // per ogni alunno della classe, a che punto è nel gioco. Solo letture:
+    //   livelearn/students                         chi è in classe (niente tester)
+    //   englishtown/progress/<CODICE>/agg          ultimo accesso al gioco
+    //   englishtown/progress/<CODICE>/dati/et_progress   quest (step/done) e stelle
+    //                                              (__stars.tot; __stars.given["piano:<codice piano>"]
+    //                                              = stelle del piano consegnato da Miss Grace)
+    //   englishtown/classi/<CLASSE>/yr,n           la unit aperta per la classe
+    // ⚠️ _MCQT_SYL e _MCQT_COORTI sono COPIE di SYLLABUS e COORTI di
+    // english-town/index.html (come QT_SYL in StudentApp): una unit nuova va
+    // aggiunta in tutti e tre i posti.
+    const _MCQT_SYL = [
+      ['u0',1,0,'🏫','Town School'],['u1',1,1,'✈️','City Airport'],['u2',1,2,'👪','Town Hall'],['u3',1,3,'🏠','Home'],
+      ['u4',1,4,'🛒','Corner Shop'],['u5',1,5,'🕐','Clock Tower'],['u6',1,6,'🥪','The Market'],['u7',1,7,'⚽','Sports Field'],
+      ['u8',1,8,'👕','Clothes Shop'],['u2_1',2,1,'💇','Style Salon'],['u2_2',2,2,'🎵','The Beat Club'],['u2_3',2,3,'🌦️','Weather Station'],
+      ['u2_4',2,4,'🎬','ODEON Cinema'],['u2_5',2,5,'🚆','Central Station'],['u2_6',2,6,'♻️','Eco Point'],['u2_7',2,7,'🧹','At home'],
+      ['u2_8',2,8,'🏙️','City Life Plaza'],['u3_1',3,1,'💼','Job Centre Tower'],['u3_2',3,2,'💻','TechLab'],['u3_3',3,3,'⛺',"Hikers' Camp"],
+      ['u3_4',3,4,'🔥','Climate & Fire Station'],['u3_5',3,5,'🏥','City Hospital']
+    ].map(([id,yr,n,ic,t]) => ({ id, yr, n, ic, t }));
+    const _MCQT_COORTI = { '1':{yr:1,n:0}, '2':{yr:1,n:6}, '3':{yr:2,n:5} };
+    const _MCQT_PARTI = ['Vocabulary','Grammar','Functions','Listening','Writing','Final task'];
+    let _mcqt = { cls:'', at:0, rows:null, cur:null, err:'', busy:false, sort:'accesso' };
+    const _mcqtNorm = x => String(x || '').toUpperCase().replace(/\s+/g, '');
+
+    async function _mcqtLoad(cls, force) {
+        if (_mcqt.busy) return;
+        if (!force && _mcqt.rows && _mcqt.cls === cls && Date.now() - _mcqt.at < 60000) return;
+        _mcqt.busy = true; _mcqt.err = '';
+        try {
+            const db2 = firebase.database();
+            const studs = (await db2.ref('livelearn/students').get()).val() || {};
+            const codes = Object.keys(studs).filter(c => studs[c] && !studs[c].tester && _mcqtNorm(studs[c].className || studs[c].classId) === cls);
+            const rd = p => db2.ref(p).get().then(s => s.val()).catch(() => undefined);
+            const ok = /^[1-3][A-Z]{1,2}$/.test(cls);
+            const [yr, n] = ok ? await Promise.all([rd('englishtown/classi/' + cls + '/yr'), rd('englishtown/classi/' + cls + '/n')]) : [null, null];
+            const y = Number(yr), u = Number(n);
+            _mcqt.cur = (isFinite(y) && isFinite(u) && y >= 1 && y <= 3 && u >= 0) ? { yr:y, n:u, cloud:true } : Object.assign({ cloud:false }, _MCQT_COORTI[cls.charAt(0)] || { yr:1, n:0 });
+            _mcqt.rows = await Promise.all(codes.map(async code => {
+                const [agg, prog] = await Promise.all([rd('englishtown/progress/' + code + '/agg'), rd('englishtown/progress/' + code + '/dati/et_progress')]);
+                return { code, name: String(studs[code].name || code).trim(), agg: Number(agg) || 0, prog: (prog && typeof prog === 'object') ? prog : {}, letto: agg !== undefined };
+            }));
+            _mcqt.cls = cls; _mcqt.at = Date.now();
+        } catch(e) {
+            _mcqt.err = e.message || String(e);
+        } finally { _mcqt.busy = false; }
+    }
+    // Lo stato di un alunno: stesse regole della card QuestTown della StudentApp
+    function _mcqtStato(r) {
+        const P = r.prog, ord = u => u.yr * 100 + u.n, cOrd = ord(_mcqt.cur);
+        const rows = _MCQT_SYL.map(u => { const p = P[u.id] || {}, done = !!p.done;
+            return Object.assign({}, u, { done, step: done ? 6 : Math.min(5, Math.max(0, Math.floor(Number(p.step) || 0))), open: done || ord(u) <= cOrd }); });
+        const unit = rows.filter(u => ord(u) <= cOrd).pop() || rows[0];
+        const open = rows.filter(u => u.open);
+        const st = P.__stars || {}, given = st.given || {};
+        let giorni = null;
+        if (r.agg > 0) { const oggi = new Date(); oggi.setHours(0,0,0,0); const g = new Date(r.agg); g.setHours(0,0,0,0); giorni = Math.max(0, Math.round((oggi - g) / 864e5)); }
+        // i piani inviati a questo alunno (Attività inviate) e le stelle prese in QuestTown
+        const piani = Object.entries(_ppActiveScritto || {}).filter(([, it]) => it && it.stuCode === r.code)
+            .map(([pc, it]) => ({ code: pc, status: it.status, best: it.bestScore ?? it.lastScore, stelle: Number(given['piano:' + pc]) || 0 }));
+        return {
+            rows, unit, giorni, stelle: Number(st.tot) || 0, piani,
+            giocato: r.agg > 0 || Object.keys(P).some(k => /^u\d/.test(k)),
+            fatte: rows.filter(u => u.done),
+            inCorso: open.filter(u => !u.done && u.step > 0),
+            daFare: open.filter(u => !u.done)
+        };
+    }
+    function _mcqtQuando(g) { return g == null ? '' : g === 0 ? 'oggi' : g === 1 ? 'ieri' : g + ' giorni fa'; }
+
+    function _mcqtHtml() {
+        const esc = x => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const classi = [...new Set((data.classi || []).map(c => _mcqtNorm(c && c.nome)).filter(c => /^[1-3][A-Z]{1,2}$/.test(c)))].sort();
+        const cls = _mcqt.cls;
+        let h = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+            <select onchange="ppQtClasse(this.value)" style="font-size:13px;padding:5px 8px;border-radius:8px;border:1.5px solid #c4b5fd;font-family:inherit;">
+              ${classi.map(c => `<option ${c === cls ? 'selected' : ''}>${c}</option>`).join('')}</select>
+            <select onchange="_mcqt.sort=this.value;_mcqtRender()" style="font-size:12px;padding:5px 8px;border-radius:8px;border:1px solid #e5e7eb;font-family:inherit;" title="Ordina">
+              <option value="accesso" ${_mcqt.sort === 'accesso' ? 'selected' : ''}>Ordina: ultimo accesso</option>
+              <option value="nome" ${_mcqt.sort === 'nome' ? 'selected' : ''}>Ordina: nome</option>
+              <option value="quest" ${_mcqt.sort === 'quest' ? 'selected' : ''}>Ordina: quest completate</option></select>
+            <button onclick="ppQtAggiorna()" style="font-size:12px;padding:5px 12px;border-radius:8px;cursor:pointer;font-weight:700;font-family:inherit;border:1px solid #c4b5fd;background:#fff;color:#6c47ff;">🔄 Aggiorna</button>
+            <a href="https://giacomocreations.github.io/english-town/" target="_blank" rel="noopener" style="margin-left:auto;font-size:12px;font-weight:700;color:#6c47ff;text-decoration:none;">🏘️ Apri QuestTown ↗</a>
+          </div>`;
+        if (_mcqt.busy && !_mcqt.rows) return h + '<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">⏳ Leggo i progressi di QuestTown…</div>';
+        if (_mcqt.err) return h + `<div style="color:#dc2626;font-size:13px;padding:10px;">Lettura non riuscita: ${esc(_mcqt.err)}</div>`;
+        if (!_mcqt.rows) return h;
+        if (!_mcqt.rows.length) return h + `<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">Nessun alunno della ${esc(cls)} con un codice LiveLearn.</div>`;
+        const S = _mcqt.rows.map(r => Object.assign({ r }, _mcqtStato(r)));
+        const U = S[0].unit;
+        const oggi = S.filter(s => s.giorni === 0).length, sett = S.filter(s => s.giorni != null && s.giorni < 7).length,
+              mai = S.filter(s => !s.giocato).length, unitOk = S.filter(s => s.unit.done).length,
+              conPiano = S.filter(s => s.piani.length), pianoStelle = conPiano.filter(s => s.piani.some(p => p.stelle)).length;
+        h += `<div style="background:#f1f7f4;border:1px solid #cfe5da;border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:13px;line-height:1.6;color:#1d2a32;">
+            <b>${esc(cls)}</b> · unit aperta: ${U.ic} <b>${esc(U.t)}</b> ${_mcqt.cur.cloud ? '' : '<span style="color:#9ca3af;" title="Nessun cursore salvato per la classe: vale la tabella di partenza del gioco">(predefinita)</span>'}<br>
+            🎮 <b>${oggi}</b> oggi · <b>${sett}</b> negli ultimi 7 giorni · <b>${mai}</b> mai entrati ·
+            ✅ quest della unit completata da <b>${unitOk}</b> su ${S.length}
+            ${conPiano.length ? ` · ⭐ stelle del piano prese da <b>${pianoStelle}</b> su ${conPiano.length} con un piano inviato` : ''}
+          </div>`;
+        const ordAcc = s => s.r.agg > 0 ? s.r.agg : (s.giocato ? 1 : 0);
+        if (_mcqt.sort === 'nome') S.sort((a, b) => a.r.name.localeCompare(b.r.name, 'it'));
+        else if (_mcqt.sort === 'quest') S.sort((a, b) => b.fatte.length - a.fatte.length || ordAcc(b) - ordAcc(a));
+        else S.sort((a, b) => ordAcc(b) - ordAcc(a) || a.r.name.localeCompare(b.r.name, 'it'));
+        const th = t => `<th style="padding:6px;text-align:left;font-size:11px;color:#555;">${t}</th>`;
+        h += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+            <thead><tr style="background:#f5f3ff;">${th('Alunno')}${th('Ultimo accesso')}${th('Quest della unit')}${th('In corso / da fare')}${th('Completate')}${th('⭐')}${th('Piano con Miss Grace')}</tr></thead><tbody>`;
+        S.forEach(s => {
+            const g = s.giorni;
+            const accCol = !s.giocato ? '#9ca3af' : g == null ? '#6b7280' : g <= 1 ? '#059669' : g < 4 ? '#b45309' : '#dc2626';
+            const acc = !s.giocato ? 'mai' : (g == null ? 'ha giocato' : _mcqtQuando(g));
+            const u = s.unit;
+            const unitTxt = u.done ? '✅ completata' : u.step ? `${u.step}/6 · manca ${esc(_MCQT_PARTI.slice(u.step).join(', '))}` : '— non iniziata';
+            const altre = s.daFare.filter(x => x !== u);
+            const cur = s.inCorso.filter(x => x !== u).pop();
+            const inCorso = (cur ? `${cur.ic} ${esc(cur.t)} ${cur.step}/6` : '') + (altre.length ? `<span style="color:#9ca3af;">${cur ? ' · ' : ''}${altre.length} da fare</span>` : (cur ? '' : '<span style="color:#9ca3af;">—</span>'));
+            const piano = !s.piani.length ? '<span style="color:#9ca3af;">nessun piano inviato</span>'
+                : s.piani.map(p => p.stelle ? `<span style="color:#059669;font-weight:700;" title="${esc(p.code)}">⭐ ${p.stelle} prese</span>`
+                    : `<span style="color:#b45309;" title="${esc(p.code)}">${p.status === 'completed' ? (p.best != null ? 'fatto (' + esc(p.best) + '%), ' : 'fatto, ') : ''}stelle non ancora prese</span>`).join('<br>');
+            h += `<tr style="border-bottom:0.5px solid #eee;">
+                <td style="padding:6px;font-weight:600;">${esc(s.r.name)}</td>
+                <td style="padding:6px;color:${accCol};font-weight:700;white-space:nowrap;" title="${s.r.agg ? new Date(s.r.agg).toLocaleString('it') : ''}">${acc}</td>
+                <td style="padding:6px;">${u.ic} ${unitTxt}</td>
+                <td style="padding:6px;">${inCorso}</td>
+                <td style="padding:6px;text-align:center;" title="${esc(s.fatte.map(x => x.t).join(', '))}">${s.fatte.length}</td>
+                <td style="padding:6px;text-align:right;">${s.stelle || '—'}</td>
+                <td style="padding:6px;font-size:12px;">${piano}</td>
+              </tr>`;
+        });
+        h += `</tbody></table></div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:8px;line-height:1.5;">L'ultimo accesso è l'ultimo salvataggio dei progressi (apertura del gioco o ultima attività).
+            Le stelle del piano (da 50 al 60% fino a 200 al 100%) arrivano una volta sola, e solo per i piani che Miss Grace ha consegnato alla Town School: chi non ci è ancora andato le vede come «non ancora prese».
+            I progressi sono quelli salvati online: chi gioca come ospite non compare.</div>`;
+        return h;
+    }
+    function _mcqtRender() { const el = document.getElementById('ppBody3'); if (el && _ppTabActive === 3) el.innerHTML = _mcqtHtml(); }
+    async function ppQtClasse(cls) { _mcqt.cls = cls; _mcqt.rows = null; _mcqtRender(); await _mcqtLoad(cls, true); _mcqtRender(); }
+    async function ppQtAggiorna() { const c = _mcqt.cls; _mcqt.rows = null; _mcqtRender(); await _mcqtLoad(c, true); _mcqtRender(); }
+    async function _mcqtTab() {
+        if (!_mcqt.cls) {
+            const cur = (typeof currentClass === 'number' || typeof currentClass === 'string') && data.classi && data.classi[currentClass];
+            _mcqt.cls = _mcqtNorm(cur && cur.nome) || _mcqtNorm((data.classi || [])[0] && data.classi[0].nome);
+        }
+        _mcqtRender();
+        await _mcqtLoad(_mcqt.cls, false);
+        _mcqtRender();
     }
 
     // Render pannello piano nel tab agente
@@ -37193,6 +37341,9 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             }
             if (_ppTabActive === 2) el.innerHTML = _ppActiveTabHtml();
         }
+
+        // ── Tab 3: QuestTown (a che punto è ogni alunno nel gioco) ───────
+        if (_ppTabActive === 3) { _mcqtTab(); }
 
                 // ── Tab 1: Orale (approvazione) ──────────────────────────────────
         if (_ppTabActive === 1) {
