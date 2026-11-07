@@ -2723,6 +2723,7 @@ function renderPianoCard(){
       <div style="flex:1;min-width:0;">
         <div style="font-size:13px;font-weight:700;color:${c.title};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(item.unitName||item.title||'Attività')}</div>
         <div style="margin-top:4px;">${_pianoEsitoHtml(item.code||item._key)}</div>
+        ${_pianoMaterialiHtml(item)}
       </div>
       ${actionHtml}
     </div>`;
@@ -2938,6 +2939,31 @@ function _pianoMsgCard(msg){
   </div>`;
 }
 
+// Il messaggio "piano" che MyClass manda in bacheca ripete un'attività che
+// c'è già in «Le tue attività»: è un doppione se ha lo stesso codice (o, per i
+// recuperi orali vecchi senza codice, la stessa unit).
+function _pianoMsgDoppione(m){
+  const code = String(m.pianoCode||'');
+  return (S.personalPlan||[]).some(p =>
+    (code && (p.code===code || p._key===code)) ||
+    (!code && m.pianoPrefix==='ORALE' && p.type==='recovery_orale' && !p.code &&
+     String(p.unitName||'').trim().toLowerCase() === String(m.pianoUnit||'').trim().toLowerCase()));
+}
+// Materiali della unit allegati al messaggio del piano: si mostrano sotto
+// l'attività, visto che il messaggio doppione non compare più.
+function _pianoMaterialiHtml(item){
+  const code = String(item.code||item._key||'');
+  const msg = code && (S.pianoMsgs||[]).find(m=>String(m.pianoCode||'')===code);
+  const mats = msg ? pianoMateriali(msg) : [];
+  if(!mats.length) return '';
+  return `<details style="margin-top:8px;">
+    <summary style="cursor:pointer;font-size:13px;font-weight:700;color:#3730a3;">📚 Rivedi i materiali di questa unit (${mats.length})</summary>
+    ${mats.map(m => m.url
+      ? `<a href="${esc(ensureUrl(m.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-top:6px;background:#fff;border:1px solid #ddd6fe;border-radius:8px;text-decoration:none;color:#3C3489;font-size:13px;font-weight:600;min-width:0;"><span style="flex-shrink:0">🔗</span><span style="flex:1;min-width:0;overflow-wrap:anywhere;word-break:break-word">${esc(m.titolo||m.url)}</span><span style="flex-shrink:0;font-size:11px;color:#7c3aed">Apri ›</span></a>`
+      : `<div style="padding:6px 10px;margin-top:6px;font-size:13px;color:#3C3489;overflow-wrap:anywhere">• ${esc(m.titolo)}</div>`).join('')}
+  </details>`;
+}
+
 function renderPiani(){
   const body = document.getElementById('piani-body');
   if(!body) return;
@@ -2951,9 +2977,11 @@ function renderPiani(){
   } else {
     html += renderPianoCard();
     html += `<div id="qt-piani">${_qtPianiHtml()}</div>`;
-    if(msgs.length){
+    // In fondo solo i messaggi che non ripetono un'attività già mostrata sopra
+    const altri = msgs.filter(m=>!_pianoMsgDoppione(m));
+    if(altri.length){
       html += '<div class="sec-lbl" style="margin-top:4px">MESSAGGI DEL PROF.</div>';
-      msgs.forEach(m=>{ html += _pianoMsgCard(m); });
+      altri.forEach(m=>{ html += _pianoMsgCard(m); });
     }
   }
   body.innerHTML = html;
