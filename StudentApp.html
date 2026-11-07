@@ -1305,6 +1305,7 @@ function setupRealtimeListeners(){
       buildCal();
       renderAgendaEvents(S.selectedDate||null);
       renderCompiti();
+      if(!document.getElementById('fb-overlay')) renderValutazioni();   // il voto delle valutazioni viene dai voti di MyClass
       if(document.getElementById('scr-stats')?.classList.contains('active')){
         ['radar-chart','grades-chart','spark-chart','ll-trend-chart'].forEach(id=>destroyChart(id));
         renderStats();
@@ -2841,6 +2842,35 @@ function openRecoveryActivity(code){
   window.open(url,'_blank');
 }
 
+// Voto di una valutazione. Il feedback che MyClass scrive dopo una verifica
+// non porta il voto: lo si prende dai voti sincronizzati (myclass.votiScritto /
+// votiOrale), cercando la prova dello stesso giorno e dello stesso tipo
+// (scritta / orale / dialogo, poi la unit). Così vale anche per i feedback
+// già inviati e segue le correzioni del voto fatte in MyClass.
+// Se non si trova un solo voto sicuro non si mostra niente.
+function _fbVoto(fb){
+  if(fb && fb.voto!=null && fb.voto!=='') return fb.voto;
+  const mc = S.myclass;
+  if(!mc || !fb || !fb.date) return null;
+  const d = String(fb.date).slice(0,10);
+  const t = String(fb.title||'').toLowerCase();
+  const tipo = /oral|interrog|speaking|dialog/.test(t) ? 'o' : /scritt|verifica|test/.test(t) ? 's' : null;
+  let cand = [
+    ...(tipo!=='s' ? (mc.votiOrale||[]) : []),
+    ...(tipo!=='o' ? (mc.votiScritto||[]) : [])
+  ].filter(v => v && v.voto!=null && v.voto!=='' && String(v.data||'').slice(0,10)===d);
+  if(cand.length>1){
+    const dial = /dialog/.test(t);
+    const c = cand.filter(v => /dialog/i.test(v.titolo||'') === dial);
+    if(c.length) cand = c;
+  }
+  if(cand.length>1){
+    const c = cand.filter(v => v.unit && t.includes(String(v.unit).toLowerCase()));
+    if(c.length) cand = c;
+  }
+  return cand.length===1 ? cand[0].voto : null;
+}
+
 function renderValutazioni(){
   const body=document.getElementById('val-body');
   if(!body) return;
@@ -2869,7 +2899,7 @@ function renderValutazioni(){
           <div style="font-size:15px;font-weight:700;color:#3C3489;">${esc(fb.title||'Valutazione')}</div>
           <div style="font-size:11px;color:#7F77DD;margin-top:2px;">${date}</div>
         </div>
-        ${fb.voto!=null?`<div style="font-size:28px;font-weight:800;color:#3C3489;margin-left:10px;">${fb.voto}</div>`:''}
+        ${_fbVoto(fb)!=null?`<div style="font-size:28px;font-weight:800;color:#3C3489;margin-left:10px;">${esc(_fbVoto(fb))}</div>`:''}
       </div>
       <div style="font-size:13px;color:#534AB7;line-height:1.6;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">${esc(fb.text||fb.puntiDiForza||'')}</div>
       <div style="margin-top:8px;font-size:11px;color:#AFA9EC;">Tocca per leggere tutto →</div>
@@ -3777,7 +3807,7 @@ function openFeedback(key){
   const date = fb.date?new Date(fb.date+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'long',year:'numeric'}):'—';
   let html = `<button onclick="closeFbOverlay()" style="background:var(--purple-light);border:none;color:var(--purple);border-radius:8px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:16px;font-family:inherit">← Indietro</button>
   <div style="text-align:center;padding:16px 0 14px">
-    ${fb.voto!=null?`<div style="font-size:52px;font-weight:800;color:var(--purple)">${fb.voto}</div>`:''}
+    ${_fbVoto(fb)!=null?`<div style="font-size:52px;font-weight:800;color:var(--purple)">${esc(_fbVoto(fb))}</div>`:''}
     <div style="font-size:15px;font-weight:700;color:var(--text);margin-top:4px">${esc(fb.title||'Valutazione')}</div>
     <div style="font-size:11px;color:var(--faint);margin-top:4px">${date}</div>
   </div>`;
