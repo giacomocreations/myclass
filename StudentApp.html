@@ -207,6 +207,30 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
 .obv-unit-btn{border:1px solid var(--purple-mid);background:#fff;color:var(--purple-dark);border-radius:16px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
 .obv-unit-btn.active{background:var(--purple);border-color:var(--purple);color:#fff}
 .obv-open{background:none;border:1px solid var(--purple-mid);color:var(--purple);border-radius:8px;padding:2px 8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0}
+
+/* ── ANTEPRIMA DOCENTE (vedi l'app come un alunno) ── */
+#preview-bar{display:none;flex-shrink:0;align-items:center;gap:8px;padding:calc(var(--safe-top) + 6px) 12px 6px;font-size:12px;font-weight:600;background:#1f2937;color:#e5e7eb}
+#preview-bar.on{display:flex}
+#preview-bar.active{background:#F59E0B;color:#2b1700}
+#preview-bar .pb-txt{flex:1;min-width:0;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#preview-bar button{border:none;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;background:rgba(255,255,255,.18);color:inherit}
+#preview-bar.active button{background:rgba(0,0,0,.14)}
+#app.has-pbar .hdr{padding-top:14px}
+#pv-modal{position:fixed;inset:0;z-index:300;background:rgba(15,15,30,.55);display:flex;align-items:flex-end;justify-content:center}
+#pv-modal .pv-box{background:#fff;width:100%;max-width:430px;max-height:88vh;border-radius:18px 18px 0 0;display:flex;flex-direction:column;overflow:hidden;padding-bottom:env(safe-area-inset-bottom,0px)}
+#pv-modal .pv-head{padding:14px 16px 10px;border-bottom:1px solid var(--border,#e5e7eb)}
+#pv-modal .pv-title{font-size:16px;font-weight:700;color:var(--text)}
+#pv-modal .pv-sub{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.4}
+#pv-modal .pv-body{overflow-y:auto;padding:12px 16px 16px;flex:1}
+#pv-modal .pv-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+#pv-modal .pv-chip{border:1px solid var(--purple-mid);background:#fff;color:var(--purple-dark);border-radius:16px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+#pv-modal .pv-chip.on{background:var(--purple);border-color:var(--purple);color:#fff}
+#pv-modal .pv-search{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #d1d5db;border-radius:10px;font-size:14px;font-family:inherit;margin-bottom:8px}
+#pv-modal .pv-stud{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:#fff;border:none;border-bottom:1px solid #f1f1f4;padding:11px 4px;font-size:14px;color:var(--text);cursor:pointer;font-family:inherit}
+#pv-modal .pv-stud:active,#pv-modal .pv-stud:hover{background:var(--purple-light)}
+#pv-modal .pv-stud .pv-cls{margin-left:auto;font-size:11px;color:var(--muted)}
+#pv-modal .pv-close{float:right;background:none;border:none;font-size:20px;line-height:1;color:var(--muted);cursor:pointer}
+#pv-modal .pv-err{background:var(--red-light);color:#501313;border-radius:10px;padding:9px 10px;font-size:13px;margin-top:8px}
 </style>
 </head>
 <body>
@@ -231,6 +255,9 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
 
 <!-- ══ APP ══ -->
 <div id="app" style="display:none">
+
+  <!-- Barra dell'anteprima docente: compare solo al docente (codice tester o accesso docente) -->
+  <div id="preview-bar"></div>
 
   <!-- SCREENS container -->
   <div id="screens" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
@@ -876,8 +903,23 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 function doLogout(){
+  // In anteprima "Esci" chiude l'anteprima e torna al proprio account
+  if (S.preview) { previewExit(); return; }
   if (!confirm('Uscire e cambiare account?')) return;
   localStorage.removeItem('ll_student_code');
+  _resetStudentState();
+  S.isTester = false;
+  _renderPreviewBar();
+  document.getElementById('code-input').value='';
+  document.getElementById('login-err').style.display='none';
+  document.querySelector('.login-btn').textContent='Accedi';
+  document.getElementById('app').style.display='none';
+  document.getElementById('login-screen').classList.remove('hidden');
+  navTab(0,'scr-agenda');
+}
+
+// Svuota i dati dell'alunno caricato (uscita o cambio alunno in anteprima)
+function _resetStudentState(){
   _offListeners();
   S.code=null; S.studentName=null; S.studentSafe=null;
   S.classId=null; S.className=null;
@@ -885,14 +927,9 @@ function doLogout(){
   S.lessons=[]; S.feedback=[]; S.boardMsgs=[]; S.pianoMsgs=[];
   S._analisiRequest=null;
   S.personalPlan=[]; S.recoverySessions={}; S._pianoSeen=new Set(); S._assignInfo={};
+  S.autoval={}; S._autovalOff=false; S.selectedDate=null;
   S.qt=null; renderQuestTown();
   Object.keys(S.chartInstances).forEach(id=>destroyChart(id));
-  document.getElementById('code-input').value='';
-  document.getElementById('login-err').style.display='none';
-  document.querySelector('.login-btn').textContent='Accedi';
-  document.getElementById('app').style.display='none';
-  document.getElementById('login-screen').classList.remove('hidden');
-  navTab(0,'scr-agenda');
 }
 
 async function doLogin(){
@@ -919,6 +956,7 @@ async function doLogin(){
     S.studentSafeInv = toSafe(String(stud.name||'').trim().split(/\s+/).reverse().join(' '));
     S.classId     = stud.classId;
     S.className   = stud.className || stud.classId;
+    S.isTester    = stud.tester === true;   // codice tester del docente: può usare l'anteprima
     localStorage.setItem('ll_student_code', raw);
     document.getElementById('login-ok').style.display='block';
     document.getElementById('login-ok').textContent = `Benvenuto, ${S.studentName}!`;
@@ -926,6 +964,232 @@ async function doLogin(){
   } catch(e) {
     document.querySelector('.login-btn').textContent = 'Accedi';
     showLoginErr('Errore di connessione. Riprova.');
+  }
+}
+
+// ── ANTEPRIMA DOCENTE: VEDI L'APP COME UN ALUNNO ──────────────────────────
+// Il docente entra in StudentApp con il suo codice tester (o con l'accesso
+// docente già fatto in LiveLearn su questo dispositivo), sceglie classe e
+// alunno e vede esattamente la sua app, senza conoscerne il codice.
+// • L'elenco degli alunni (livelearn/students) lo leggono solo il docente:
+//   se l'app non ha ancora l'accesso docente chiede la password (la stessa di
+//   LiveLearn; la verifica la fa Firebase, nel file non c'è nulla).
+// • In anteprima l'app è in SOLA LETTURA: ogni scrittura sul database
+//   (registro accessi, "letto", autovalutazione, messaggi…) viene scartata,
+//   così l'alunno non vede segni del passaggio del docente.
+const TEACHER_UID   = '8RtaYMmlVme4Tzk7bu1Gvjjd1wu1';
+const TEACHER_EMAIL = 'giacomocossu@hotmail.com';
+S.preview = null;      // { ownRaw } mentre si guarda l'app di un alunno
+S.isTester = false;
+
+function _isTeacherAuth(){
+  try{ const u = firebase.auth().currentUser; return !!(u && !u.isAnonymous && u.uid === TEACHER_UID); }
+  catch(e){ return false; }
+}
+function _canPreview(){ return !!S.preview || S.isTester || _isTeacherAuth(); }
+
+// Sola lettura: in anteprima i metodi di scrittura non toccano il database
+(function _previewReadOnly(){
+  try{
+    const proto = Object.getPrototypeOf(db.ref('livelearn'));
+    ['set','update','push','remove','transaction','setWithPriority','setPriority'].forEach(m=>{
+      const orig = proto[m];
+      if(typeof orig !== 'function') return;
+      proto[m] = function(){
+        if(S.preview){
+          console.info('[Anteprima] scrittura ignorata:', m, this.toString());
+          return Promise.resolve(null);
+        }
+        return orig.apply(this, arguments);
+      };
+    });
+  }catch(e){ console.warn('[Anteprima] protezione scritture non attiva:', e); }
+})();
+
+let _pvToastT = null;
+function _previewNo(){
+  if(!S.preview) return false;
+  let t = document.getElementById('pv-toast');
+  if(!t){
+    t = document.createElement('div'); t.id = 'pv-toast';
+    t.style.cssText = 'position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:#1f2937;color:#fff;padding:9px 14px;border-radius:10px;font-size:13px;z-index:400;max-width:90vw;text-align:center';
+    document.body.appendChild(t);
+  }
+  t.textContent = '👁 Anteprima in sola lettura: non viene salvato nulla.';
+  t.style.display = 'block';
+  clearTimeout(_pvToastT); _pvToastT = setTimeout(()=>{ t.style.display='none'; }, 2600);
+  return true;
+}
+// Link che aprono LiveLearn o QuestTown "come l'alunno": lì le risposte si salverebbero davvero
+function _previewConfirmLink(){
+  return confirm('Sei in anteprima come ' + S.studentName + '.\n\n'
+    + 'Questa attività si apre fuori da StudentApp: LiveLearn la aprirebbe con il nome dell\'alunno '
+    + '(e QuestTown con il TUO codice), e lì quello che fai viene salvato davvero.\n\nAprire comunque?');
+}
+document.addEventListener('click', function(e){
+  if(!S.preview) return;
+  const a = e.target && e.target.closest && e.target.closest('a[href]');
+  if(!a) return;
+  const h = a.getAttribute('href') || '';
+  if(/LiveLearn\.html/i.test(h) || h.indexOf('english-town') !== -1){
+    if(!_previewConfirmLink()){ e.preventDefault(); e.stopPropagation(); }
+  }
+}, true);
+
+function _renderPreviewBar(){
+  const bar = document.getElementById('preview-bar');
+  const app = document.getElementById('app');
+  if(!bar) return;
+  const on = !!S.code && _canPreview();
+  bar.classList.toggle('on', on);
+  bar.classList.toggle('active', !!S.preview);
+  app.classList.toggle('has-pbar', on);
+  if(!on){ bar.innerHTML = ''; return; }
+  if(S.preview){
+    bar.innerHTML = `<div class="pb-txt">👁 <b>${esc(S.studentName)}</b> · ${esc(S.className)} · sola lettura</div>
+      <button onclick="previewOpen()">Cambia</button>
+      <button onclick="previewExit()">✕ Esci</button>`;
+  } else {
+    bar.innerHTML = `<div class="pb-txt">🧪 Area docente</div>
+      <button onclick="previewOpen()">👁 Vedi l'app di un alunno</button>`;
+  }
+}
+
+const PV = { students: null, cls: null, q: '' };
+
+function _pvModal(inner){
+  let m = document.getElementById('pv-modal');
+  if(!m){
+    m = document.createElement('div'); m.id = 'pv-modal';
+    m.addEventListener('click', e=>{ if(e.target === m) previewClose(); });
+    document.body.appendChild(m);
+  }
+  m.innerHTML = `<div class="pv-box">${inner}</div>`;
+  return m;
+}
+function previewClose(){ const m = document.getElementById('pv-modal'); if(m) m.remove(); }
+function _pvHead(sub){
+  return `<div class="pv-head"><button class="pv-close" onclick="previewClose()" title="Chiudi">✕</button>
+    <div class="pv-title">👁 Vedi l'app di un alunno</div>
+    <div class="pv-sub">${sub}</div></div>`;
+}
+
+async function previewOpen(){
+  _pvModal(_pvHead('Caricamento degli alunni…') + '<div class="pv-body"><div class="loading"><div class="spinner"></div>Caricamento...</div></div>');
+  await awaitAuth();
+  if(!_isTeacherAuth()){ _pvAskPassword(''); return; }
+  _pvLoadStudents();
+}
+
+function _pvAskPassword(err){
+  _pvModal(_pvHead('Per vedere l\'elenco degli alunni serve l\'accesso docente (la password di LiveLearn). Basta farlo una volta su questo dispositivo.') + `
+    <div class="pv-body">
+      <form onsubmit="event.preventDefault();_pvLogin()">
+        <input id="pv-pwd" class="pv-search" type="password" placeholder="Password docente" autocomplete="current-password">
+        <button class="login-btn" type="submit" id="pv-login-btn">Accedi come docente</button>
+      </form>
+      ${err ? `<div class="pv-err">${esc(err)}</div>` : ''}
+    </div>`);
+  setTimeout(()=>{ const i = document.getElementById('pv-pwd'); if(i) i.focus(); }, 50);
+}
+
+async function _pvLogin(){
+  const pwd = (document.getElementById('pv-pwd')?.value || '');
+  if(!pwd) return;
+  const btn = document.getElementById('pv-login-btn'); if(btn) btn.textContent = 'Verifica…';
+  try{
+    await firebase.auth().signInWithEmailAndPassword(TEACHER_EMAIL, pwd);
+  }catch(e){
+    const c = e && e.code;
+    _pvAskPassword(
+      (c === 'auth/wrong-password' || c === 'auth/invalid-credential' ||
+       c === 'auth/invalid-login-credentials' || c === 'auth/user-not-found') ? 'Password errata. Riprova.'
+      : c === 'auth/too-many-requests' ? 'Troppi tentativi. Riprova fra qualche minuto.'
+      : c === 'auth/network-request-failed' ? 'Nessuna connessione.'
+      : 'Accesso non riuscito (' + (c || e.message) + ').');
+    return;
+  }
+  _renderPreviewBar();
+  _pvLoadStudents();
+}
+
+async function _pvLoadStudents(){
+  try{
+    const snap = await db.ref('livelearn/students').get();
+    const all = snap.val() || {};
+    PV.students = Object.entries(all)
+      .filter(([c,v]) => v && v.name && v.classId)
+      .map(([c,v]) => ({ code:c, name:String(v.name), classId:v.classId, className:v.className||v.classId, tester:v.tester===true, rec:v }));
+  }catch(e){
+    _pvModal(_pvHead('') + `<div class="pv-body"><div class="pv-err">Impossibile leggere l'elenco degli alunni (${esc(e.code||e.message)}).</div></div>`);
+    return;
+  }
+  if(!PV.cls || !PV.students.some(s=>s.classId===PV.cls))
+    PV.cls = S.preview ? S.classId : (PV.students.find(s=>!s.tester)||PV.students[0]||{}).classId || null;
+  PV.q = '';
+  _pvRenderList();
+}
+
+function _pvClassi(){
+  const m = new Map();
+  PV.students.forEach(s=>{ if(!m.has(s.classId)) m.set(s.classId, { id:s.classId, nome:s.className, n:0, tester:true }); const c=m.get(s.classId); c.n++; if(!s.tester) c.tester=false; });
+  return [...m.values()].sort((a,b)=> (a.tester-b.tester) || String(a.nome).localeCompare(String(b.nome), 'it', {numeric:true}));
+}
+
+function _pvRenderList(){
+  const classi = _pvClassi();
+  _pvModal(_pvHead('Scegli classe e alunno: vedi la sua app così come la vede lui, in sola lettura.') + `
+    <div class="pv-body">
+      <div class="pv-chips">${classi.map(c=>`<button class="pv-chip${c.id===PV.cls?' on':''}" onclick="_pvSetCls('${esc(String(c.id).replace(/'/g,''))}')">${c.tester?'🧪 ':''}${esc(c.nome)}</button>`).join('')}</div>
+      <input class="pv-search" id="pv-q" type="search" placeholder="Cerca un alunno (in tutte le classi)…" value="${esc(PV.q)}" oninput="PV.q=this.value;_pvRenderStudents()">
+      <div id="pv-list"></div>
+    </div>`);
+  _pvRenderStudents();
+}
+function _pvSetCls(id){ PV.cls = id; PV.q = ''; _pvRenderList(); }
+
+function _pvRenderStudents(){
+  const el = document.getElementById('pv-list'); if(!el) return;
+  const norm = x => String(x||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  const q = norm(PV.q).trim();
+  const list = PV.students
+    .filter(s => q ? norm(s.name).includes(q) : s.classId === PV.cls)
+    .sort((a,b)=> (a.tester-b.tester) || a.name.localeCompare(b.name, 'it'));
+  el.innerHTML = list.length ? list.map(s=>`<button class="pv-stud" onclick="previewStudent('${esc(s.code)}')">
+      <span>${s.tester?'🧪 ':''}${esc(s.name)}${S.preview && S.code===s.code ? ' <b style="color:var(--purple)">· ora</b>':''}</span>
+      ${q ? `<span class="pv-cls">${esc(s.className)}</span>` : ''}
+    </button>`).join('')
+    : `<div style="font-size:13px;color:var(--muted);padding:12px 4px">Nessun alunno.</div>`;
+}
+
+async function previewStudent(code){
+  const s = (PV.students||[]).find(x=>x.code===code);
+  if(!s) return;
+  previewClose();
+  if(!S.preview) S.preview = { ownRaw: localStorage.getItem('ll_student_code') || '' };
+  _resetStudentState();
+  S.code        = s.code;
+  S.studentName = s.name;
+  S.studentSafe = toSafe(s.name);
+  S.studentSafeInv = toSafe(s.name.trim().split(/\s+/).reverse().join(' '));
+  S.classId     = s.classId;
+  S.className   = s.className;
+  await bootApp();
+}
+
+function previewExit(){
+  if(!S.preview) return;
+  const raw = S.preview.ownRaw;
+  previewClose();
+  _resetStudentState();
+  S.preview = null;
+  _renderPreviewBar();
+  if(raw){
+    document.getElementById('code-input').value = raw;
+    doLogin();
+  } else {
+    document.getElementById('app').style.display='none';
+    document.getElementById('login-screen').classList.remove('hidden');
   }
 }
 
@@ -1145,9 +1409,11 @@ async function bootApp(){
   const firstName = rawFirst ? rawFirst.charAt(0).toUpperCase() + rawFirst.slice(1).toLowerCase() : S.studentName;
   const greetEl = document.getElementById('agenda-greeting');
   if(greetEl) greetEl.textContent = 'Buongiorno, ' + firstName + '!';
+  _renderPreviewBar();
 
   // ── Registra accesso su Firebase ─────────────────────────────────────
-  try {
+  // (non in anteprima: l'accesso del docente non va nel registro dell'alunno)
+  if(!S.preview) try {
     const _ua = navigator.userAgent;
     const _isMobile = /Mobi|Android|iPhone|iPad/i.test(_ua);
     const _isStandalone = window.matchMedia('(display-mode: standalone)').matches
@@ -1180,6 +1446,7 @@ async function bootApp(){
   renderObiettiviCard();
   navTab(0,'scr-agenda');
   qtLoad(true);
+  if(S.preview) return;   // anteprima docente: niente banner, notifiche, link dai piani
   maybeShowInstallBanner();
   maybeRequestPushPermission();
 
@@ -2572,6 +2839,7 @@ async function markOraleRead(key){
 
 function openRecoveryActivity(code){
   if(!code) return;
+  if(S.preview && !_previewConfirmLink()) return;
   // Apre LiveLearn con codice e nome pre-inseriti (LiveLearn legge ?code= e ?name=
   // via _checkUrlCode): l'alunno deve solo premere "Entra".
   const url = 'LiveLearn.html?code='+encodeURIComponent(code)
@@ -2713,6 +2981,7 @@ function getBestWorstTag(sessions,which){
 }
 
 async function requestAnalisiDidattica(){
+  if(_previewNo()) return;
   if(!S.classId || !S.studentSafe){ return; }
   const ar = S._analisiRequest;
   // Se già in corso, non rifare
@@ -3126,6 +3395,7 @@ function _obvRerender(){
   }
 }
 async function setAutoval(ord, id, v){
+  if(_previewNo()) return;
   const u = _obvUnita().find(x=>x.ord===ord);
   if(!u || u.esiti || S._autovalOff) return;
   const k = _obvKey(u.unit);
@@ -3908,6 +4178,7 @@ async function _logModerazione(kind, testo, hits){
 }
 
 async function sendMessage(){
+  if(_previewNo()) return;
   const text = document.getElementById('compose-text').value.trim();
   if(!text){ alert('Scrivi un messaggio.'); return; }
   // Gli studenti scrivono solo al prof.: niente più messaggi di classe.
