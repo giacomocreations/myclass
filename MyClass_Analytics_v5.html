@@ -32551,6 +32551,9 @@ ${righe.join('\n')}
         const isPei = verInfo?.layout === 2, isDsa = verInfo?.layout === 1;
         const pei = isPei ? _ppPeiProfile(verInfo) : null;
         const nQ = isPei ? pei.nQ : (opts.nQ || 15);   // PEI: quante domande aveva la sua verifica
+        // Piano dopo un recupero (opts.soloErrori): poche domande, TUTTE sugli errori,
+        // con le schede in cui l'alunno riscrive la regola di quegli errori
+        const soloErrori = !!opts.soloErrori && !isPei;
         const { testErrors, context: ctxDetails } = _ppSplitErrorDetails(errorDetails);
         let errList = _ppErrorList(testErrors);
         // Più errori che domande nella sua verifica PEI = errori calcolati su un'altra versione: si scartano
@@ -32568,7 +32571,7 @@ ${righe.join('\n')}
         }
         const photoNums = fotoCtx ? Object.keys(fotoCtx.map).map(Number) : [];
         const errReq = !errList.length ? 0
-            : Math.min(errList.length, isPei ? nQ : prefix === 'APP' ? Math.ceil(nQ / 2) : Math.ceil(nQ * 2 / 3));
+            : Math.min(errList.length, isPei || soloErrori ? nQ : prefix === 'APP' ? Math.ceil(nQ / 2) : Math.ceil(nQ * 2 / 3));
 
         // Descrizione della prestazione nel test (non livello CEFR globale)
         const prestazioneDesc =
@@ -32664,7 +32667,7 @@ Le regole di questa sezione PREVALGONO sui tipi, sulla distribuzione e sul livel
         const ctxUse = isPei ? '' : ctxDetails;
         const isNotesContext   = prefix === 'APP' && ctxUse.startsWith('NOTE DISCORSIVE');
         const isPreviousWeak   = prefix === 'APP' && !isNotesContext && ctxUse.startsWith('AREE DEBOLI');
-        const nErrQ = !errList.length ? 0 : isPei ? errReq : prefix === 'APP' ? Math.ceil(nQ / 2) : Math.ceil(nQ * 2 / 3);
+        const nErrQ = !errList.length ? 0 : isPei ? errReq : soloErrori ? nQ : prefix === 'APP' ? Math.ceil(nQ / 2) : Math.ceil(nQ * 2 / 3);
 
         // ── Schede "scopri la regola" (metodo induttivo, come nelle attività in classe) ──
         // Per gli errori più importanti l'alunno prima ragiona e ricostruisce la regola,
@@ -32673,6 +32676,7 @@ Le regole di questa sezione PREVALGONO sui tipi, sulla distribuzione e sul livel
         // PEI no: il piano è il ripasso della sua verifica (ha già la regola su ogni domanda).
         // Sfide (alunni da 9,5, poche domande): al massimo una scheda, facoltativa.
         const rules = isPei ? null
+            : soloErrori ? { min: 1, max: 2 }
             : opts.level ? (errList.length ? { min: 0, max: 1 } : null)
             : errList.length || prefix !== 'APP' ? { min: 1, max: nQ <= 10 ? 1 : prefix === 'APP' ? 2 : 3 }
             : null;
@@ -32688,7 +32692,7 @@ Lo studente non deve solo rifare esercizi: ${errList.length ? 'per gli errori pi
   3. "fase":"controllo" — "multiple-choice" in inglese che applica la regola: "👀 **Avevi ragione?** Controlla la regola.\\n\\n❓ **Which is correct?**" (4 frasi, una sola corretta, gli errori tipici come distrattori), con il campo "referenceTable": la regola COMPLETA in italiano, max 3 righe con 1 esempio. L'alunno la vede nel riquadro "📘 Regola di riferimento" e la confronta con quella che ha scritto.
 - Subito dopo ogni scheda: ${_ruleEx} esercizi su quella regola, dal più guidato al meno guidato, con lo stesso "scheda" e SENZA "fase" (non mettere "referenceTable": devono ricordare la regola da soli).
 - Le domande della scheda e i suoi esercizi portano nel campo "errore" i codici degli errori che riprendono (anche più codici: "errore":"E1,E3").
-- Dopo tutte le schede vengono le altre domande (senza "scheda"), mescolate: ${prefix === 'CON' ? 'riprendono gli altri errori e fanno scegliere tra strutture simili che si confondono' : prefix === 'APP' ? 'riprendono gli altri errori e contengono i "Transfer"' : 'riprendono gli altri errori e il resto dell\'unità'}.
+- Dopo tutte le schede vengono le altre domande (senza "scheda"), mescolate: ${soloErrori ? 'riprendono SOLO gli altri errori elencati (niente domande sul resto dell\'unità)' : prefix === 'CON' ? 'riprendono gli altri errori e fanno scegliere tra strutture simili che si confondono' : prefix === 'APP' ? 'riprendono gli altri errori e contengono i "Transfer"' : 'riprendono gli altri errori e il resto dell\'unità'}.
 - ${prefix === 'REC' ? 'Recupero: esempi molto chiari e semplici, parole della regola da ragazzo di scuola media.' : prefix === 'CON' ? 'Consolidamento: negli esempi di "osserva" metti a confronto la struttura giusta con quella che lo studente confonde (es. some/any, Present simple/continuous).' : 'Approfondimento: scheda più asciutta e meno guidata; puoi far scoprire un caso particolare o un\'eccezione della regola.'}${isDsa ? `
 - Versione DSA: la cloze della fase "regola" è ammessa (si clicca, non si scrive), SOLO con le scelte [[...]].` : ''}
 - La regola deve essere CORRETTA al 100%: verificala prima di scriverla. Nelle schede non parlare di foto o immagini.
@@ -32706,7 +32710,7 @@ ${errList.map(e => `${e.id}: ${e.line}${photoNums.includes(Number((e.line.match(
 
 ⚠️ ISTRUZIONI VINCOLANTI (vengono controllate automaticamente):
 1. ${errList.length <= errReq ? 'OGNI errore elencato' : `Almeno ${errReq} errori DIVERSI tra quelli elencati (i più importanti)`} deve essere ripreso da almeno una domanda: stessa struttura o stesso lessico in cui ha sbagliato (es. se ha confuso what/which, domande su what/which), con frasi NUOVE — non copiare la frase della verifica.
-2. Almeno ${nErrQ} delle ${nQ} domande devono esercitare DIRETTAMENTE gli errori sopra. Se più errori riguardano la stessa struttura, quella struttura merita più domande.${prefix === 'APP' && !isPei ? ' Sono domande di approfondimento: stessa struttura, ma contesti nuovi e un po\' più impegnativi. Le altre domande coprono il resto dell\'unità.' : ''}
+2. ${soloErrori ? `TUTTE le ${nQ} domande devono esercitare DIRETTAMENTE gli errori sopra: niente domande sul resto dell'unità.` : `Almeno ${nErrQ} delle ${nQ} domande devono esercitare DIRETTAMENTE gli errori sopra.`} Se più errori riguardano la stessa struttura, quella struttura merita più domande.${prefix === 'APP' && !isPei ? ' Sono domande di approfondimento: stessa struttura, ma contesti nuovi e un po\' più impegnativi. Le altre domande coprono il resto dell\'unità.' : ''}
 3. Su OGNI domanda aggiungi il campo "errore" con il codice dell'errore che riprende (es. "errore":"E2"), oppure "errore":null se non ne riprende nessuno. Metti il codice SOLO se la domanda esercita davvero quella struttura.
 4. RIMANI STRETTAMENTE nell'unità "${unit || 'English Grammar'}": NON introdurre strutture di altre unità o di anni precedenti.${photoNums.length && !isPei ? `
 5. FOTO: gli errori segnati [FOTO] erano domande con una foto. Puoi riproporre quella foto aggiungendo alla domanda "foto": <numero della domanda della verifica> (es. "foto": ${photoNums[0]} per Q${photoNums[0]}): la foto viene inserita automaticamente. La foto mostra la risposta giusta di quella domanda: chiedi la stessa cosa con frase, consegna o opzioni diverse. Una domanda che parla di foto o immagini DEVE avere il campo "foto" con uno di questi numeri: ${photoNums.join(', ')}.` : ''}
@@ -32787,7 +32791,8 @@ Per le domande sulle unit precedenti: usa strutture grammaticali e lessico di qu
         const _has = t => _types.includes(t);
         const prompt = `Sei un docente esperto di inglese per scuola media italiana.
 Genera ESATTAMENTE ${nQ} domande per uno studente, unità: "${isNotesContext && !errList.length ? 'tutte le unit svolte (vedi note sotto)' : (unit || 'English Grammar')}".
-Prestazione nel test: ${prestazioneDesc}.
+Prestazione nel test: ${prestazioneDesc}.${soloErrori ? `
+⚠️ PIANO DOPO IL RECUPERO: lo studente ha già fatto il recupero in classe e il voto qui sopra è quello del recupero. È un piano BREVE e MIRATO: ${nQ} domande in tutto, ${errList.length ? 'TUTTE sugli errori elencati più sotto' : 'sulle strutture fondamentali dell\'unità che hanno causato il voto basso (i dati degli errori non ci sono)'}, e per ogni errore importante lo studente RISCRIVE LA REGOLA nelle schede "scopri la regola" (obbligatorie). Niente domande di ripasso generale dell'unità.` : ''}
 ${_classCtx}
 
 ${difficoltaSpec}
@@ -32876,7 +32881,7 @@ ${P.prompt}`;
         const challenge = prefix === 'APP' && !!opts.challenge;
         const _lv = challenge ? _ppChallengeLevel(classeNome) : null;
         const photoCtx = verInfo?.layout === 2 ? null : await _ppTestPhotoCtx(_mcToSafe(`${studente.cognome} ${studente.nome}`), unit);
-        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, { ...(_lv ? { nQ: _lv.nQ, level: _lv } : {}), photoCtx });
+        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, { ...(_lv ? { nQ: _lv.nQ, level: _lv } : opts.nQ ? { nQ: opts.nQ } : {}), soloErrori: !!opts.soloErrori, photoCtx });
         let raw = '';
         try {
             raw = await _pianoAICall(P.prompt, P.sysMsg);
@@ -33856,10 +33861,10 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
 
     // Voce dell'export: "local" resta in questo browser (nomi, codici), "file" va a Claude (senza nomi).
     // nQ: domande scritte (piano unico scritto + orale: 8); speaking: specifica degli esercizi al microfono
-    async function _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix, voto, code, errorDetails = '', tagBreakdown = {}, verInfo = null, challenge = false, draftId = null, nQ = null, speaking = null }) {
+    async function _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit, prefix, voto, code, errorDetails = '', tagBreakdown = {}, verInfo = null, challenge = false, draftId = null, nQ = null, speaking = null, soloErrori = false }) {
         const _lv = challenge ? _ppChallengeLevel(classeNome) : null;
         const photoCtx = verInfo?.layout === 2 ? null : await _ppTestPhotoCtx(studentSafe, unit);
-        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, { ...(_lv ? { nQ: _lv.nQ, level: _lv } : nQ ? { nQ } : {}), photoCtx });
+        const P = _pianoBuildActivityPrompt(studente, voto, unit, prefix, errorDetails, tagBreakdown, classeNome, verInfo, { ...(_lv ? { nQ: _lv.nQ, level: _lv } : nQ ? { nQ } : {}), soloErrori, photoCtx });
         const lNeed = _ppListeningNeed(prefix, errorDetails, tagBreakdown, verInfo);
         const sfida = challenge ? _ppChallengeKey(classeNome, unit) : null;
         return {
@@ -33899,7 +33904,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
         const errorDetails = await _ppPlanErrorDetails(stu, d.studentSafe, d.classeNome, d.unit, d.prefix);
         const challenge = d.prefix === 'APP' && _ppChallengeEligible(stu, d.unit, verInfo);
         return _ppBuildExportEntry({ studente: stu, studentSafe: d.studentSafe, studentName: d.studentName, classeNome: d.classeNome,
-            unit: d.unit, prefix: d.prefix, voto: d.voto, code: d.code, errorDetails, tagBreakdown: d.tagBreakdown || {}, verInfo, challenge, draftId: d.id });
+            unit: d.unit, prefix: d.prefix, voto: d.voto, code: d.code, errorDetails, tagBreakdown: d.tagBreakdown || {}, verInfo, challenge, draftId: d.id,
+            ...(d.dopoRecupero ? { nQ: 10, soloErrori: true } : {}) });
     }
 
     function _ppLoadClaudeManifest() {
@@ -34119,7 +34125,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             }
             if (L.misto) activity.misto = L.misto;
             if (L.soloOrale) activity.title = '🎤 Speaking — ' + (L.unit || '');
-            const _kind = { ...(L.misto ? { misto: L.misto } : {}), ...(L.soloOrale ? { soloOrale: true } : {}) };
+            const _kind = { ...(L.misto ? { misto: L.misto } : {}), ...(L.soloOrale ? { soloOrale: true } : {}),
+                ...(L.replaces ? { replaces: L.replaces } : {}), ...(L.dopoRecupero ? { dopoRecupero: true } : {}) };
             const target = (L.draftId && _ppDraftScritto.find(x => x.id === L.draftId))
                 || _ppDraftScritto.find(x => x.studentSafe === L.studentSafe && x.unit === L.unit && x.prefix === L.prefix);
             if (target) {
@@ -34473,14 +34480,19 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
             if (verInfo) console.log(`[Piano] ${studentName}: verifica in versione ${verInfo.label} (${verInfo.source}) → piano adattato`);
             // Export per Claude Code: si raccoglie la consegna invece di generare
             if (_ppExportCollector) {
-                _ppExportCollector.push(await _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit: unitEff, prefix, voto, code, errorDetails, tagBreakdown, verInfo }));
+                const e = await _ppBuildExportEntry({ studente, studentSafe, studentName, classeNome, unit: unitEff, prefix, voto, code, errorDetails, tagBreakdown, verInfo,
+                    ...(dopoRecupero ? { nQ: 10, soloErrori: true } : {}) });
+                if (replaces) e.local.replaces = replaces;
+                if (dopoRecupero) e.local.dopoRecupero = true;
+                _ppExportCollector.push(e);
                 return { outcome: 'exported' };
             }
-            const activity = await _pianoGenerateActivity(studente, voto, unitEff, prefix, errorDetails, tagBreakdown, classeNome, verInfo);
+            // Dopo un recupero: piano breve, 10 domande tutte sugli errori + la regola riscritta
+            const activity = await _pianoGenerateActivity(studente, voto, unitEff, prefix, errorDetails, tagBreakdown, classeNome, verInfo, dopoRecupero ? { nQ: 10, soloErrori: true } : {});
             if (!activity) { _ppShowError(studentName, 'Generazione quiz fallita'); return { outcome: 'error', reason: 'Generazione quiz fallita' }; }
             // ── BOZZA: salva per anteprima docente prima dell'invio ──────────
             const draftId = 'ds_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-            _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix, activity, unit: unitEff, voto, classeNome, createdAt: Date.now(), tagBreakdown: tagBreakdown || {}, source: _ppGenProvider, ...(verInfo ? { versione: verInfo.label } : {}), ...(replaces ? { replaces } : {}) });
+            _ppDraftScritto.push({ id: draftId, studentSafe, studentName, code, prefix, activity, unit: unitEff, voto, classeNome, createdAt: Date.now(), tagBreakdown: tagBreakdown || {}, source: _ppGenProvider, ...(verInfo ? { versione: verInfo.label } : {}), ...(replaces ? { replaces } : {}), ...(dopoRecupero ? { dopoRecupero: true } : {}) });
             _ppSavDraftScritto();
             ppSwitchTab(0);  // porta docente sul tab scritto
             renderPianoPersPanel();
@@ -35280,7 +35292,7 @@ Rispondi SOLO con il testo del prompt, nessuna introduzione.`;
         const verInfo = await _ppDetectTestVersion(stu, d.studentSafe, d.unit);
         const errorDetails = await _ppPlanErrorDetails(stu, d.studentSafe, d.classeNome, d.unit, d.prefix);
         const challenge = d.prefix === 'APP' && _ppChallengeEligible(stu, d.unit, verInfo);
-        const activity = await _pianoGenerateActivity(stu, d.voto, d.unit, d.prefix, errorDetails, d.tagBreakdown || {}, d.classeNome, verInfo, { challenge });
+        const activity = await _pianoGenerateActivity(stu, d.voto, d.unit, d.prefix, errorDetails, d.tagBreakdown || {}, d.classeNome, verInfo, { challenge, ...(d.dopoRecupero ? { nQ: 10, soloErrori: true } : {}) });
         if (!activity) throw new Error('generazione quiz fallita (errore AI)');
         const old = (d.activity && !Array.isArray(d.activity)) ? d.activity : {};
         if (old.speakingPrompt && verInfo?.layout !== 2) activity.speakingPrompt = old.speakingPrompt;
