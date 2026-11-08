@@ -4452,7 +4452,7 @@ function _evalWithOverrides(q, i, entry) {
     return { pts: 0, maxPts: 0, label: '🚫 Escluso', color: '#64748b', bg: '#f1f5f9', excluded: true };
   }
   const r = _evalSimple(q, answers[i], ms[i] != null ? Number(ms[i]) : null, as_[i] != null ? Number(as_[i]) : null);
-  if (qmo[i] == null) return r;
+  if (qmo[i] == null || r.poll) return r;
   const op = q.points || 1, em = Number(qmo[i]);
   const pts = (ms[i] != null || typeof r.pts !== 'number' || op <= 0) ? r.pts : Math.round(r.pts / op * em * 100) / 100;
   return Object.assign({}, r, { pts, maxPts: em });
@@ -4627,7 +4627,14 @@ function _spkEval(q, raw) {
   return { rows, tips, words, frac };
 }
 
+// Sondaggio (come _qIsPoll di LiveLearn): scelta multipla con "poll": true e
+// senza risposta giusta. Non conta nel punteggio (né nei punti fatti né nel
+// totale) e non si colora di giusto/sbagliato. Prima qui valeva 1 punto ed era
+// sempre "Errata": il totale saliva (76/84 invece di 76/82) e la % scendeva.
+function _qIsPoll(q) { return !!(q && q.type === 'multiple-choice' && q.poll); }
+
 function _llEvaluate(q, a) {
+  if (_qIsPoll(q)) return { scorable: false, correct: false, points: 0, poll: true };
   const pts = q.points || 1;
   const t = q.type;
   if (t === 'multiple-choice') return { scorable: true, correct: a === q.correct, points: pts };
@@ -4663,6 +4670,7 @@ function _llEvaluate(q, a) {
 }
 
 function _evalSimple(q, a, manualScore, aiScore) {
+  if (_qIsPoll(q)) return { pts: 0, maxPts: 0, label: '📊 Sondaggio', color: '#0369a1', bg: '#f0f9ff', poll: true };
   const maxPts = q.points || 1;
   // Priorità: manuale > AI > auto (come LiveLearn)
   if (manualScore != null) return { pts: manualScore, maxPts, label: '✏️ Manuale', color: '#3b82f6', bg: manualScore >= maxPts ? '#eff6ff' : manualScore > 0 ? '#fef3c7' : '#fef2f2' };
@@ -4761,9 +4769,12 @@ function _pdfqBody(q, type, a) {
       const f = opts.findIndex(o => _pdfqNorm(o) === _pdfqNorm(a));
       if (f >= 0) sel = f;
     }
-    const corr = q.correct != null && q.correct !== '' ? Number(q.correct) : null;
+    const poll = _qIsPoll(q);
+    const corr = !poll && q.correct != null && q.correct !== '' ? Number(q.correct) : null;
     const rows = opts.map((o, oi) => {
       const isSel = sel === oi, isCorr = corr === oi;
+      if (poll) return '<div class="pq-opt"><span class="pq-letter">' + (L[oi] || (oi + 1)) + '</span><span class="pq-otext">' + _pdfqEsc(o) + '</span>' +
+        (isSel ? '<span class="pq-tag" style="background:#e0f2fe;color:#0369a1;">● scelta dall\'alunno</span>' : '') + '</div>';
       const cls = isSel ? (isCorr ? 'pq-opt pq-opt-ok' : 'pq-opt pq-opt-ko') : (isCorr ? 'pq-opt pq-opt-right' : 'pq-opt');
       const tags = (isSel ? '<span class="pq-tag ' + (isCorr ? 'pq-tag-ok' : 'pq-tag-ko') + '">' + (isCorr ? '✓ scelta dall\'alunno' : '✗ scelta dall\'alunno') + '</span>' : '') +
         (isCorr && !isSel ? '<span class="pq-tag pq-tag-right">✓ risposta corretta</span>' : '');
@@ -5117,7 +5128,7 @@ function _buildStudentPdfWindow(sessionCode, questions, entry, sess, imgIdx) {
     return _pdfQuestionCard(q, a, {
       num: 'Domanda ' + (i+1), typeLabel: typeTxt(q.type),
       label: r.label, color: r.color, bg: r.bg,
-      pts: r.excluded ? 'non valutato' : r.pts + '/' + r.maxPts + ' pt',
+      pts: r.excluded ? 'non valutato' : r.poll ? '—' : r.pts + '/' + r.maxPts + ' pt',
       time: sec != null ? fmtSec(sec) : '', feedback: fb ? '💬 ' + esc(fb) : ''
     });
   }).join('');
@@ -5144,7 +5155,7 @@ function _buildStudentPdfWindow(sessionCode, questions, entry, sess, imgIdx) {
           const rr = _evalSimple(rq, ra, hMs[ri] != null ? Number(hMs[ri]) : null, hAi[ri] != null ? Number(hAi[ri]) : null);
           return _pdfQuestionCard(rq, ra, {
             num: 'Recupero ' + (h.attempt||1) + '.' + (ri+1), typeLabel: typeTxt(rq.type),
-            label: rr.label, color: rr.color, bg: rr.bg, pts: rr.pts + '/' + rr.maxPts + ' pt', time: '',
+            label: rr.label, color: rr.color, bg: rr.bg, pts: rr.poll ? '—' : rr.pts + '/' + rr.maxPts + ' pt', time: '',
             feedback: hFb[ri] ? '💬 ' + esc(hFb[ri]) : ''
           });
         }).join('');
