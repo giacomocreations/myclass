@@ -7246,8 +7246,11 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
         // 🔴 escludi → non appare
         // Usata da calcAvgWithRecupero, grafici studente e grafici classe
         // ================================================================
-        function _effectiveGrades(grades) {
-            const sorted = [...grades].sort((a,b) => a.data.localeCompare(b.data));
+        // keepSingle: per la StudentApp. Il recupero 'media' NON diventa un
+        // punto unico: restano il voto insufficiente e quello del recupero,
+        // ciascuno col suo valore (la media vale solo per mediaO/mediaS).
+        function _effectiveGrades(grades, keepSingle) {
+            const sorted = [...grades].sort((a,b) => (a.data||'').localeCompare(b.data||''));
 
             // PASSATA 1: identifica tutti gli indici "base" (insuff originali) da escludere
             // perché già fusi in un recupero 'media'
@@ -7270,11 +7273,14 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             // PASSATA 2: costruisce il risultato
             const result = [];
             sorted.forEach((g, i) => {
-                if (excludedBase.has(i)) return;          // voto base già fuso: escludi
+                if (excludedBase.has(i)) {                // voto base già fuso
+                    if (keepSingle) result.push({ ...g });
+                    return;
+                }
                 if (g.recupero === 'escludi') return;     // escludi dal grafico
                 if (g.recupero === 'media') {
                     const fusione = fusioni.find(f => f.recuperoIdx === i);
-                    if (fusione) {
+                    if (fusione && !keepSingle) {
                         // Punto unico: media tra insuff originale e recupero
                         const base = sorted[fusione.baseIdx];
                         result.push({ ...g, voto: parseFloat(((base.voto + g.voto) / 2).toFixed(2)), _fuso: true });
@@ -7286,6 +7292,14 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 result.push({ ...g });
             });
             return result;
+        }
+
+        // Voti singoli per la StudentApp (campi sicuri: data, voto, titolo, unit)
+        function _votiPerStudentApp(grades) {
+            return _effectiveGrades(grades || [], true).map(g => ({
+                data: g.data || '', voto: g.voto, titolo: g.titolo || '', unit: g.unit || '',
+                ...(g.recupero ? { recupero: true } : {})
+            }));
         }
 
         function calcAvgWithRecupero(grades) {
@@ -20600,6 +20614,84 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
       }
     }
 
+    // ── Conversazioni: le risposte stanno sotto il messaggio d'origine ──
+    // Una risposta si aggancia al padre (replyTo) solo se sta nello stesso
+    // ramo privato board_priv/<classe>/<CODICE>: ogni conversazione resta
+    // così tra il docente e un solo alunno.
+    let _msgThreadByRoot = {};
+    const _msgReplyDraft = {};
+    const _msgReplyOpen = new Set();
+
+    function _msgBuildThreads() {
+      const byKey = {};
+      _msgAllMsgs.forEach(m => { byKey[m._key] = m; });
+      const parentOf = m => {
+        const p = m.replyTo && byKey[m.replyTo];
+        return (p && p !== m && m._code && p._code === m._code) ? p : null;
+      };
+      const rootOf = m => {
+        let r = m; const seen = new Set([m._key]);
+        for (let p = parentOf(r); p && !seen.has(p._key); p = parentOf(r)) { seen.add(p._key); r = p; }
+        return r;
+      };
+      const map = {};
+      _msgAllMsgs.forEach(m => {
+        const r = rootOf(m);
+        if (!map[r._key]) map[r._key] = { root: r, replies: [] };
+        if (r !== m) map[r._key].replies.push(m);
+      });
+      const threads = Object.values(map);
+      threads.forEach(t => {
+        t.replies.sort((a,b) => (a.ts||0) - (b.ts||0));
+        t.last = Math.max(t.root.ts||0, ...t.replies.map(x => x.ts||0));
+        t.hasStudent = [t.root, ...t.replies].some(x => x.from === 'student');
+      });
+      // Fissati in cima, poi la conversazione con l'attività più recente
+      threads.sort((a,b) => {
+        if (a.root.pinned && !b.root.pinned) return -1;
+        if (!a.root.pinned && b.root.pinned) return 1;
+        return b.last - a.last;
+      });
+      _msgThreadByRoot = map;
+      return { threads, byKey };
+    }
+
+    function _msgReplyToggle(rootKey, open) {
+      if (open) _msgReplyOpen.add(rootKey); else { _msgReplyOpen.delete(rootKey); delete _msgReplyDraft[rootKey]; }
+      _renderMsgList();
+      if (open) setTimeout(() => document.getElementById('mc-reply-text-' + rootKey)?.focus(), 0);
+    }
+
+    // Risposta del docente: va SOLO nel ramo privato dell'alunno della
+    // conversazione (board_priv/<classe>/<CODICE>), che legge solo lui; la
+    // notifica push parte solo verso il suo dispositivo.
+    async function mcBachecaReply(rootKey) {
+      const t = _msgThreadByRoot[rootKey];
+      if (!t) return;
+      const code = t.root._code;
+      if (!code || !/^[A-Za-z0-9_-]+$/.test(code)) { alert('Conversazione senza destinatario privato: impossibile rispondere.'); return; }
+      const ta = document.getElementById('mc-reply-text-' + rootKey);
+      const text = (ta ? ta.value : (_msgReplyDraft[rootKey] || '')).trim();
+      if (!text) { alert('Scrivi la risposta.'); return; }
+      const last = t.replies.length ? t.replies[t.replies.length - 1] : t.root;
+      const btn = document.getElementById('mc-reply-send-' + rootKey);
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Invio…'; }
+      const classId = _mcClassId();
+      try {
+        await firebase.database().ref('livelearn/board_priv/' + classId + '/' + code).push({
+          from: 'teacher', type: 'msg', text, visibility: 'private',
+          replyTo: last._key, threadRoot: rootKey, ts: Date.now()
+        });
+        sendPushToClass(classId, '💬 Il prof. ti ha risposto',
+          text.length > 80 ? text.slice(0,80) + '…' : text, 'bacheca', code).catch(() => {});
+        _msgReplyOpen.delete(rootKey); delete _msgReplyDraft[rootKey];
+        await mcBachecaLoadMsgs();
+      } catch (e) {
+        alert('Errore invio: ' + e.message);
+        if (btn) { btn.disabled = false; btn.textContent = '📤 Invia'; }
+      }
+    }
+
     function _renderMsgList() {
       const list = document.getElementById('mc-bacheca-list');
       if (!list) return;
@@ -20614,12 +20706,23 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         ${selCount?`<button onclick="_msgDeleteSelected()" style="background:#dc2626;color:#fff;border:none;border-radius:8px;padding:5px 14px;font-size:13px;font-weight:600;cursor:pointer;">
           🗑 Elimina selezionati (${selCount})</button>`:''}
       </div>`;
-      const items = _msgAllMsgs.map(m => {
+      const { threads, byKey } = _msgBuildThreads();
+      const fmtTs = ts => ts ? new Date(ts).toLocaleDateString('it-IT',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+      const plain = m => String(m.text || '').replace(/\s+/g, ' ').trim();
+      // Testo degli alunni sempre come testo puro (mai HTML)
+      const studentBody = m => `<span style="white-space:pre-line;overflow-wrap:anywhere;">${_lessEsc(m.text||'')}</span>`
+        + (m.flagged ? ' <span style="font-size:10px;background:#fef2f2;color:#dc2626;padding:1px 6px;border-radius:4px;font-weight:700;">⚠️ linguaggio segnalato</span>' : '');
+      const items = threads.map(t => {
+        const m = t.root;
+        const isStu = m.from === 'student';
         const tm = MC_TYPE_META[m.type] || MC_TYPE_META.msg;
-        const date = m.ts ? new Date(m.ts).toLocaleDateString('it-IT',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+        const color = isStu ? '#047857' : tm.color;
+        const bg = isStu ? '#ecfdf5' : tm.bg;
+        const date = fmtTs(m.ts);
         const reads = m.readBy ? Object.keys(m.readBy).length : 0;
+        const stuName = m._destName || (m.authorName ? String(m.authorName).toUpperCase() : 'Studente');
         const dest = m.visibility === 'private'
-          ? `🔒 <em style="color:#6c47ff">${m._destName || 'Solo per studente'}</em>`
+          ? `🔒 <em style="color:#6c47ff">${_lessEsc(m._destName || 'Solo per studente')}</em>`
           : '👥 Classe';
         const sel = _msgSel.has(m._key);
         // Blocco speciale per tipo piano personalizzato
@@ -20634,20 +20737,69 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             ${m.pianoText ? `<div style="font-size:12px;color:#3730a3;line-height:1.5;background:white;border-radius:6px;padding:8px;margin-bottom:8px;max-height:80px;overflow:hidden;">${m.pianoText.slice(0,200)}${m.pianoText.length>200?'…':''}</div>` : ''}
             ${m.url ? `<a href="${m.url}" target="_blank" style="display:inline-block;padding:7px 16px;background:#5b21b6;color:#fff;border-radius:8px;font-size:12px;font-weight:700;text-decoration:none;">▶ Apri in StudentApp</a>` : ''}
           </div>` : (m.url ? `<a href="${m.url}" target="_blank" style="font-size:12px;color:${tm.color};word-break:break-all;margin-top:4px;display:block;">${m.url}</a>` : '');
-        return `<div style="border-left:3px solid ${tm.color};padding:10px 12px;margin-bottom:8px;background:${sel?'#f0edff':tm.bg};border-radius:0 10px 10px 0;transition:background 0.15s;">
+        // Messaggio dell'alunno in risposta a un messaggio di classe: citazione
+        const quoted = (m.replyTo && byKey[m.replyTo] && byKey[m.replyTo] !== m) ? byKey[m.replyTo] : null;
+        const quoteHtml = quoted ? `<div style="font-size:11px;color:#6b7280;border-left:2px solid #c4b5fd;padding:2px 8px;margin:2px 0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">↪ in risposta a: ${_lessEsc(plain(quoted).slice(0,90))}</div>` : '';
+        const bodyHtml = isStu ? studentBody(m)
+          : (m.type==='piano' ? (m.pianoUnit||'') + (m.pianoVoto!=null?' · voto '+m.pianoVoto:'') : (m.htmlText ? m.htmlText : (m.text||'')));
+        const label = isStu
+          ? `<span style="font-size:11px;font-weight:700;color:${color};">✉️ ${_lessEsc(stuName)} ti ha scritto</span>`
+          : `<span style="font-size:11px;font-weight:700;color:${color};">${tm.emoji} ${tm.label}</span>`;
+
+        // Risposte della conversazione, in ordine cronologico (chat)
+        const repliesHtml = t.replies.map(r => {
+          const mine = r.from === 'teacher';
+          const rb = mine
+            ? (r.htmlText ? r.htmlText : `<span style="white-space:pre-line;overflow-wrap:anywhere;">${_lessEsc(r.text||'')}</span>`)
+            : studentBody(r);
+          const letto = mine && r.readBy ? '<span style="color:#16a37f;">👁 letto</span>' : '';
+          return `<div style="display:flex;justify-content:${mine?'flex-end':'flex-start'};margin-top:6px;">
+            <div style="max-width:85%;background:${mine?'#ede9fe':'#ffffff'};border:1px solid ${mine?'#c4b5fd':'#a7f3d0'};border-radius:${mine?'12px 12px 2px 12px':'12px 12px 12px 2px'};padding:7px 10px;">
+              <div style="font-size:10px;color:#888;margin-bottom:2px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <b style="color:${mine?'#6c47ff':'#047857'};">${mine ? 'Tu' : _lessEsc(stuName)}</b>
+                <span>${fmtTs(r.ts)}</span>${letto}
+                <button onclick="mcBachecaDeleteMsg('${r._key}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:12px;padding:0 2px;" title="Elimina questa risposta">🗑</button>
+              </div>
+              <div style="font-size:13px;color:#1e1b4b;line-height:1.45;">${rb}</div>
+            </div>
+          </div>`;
+        }).join('');
+        const threadHtml = t.replies.length ? `<div style="margin-top:8px;padding:6px 8px;background:rgba(255,255,255,.6);border-radius:10px;">
+            <div style="font-size:10px;font-weight:700;color:#6b7280;letter-spacing:.3px;">💬 CONVERSAZIONE · ${t.replies.length} rispost${t.replies.length===1?'a':'e'}</div>
+            ${repliesHtml}
+          </div>` : '';
+
+        // Rispondi: solo nelle conversazioni con un alunno, nel suo ramo privato
+        const rk = m._key;
+        const canReply = t.hasStudent && !!m._code;
+        const open = _msgReplyOpen.has(rk);
+        const replyHtml = !canReply ? '' : (open ? `<div style="margin-top:8px;">
+            <div style="font-size:11px;color:#6c47ff;margin-bottom:4px;">🔒 La risposta arriva solo a <b>${_lessEsc(stuName)}</b></div>
+            <textarea id="mc-reply-text-${rk}" rows="3" oninput="_msgReplyDraft['${rk}']=this.value" placeholder="Scrivi la risposta…"
+              style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid #c4b5fd;border-radius:8px;font-size:13px;font-family:inherit;">${_lessEsc(_msgReplyDraft[rk]||'')}</textarea>
+            <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:6px;">
+              <button onclick="_msgReplyToggle('${rk}',false)" style="background:#f3f4f6;color:#444;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;">Annulla</button>
+              <button id="mc-reply-send-${rk}" onclick="mcBachecaReply('${rk}')" style="background:#6c47ff;color:#fff;border:none;border-radius:8px;padding:6px 16px;font-size:12px;font-weight:700;cursor:pointer;">📤 Invia</button>
+            </div>
+          </div>` : `<button onclick="_msgReplyToggle('${rk}',true)" style="margin-top:8px;background:#fff;color:#6c47ff;border:1.5px solid #c4b5fd;border-radius:8px;padding:5px 14px;font-size:12px;font-weight:700;cursor:pointer;">↩ Rispondi a ${_lessEsc(stuName)}</button>`);
+
+        return `<div style="border-left:3px solid ${color};padding:10px 12px;margin-bottom:8px;background:${sel?'#f0edff':bg};border-radius:0 10px 10px 0;transition:background 0.15s;">
           <div style="display:flex;align-items:flex-start;gap:8px;">
             <input type="checkbox" ${sel?'checked':''} onchange="_msgToggleItem(this,'${m._key}')"
               style="width:15px;height:15px;margin-top:3px;accent-color:#6c47ff;cursor:pointer;flex-shrink:0;">
-            <div style="flex:1;">
+            <div style="flex:1;min-width:0;">
               <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;align-items:center;">
-                <span style="font-size:11px;font-weight:700;color:${tm.color};">${tm.emoji} ${tm.label}</span>
+                ${label}
                 ${m.pinned?'<span style="font-size:10px;background:#fef9c3;color:#713f12;padding:1px 6px;border-radius:4px;">📌</span>':''}
                 <span style="font-size:10px;color:#aaa;">${date}</span>
                 <span style="font-size:10px;color:#888;">${dest}</span>
                 ${reads?`<span style="font-size:10px;color:#16a37f;">👁 ${reads}</span>`:''}
               </div>
-              <div style="font-size:13px;color:#1e1b4b;line-height:1.5;">${m.type==='piano' ? (m.pianoUnit||'') + (m.pianoVoto!=null?' · voto '+m.pianoVoto:'') : (m.htmlText ? m.htmlText : (m.text||''))}</div>
+              ${quoteHtml}
+              <div style="font-size:13px;color:#1e1b4b;line-height:1.5;">${bodyHtml}</div>
               ${pianoBlock}
+              ${threadHtml}
+              ${replyHtml}
             </div>
             <button onclick="mcBachecaDeleteMsg('${m._key}')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:16px;flex-shrink:0;" title="Elimina">🗑</button>
           </div>
@@ -20668,6 +20820,8 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
 
     async function _msgDeleteSelected() {
       if (!_msgSel.size) return;
+      // Con il messaggio d'origine se ne vanno anche le risposte della conversazione
+      [..._msgSel].forEach(k => (_msgThreadByRoot[k]?.replies || []).forEach(r => _msgSel.add(r._key)));
       if (!confirm(`Eliminare ${_msgSel.size} messaggi dalla bacheca?`)) return;
       const db = firebase.database();
       const pianoUpdates = {};
@@ -20695,7 +20849,10 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
     }
 
     async function mcBachecaDeleteMsg(key) {
-      if (!confirm('Eliminare questo messaggio dalla bacheca?')) return;
+      const _thrRep = _msgThreadByRoot[key]?.replies || [];
+      if (!confirm(_thrRep.length
+          ? `Eliminare questo messaggio e le ${_thrRep.length} risposte della conversazione?`
+          : 'Eliminare questo messaggio dalla bacheca?')) return;
       const db = firebase.database();
       const msg = _msgAllMsgs.find(m => m._key === key);
       // Se è un piano personalizzato scritto, rimuove anche da Firebase recovery + studentapp
@@ -20716,6 +20873,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         ? 'livelearn/board_priv/' + _mcClassId() + '/' + msg._code
         : 'livelearn/board/' + _mcClassId();
       await db.ref(_baseDel + '/' + key).remove();
+      if (_thrRep.length && msg && msg._code) {
+        await Promise.all(_thrRep.map(r => db.ref(_baseDel + '/' + r._key).remove().catch(() => {})));
+      }
       await mcBachecaLoadMsgs();
     }
 
@@ -21044,6 +21204,8 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
               <div style="font-size:11px;color:#888;">${date}</div>
               <div style="font-size:12px;color:#444;margin-top:5px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${f.text||''}</div>
             </div>
+            <button onclick="mcEditFeedback('${f._safe}','${f._key}')"
+              style="background:none;border:none;cursor:pointer;color:#6c47ff;font-size:16px;flex-shrink:0;padding:2px 4px;" title="Modifica (l'alunno lo vede aggiornato subito)">✏️</button>
             <button onclick="mcDeleteFeedback('${f._safe}','${f._key}')"
               style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:16px;flex-shrink:0;padding:2px 4px;" title="Elimina">🗑</button>
           </div>
@@ -21076,6 +21238,72 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
       });
       await Promise.all(promises);
       await mcBachecaLoadFeedback();
+    }
+
+    // Modifica di un feedback già pubblicato: scrive sullo stesso nodo della
+    // cronologia personale, la StudentApp lo ascolta in tempo reale.
+    function mcEditFeedback(safe, key) {
+      const f = _fbAllFeedback.find(x => x._safe === safe && x._key === key);
+      if (!f) return;
+      const inp = 'width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;font-family:inherit;';
+      const lab = 'display:block;font-size:11px;font-weight:700;color:#6c47ff;text-transform:uppercase;letter-spacing:.5px;margin:12px 0 4px;';
+      // Feedback vecchi con le sezioni separate: si modificano le sezioni
+      const extra = (f.puntiDiForza != null || f.cosaMigliorare != null) ? `
+            <label style="${lab}">Punti di forza</label>
+            <textarea id="fe-puntiDiForza" rows="5" style="${inp}">${_lessEsc(f.puntiDiForza)}</textarea>
+            <label style="${lab}">Cosa migliorare</label>
+            <textarea id="fe-cosaMigliorare" rows="5" style="${inp}">${_lessEsc(f.cosaMigliorare)}</textarea>` : '';
+      const html = `
+        <div id="fbEditOverlay" onclick="if(event.target===this)_fbEditClose()"
+          style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;">
+          <div style="background:#fff;border-radius:16px;max-width:620px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3);padding:20px;">
+            <div style="font-size:17px;font-weight:700;color:#1e1b4b;">✏️ Modifica feedback</div>
+            <div style="font-size:12px;color:#888;margin-top:2px;">${_lessEsc(f.displayName)} — le modifiche compaiono subito nella StudentApp.</div>
+            <label style="${lab}">Titolo</label>
+            <input id="fe-title" style="${inp}" value="${_lessEsc(f.title)}">
+            <label style="${lab}">Data</label>
+            <input id="fe-date" type="date" style="${inp}" value="${_lessEsc(String(f.date||'').slice(0,10))}">
+            <label style="${lab}">Testo del feedback</label>
+            <textarea id="fe-text" rows="12" style="${inp}line-height:1.5;">${_lessEsc(f.text)}</textarea>${extra}
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;">
+              <button onclick="_fbEditClose()" style="background:#f3f4f6;color:#444;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;">Annulla</button>
+              <button id="fe-save" onclick="mcSaveFeedback('${safe}','${key}')" style="background:#6c47ff;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;">💾 Salva</button>
+            </div>
+          </div>
+        </div>`;
+      _fbEditClose();
+      document.body.insertAdjacentHTML('beforeend', html);
+    }
+
+    function _fbEditClose() {
+      const el = document.getElementById('fbEditOverlay');
+      if (el) el.remove();
+    }
+
+    async function mcSaveFeedback(safe, key) {
+      const el = id => document.getElementById('fe-' + id);
+      const v = id => (el(id)?.value || '').trim();
+      const upd = {
+        title: v('title') || 'Valutazione',
+        text: v('text') || null,
+        date: v('date') || null,
+        modificatoAt: Date.now()
+      };
+      if (el('puntiDiForza'))   upd.puntiDiForza   = v('puntiDiForza') || null;
+      if (el('cosaMigliorare')) upd.cosaMigliorare = v('cosaMigliorare') || null;
+      if (!upd.text && !upd.puntiDiForza && !upd.cosaMigliorare) { alert('Il feedback non può essere vuoto.'); return; }
+      const btn = el('save');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Salvo…'; }
+      try {
+        const b = await _mcHistBase(safe);
+        if (!b) throw new Error('alunno senza codice personale');
+        await firebase.database().ref(b + '/feedback/' + key).update(upd);
+        _fbEditClose();
+        await mcBachecaLoadFeedback();
+      } catch (e) {
+        alert('Errore nel salvataggio: ' + e.message);
+        if (btn) { btn.disabled = false; btn.textContent = '💾 Salva'; }
+      }
     }
 
     async function mcDeleteFeedback(safe, key) {
@@ -21134,8 +21362,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         const effS = _effectiveGrades(s.scritto||[]);
 
         // Storico voti (campi sicuri: data, voto, titolo, unit)
-        const votiOrale   = effO.map(g=>({data:g.data||'',voto:g.voto,titolo:g.titolo||'',unit:g.unit||''}));
-        const votiScritto = effS.map(g=>({data:g.data||'',voto:g.voto,titolo:g.titolo||'',unit:g.unit||''}));
+        // Recupero 'media': l'alunno vede i due voti singoli, non la media
+        const votiOrale   = _votiPerStudentApp(s.orale);
+        const votiScritto = _votiPerStudentApp(s.scritto);
 
         const aiText = s.aiReport?.text || null;
         const orarioSettimana = (classe.pianificazione?.orario||[])
@@ -21284,8 +21513,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         numScritto: effS.length,
         assenze:    studente.assenze||0,
         supporto:   studente.supporto||null,
-        votiOrale:  effO.map(g=>({data:g.data||'',voto:g.voto,titolo:g.titolo||'',unit:g.unit||''})),
-        votiScritto:effS.map(g=>({data:g.data||'',voto:g.voto,titolo:g.titolo||'',unit:g.unit||''})),
+        // Recupero 'media': l'alunno vede i due voti singoli, non la media
+        votiOrale:  _votiPerStudentApp(studente.orale),
+        votiScritto:_votiPerStudentApp(studente.scritto),
         // Competenze dai dati reali delle prove; un'area assente (NP) non c'e'
         competenze:          _compForSync(studente),
         aiReportText:        aiText,
