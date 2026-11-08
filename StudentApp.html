@@ -2758,45 +2758,35 @@ function renderPianoCard(){
     </div>`;
   };
 
-  // Fascia RECUPERO
-  if(rec_s.length||rec_o.length){
-    const c=_pianoColor('recovery_scritto');
+  // Fasce in ordine cronologico: il piano inserito per ultimo sta in cima
+  // (S.personalPlan è già ordinato per createdAt decrescente). Piani
+  // consecutivi della stessa categoria restano nella stessa fascia.
+  const FASCE = {
+    recupero:        { type:'recovery_scritto', icon:'📝', label:'RECUPERO' },
+    consolidamento:  { type:'consolidamento',   icon:'📚', label:'CONSOLIDAMENTO' },
+    approfondimento: { type:'approfondimento',  icon:'⭐', label:'APPROFONDIMENTO' }
+  };
+  const fasciaOf = p => (p.type==='recovery_scritto'||p.type==='recovery_orale') ? 'recupero'
+                      : FASCE[p.type] ? p.type : null;
+  const gruppi = [];
+  [...rec_s, ...rec_o, ...con, ...app]
+    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
+    .forEach(item=>{
+      const f = fasciaOf(item);
+      const last = gruppi[gruppi.length-1];
+      if(last && last.f===f) last.items.push(item); else gruppi.push({ f, items:[item] });
+    });
+  gruppi.forEach(g=>{
+    const m = FASCE[g.f];
+    const c = _pianoColor(m.type);
     fasceHtml+=`<div style="background:${c.bg};border-radius:12px;border:1px solid ${c.border};padding:14px;margin-bottom:10px;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-        <span style="font-size:16px;">📝</span>
-        <div style="font-size:12px;font-weight:800;color:${c.title};letter-spacing:0.5px;">RECUPERO</div>
-        <span style="font-size:11px;color:${c.sub};font-weight:500;">Consolida prima di andare avanti</span>
+        <span style="font-size:16px;">${m.icon}</span>
+        <div style="font-size:12px;font-weight:800;color:${c.title};letter-spacing:0.5px;">${m.label}</div>
       </div>`;
-    rec_s.forEach(item=>{ fasceHtml+=renderActivityRow(item); });
-    rec_o.forEach(item=>{ fasceHtml+=renderOraleRow(item); });
+    g.items.forEach(item=>{ fasceHtml += item.type==='recovery_orale' ? renderOraleRow(item) : renderActivityRow(item); });
     fasceHtml+=`</div>`;
-  }
-
-  // Fascia CONSOLIDAMENTO
-  if(con.length){
-    const c=_pianoColor('consolidamento');
-    fasceHtml+=`<div style="background:${c.bg};border-radius:12px;border:1px solid ${c.border};padding:14px;margin-bottom:10px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-        <span style="font-size:16px;">📚</span>
-        <div style="font-size:12px;font-weight:800;color:${c.title};letter-spacing:0.5px;">CONSOLIDAMENTO</div>
-        <span style="font-size:11px;color:${c.sub};font-weight:500;">Stai andando bene, continua così!</span>
-      </div>`;
-    con.forEach(item=>{ fasceHtml+=renderActivityRow(item); });
-    fasceHtml+=`</div>`;
-  }
-
-  // Fascia APPROFONDIMENTO
-  if(app.length){
-    const c=_pianoColor('approfondimento');
-    fasceHtml+=`<div style="background:${c.bg};border-radius:12px;border:1px solid ${c.border};padding:14px;margin-bottom:10px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-        <span style="font-size:16px;">⭐</span>
-        <div style="font-size:12px;font-weight:800;color:${c.title};letter-spacing:0.5px;">APPROFONDIMENTO</div>
-        <span style="font-size:11px;color:${c.sub};font-weight:500;">Ottimo lavoro! Pronto per la sfida?</span>
-      </div>`;
-    app.forEach(item=>{ fasceHtml+=renderActivityRow(item); });
-    fasceHtml+=`</div>`;
-  }
+  });
 
   return `<div id="piano-card" style="margin-bottom:16px;">
     <div style="width:100%;background:linear-gradient(135deg,#667EEA,#764BA2);border-radius:14px;padding:14px 16px;color:#fff;display:flex;justify-content:space-between;align-items:center;box-sizing:border-box;">
@@ -3001,7 +2991,7 @@ function renderPiani(){
   const body = document.getElementById('piani-body');
   if(!body) return;
   const msgs = S.pianoMsgs||[];
-  let html = `<div style="background:#f0edff;border:1px solid #d9d2ff;border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#3C3489;line-height:1.5;">
+  let html = `<div style="background:#f0edff;border:1px solid #d9d2ff;border-radius:12px;padding:14px 16px;margin-bottom:14px;font-size:16px;font-weight:500;color:#3C3489;line-height:1.55;">
     📋 Il piano personale è scelto dal docente in base all'andamento delle verifiche e delle lezioni ed è <strong>sempre disponibile</strong>.
   </div>`;
   if(!S.personalPlan.length && !msgs.length){
@@ -3766,7 +3756,7 @@ function renderStats(){
     [...mc.votiOrale].sort((a,b)=>(b.data||'').localeCompare(a.data||'')).forEach(v=>{
       const col=v.voto>=7?'var(--teal)':v.voto>=6?'#d97706':'#dc2626';
       const bg=v.voto>=7?'var(--teal-light)':v.voto>=6?'#fffbeb':'#fef2f2';
-      html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f0f0f0;"><div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(v.titolo||'—')}</div><div style="font-size:10px;color:var(--muted);">${fmtDate(v.data)}${v.unit?' · '+esc(v.unit):''}</div></div><div style="background:${bg};color:${col};font-size:16px;font-weight:800;padding:4px 10px;border-radius:8px;margin-left:8px;min-width:40px;text-align:center;">${v.voto}</div></div>`;
+      html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f0f0f0;"><div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(v.titolo||'—')}</div><div style="font-size:10px;color:var(--muted);">${fmtDate(v.data)}${v.unit?' · '+esc(v.unit):''}${v.recupero?' · <b style="color:#7c3aed">recupero</b>':''}</div></div><div style="background:${bg};color:${col};font-size:16px;font-weight:800;padding:4px 10px;border-radius:8px;margin-left:8px;min-width:40px;text-align:center;">${v.voto}</div></div>`;
     });
     html+=`</div>`;
   }
@@ -3775,7 +3765,7 @@ function renderStats(){
     [...mc.votiScritto].sort((a,b)=>(b.data||'').localeCompare(a.data||'')).forEach(v=>{
       const col=v.voto>=7?'var(--teal)':v.voto>=6?'#d97706':'#dc2626';
       const bg=v.voto>=7?'var(--teal-light)':v.voto>=6?'#fffbeb':'#fef2f2';
-      html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f0f0f0;"><div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(v.titolo||'—')}</div><div style="font-size:10px;color:var(--muted);">${fmtDate(v.data)}${v.unit?' · '+esc(v.unit):''}</div></div><div style="background:${bg};color:${col};font-size:16px;font-weight:800;padding:4px 10px;border-radius:8px;margin-left:8px;min-width:40px;text-align:center;">${v.voto}</div></div>`;
+      html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f0f0f0;"><div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(v.titolo||'—')}</div><div style="font-size:10px;color:var(--muted);">${fmtDate(v.data)}${v.unit?' · '+esc(v.unit):''}${v.recupero?' · <b style="color:#7c3aed">recupero</b>':''}</div></div><div style="background:${bg};color:${col};font-size:16px;font-weight:800;padding:4px 10px;border-radius:8px;margin-left:8px;min-width:40px;text-align:center;">${v.voto}</div></div>`;
     });
     html+=`</div>`;
   }
@@ -4067,7 +4057,27 @@ function renderBoard(){
   }
   S._boardReplyTexts = {};
   let html='';
-  visible.forEach(msg=>{
+  // Conversazioni: le risposte (replyTo) stanno sotto il messaggio d'origine,
+  // in ordine cronologico; in cima la conversazione con l'ultima attività.
+  const byKey = {};
+  visible.forEach(m=>{ if(m._key) byKey[m._key]=m; });
+  const rootOf = m => {
+    let r = m; const seen = new Set([m._key]);
+    while(r.replyTo && byKey[r.replyTo] && !seen.has(r.replyTo)){ seen.add(r.replyTo); r = byKey[r.replyTo]; }
+    return r;
+  };
+  const thrMap = new Map();
+  visible.forEach(m=>{
+    const r = rootOf(m);
+    if(!thrMap.has(r)) thrMap.set(r, []);
+    if(r!==m) thrMap.get(r).push(m);
+  });
+  const threads = [...thrMap.entries()].map(([root, replies])=>{
+    replies.sort((a,b)=>(a.ts||0)-(b.ts||0));
+    return { root, replies, last: Math.max(root.ts||0, ...replies.map(x=>x.ts||0)) };
+  }).sort((a,b)=>{ if(a.root.pinned&&!b.root.pinned)return -1; if(!a.root.pinned&&b.root.pinned)return 1; return b.last-a.last; });
+  const cardOf = msg=>{
+    let html='';
     const isTeacher = msg.from==='teacher';
     const isPriv    = msg.visibility==='private';
     const isMine    = msg.studentCode===S.code && !isTeacher;
@@ -4111,8 +4121,21 @@ function renderBoard(){
            </div>`:'' )}
          </div>
        </div>
-       ${isTeacher&&!isMine&&!isQuiz?`<button onclick="showCompose('${msg._key}')" style="width:100%;margin-top:10px;padding:7px;background:rgba(83,74,183,0.1);border:0.5px solid #AFA9EC;border-radius:8px;font-size:12px;color:#3C3489;cursor:pointer;font-family:inherit">Rispondi</button>`:''}
      </div>`;
+    return html;
+  };
+  threads.forEach(({root, replies})=>{
+    const all = [root, ...replies];
+    const last = all[all.length-1];
+    const rootQuiz = root.type==='avviso_quiz';
+    // Si risponde nella conversazione se c'è un messaggio del prof.
+    const canReply = !rootQuiz && all.some(m=>m.from==='teacher');
+    let card = cardOf(root);
+    const thr = replies.map(r=>`<div style="margin:0 0 0 18px">${cardOf(r)}</div>`).join('');
+    const btn = canReply ? `<button onclick="showCompose('${last._key}')" style="width:100%;margin:-4px 0 10px;padding:7px;background:rgba(83,74,183,0.1);border:0.5px solid #AFA9EC;border-radius:8px;font-size:12px;color:#3C3489;cursor:pointer;font-family:inherit">Rispondi</button>` : '';
+    html += replies.length || canReply
+      ? `<div style="margin-bottom:10px">${card}${replies.length?`<div style="border-left:2px solid #AFA9EC;margin:-4px 0 10px 10px;padding-top:4px">${thr}</div>`:''}${btn}</div>`
+      : card;
   });
   document.getElementById('board-body').innerHTML = html;
   // Mark as read solo i messaggi del tab attivo
