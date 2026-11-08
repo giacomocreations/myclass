@@ -21486,6 +21486,23 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
       await Promise.all(codes.map(code => db.ref('livelearn/history_priv/'+code+'/myclass').update(upd)));
     }
 
+    // Una tantum per dispositivo: riscrive le statistiche StudentApp di TUTTE
+    // le classi (l'auto-sync normale copre solo la classe aperta dopo un
+    // salvataggio), così i recuperi 'media' arrivano come voti singoli.
+    async function _syncVotiSingoliUnaVolta() {
+      const FLAG = 'myclass_sync_voti_singoli_v1';
+      try { if (localStorage.getItem(FLAG)) return; } catch(e) { return; }
+      if (!data?.classi?.length) return;
+      let n = 0;
+      for (const cl of data.classi) {
+        for (const s of (cl.studenti || [])) {
+          try { await _autoSyncStudentMyClass(s, cl.nome); n++; } catch(e) {}
+        }
+      }
+      if (n) { try { localStorage.setItem(FLAG, String(Date.now())); } catch(e) {} }
+      console.log('[Sync voti singoli] ✅ studenti risincronizzati:', n);
+    }
+
     async function _autoSyncStudentMyClass(studente, classeNome) {
       let db;
       try { db = firebase.database(); } catch(e) { return; }
@@ -31630,6 +31647,11 @@ ${blocchiPerAlunno}`;
             // senza che il docente debba ricordarsi di premere niente.
             if (typeof mcSmistaInbox === 'function') {
               setTimeout(function(){ mcSmistaInbox(true).catch(function(){}); }, 1500);
+            }
+            // Una tantum: risincronizza i voti di tutte le classi, così la
+            // StudentApp riceve i voti singoli dei recuperi invece della media.
+            if (typeof _syncVotiSingoliUnaVolta === 'function') {
+              setTimeout(function(){ _syncVotiSingoliUnaVolta().catch(function(){}); }, 4000);
             }
           }
           else if (!window.MCAuth.offline) _mcShowLogin();
