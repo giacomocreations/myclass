@@ -1482,16 +1482,53 @@ const NOUN_RE = {
   shorts: /\bshorts?\b/, skirt: /\bskirts?\b/, jacket: /\bjackets?\b/, coat: /\bcoats?\b/, cardigan: /\bcardigans?\b/, shoes: /\bshoes?\b/,
   trainers: /\btrainers?\b|\bsneakers?\b/, boots: /\bboots?\b/, sandals: /\bsandals?\b/, socks: /\bsocks?\b|\bsox\b/, cap: /\bcaps?\b|\bhat\b/,
 };
+// Il browser chiude da solo l'ascolto dopo qualche secondo di silenzio (su
+// telefono e iPhone già alla prima pausa). Finché l'alunno non preme ⏹ lo
+// riaccendiamo subito e continuiamo ad accumulare il testo, fino a MIC_MAX_SEC.
+const MIC_MAX_SEC = 180;
+const MIC_FATAL = { 'not-allowed': '⚠️ Permetti l\'uso del microfono al browser.', 'service-not-allowed': '⚠️ Permetti l\'uso del microfono al browser.', 'audio-capture': '⚠️ Non trovo il microfono: controlla che sia collegato.', 'network': '⚠️ Il riconoscimento vocale ha bisogno di internet: controlla la connessione.', 'language-not-supported': '⚠️ Il browser non riconosce l\'inglese: prova con Chrome o Edge.' };
+let micWanted = false, micText = '', micStopT = null, micFails = 0;
+const micNote = t => { document.getElementById('mic-note').textContent = t; };
 function toggleMic() {
   if (!SpeechRec) return;
-  if (listening) { rec && rec.stop(); return; }
-  rec = new SpeechRec(); rec.lang = 'en-GB'; rec.interimResults = false; rec.continuous = true; rec.maxAlternatives = 1;
-  let text = '';
-  rec.onresult = e => { for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) text += ' ' + e.results[i][0].transcript; };
-  rec.onerror = e => { document.getElementById('mic-note').textContent = e.error === 'not-allowed' ? '⚠️ Permetti l\'uso del microfono al browser.' : '⚠️ Non ho sentito bene: riprova.'; };
-  rec.onend = () => { listening = false; setMicBtn(); if (text.trim()) checkSpeech(text.trim()); };
-  try { rec.start(); listening = true; setMicBtn(); showStageAndMic(); document.getElementById('mic-note').textContent = 'Parla adesso… premi ⏹ quando hai finito.'; }
-  catch (err) { listening = false; setMicBtn(); }
+  if (listening) { stopMic(); return; }
+  micText = ''; micWanted = true; micFails = 0;
+  listening = true; setMicBtn(); showStageAndMic();
+  micNote('Parla adesso… puoi fare pause, ti ascolto finché non premi ⏹ (massimo 3 minuti).');
+  clearTimeout(micStopT);
+  micStopT = setTimeout(() => { if (listening) { stopMic(); toast('⏱ 3 minuti: ascolto finito'); } }, MIC_MAX_SEC * 1000);
+  startRec();
+}
+function stopMic() {
+  micWanted = false; clearTimeout(micStopT);
+  if (rec) { try { rec.stop(); } catch (e) { rec = null; finishMic(); } }   // onend chiude e corregge
+  else finishMic();
+}
+function startRec() {
+  const r = new SpeechRec(); r.lang = 'en-GB'; r.interimResults = false; r.continuous = true; r.maxAlternatives = 1;
+  const t0 = Date.now(); let heard = false;
+  rec = r;
+  r.onresult = e => { for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) { micText += ' ' + e.results[i][0].transcript; heard = true; } };
+  r.onerror = e => { if (MIC_FATAL[e.error]) { micWanted = false; micNote(MIC_FATAL[e.error]); } };   // no-speech / aborted: si riparte
+  r.onend = () => {
+    if (rec !== r) return;
+    rec = null;
+    // ripartenze a vuoto una dopo l'altra: il microfono non funziona, meglio fermarsi
+    micFails = !heard && Date.now() - t0 < 1000 ? micFails + 1 : 0;
+    if (micWanted && listening && micFails < 5) {
+      try { startRec(); return; } catch (err) {}
+    }
+    finishMic();
+  };
+  try { r.start(); }
+  catch (err) { rec = null; micWanted = false; finishMic(); }
+}
+function finishMic() {
+  const was = listening;
+  listening = false; micWanted = false; clearTimeout(micStopT); setMicBtn();
+  if (!was) return;
+  if (micText.trim()) checkSpeech(micText.trim());
+  else if (!Object.values(MIC_FATAL).includes(document.getElementById('mic-note').textContent)) micNote('⚠️ Non ho sentito niente: riprova, parlando vicino al microfono.');
 }
 function setMicBtn() {
   const b = document.getElementById('btn-mic');
@@ -1783,7 +1820,7 @@ function toggleLock() {
 }
 function setMode(m) {
   if (m === 'class' && !TeacherLock.isUnlocked()) { TeacherLock.ask(() => { refreshLock(); setMode('class'); }); return; }
-  if (m === 'class' && listening && rec) rec.stop();
+  if (m === 'class' && listening) stopMic();
   state.mode = m;
   document.body.classList.toggle('mode-home', m === 'home');
   document.body.classList.toggle('mode-class', m === 'class');

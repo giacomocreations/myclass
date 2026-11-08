@@ -644,17 +644,53 @@ function detectModal(t) {
   if (/\b(must|have to|has to|have got to|need to)\b/.test(t)) return 'ob';
   return null;
 }
+// Parlato lungo (continuous): il browser chiude da solo l'ascolto dopo qualche
+// secondo di silenzio (su telefono e iPhone già alla prima pausa). Finché
+// l'alunno non preme ⏹ lo riaccendiamo e continuiamo ad accumulare il testo,
+// fino a MIC_MAX_SEC. Le singole frasi (🎤 di ogni riga) si fermano da sole.
+const MIC_MAX_SEC = 180;
+const MIC_FATAL = { 'not-allowed': "⚠️ Permetti l'uso del microfono al browser.", 'service-not-allowed': "⚠️ Permetti l'uso del microfono al browser.", 'audio-capture': '⚠️ Non trovo il microfono: controlla che sia collegato.', 'network': '⚠️ Il riconoscimento vocale ha bisogno di internet: controlla la connessione.', 'language-not-supported': "⚠️ Il browser non riconosce l'inglese: prova con Chrome o Edge." };
+let recWanted = false, recStopT = null;
 function listen(onText, onEnd, continuous) {
   if (!SpeechRec || recBusy) return false;
-  rec = new SpeechRec(); rec.lang = 'en-GB'; rec.interimResults = false; rec.continuous = !!continuous; rec.maxAlternatives = 1;
-  let text = '';
-  rec.onresult = e => { for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) text += ' ' + e.results[i][0].transcript; };
-  rec.onerror = e => { const n = document.getElementById(isChores() ? 'free-note' : 'mic-note'); if (n) n.textContent = e.error === 'not-allowed' ? "⚠️ Permetti l'uso del microfono al browser." : '⚠️ Non ho sentito bene: riprova.'; };
-  rec.onend = () => { recBusy = false; onEnd && onEnd(); if (text.trim()) onText(text.trim()); };
-  try { rec.start(); recBusy = true; return true; } catch (e) { recBusy = false; return false; }
+  let text = '', fails = 0, fatal = false;
+  recWanted = !!continuous;
+  const micNoteEl = () => document.getElementById(continuous ? 'free-note' : 'mic-note');
+  const finish = () => {
+    recBusy = false; recWanted = false; clearTimeout(recStopT);
+    onEnd && onEnd();
+    if (text.trim()) onText(text.trim());
+    else if (continuous && !fatal) { const n = micNoteEl(); if (n) n.textContent = '⚠️ Non ho sentito niente: riprova, parlando vicino al microfono.'; }
+  };
+  const start = () => {
+    const r = new SpeechRec(); r.lang = 'en-GB'; r.interimResults = false; r.continuous = !!continuous; r.maxAlternatives = 1;
+    const t0 = Date.now(); let heard = false;
+    r.onresult = e => { for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) { text += ' ' + e.results[i][0].transcript; heard = true; } };
+    r.onerror = e => {
+      const n = micNoteEl();
+      if (MIC_FATAL[e.error]) { fatal = true; recWanted = false; if (n) n.textContent = MIC_FATAL[e.error]; }
+      else if (!continuous && e.error !== 'aborted' && n) n.textContent = '⚠️ Non ho sentito bene: riprova.';   // nel parlato lungo: si riparte
+    };
+    r.onend = () => {
+      if (rec !== r) return;
+      // ripartenze a vuoto una dopo l'altra: il microfono non funziona, meglio fermarsi
+      fails = !heard && Date.now() - t0 < 1000 ? fails + 1 : 0;
+      if (recWanted && fails < 5) { try { start(); return; } catch (err) {} }
+      rec = null; finish();
+    };
+    r.start(); rec = r;
+  };
+  try { start(); } catch (e) { rec = null; recWanted = false; return false; }
+  recBusy = true;
+  if (continuous) recStopT = setTimeout(() => { if (recBusy) { stopListen(); toast('⏱ 3 minuti: ascolto finito'); } }, MIC_MAX_SEC * 1000);
+  return true;
+}
+function stopListen() {
+  recWanted = false; clearTimeout(recStopT);
+  if (rec) { try { rec.stop(); } catch (e) {} }
 }
 function micRow(i) {
-  if (recBusy) { rec.stop(); return; }
+  if (recBusy) { stopListen(); return; }
   const btn = document.getElementById('mic-' + i);
   if (!listen(txt => checkRow(i, txt), () => { const b = document.getElementById('mic-' + i); if (b) b.textContent = '🎤'; })) return;
   btn.textContent = '⏹';
@@ -692,10 +728,10 @@ const CHORE_RE = [
 const DOMAKE_ERR = [[/\bmake the (washing[\s-]?up|washing|ironing|shopping|vacuuming)\b/, 'make → do the …'], [/\bdo (my|the) bed\b/, 'do → make my bed']];
 let freeOn = false;
 function toggleFreeMic() {
-  if (recBusy) { rec.stop(); return; }
+  if (recBusy) { stopListen(); return; }
   if (!listen(checkFree, () => { freeOn = false; document.getElementById('btn-free-mic').textContent = '🎤 Parla'; }, true)) return;
   freeOn = true; document.getElementById('btn-free-mic').textContent = '⏹ Ho finito';
-  document.getElementById('free-note').textContent = 'Parla adesso… premi ⏹ quando hai finito.';
+  document.getElementById('free-note').textContent = 'Parla adesso… puoi fare pause, ti ascolto finché non premi ⏹ (massimo 3 minuti).';
 }
 function checkFree(raw) {
   const t = norm(raw);
