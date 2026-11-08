@@ -2849,7 +2849,38 @@ function openRecoveryActivity(code){
 // già inviati e segue le correzioni del voto fatte in MyClass.
 // Se non si trova un solo voto sicuro non si mostra niente.
 function _fbVoto(fb){
-  if(fb && fb.voto!=null && fb.voto!=='') return fb.voto;
+  const g = _fbVotoMatch(fb);
+  return g ? g.voto : null;
+}
+// Voto/i da mostrare per una valutazione. Se è un recupero, accanto al voto
+// del recupero compare quello della prima prova insufficiente (stessa unit,
+// data precedente): due voti singoli, mai la loro media.
+function _fbVotoHtml(fb, big){
+  const g = _fbVotoMatch(fb);
+  if(!g) return '';
+  const fs = big ? 52 : 28;
+  const main = `<div style="font-size:${fs}px;font-weight:800;color:${big?'var(--purple)':'#3C3489'};line-height:1">${esc(g.voto)}</div>`;
+  if(!g.recupero) return main;
+  const base = _fbVotoBase(g);
+  const lbl = `font-size:${big?12:10}px;font-weight:700;color:#7F77DD;text-transform:uppercase;letter-spacing:.3px`;
+  return `<div style="display:flex;gap:${big?18:10}px;align-items:flex-end;justify-content:center;flex-shrink:0">
+    ${base?`<div style="text-align:center"><div style="${lbl}">1ª prova</div><div style="font-size:${Math.round(fs*0.7)}px;font-weight:800;color:#dc2626;line-height:1.1">${esc(base.voto)}</div></div>`:''}
+    <div style="text-align:center"><div style="${lbl}">Recupero</div>${main}</div>
+  </div>`;
+}
+function _fbVotoBase(rec){
+  const mc = S.myclass || {};
+  const d = String(rec.data||'').slice(0,10);
+  const u = String(rec.unit||'').trim().toLowerCase();
+  const prev = [...(mc.votiScritto||[]), ...(mc.votiOrale||[])]
+    .filter(v => v && !v.recupero && v.voto!=null && Number(v.voto) < 6
+              && String(v.data||'').slice(0,10) < d
+              && String(v.unit||'').trim().toLowerCase() === u)
+    .sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')));
+  return prev[0] || null;
+}
+function _fbVotoMatch(fb){
+  if(fb && fb.voto!=null && fb.voto!=='') return { voto: fb.voto };
   const mc = S.myclass;
   if(!mc || !fb || !fb.date) return null;
   const d = String(fb.date).slice(0,10);
@@ -2868,7 +2899,7 @@ function _fbVoto(fb){
     const c = cand.filter(v => v.unit && t.includes(String(v.unit).toLowerCase()));
     if(c.length) cand = c;
   }
-  return cand.length===1 ? cand[0].voto : null;
+  return cand.length===1 ? cand[0] : null;
 }
 
 function renderValutazioni(){
@@ -2899,7 +2930,7 @@ function renderValutazioni(){
           <div style="font-size:15px;font-weight:700;color:#3C3489;">${esc(fb.title||'Valutazione')}</div>
           <div style="font-size:11px;color:#7F77DD;margin-top:2px;">${date}</div>
         </div>
-        ${_fbVoto(fb)!=null?`<div style="font-size:28px;font-weight:800;color:#3C3489;margin-left:10px;">${esc(_fbVoto(fb))}</div>`:''}
+        ${_fbVoto(fb)!=null?`<div style="margin-left:10px;">${_fbVotoHtml(fb,false)}</div>`:''}
       </div>
       <div style="font-size:13px;color:#534AB7;line-height:1.6;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">${esc(fb.text||fb.puntiDiForza||'')}</div>
       <div style="margin-top:8px;font-size:11px;color:#AFA9EC;">Tocca per leggere tutto →</div>
@@ -3807,7 +3838,7 @@ function openFeedback(key){
   const date = fb.date?new Date(fb.date+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'long',year:'numeric'}):'—';
   let html = `<button onclick="closeFbOverlay()" style="background:var(--purple-light);border:none;color:var(--purple);border-radius:8px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:16px;font-family:inherit">← Indietro</button>
   <div style="text-align:center;padding:16px 0 14px">
-    ${_fbVoto(fb)!=null?`<div style="font-size:52px;font-weight:800;color:var(--purple)">${esc(_fbVoto(fb))}</div>`:''}
+    ${_fbVoto(fb)!=null?`<div style="margin-top:4px">${_fbVotoHtml(fb,true)}</div>`:''}
     <div style="font-size:15px;font-weight:700;color:var(--text);margin-top:4px">${esc(fb.title||'Valutazione')}</div>
     <div style="font-size:11px;color:var(--faint);margin-top:4px">${date}</div>
   </div>`;
