@@ -807,6 +807,9 @@ async function _refreshSessionScores(){
           // Aggiorna anche score e maxPts per la scheda dettaglio
           sessEntry.score  = totalScore;
           sessEntry.maxPts = maxPts;
+          // Assegnate ripetibili: percentuali di tutti i tentativi
+          sessEntry._att = _attemptsSummary(_prevAttempts(entry, baseQuestions, versions, studentVersions),
+            { score: totalScore, maxPts, submittedAt: entry.submittedAt });
         }
       }
 
@@ -2537,6 +2540,7 @@ function renderCompiti(){
               <span class="pill pill-gray">${fmtDateTime(sess.ts)}</span>
               ${sess.numQuestions?`<span class="pill pill-gray">${sess.numQuestions} dom.</span>`:''}
               ${sess._piano&&sess.attemptCount>1?`<span class="pill pill-gray">${sess.attemptCount} tent.</span>`:''}
+              ${!sess._piano&&Array.isArray(sess._att)&&sess._att.length>1?`<span class="pill pill-gray">🔁 ${sess._att.length} tent.</span>`:''}
             </div>
           </div>
           <div style="text-align:right;white-space:nowrap">
@@ -2564,6 +2568,29 @@ function renderCompiti(){
 }
 
 function setHwFilter(f){ S.homeworkFilter=f; renderCompiti(); }
+
+// Scheda "Tentativi" del dettaglio: progressi dal primo all'ultimo
+function _attemptsCardHtml(att){
+  if(!Array.isArray(att) || att.length<2) return '';
+  const best = Math.max(...att.map(a=>a.pct).filter(p=>p!=null));
+  let prev = null;
+  let html = `<div class="card" style="margin-bottom:12px"><div class="sec-lbl" style="margin-bottom:8px">TENTATIVI · PROGRESSI</div>`;
+  att.forEach(a=>{
+    let d = '';
+    if(a.pct!=null && prev!=null){
+      const v = a.pct - prev;
+      d = v>0 ? `<span style="font-size:11px;font-weight:700;color:#059669">▲ +${v}</span>` : v<0 ? `<span style="font-size:11px;font-weight:700;color:#dc2626">▼ ${v}</span>` : `<span style="font-size:11px;color:var(--muted)">=</span>`;
+    }
+    if(a.pct!=null) prev = a.pct;
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px solid #f0eeff">
+      <span style="font-size:12px;color:var(--text);flex:1">Tentativo ${a.n}${a.last?' (ultimo)':''}${a.submittedAt?' · '+fmtDateTime(a.submittedAt):''}${a.pct===best?' ⭐':''}</span>
+      ${d}
+      <span style="font-size:12px;font-weight:700;color:${pctColor(a.pct||0)};min-width:38px;text-align:right">${a.pct!=null?a.pct+'%':'—'}</span>
+    </div>`;
+  });
+  html += `<div style="font-size:11px;color:var(--muted);margin-top:8px">Nel PDF completo trovi le risposte di ogni tentativo.</div></div>`;
+  return html;
+}
 
 function openPdf(sessionCode){
   const sess = S.sessions[sessionCode];
@@ -2634,10 +2661,39 @@ function openPdf(sessionCode){
     });
     html += `</div>`;
   }
-  html += `<button id="full-pdf-btn" onclick="openFullPdf('${sess.sessionCode}')" style="display:block;width:100%;padding:13px;background:var(--purple);color:#fff;border:none;border-radius:12px;text-align:center;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:8px">📄 Apri PDF completo</button>`;
+  html += `<div id="att-card-slot">${_attemptsCardHtml(sess._att)}</div>`;
+  html += `<button id="full-pdf-btn" onclick="openFullPdf('${sess.sessionCode}')" style="display:block;width:100%;padding:13px;background:var(--purple);color:#fff;border:none;border-radius:12px;text-align:center;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:8px">📄 Apri PDF completo${sess._att&&sess._att.length>1?' (tutti i tentativi)':''}</button>`;
   document.getElementById('pdf-body').innerHTML = html;
   showScreen('scr-pdf');
   document.getElementById('main-tab-bar').style.display='none';
+  // Tentativi non ancora letti (es. sessione oltre le 10 più recenti): si caricano ora
+  if(sess._att === undefined) _loadAttempts(sess).then(()=>{
+    const slot = document.getElementById('att-card-slot');
+    if(!slot || S.sessions[sessionCode]!==sess || !document.getElementById('scr-pdf')?.classList.contains('active')) return;
+    slot.innerHTML = _attemptsCardHtml(sess._att);
+    const b = document.getElementById('full-pdf-btn');
+    if(b && Array.isArray(sess._att) && sess._att.length>1) b.textContent = '📄 Apri PDF completo (tutti i tentativi)';
+  });
+}
+
+// Legge solo il proprio record; se ci sono tentativi precedenti carica le
+// domande (sessione + attività) per calcolarne le percentuali.
+async function _loadAttempts(sess){
+  if(!db || !sess || !sess.sessionCode) return;
+  try {
+    const entry = await _leggiMiaRisposta(db, sess.sessionCode, S.studentName, S.studentSafe, sess.respKey);
+    if(!entry || !entry.attempts){ sess._att = null; return; }
+    const sessData = (await db.ref('livelearn/sessions/' + sess.sessionCode).get()).val() || {};
+    if(!sessData.activityId){ sess._att = null; return; }
+    const actData = (await db.ref('livelearn/activities/' + sessData.activityId).get()).val() || {};
+    const { baseQuestions, versions } = _noListeningFilter(sessData, actData.questions || [], actData.versions || {});
+    const studentVersions = sessData.studentVersions || {};
+    const questions = _resolveStudentQuestions(S.studentName, entry, baseQuestions, versions, studentVersions);
+    let score = 0, maxPts = 0;
+    questions.forEach((q, i) => { const r = _evalWithOverrides(q, i, entry); maxPts += r.maxPts; if (typeof r.pts === 'number') score += r.pts; });
+    sess._att = _attemptsSummary(_prevAttempts(entry, baseQuestions, versions, studentVersions),
+      { score: Math.round(score * 100) / 100, maxPts, submittedAt: entry.submittedAt });
+  } catch(e) { /* non bloccante: resta il PDF completo */ }
 }
 
 // Giudizio sul tempo medio per domanda, con soglie diverse per tipo di
@@ -4356,8 +4412,12 @@ async function openFullPdf(sessionCode) {
     const imgIdx = _pdfImageIndex(actData);
     _pdfHydrateImages(questions, imgIdx);
 
+    // 5b. Assegnate ripetibili: tentativi precedenti (primo, secondo, …)
+    const prevAtt = _prevAttempts(entry, baseQuestions, versions, studentVersions);
+    prevAtt.forEach(t => _pdfHydrateImages(t.questions, imgIdx));
+
     // 6. Genera finestra di stampa
-    _buildStudentPdfWindow(sessionCode, questions, entry, sess, imgIdx);
+    _buildStudentPdfWindow(sessionCode, questions, entry, sess, imgIdx, prevAtt);
 
   } catch(e) {
     alert('Errore: ' + e.message);
@@ -5061,7 +5121,89 @@ function _pdfHydrateImages(qs, idx) {
   return qs;
 }
 
-function _buildStudentPdfWindow(sessionCode, questions, entry, sess, imgIdx) {
+// ── Assegnate ripetibili: tutti i tentativi ──────────────────────────────
+// Se il compito è ripetibile, LiveLearn archivia ogni consegna in
+// response.attempts prima di ripartire; il record mostra solo l'ultima.
+// Qui i tentativi precedenti con domande della loro versione e punteggio
+// ricalcolato come per l'ultimo (correzioni del docente comprese: esclusioni
+// e massimi riscalati del record valgono anche per i tentativi della stessa versione).
+function _prevAttempts(entry, baseQuestions, versions, studentVersions) {
+  const list = (_llFbArr(entry && entry.attempts) || []).filter(Boolean);
+  const curVer = (entry && entry.studentVersion) || 'originale';
+  return list.map((t, i) => {
+    const ver = t.studentVersion || 'originale';
+    const sameVer = ver === curVer;
+    const e = {
+      answers: _llFbArr(t.answers), aiScores: t.aiScores || {}, aiFeedbacks: t.aiFeedbacks || {},
+      manualScores: t.manualScores || {}, questionTimes: _llFbArr(t.questionTimes),
+      questionMaxOverrides: t.questionMaxOverrides || (sameVer ? entry.questionMaxOverrides : null) || {},
+      excludedQuestions: t.excludedQuestions || (sameVer ? entry.excludedQuestions : null) || {},
+      joinedAt: t.joinedAt || null, submittedAt: t.submittedAt || null, studentVersion: ver
+    };
+    let questions = [];
+    if (e.answers.length) {
+      try { questions = _resolveStudentQuestions(S.studentName, { studentVersion: ver, aliasOf: entry.aliasOf }, baseQuestions, versions || {}, studentVersions || {}) || []; } catch(_) {}
+    }
+    let score = t.score != null ? Number(t.score) : null, maxPts = t.maxScore != null ? Number(t.maxScore) : null;
+    if (questions.length) {
+      score = 0; maxPts = 0;
+      questions.forEach((q, qi) => { const r = _evalWithOverrides(q, qi, e); maxPts += r.maxPts; if (typeof r.pts === 'number') score += r.pts; });
+      score = Math.round(score * 100) / 100; maxPts = Math.round(maxPts * 100) / 100;
+    }
+    const pct = (maxPts > 0 && score != null) ? Math.round(score / maxPts * 100) : (t.pct != null ? Number(t.pct) : null);
+    return { n: i + 1, entry: e, questions, score, maxPts, pct, submittedAt: e.submittedAt };
+  });
+}
+// Elenco leggero (n, punti, %, data) di tutti i tentativi, ultimo compreso
+function _attemptsSummary(prev, cur) {
+  if (!prev || !prev.length) return null;
+  return prev.map(t => ({ n: t.n, score: t.score, maxPts: t.maxPts, pct: t.pct, submittedAt: t.submittedAt }))
+    .concat([{ n: prev.length + 1, score: cur.score, maxPts: cur.maxPts,
+      pct: cur.maxPts > 0 ? Math.round(cur.score / cur.maxPts * 100) : null, submittedAt: cur.submittedAt, last: true }]);
+}
+// Tabella "Progressi" (PDF): tentativo, data, punti, %, variazione
+function _attemptsTableHtml(all) {
+  const fmtDt = ts => ts ? new Date(ts).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+  const col = p => p == null ? '#888' : p >= 70 ? '#059669' : p >= 50 ? '#d97706' : '#dc2626';
+  const pcts = all.map(t => t.pct).filter(p => p != null);
+  const best = pcts.length ? Math.max(...pcts) : null;
+  let rows = '', prevPct = null;
+  all.forEach(t => {
+    let delta = '';
+    if (t.pct != null && prevPct != null) {
+      const d = t.pct - prevPct;
+      delta = d > 0 ? '<span style="color:#059669;font-weight:800;">▲ +' + d + '</span>'
+        : d < 0 ? '<span style="color:#dc2626;font-weight:800;">▼ ' + d + '</span>'
+        : '<span style="color:#888;font-weight:700;">= 0</span>';
+    }
+    if (t.pct != null) prevPct = t.pct;
+    const w = t.pct != null ? Math.max(0, Math.min(100, t.pct)) : 0;
+    rows += '<tr' + (t.last ? ' style="background:#f5f3ff;"' : '') + '>' +
+      '<td style="padding:6px 8px;font-weight:800;white-space:nowrap;">' + t.n + '°' + (t.last ? ' <span style="font-size:10px;color:#6c47ff;">(ultimo)</span>' : '') + (t.pct != null && t.pct === best && pcts.length > 1 ? ' ⭐' : '') + '</td>' +
+      '<td style="padding:6px 8px;white-space:nowrap;">' + fmtDt(t.submittedAt) + '</td>' +
+      '<td style="padding:6px 8px;white-space:nowrap;">' + (t.score != null ? t.score : '—') + ' / ' + (t.maxPts != null ? t.maxPts : '—') + '</td>' +
+      '<td style="padding:6px 8px;min-width:110px;"><div style="display:flex;align-items:center;gap:6px;"><strong style="color:' + col(t.pct) + ';min-width:36px;">' + (t.pct != null ? t.pct + '%' : '—') + '</strong>' +
+        '<div style="flex:1;height:6px;background:#ece9ff;border-radius:3px;min-width:40px;"><div style="height:6px;width:' + w + '%;background:' + col(t.pct) + ';border-radius:3px;"></div></div></div></td>' +
+      '<td style="padding:6px 8px;white-space:nowrap;">' + delta + '</td>' +
+    '</tr>';
+  });
+  let trend = '';
+  if (pcts.length > 1) {
+    const d = pcts[pcts.length - 1] - pcts[0];
+    trend = '<div style="margin-top:8px;font-size:12px;color:#4c1d95;">Dal primo all\'ultimo tentativo: <strong>' + pcts[0] + '% → ' + pcts[pcts.length - 1] + '%</strong> ' +
+      (d > 0 ? '<span style="color:#059669;font-weight:800;">(+' + d + ' punti percentuali)</span>' : d < 0 ? '<span style="color:#dc2626;font-weight:800;">(' + d + ' punti percentuali)</span>' : '<span style="color:#888;">(invariato)</span>') +
+      ' · Migliore: <strong>' + best + '%</strong></div>';
+  }
+  const th = 'padding:6px 8px;text-align:left;background:#6c47ff;color:#fff;font-size:11px;';
+  return '<div style="margin:0 0 16px;border:1.5px solid #ddd6fe;border-radius:10px;padding:10px 12px;background:#faf9ff;break-inside:avoid;page-break-inside:avoid;overflow-x:auto;">' +
+    '<div style="font-size:13px;font-weight:900;color:#5b21b6;margin-bottom:6px;">📈 Progressi — ' + all.length + ' tentativi</div>' +
+    '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+      '<thead><tr><th style="' + th + '">Tentativo</th><th style="' + th + '">Consegnato</th><th style="' + th + '">Punti</th><th style="' + th + '">Risultato</th><th style="' + th + '">Rispetto al precedente</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>' + trend +
+  '</div>';
+}
+
+function _buildStudentPdfWindow(sessionCode, questions, entry, sess, imgIdx, prevAttempts) {
   const TAG_COLORS = { GRAMMAR:'#3b82f6', VOCABULARY:'#10b981', FUNCTIONS:'#f59e0b', LISTENING:'#8b5cf6', READING:'#ec4899', WRITING:'#0ea5e9' };
   const TYPE_ICONS = { 'multiple-choice':'📋','cloze':'✏️','fill-blanks':'📝','matching':'🔗','drag-drop':'🔀','reorder':'🔢','free-response':'💬','listening':'🎧','categorization':'🗂️' };
   const TAG_LABELS = { GRAMMAR:'Grammar', VOCABULARY:'Vocabulary', FUNCTIONS:'Functions', LISTENING:'Listening', READING:'Reading', WRITING:'Writing' };
@@ -5163,6 +5305,45 @@ function _buildStudentPdfWindow(sessionCode, questions, entry, sess, imgIdx) {
     recoveryHtml += '</div>';
   }
 
+  // Assegnate ripetibili: progressi e dettaglio dei tentativi precedenti
+  let attSummary = '', attLastTitle = '', attDetail = '';
+  const prevAtt = (prevAttempts || []).filter(Boolean);
+  if (prevAtt.length) {
+    const all = _attemptsSummary(prevAtt, { score: totalScore, maxPts, submittedAt });
+    attSummary = _attemptsTableHtml(all);
+    attLastTitle = `<div style="margin:6px 0 10px;padding:7px 12px;border-radius:8px;background:#ede9fe;color:#5b21b6;font-size:13px;font-weight:900;">🔁 Tentativo ${all.length} (ultimo) — ${pct}% · ${fmtDt(submittedAt)}</div>`;
+    const colP = p => p == null ? '#888' : p >= 70 ? '#059669' : p >= 50 ? '#d97706' : '#dc2626';
+    prevAtt.slice().reverse().forEach(t => {
+      const tt = (t.entry.submittedAt && t.entry.joinedAt) ? Math.round((t.entry.submittedAt - t.entry.joinedAt) / 1000) : null;
+      attDetail += `<div style="margin-top:22px;">
+        <div style="padding:8px 12px;border-radius:8px;background:#f5f3ff;border-left:4px solid ${colP(t.pct)};margin-bottom:10px;break-after:avoid;page-break-after:avoid;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+          <span style="font-size:14px;font-weight:900;color:#5b21b6;">🔁 Tentativo ${t.n}</span>
+          <span style="font-size:12px;color:#555;">Consegnato: ${fmtDt(t.submittedAt)}${tt ? ' · ⏱ ' + fmtSec(tt) : ''} · <strong>${t.score != null ? t.score : '—'}/${t.maxPts != null ? t.maxPts : '—'} pt</strong> · <strong style="color:${colP(t.pct)};">${t.pct != null ? t.pct + '%' : '—'}</strong></span>
+        </div>`;
+      if (!t.questions.length || !t.entry.answers.length) {
+        attDetail += `<div style="font-size:12px;color:#888;padding:6px 2px;">Risposte di questo tentativo non disponibili.</div></div>`;
+        return;
+      }
+      attDetail += t.questions.map((q, i) => {
+        if (!q || ((t.entry.excludedQuestions || {})[i] || {}).hide) return '';
+        const a = t.entry.answers[i];
+        const r = _evalWithOverrides(q, i, t.entry);
+        const sec = t.entry.questionTimes[i];
+        const fb = t.entry.aiFeedbacks[i] || '';
+        return _pdfQuestionCard(q, a, {
+          num: 'T' + t.n + ' · Domanda ' + (i+1), typeLabel: typeTxt(q.type),
+          label: r.label, color: r.color, bg: r.bg,
+          pts: r.excluded ? 'non valutato' : r.poll ? '—' : r.pts + '/' + r.maxPts + ' pt',
+          time: sec != null ? fmtSec(sec) : '', feedback: fb ? '💬 ' + esc(fb) : ''
+        });
+      }).join('') + '</div>';
+    });
+    attDetail = `<div style="margin-top:26px;border-top:3px solid #c4b5fd;padding-top:10px;">
+      <div style="font-size:15px;font-weight:900;color:#5b21b6;">🗂️ Tentativi precedenti</div>
+      <div style="font-size:11px;color:#888;margin-top:2px;">Dal più recente al primo, con tutte le risposte date.</div>
+      ${attDetail}</div>`;
+  }
+
   const html = `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LiveLearn — ${esc(S.studentName)} — ${esc(sess.activityTitle||'Attività')}</title>
@@ -5210,9 +5391,12 @@ function _buildStudentPdfWindow(sessionCode, questions, entry, sess, imgIdx) {
     <div style="font-size:13px;font-weight:700;color:#888;">${totalScore}/${maxPts} pt · ${fmtSec(totalTime)}</div>
   </div>
 </div>
+${attSummary}
 ${tagHtml}
 ${_PDFQ_LEGEND}
+${attLastTitle}
 <div class="pq-cards">${cardsHtml}</div>
+${attDetail}
 ${recoveryHtml}
 <div style="margin-top:16px;font-size:10px;color:#aaa;text-align:right;">Generato da LiveLearn · ${new Date().toLocaleString('it-IT')}</div>
 <div class="no-print" style="margin-top:24px;text-align:center;">
