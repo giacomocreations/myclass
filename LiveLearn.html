@@ -16640,6 +16640,9 @@ async function restartAssignedActivity() {
           score: sc, maxScore: maxPts, pct: maxPts > 0 ? Math.round(sc / maxPts * 100) : null,
           submittedAt: r.submittedAt, answers: r.answers || null,
           aiScores: r.aiScores || null, manualScores: r.manualScores || null,
+          // Per il PDF dei tentativi: feedback AI, tempi per domanda e durata
+          aiFeedbacks: r.aiFeedbacks || null, questionTimes: r.questionTimes || null,
+          joinedAt: r.joinedAt || null,
           studentVersion: r.studentVersion || 'originale'
         });
       }
@@ -17978,9 +17981,137 @@ async function _pvOpenDeep(code) {
   alert('Piano ' + code + ' non trovato: forse è stato rimosso da MyClass.');
 }
 
+// ── Assegnate ripetibili: tutti i tentativi nel PDF ──────────────────────
+// restartAssignedActivity archivia ogni consegna in response.attempts prima di
+// ripartire, ma il PDF mostrava solo l'ultima. Qui: tabella dei progressi
+// (primo, secondo, terzo… tentativo) e dettaglio completo dei precedenti.
+// I punteggi si ricalcolano come per l'ultimo, con le correzioni del docente;
+// esclusioni e massimi riscalati del record valgono anche per i tentativi
+// fatti sulla stessa versione (il docente li imposta sul record, che resta).
+function _llPrevAttempts(entry, studentKey, displayName) {
+  const list = entry && entry.attempts ? (fbArr(entry.attempts) || []).filter(Boolean) : [];
+  const curVer = (entry && entry.studentVersion) || 'originale';
+  return list.map((t, i) => {
+    const sameVer = (t.studentVersion || 'originale') === curVer;
+    const exc = t.excludedQuestions || (sameVer ? entry.excludedQuestions : null) || {};
+    const ms = Object.assign({}, t.manualScores || {});
+    Object.keys(exc).forEach(k => { if (exc[k]) ms[k] = 0; });
+    const e = {
+      answers: fbArr(t.answers || []), aiScores: t.aiScores || {}, manualScores: ms,
+      aiFeedbacks: t.aiFeedbacks || {}, questionTimes: fbArr(t.questionTimes || []),
+      questionMaxOverrides: t.questionMaxOverrides || (sameVer ? entry.questionMaxOverrides : null) || {},
+      excludedQuestions: exc, joinedAt: t.joinedAt || null, submittedAt: t.submittedAt || null,
+      studentVersion: t.studentVersion || 'originale'
+    };
+    let qs = [];
+    if (e.answers.length) {
+      try { qs = getStudentAssignedQuestions(studentKey, displayName, entry.aliasOf, e.studentVersion, null, e.answers) || []; } catch(_) {}
+    }
+    let score = t.score != null ? Number(t.score) : null, maxPts = t.maxScore != null ? Number(t.maxScore) : null;
+    if (qs.length) { const ef = _llEffectiveScore(qs, e); score = ef.score; maxPts = ef.maxPts; }
+    const pct = (maxPts > 0 && score != null) ? Math.round(score / maxPts * 100) : (t.pct != null ? Number(t.pct) : null);
+    return { n: i + 1, e, qs, score, maxPts, pct, submittedAt: e.submittedAt };
+  });
+}
+
+// Esito di una domanda di un tentativo (stesse regole del PDF: manuale > AI > automatico)
+function _llPdfEsito(q, a, i, e) {
+  if ((e.excludedQuestions || {})[i]) return { label: '🚫 Escluso', color: '#64748b', bg: '#f1f5f9', pts: 'non valutato' };
+  const ms = (e.manualScores || {})[i], ai = (e.aiScores || {})[i], qmo = e.questionMaxOverrides || {};
+  let r = {}; try { r = evaluateAnswer(q, a) || {}; } catch(_) {}
+  const qP = _qPts(q), effMax = qmo[i] != null ? Number(qmo[i]) : qP;
+  const sc = v => qP > 0 ? Math.round(Number(v) / qP * effMax * 100) / 100 : Number(v);
+  if (ms != null) return { label: '✏️ Manuale', color: '#3b82f6', bg: '#eff6ff', pts: Number(ms) + '/' + effMax + ' pt' };
+  if (ai != null) return { label: '🤖 AI: ' + sc(ai), color: '#6c47ff', bg: '#f5f3ff', pts: sc(ai) + '/' + effMax + ' pt' };
+  if (r.poll) return { label: '📊 Sondaggio', color: '#0369a1', bg: '#fafafa', pts: '—' };
+  if (!r.scorable) return { label: 'Aperta', color: '#555', bg: '#fafafa', pts: '—' };
+  if (r.correct) return { label: 'Corretta ✓', color: '#059669', bg: '#f0fdf4', pts: '+' + effMax + ' pt' };
+  if (r.partial && typeof r.earnedPoints === 'number' && r.earnedPoints > 0)
+    return { label: 'Parziale 🔶', color: '#d97706', bg: '#fff7ed', pts: sc(r.earnedPoints) + '/' + effMax + ' pt' };
+  return { label: 'Errata ✗', color: '#dc2626', bg: '#fef2f2', pts: '0/' + effMax + ' pt' };
+}
+
+// HTML dei tentativi per il PDF. cur = ultimo tentativo { score, maxPts, submittedAt }.
+// Restituisce { summary, lastTitle, detail }: tutto vuoto se c'è un solo tentativo.
+function _llAttemptsPdfHtml(entry, studentKey, displayName, cur) {
+  const prev = _llPrevAttempts(entry, studentKey, displayName);
+  if (!prev.length) return { summary: '', lastTitle: '', detail: '' };
+  const fmtDt = ts => ts ? new Date(ts).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+  const fmtSec = s => s == null ? '—' : s >= 60 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : s + 's';
+  const col = p => p == null ? '#888' : p >= 70 ? '#059669' : p >= 50 ? '#d97706' : '#dc2626';
+  const curPct = cur.maxPts > 0 ? Math.round(cur.score / cur.maxPts * 100) : null;
+  const all = prev.concat([{ n: prev.length + 1, score: cur.score, maxPts: cur.maxPts, pct: curPct, submittedAt: cur.submittedAt, last: true }]);
+  const pcts = all.map(t => t.pct).filter(p => p != null);
+  const best = pcts.length ? Math.max(...pcts) : null;
+  let rows = '', prevPct = null;
+  all.forEach(t => {
+    let delta = '';
+    if (t.pct != null && prevPct != null) {
+      const d = t.pct - prevPct;
+      delta = d > 0 ? '<span style="color:#059669;font-weight:800;">▲ +' + d + '</span>'
+        : d < 0 ? '<span style="color:#dc2626;font-weight:800;">▼ ' + d + '</span>'
+        : '<span style="color:#888;font-weight:700;">= 0</span>';
+    }
+    if (t.pct != null) prevPct = t.pct;
+    const w = t.pct != null ? Math.max(0, Math.min(100, t.pct)) : 0;
+    rows += '<tr' + (t.last ? ' style="background:#f5f3ff;"' : '') + '>' +
+      '<td style="padding:6px 8px;font-weight:800;white-space:nowrap;">' + t.n + '°' + (t.last ? ' <span style="font-size:10px;color:#6c47ff;">(ultimo)</span>' : '') + (t.pct != null && t.pct === best && pcts.length > 1 ? ' ⭐' : '') + '</td>' +
+      '<td style="padding:6px 8px;white-space:nowrap;">' + fmtDt(t.submittedAt) + '</td>' +
+      '<td style="padding:6px 8px;white-space:nowrap;">' + (t.score != null ? t.score : '—') + ' / ' + (t.maxPts != null ? t.maxPts : '—') + '</td>' +
+      '<td style="padding:6px 8px;min-width:110px;"><div style="display:flex;align-items:center;gap:6px;"><strong style="color:' + col(t.pct) + ';min-width:36px;">' + (t.pct != null ? t.pct + '%' : '—') + '</strong>' +
+        '<div style="flex:1;height:6px;background:#ece9ff;border-radius:3px;min-width:40px;"><div style="height:6px;width:' + w + '%;background:' + col(t.pct) + ';border-radius:3px;"></div></div></div></td>' +
+      '<td style="padding:6px 8px;white-space:nowrap;">' + delta + '</td>' +
+    '</tr>';
+  });
+  let trend = '';
+  if (pcts.length > 1) {
+    const d = pcts[pcts.length - 1] - pcts[0];
+    trend = '<div style="margin-top:8px;font-size:12px;color:#4c1d95;">Dal primo all\'ultimo tentativo: <strong>' + pcts[0] + '% → ' + pcts[pcts.length - 1] + '%</strong> ' +
+      (d > 0 ? '<span style="color:#059669;font-weight:800;">(+' + d + ' punti percentuali)</span>' : d < 0 ? '<span style="color:#dc2626;font-weight:800;">(' + d + ' punti percentuali)</span>' : '<span style="color:#888;">(invariato)</span>') +
+      ' · Migliore: <strong>' + best + '%</strong></div>';
+  }
+  const summary = '<div class="att-summary" style="margin:0 0 16px;border:1.5px solid #ddd6fe;border-radius:10px;padding:10px 12px;background:#faf9ff;break-inside:avoid;page-break-inside:avoid;">' +
+    '<div style="font-size:13px;font-weight:900;color:#5b21b6;margin-bottom:6px;">📈 Progressi — ' + all.length + ' tentativi</div>' +
+    '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+      '<thead><tr><th style="padding:6px 8px;text-align:left;">Tentativo</th><th style="padding:6px 8px;text-align:left;">Consegnato</th><th style="padding:6px 8px;text-align:left;">Punti</th><th style="padding:6px 8px;text-align:left;">Risultato</th><th style="padding:6px 8px;text-align:left;">Rispetto al precedente</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>' + trend +
+    '</div>';
+  const lastTitle = '<div style="margin:6px 0 10px;padding:7px 12px;border-radius:8px;background:#ede9fe;color:#5b21b6;font-size:13px;font-weight:900;">🔁 Tentativo ' + all.length + ' (ultimo) — ' + (curPct != null ? curPct + '%' : '—') + ' · ' + fmtDt(cur.submittedAt) + '</div>';
+  const typeIcons = {'multiple-choice':'📋','cloze':'✏️','fill-blanks':'📝','matching':'🔗','free-response':'💬','listening':'🎧','drag-drop':'🔀','reorder':'🔢','categorization':'🗂️','speaking':'🎤'};
+  let detail = '';
+  prev.slice().reverse().forEach(t => {
+    const tt = (t.e.submittedAt && t.e.joinedAt) ? Math.round((t.e.submittedAt - t.e.joinedAt) / 1000) : null;
+    detail += '<div class="att-prev" style="margin-top:22px;">' +
+      '<div style="padding:8px 12px;border-radius:8px;background:#f5f3ff;border-left:4px solid ' + col(t.pct) + ';margin-bottom:10px;break-after:avoid;page-break-after:avoid;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">' +
+        '<span style="font-size:14px;font-weight:900;color:#5b21b6;">🔁 Tentativo ' + t.n + '</span>' +
+        '<span style="font-size:12px;color:#555;">Consegnato: ' + fmtDt(t.submittedAt) + (tt ? ' · ⏱ ' + fmtSec(tt) : '') + ' · <strong>' + (t.score != null ? t.score : '—') + '/' + (t.maxPts != null ? t.maxPts : '—') + ' pt</strong> · <strong style="color:' + col(t.pct) + ';">' + (t.pct != null ? t.pct + '%' : '—') + '</strong></span>' +
+      '</div>';
+    if (!t.qs.length || !t.e.answers.length) {
+      detail += '<div style="font-size:12px;color:#888;padding:6px 2px;">Risposte di questo tentativo non disponibili.</div></div>';
+      return;
+    }
+    detail += t.qs.map((q, i) => {
+      if (((t.e.excludedQuestions || {})[i] || {}).hide) return '';
+      const a = t.e.answers[i];
+      const r = _llPdfEsito(q, a, i, t.e);
+      const fb = t.e.aiFeedbacks[i];
+      return _pdfQuestionCard(q, a, {
+        num: 'T' + t.n + ' · Domanda ' + (i + 1), typeLabel: (typeIcons[q.type] || '') + ' ' + typeLabel(q.type),
+        label: r.label, color: r.color, bg: r.bg, pts: r.pts,
+        time: t.e.questionTimes[i] != null ? fmtSec(t.e.questionTimes[i]) : '',
+        feedback: fb ? '🤖 ' + esc(fb) : ''
+      });
+    }).join('') + '</div>';
+  });
+  detail = '<div style="margin-top:26px;border-top:3px solid #c4b5fd;padding-top:10px;">' +
+    '<div style="font-size:15px;font-weight:900;color:#5b21b6;">🗂️ Tentativi precedenti</div>' +
+    '<div style="font-size:11px;color:#888;margin-top:2px;">Dal più recente al primo, con tutte le risposte date.</div>' + detail + '</div>';
+  return { summary, lastTitle, detail };
+}
+
 // pv (facoltativo): tentativo di un piano personalizzato { entry, questions, title, code }
 async function exportStudentPDF(studentName, pv) {
-  let entry, questions;
+  let entry, questions, studentKeyPDF = null;
   if (pv) { entry = pv.entry; questions = pv.questions; }
   else {
   // Fetch all responses and find this student by display name
@@ -17990,7 +18121,7 @@ async function exportStudentPDF(studentName, pv) {
   if (!entry) { alert('Dati non trovati per: ' + studentName); return; }
 
   // Chiave safe dell'entry per il lookup versione
-  const studentKeyPDF = Object.keys(allData).find(k => allData[k] === entry)
+  studentKeyPDF = Object.keys(allData).find(k => allData[k] === entry)
     || (studentName || '').replace(/[.#$\[\]\/]/g, '_');
   // Versione registrata nella risposta (FILA B/C, DSA, PEI, Training…): senza,
   // le risposte venivano lette sulle domande di un'altra versione.
@@ -18022,6 +18153,9 @@ async function exportStudentPDF(studentName, pv) {
   const fmtDt      = ts => ts ? new Date(ts).toLocaleString('it-IT') : '—';
   const actTitle   = pv ? pv.title : (S.liveActivity?.title || 'Attività');
   const sessionCode = pv ? pv.code : (S.liveCode || '');
+  // Assegnate ripetibili: progressi e tentativi precedenti
+  const attHtml = pv ? { summary: '', lastTitle: '', detail: '' }
+    : _llAttemptsPdfHtml(entry, studentKeyPDF, studentName, { score, maxPts: totalPts, submittedAt: submitted });
 
   // Build answer rows HTML
   const typeIcons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','drag-drop':'🔀','reorder':'🔢','categorization':'🗂️','speaking':'🎤'};
@@ -18248,9 +18382,12 @@ async function exportStudentPDF(studentName, pv) {
     <div class="meta-card"><div class="label">Risposte date</div><div class="value">${answers.filter(a=>a!==null&&a!==undefined).length} / ${questions.length}</div></div>
     <div class="meta-card"><div class="label">Tempo totale</div><div class="value">${fmtSecs(totalTime)}</div></div>
   </div>
+  ${attHtml.summary}
   ${buildTagBreakdown(questions, answers, aiScoresData, manualScoresData, 'pdf', entry.excludedQuestions)}
   ${_PDFQ_LEGEND}
+  ${attHtml.lastTitle}
   <div class="pq-list-wrap">${rowsHtml}</div>
+  ${attHtml.detail}
   ${recoverySection}
   <div class="footer">Generato da LiveLearn · ${new Date().toLocaleString('it-IT')}</div>
   <div class="no-print" style="margin-top:28px;text-align:center;">
@@ -19036,6 +19173,8 @@ async function exportAllPDFCorretto() {
 
     // Tag breakdown (riusa buildTagBreakdown già disponibile)
     const tagHtml = buildTagBreakdown(questions, answers, aiScores, manualScores, 'pdf', entry.excludedQuestions);
+    // Assegnate ripetibili: progressi e tentativi precedenti
+    const attHtml = _llAttemptsPdfHtml(entry, studentKey, displayName, { score, maxPts: totalPts, submittedAt });
 
     // Righe domande
     const rowsHtml = questions.map((q, i) => {
@@ -19146,9 +19285,12 @@ async function exportAllPDFCorretto() {
           <div style="font-size:12px;font-weight:700;color:#888;">${score}/${totalPts} pt</div>
         </div>
       </div>
+      ${attHtml.summary}
       ${tagHtml}
       ${_PDFQ_LEGEND}
+      ${attHtml.lastTitle}
       ${rowsHtml}
+      ${attHtml.detail}
       ${recoveryHtml}
     </div>`;
   }
