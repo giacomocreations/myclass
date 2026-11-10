@@ -4260,9 +4260,8 @@ function showCompose(replyKey, replyText){
 
 // ── FILTRO LINGUAGGIO ─────────────────────────────────────────────────────
 // Due passate: (1) confronto per PAROLA INTERA, così "africa" non fa scattare
-// "fica" e "cazzuola" non fa scattare "cazzo"; (2) confronto su testo
-// compattato solo per termini lunghi (>=5), che intercetta "c a z z o" e
-// "c4zz0" senza generare falsi positivi fra parole vicine.
+// "fica" e "cazzuola" non fa scattare "cazzo"; (2) solo per termini lunghi
+// (>=5): parole che cominciano col termine e parole spezzate ("c a z z o").
 const LINGUACCIA_LISTA = [
   'cazzo','cazzi','cazzata','cazzate','incazzato','incazzata',
   'merda','merdoso','stronzo','stronza','stronzi','stronze','stronzata',
@@ -4293,7 +4292,7 @@ const LINGUACCIA_INSULTI = [
   'idiot','moron','loser','retard','retarded','dumbass','jerk',
   'caghineri','caghineris','gay','finocchio','finocchi'
 ];
-const LINGUACCIA_ECCEZIONI = ['cazzuola','cazzuole','fico','fichi','ficata','segale','segatura','culotte','culla','africa','penisola','merlo','finocchiona','finocchietto','finocchiona'];
+const LINGUACCIA_ECCEZIONI = ['vermicelli','vermiglio','vermiglia','vermentino','cazzuola','cazzuole','fico','fichi','ficata','segale','segatura','culotte','culla','africa','penisola','merlo','finocchiona','finocchietto','finocchiona'];
 
 function _lingNorm(s){
   return String(s||'')
@@ -4325,14 +4324,34 @@ function linguaccia(testo){
     }
     return tok;
   });
-  // Passata 2 — testo compattato, solo termini lunghi
-  // Le ripetizioni vanno compattate DOPO aver tolto gli spazi, altrimenti
-  // "c a z z o" resta con la doppia e non combacia col termine normalizzato.
-  let compatto = _lingNorm(raw).replace(/[^a-z]/g,'').replace(/(.)\1{1,}/g,'$1');
-  // Le eccezioni vanno tolte anche qui: senza questo "finocchiona" contiene
-  // "finocchio" nel testo compattato e farebbe scattare il filtro.
-  _LING_OK.forEach(w => { if (w.length >= 4) compatto = compatto.split(w).join(''); });
-  _LING_LUNGHE.forEach(w => { if (compatto.includes(w) && !hits.length) hits.push(w); });
+  // Passata 2 — solo termini lunghi (>=5), in due casi:
+  //  a) parola che COMINCIA col termine: "cazzone", "stronzone";
+  //  b) parola spezzata in pezzi corti: "c a z z o", "c.a.z.z.o", "ca zzo".
+  // Prima si cercava il termine in tutto il testo compattato, anche a metà
+  // di una parola normale: "comunicazione" contiene "cazi" (= "cazzi" senza
+  // doppie) e il messaggio veniva segnalato. Queste due regole trovano solo
+  // un sottoinsieme di quello che trovava la vecchia: niente falsi allarmi nuovi.
+  const lungo = n => _LING_LUNGHE.find(w => n.startsWith(w));
+  const pezzi = raw.match(/[\p{L}\p{N}@$!|]+/gu) || [];
+  let corti = [];
+  const chiudi = () => {
+    if (corti.length >= 2) {
+      const unito = corti.join('').replace(/(.)\1{1,}/g,'$1');
+      const w = _LING_LUNGHE.find(t => unito.includes(t));
+      if (w && !hits.length) hits.push(w);
+    }
+    corti = [];
+  };
+  pezzi.forEach(tok => {
+    const n = _lingNorm(tok).replace(/[^a-z]/g,'');
+    if (!n) return;
+    if (n.length <= 3) { corti.push(n); return; }
+    chiudi();
+    if (_LING_OK.has(n) || _LING_SET.has(n)) return;
+    const w = lungo(n);
+    if (w && !hits.length) hits.push(w);
+  });
+  chiudi();
   return { flagged: hits.length > 0, masked, hits };
 }
 
