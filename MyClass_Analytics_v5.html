@@ -2082,7 +2082,7 @@
                         </div>
                         <button onclick="agentProcessPendingOrali()" class="agent-btn-approve" style="font-size:12px;padding:5px 14px;margin-top:6px;">▶ Processa tutti gli orali in coda</button>
                         <div style="font-size:11px;color:#aaa;margin-top:6px;">
-                            Cartella predefinita: <code>Documenti\Registrazioni di suoni</code>. Va autorizzata una volta per sessione. I task vengono aggiunti in coda: processa uno alla volta con ▶ oppure tutti insieme.
+                            Cartella predefinita: <code>Documenti\Registrazioni di suoni</code> (vengono lette anche le sottocartelle, es. una per classe). Va autorizzata una volta per sessione. I task vengono aggiunti in coda: processa uno alla volta con ▶ oppure tutti insieme.
                         </div>
                         <!-- Classi con orale rilevate automaticamente dal piano lezioni -->
                         <div id="agentOraliRilevate" style="margin-top:10px;font-size:12px;color:#555;"></div>
@@ -18022,7 +18022,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             }
 
             // ── Registratore Audio ─────────────────────────────────────────
-            // ── Encoder WAV (PCM 16-bit mono) — compatibile Gemini ──────────
+            // ── Encoder WAV (PCM 16-bit mono) — solo ripiego se l'MP3 non è disponibile ──
             function lvEncodeWAV(samples, sampleRate) {
                 const buf = new ArrayBuffer(44 + samples.length * 2);
                 const v   = new DataView(buf);
@@ -18106,16 +18106,23 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 const merged   = new Float32Array(totalLen);
                 let off = 0;
                 for (const ch of pcmChunks) { merged.set(ch, off); off += ch.length; }
-                // Codifica WAV e scarica
-                const wavBuf  = lvEncodeWAV(merged, sampleRate);
-                const blob    = new Blob([wavBuf], { type: 'audio/wav' });
+                // Codifica MP3 (mono 16 kHz, 32 kbps ≈ 240 KB/min) e scarica.
+                // Se l'encoder MP3 non si carica (es. offline) ripiega sul WAV.
                 const cognomi = LV.recStudenti.map(n => n.replace(/\s+/g,'_')).join('_');
-                const fn      = `Orale_${cognomi}_${classe.nome.replace(/\s+/g,'')}_${isoDate}.wav`;
-                const url     = URL.createObjectURL(blob);
-                const a       = document.createElement('a');
-                a.href=url; a.download=fn; a.style.display='none';
-                document.body.appendChild(a); a.click();
-                setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 2000);
+                const fnBase  = `Orale_${cognomi}_${classe.nome.replace(/\s+/g,'')}_${isoDate}`;
+                const scarica = (blob, ext) => {
+                    const url = URL.createObjectURL(blob);
+                    const a   = document.createElement('a');
+                    a.href=url; a.download=`${fnBase}.${ext}`; a.style.display='none';
+                    document.body.appendChild(a); a.click();
+                    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 2000);
+                };
+                _encodeMP3(merged, sampleRate)
+                    .then(mp3 => scarica(mp3, 'mp3'))
+                    .catch(err => {
+                        console.warn('[REC] MP3 non disponibile, salvo in WAV:', err.message);
+                        scarica(new Blob([lvEncodeWAV(merged, sampleRate)], { type: 'audio/wav' }), 'wav');
+                    });
             };
 
             // ── Toggle modalità coppia ─────────────────────────────────────
@@ -26637,7 +26644,7 @@ ${sectionInstr}`;
         if (!task?.audioFileName) return null;
         if (!agentAudioDirHandle || typeof agentAudioDirHandle.getFileHandle !== 'function') return null;
         try {
-            const fh = await agentAudioDirHandle.getFileHandle(task.audioFileName);
+            const fh = await _agentFileHandleByPath(agentAudioDirHandle, task.audioFileName);
             task.audioHandle = fh; // re-inietta in RAM (non serve salvare in LS)
             return fh;
         } catch { return null; }
@@ -29785,6 +29792,123 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
 
 
     // ══════════════════════════════════════════════════════════════════════
+    //  Audio compresso (MP3) — registrazioni LIVE e invio a Gemini
+    // ══════════════════════════════════════════════════════════════════════
+    // Gemini accetta al massimo ~20 MB per richiesta con l'audio "inline"
+    // (in base64, che pesa +33%). Un WAV a 16 kHz occupa ~1,9 MB/minuto, quindi
+    // oltre ~7 minuti non passa. In MP3 mono 32 kbps lo stesso minuto pesa ~240 KB.
+    const GEMINI_INLINE_MAX_BYTES = 14 * 1024 * 1024;
+    const AUDIO_MP3_KBPS = 32;
+    let _lamePromise = null;
+
+    // Carica l'encoder MP3 (lamejs) solo quando serve
+    function _loadLame() {
+        if (window.lamejs) return Promise.resolve(window.lamejs);
+        if (_lamePromise) return _lamePromise;
+        const urls = [
+            'https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js',
+            'https://unpkg.com/lamejs@1.2.1/lame.min.js'
+        ];
+        _lamePromise = (async () => {
+            for (const u of urls) {
+                try {
+                    await new Promise((res, rej) => {
+                        const sc = document.createElement('script');
+                        sc.src = u; sc.onload = res;
+                        sc.onerror = () => { sc.remove(); rej(new Error(u)); };
+                        document.head.appendChild(sc);
+                    });
+                    if (window.lamejs) return window.lamejs;
+                } catch (e) { console.warn('[Audio] Encoder MP3 non caricato da', e.message); }
+            }
+            _lamePromise = null;
+            throw new Error('Encoder MP3 non disponibile (connessione assente?)');
+        })();
+        return _lamePromise;
+    }
+
+    // Float32 mono [-1,1] → Blob MP3. Cede il controllo al browser ogni tanto
+    // per non bloccare l'interfaccia sulle registrazioni lunghe.
+    async function _encodeMP3(samples, sampleRate, kbps = AUDIO_MP3_KBPS) {
+        const lame = await _loadLame();
+        const enc = new lame.Mp3Encoder(1, sampleRate, kbps);
+        const BLOCK = 1152, out = [];
+        const pcm = new Int16Array(BLOCK);
+        for (let i = 0, n = 0; i < samples.length; i += BLOCK, n++) {
+            const len = Math.min(BLOCK, samples.length - i);
+            for (let j = 0; j < len; j++) {
+                const v = Math.max(-1, Math.min(1, samples[i + j]));
+                pcm[j] = v < 0 ? v * 0x8000 : v * 0x7FFF;
+            }
+            const b = enc.encodeBuffer(len === BLOCK ? pcm : pcm.subarray(0, len));
+            if (b.length) out.push(new Uint8Array(b.buffer, b.byteOffset, b.length).slice());
+            if (n % 400 === 399) await new Promise(r => setTimeout(r, 0));
+        }
+        const end = enc.flush();
+        if (end.length) out.push(new Uint8Array(end.buffer, end.byteOffset, end.length).slice());
+        return new Blob(out, { type: 'audio/mpeg' });
+    }
+
+    // Qualsiasi audio leggibile dal browser (wav, mp3, m4a, ogg, webm, flac…)
+    // → campioni mono a 16 kHz (la qualità che serve per il parlato)
+    async function _decodeAudioMono16k(arrayBuffer) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        const ctx = new AC({ sampleRate: 16000 });
+        let dec;
+        try { dec = await ctx.decodeAudioData(arrayBuffer); }
+        finally { try { ctx.close(); } catch (e) {} }
+        if (dec.numberOfChannels === 1) return dec.getChannelData(0);
+        const mono = new Float32Array(dec.length);
+        for (let c = 0; c < dec.numberOfChannels; c++) {
+            const ch = dec.getChannelData(c);
+            for (let i = 0; i < ch.length; i++) mono[i] += ch[i] / dec.numberOfChannels;
+        }
+        return mono;
+    }
+
+    function _audioMimeFromName(name) {
+        const ext = String(name || '').split('.').pop().toLowerCase();
+        return ({ mp3:'audio/mp3', wav:'audio/wav', ogg:'audio/ogg', opus:'audio/ogg', flac:'audio/flac',
+                  aac:'audio/aac', m4a:'audio/mp4', webm:'audio/webm' })[ext] || 'audio/mpeg';
+    }
+
+    function _blobToBase64(blob) {
+        return new Promise((res, rej) => {
+            const r = new FileReader();
+            r.onload = () => res(String(r.result).split(',')[1] || '');
+            r.onerror = () => rej(r.error || new Error('Lettura file audio fallita'));
+            r.readAsDataURL(blob);
+        });
+    }
+
+    // Prepara un file audio per Gemini: se è troppo grande per l'invio inline
+    // (tipicamente un WAV lungo) lo converte al volo in MP3 mono 16 kHz.
+    // Il file originale nella cartella non viene toccato.
+    async function _audioFileForGemini(file) {
+        let blob = file, mimeType = file.type || _audioMimeFromName(file.name);
+        if (file.size > GEMINI_INLINE_MAX_BYTES) {
+            const mb = (file.size / 1048576).toFixed(1);
+            console.log(`[Agente] ${file.name}: ${mb} MB, troppo grande per Gemini — conversione in MP3…`);
+            let pcm;
+            try { pcm = await _decodeAudioMono16k(await file.arrayBuffer()); }
+            catch (e) { throw new Error(`Audio di ${mb} MB troppo grande per Gemini e il browser non riesce a convertirlo (${e.message || e}). Salvalo in MP3 o M4A.`); }
+            blob = await _encodeMP3(pcm, 16000);
+            mimeType = 'audio/mp3';
+            console.log(`[Agente] ${file.name}: convertito in MP3 (${(blob.size / 1048576).toFixed(1)} MB)`);
+            if (blob.size > GEMINI_INLINE_MAX_BYTES)
+                throw new Error(`Audio troppo lungo anche dopo la compressione (${Math.round(pcm.length / 16000 / 60)} min): dividilo in parti più brevi.`);
+        }
+        return { base64: await _blobToBase64(blob), mimeType };
+    }
+
+    // Messaggio d'errore leggibile da una risposta Gemini non OK
+    async function _geminiHttpError(res, what) {
+        let detail = '';
+        try { detail = (await res.json())?.error?.message || ''; } catch (e) {}
+        return new Error(`Gemini ${what} HTTP ${res.status}${detail ? ': ' + detail : ''}`);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
     //  FASE 5 — Valutazioni Verifiche Orali
     // ══════════════════════════════════════════════════════════════════════
 
@@ -29904,7 +30028,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                     let restored = 0;
                     for (const t of needsHandle) {
                         try {
-                            t.audioHandle = await handle.getFileHandle(t.audioFileName);
+                            t.audioHandle = await _agentFileHandleByPath(handle, t.audioFileName);
                             restored++;
                         } catch { /* file non trovato: handle resta null */ }
                     }
@@ -29917,6 +30041,29 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
             }
         } catch { /* handle non più valido */ }
         agentBadgeUpdate();
+    }
+
+    // Percorre la cartella audio e le sue sottocartelle (max 6 livelli).
+    // Salta cartelle nascoste/di sistema. Restituisce { name, path, folders, handle }
+    // dove path è il percorso relativo con "/" (es. "3E/Rossi Mario.m4a").
+    async function* _agentWalkAudioDir(dirHandle, folders = [], depth = 0) {
+        for await (const [name, handle] of dirHandle.entries()) {
+            if (name.startsWith('.') || name.startsWith('$')) continue;
+            if (handle.kind === 'directory') {
+                if (depth < 6) yield* _agentWalkAudioDir(handle, [...folders, name], depth + 1);
+                continue;
+            }
+            yield { name, path: [...folders, name].join('/'), folders, handle };
+        }
+    }
+
+    // Ottiene il FileSystemFileHandle da un percorso relativo ("3E/Rossi.m4a" o "Rossi.m4a")
+    async function _agentFileHandleByPath(dirHandle, path) {
+        const parts = String(path || '').split('/').filter(Boolean);
+        if (!parts.length) throw new Error('Percorso audio vuoto');
+        let dir = dirHandle;
+        for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p);
+        return dir.getFileHandle(parts[parts.length - 1]);
     }
 
     // Scansiona la cartella audio — usa le lezioni orali rilevate automaticamente dal piano
@@ -29956,9 +30103,10 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
         // fileDate = data reale del file = data della sessione già avvenuta.
         // Così anche se nella cartella ci sono file vecchi (già valutati),
         // la sessionDate sarà quella giusta e il check storico li blocca.
+        // Legge anche le sottocartelle (es. "3E/Rossi Mario.m4a"): il nome
+        // registrato nel task è il percorso relativo alla cartella audio.
         const audioFiles = [];
-        for await (const [name, handle] of agentAudioDirHandle.entries()) {
-            if (handle.kind !== 'file') continue;
+        for await (const { name, path, folders, handle } of _agentWalkAudioDir(agentAudioDirHandle)) {
             const ext = name.split('.').pop().toLowerCase();
             if (!audioExts.has(ext)) continue;
             let fileDate = today;
@@ -29966,14 +30114,18 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                 const f = await handle.getFile();
                 fileDate = new Date(f.lastModified).toISOString().split('T')[0];
             } catch(e) {
-                console.warn(`[Agente] Impossibile leggere data file ${name}:`, e.message);
+                console.warn(`[Agente] Impossibile leggere data file ${path}:`, e.message);
             }
             // Skip file futuri: non possono essere stati registrati
             if (fileDate > today) {
-                console.log(`[Agente] Skip ${name}: data file ${fileDate} è futura (oggi ${today})`);
+                console.log(`[Agente] Skip ${path}: data file ${fileDate} è futura (oggi ${today})`);
                 continue;
             }
-            audioFiles.push({ name, handle, baseName: norm(name.replace(/\.[^.]+$/, '')), fileDate });
+            audioFiles.push({
+                name: path, handle, fileDate,
+                baseName:   norm(name.replace(/\.[^.]+$/, '')),
+                folderName: norm(folders.join(' '))   // per il codice classe (es. cartella "3E")
+            });
         }
 
         if (!audioFiles.length) {
@@ -30019,7 +30171,9 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
         const abbinati = new Set();
         for (const audio of audioFiles) {
             // Estrai eventuale codice classe dal nome file (es. "Noemi 3E.m4a" → "3e")
-            const classeCodeInFile = (audio.baseName.match(/\b([123][a-zA-Z])\b/) || [])[1]?.toLowerCase().replace(/\s/g,'');
+            // Se il nome file non lo contiene, lo cerca nelle sottocartelle (es. "3E/Noemi.m4a")
+            const classeCodeInFile = (audio.baseName.match(/\b([123][a-zA-Z])\b/)
+                                   || audio.folderName.match(/\b([123][a-zA-Z])\b/) || [])[1]?.toLowerCase().replace(/\s/g,'');
 
             for (const classe of (data.classi || [])) {
                 // Codice classe normalizzato (es. "3E" → "3e")
@@ -30203,7 +30357,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                     lastErr = new Error(`Gemini servizio non disponibile (503) — riprovare.`);
                     continue;
                 }
-                if (!res.ok) throw new Error(`Gemini trascrizione HTTP ${res.status}`);
+                if (!res.ok) throw await _geminiHttpError(res, 'trascrizione');
                 const json = await res.json();
                 const text = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
                 if (!text.trim()) throw new Error('Trascrizione vuota.');
@@ -30242,15 +30396,9 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
 
         try {
             if (!skipTranscription) {
-                // 1. Audio → base64
+                // 1. Audio → base64 (convertito in MP3 se troppo grande per Gemini)
                 const file = await task.audioHandle.getFile();
-                const buf  = await file.arrayBuffer();
-                const bytes = new Uint8Array(buf);
-                let binary = ''; const chunk = 8192;
-                for (let i = 0; i < bytes.length; i += chunk)
-                    binary += String.fromCharCode(...bytes.slice(i, i+chunk));
-                const base64 = btoa(binary);
-                const mimeType = file.type || 'audio/mpeg';
+                const { base64, mimeType } = await _audioFileForGemini(file);
                 task.aiProvider = 'gemini'; agentRenderPanel();
 
                 // 2. Trascrizione Gemini — con retry automatico su 429 (max 3 tentativi, backoff 8/16/32s).
@@ -30892,7 +31040,7 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
                     continue;
                 }
                 if (res.status === 503) { lastErr = new Error('Gemini servizio non disponibile (503).'); continue; }
-                if (!res.ok) throw new Error(`Gemini trascrizione HTTP ${res.status}`);
+                if (!res.ok) throw await _geminiHttpError(res, 'trascrizione');
                 const json = await res.json();
                 const text = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
                 if (!text.trim()) throw new Error('Trascrizione vuota.');
@@ -30924,13 +31072,7 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
                 agentRenderPanel(); return;
             }
             task.audioFileName = task.audioFileName || file.name;
-            const buf = await file.arrayBuffer();
-            const bytes = new Uint8Array(buf);
-            let binary = ''; const chunk = 8192;
-            for (let i = 0; i < bytes.length; i += chunk)
-                binary += String.fromCharCode(...bytes.slice(i, i+chunk));
-            const base64 = btoa(binary);
-            const mimeType = file.type || 'audio/mpeg';
+            const { base64, mimeType } = await _audioFileForGemini(file);
             task.aiProvider = 'gemini'; agentRenderPanel();
             const nSpeakers = Math.min(3, Math.max(2, (task.studenti||[]).length || 2));
             try {
