@@ -5637,30 +5637,34 @@ function dismissInstall(){
 // Prima l'aggiornamento chiedeva di premere "Ricarica", e chi teneva l'app
 // aperta in background per giorni non riceveva le modifiche alla pagina
 // (il controllo guardava solo sw.js). Ora:
-//  • nuova versione del service worker → si applica da sola;
-//  • nuova versione di StudentApp.html (ETag/Last-Modified del server,
-//    controllati al rientro nell'app e ogni 10 minuti) → si ricarica da sola;
-//  • mai mentre l'alunno sta scrivendo: si riprova appena il testo è vuoto.
+//  • si ricarica da sola SOLO se StudentApp.html è cambiata davvero: GitHub
+//    Pages cambia ETag/Last-Modified di TUTTI i file a ogni pubblicazione
+//    (anche per una modifica a MyClass), quindi l'ETag fa solo da campanello
+//    e poi si confronta l'impronta del contenuto;
+//  • una nuova versione del service worker si attiva da sola, senza ricaricare
+//    (la pagina arriva sempre dalla rete: ci pensa il controllo qui sopra);
+//  • mai mentre l'alunno sta scrivendo o sta toccando lo schermo (es. ha appena
+//    aperto LiveLearn: il ricaricamento annullava l'apertura);
+//  • al massimo un ricaricamento automatico ogni 5 minuti.
 let _newSWWaiting = null;
 let _swRefreshing = false;
-let _updPending = false, _updTimer = null;
-const _hadSWController = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+let _updPending = false, _updTimer = null, _updReloadTimer = null;
+const _AUTO_RELOAD_GAP = 5 * 60 * 1000;
+let _lastTouchAt = 0;
 
 function _setupSWUpdateListener(registration){
-  if(registration.waiting){
-    _newSWWaiting = registration.waiting;
-    _requestAutoUpdate();
-  }
+  if(registration.waiting) _activateNewSW(registration.waiting);
   registration.addEventListener('updatefound', () => {
     const newSW = registration.installing;
     if(!newSW) return;
     newSW.addEventListener('statechange', () => {
-      if(newSW.state === 'installed' && navigator.serviceWorker.controller){
-        _newSWWaiting = newSW;
-        _requestAutoUpdate();
-      }
+      if(newSW.state === 'installed' && navigator.serviceWorker.controller) _activateNewSW(newSW);
     });
   });
+}
+function _activateNewSW(sw){
+  _newSWWaiting = sw;
+  try { sw.postMessage({type:'SKIP_WAITING'}); } catch(e) {}
 }
 
 // Si puo' ricaricare senza far perdere niente all'alunno?
@@ -5669,48 +5673,102 @@ function _isSafeToReload(){
   if(ct && ct.value.trim()) return false;                 // messaggio in scrittura
   const ae = document.activeElement;
   if(ae && (ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && !/^(button|submit|checkbox|radio)$/i.test(ae.type||''))) && String(ae.value||'').trim()) return false;
+  if(Date.now() - _lastTouchAt < 4000) return false;     // sta usando l'app in questo momento
   return true;
+}
+function _lastAutoReload(){
+  try { return +sessionStorage.getItem('sa_auto_reload_at') || 0; } catch(e){ return 0; }
 }
 
 function _requestAutoUpdate(){
   _updPending = true;
-  if(_newSWWaiting){ try { _newSWWaiting.postMessage({type:'SKIP_WAITING'}); } catch(e) {} }
   _tryAutoReload();
 }
 
 function _tryAutoReload(){
   if(!_updPending || _swRefreshing) return;
   clearTimeout(_updTimer);
+  const wait = _AUTO_RELOAD_GAP - (Date.now() - _lastAutoReload());
+  if(wait > 0){ _updTimer = setTimeout(_tryAutoReload, wait + 1000); return; }
   if(!_isSafeToReload()){ _updTimer = setTimeout(_tryAutoReload, 20000); return; }
+  const doReload = () => {
+    _updReloadTimer = null;
+    // Un tocco durante l'avviso (es. "Inizia attività") annulla e rimanda
+    if(Date.now() - _lastTouchAt < 1600){ _swRefreshing = false; _updTimer = setTimeout(_tryAutoReload, 20000); return; }
+    try { sessionStorage.setItem('sa_auto_reload_at', String(Date.now())); } catch(e) {}
+    window.location.reload();
+  };
   _swRefreshing = true;
   if(document.visibilityState === 'visible'){
     try { _showInAppToast('🔄 Aggiornamento dell\'app…', 'Un attimo, sto caricando la nuova versione.', 'ok'); } catch(e) {}
-    setTimeout(() => window.location.reload(), 1500);
+    _updReloadTimer = setTimeout(doReload, 1500);
   } else {
-    window.location.reload();
+    doReload();
   }
 }
+['pointerdown','touchstart','keydown'].forEach(ev =>
+  window.addEventListener(ev, () => { _lastTouchAt = Date.now(); }, { capture:true, passive:true }));
+// L'alunno lascia la pagina (link a LiveLearn, ecc.): niente ricaricamenti in sospeso
+window.addEventListener('pagehide', () => { clearTimeout(_updReloadTimer); clearTimeout(_updTimer); });
 
 // Compatibilita' con eventuali banner rimasti aperti
 function _applyUpdate(){ _requestAutoUpdate(); }
 
 // ── Versione della pagina sul server ──
-let _pageSig = null, _pageSigAt = 0;
+// _pageSig: ETag/Last-Modified visto per ultimo (cambia a ogni pubblicazione del sito)
+// _pageHash: impronta del contenuto della versione in uso (cambia solo se cambia la pagina)
+let _pageSig = null, _pageSigAt = 0, _pageHash = null, _pageHashBusy = false;
 async function _fetchPageSig(){
   const r = await fetch(location.pathname + '?vcheck=' + Date.now(), { method:'HEAD', cache:'no-store' });
   if(!r.ok) return null;
   return r.headers.get('etag') || r.headers.get('last-modified') || null;
 }
+async function _hashResponse(r){
+  if(!r || !r.ok) return null;
+  const buf = await r.arrayBuffer();
+  if(window.crypto?.subtle){
+    const h = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+    return Array.from(h.slice(0, 12), b => b.toString(16).padStart(2,'0')).join('');
+  }
+  // senza crypto.subtle (http non sicuro): impronta semplice
+  const u = new Uint8Array(buf); let x = 2166136261;
+  for(let i = 0; i < u.length; i++){ x ^= u[i]; x = Math.imul(x, 16777619); }
+  return u.length + '-' + (x >>> 0).toString(16);
+}
+// Contenuto attuale sul server (?vcheck= → il service worker lo lascia passare in rete)
+async function _serverPageHash(){
+  return _hashResponse(await fetch(location.pathname + '?vcheck=' + Date.now(), { cache:'no-store' }));
+}
+// Contenuto della versione in uso: è la copia che il service worker ha salvato
+// aprendo la pagina; senza service worker si chiede al server (appena caricata).
+async function _currentPageHash(){
+  try {
+    if(window.caches && navigator.serviceWorker?.controller){
+      const hit = await caches.match(location.href);
+      if(hit) return _hashResponse(hit);
+    }
+  } catch(e) {}
+  return _serverPageHash();
+}
 async function _checkPageVersion(force){
-  if(!navigator.onLine) return;
+  if(!navigator.onLine || _pageHashBusy) return;
   if(!force && Date.now() - _pageSigAt < 60 * 1000) return; // al massimo una volta al minuto
   _pageSigAt = Date.now();
+  _pageHashBusy = true;
   try {
+    if(_pageHash === null) _pageHash = await _currentPageHash();
     const sig = await _fetchPageSig();
     if(!sig) return;
     if(_pageSig === null){ _pageSig = sig; return; }
-    if(sig !== _pageSig){ console.log('[Update] nuova versione di StudentApp sul server'); _requestAutoUpdate(); }
+    if(sig === _pageSig) return;
+    // Il sito è stato ripubblicato: StudentApp è cambiata davvero?
+    const h = await _serverPageHash();
+    if(!h) return;
+    _pageSig = sig;
+    if(_pageHash === null){ _pageHash = h; return; }
+    if(h !== _pageHash){ console.log('[Update] nuova versione di StudentApp sul server'); _requestAutoUpdate(); }
   } catch(e) { /* rete assente: si riprova al prossimo giro */ }
+  finally { _pageHashBusy = false; }
 }
 window.addEventListener('load', () => { _checkPageVersion(true); });
 setInterval(() => _checkPageVersion(true), 10 * 60 * 1000);
@@ -5729,12 +5787,8 @@ document.addEventListener('visibilitychange', () => {
 });
 
 if(navigator.serviceWorker){
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    // Primo avvio in assoluto: il SW prende il controllo, non c'e' nulla da aggiornare
-    if(!_hadSWController) return;
-    _updPending = true;
-    _tryAutoReload();
-  });
+  // Nuovo service worker attivo: nessun ricaricamento (la pagina arriva
+  // sempre dalla rete e i suoi cambiamenti li rileva _checkPageVersion).
   navigator.serviceWorker.addEventListener('message', event => {
     if(event.data?.type === 'NOTIFICATION_CLICK'){
       const {type} = event.data.data || {};

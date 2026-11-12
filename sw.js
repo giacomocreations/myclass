@@ -46,7 +46,7 @@ messaging.onBackgroundMessage(payload => {
 });
 
 // ── CAMBIA QUESTO NUMERO AD OGNI DEPLOY ────────────────────────
-const CACHE_VERSION = 'v46';
+const CACHE_VERSION = 'v47';
 // ───────────────────────────────────────────────────────────────
 
 const CACHE_NAME = 'studentapp-' + CACHE_VERSION;
@@ -89,6 +89,9 @@ self.addEventListener('fetch', event => {
 
   // Solo GET passa dalla cache (HEAD del controllo versione, POST… vanno in rete)
   if (event.request.method !== 'GET') return;
+
+  // Controllo versione di StudentApp (?vcheck=…): sempre rete, mai in cache
+  if (url.searchParams.has('vcheck')) return;
 
   // Firebase, Google API, Anthropic, localhost (Ollama): sempre rete, mai cache
   if (url.hostname.includes('firebase') ||
