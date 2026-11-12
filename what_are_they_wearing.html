@@ -187,6 +187,7 @@
 </style>
 <script src="font-zoom.js" defer></script>
 <script src="teacher-lock.js"></script>
+<script src="myclass-live-link.js"></script>
 </head>
 <body class="mode-home">
 
@@ -1659,6 +1660,7 @@ input:focus{outline:none;border-color:#3ec6ff}
 .tot .v{font-size:40px;font-weight:900;color:#ffd166;line-height:1}
 .tot .p{color:#a49cbd}
 .msg{min-height:18px;font-weight:700;color:#06d6a0;margin-top:6px}
+.link{min-height:16px;font-size:12.5px;color:#97a3bd;margin:2px 0 4px}.link.ok{color:#06d6a0}.link.err{color:#ffb547}
 table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
 td,th{text-align:left;padding:5px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}
 th{color:#a49cbd;font-size:11px;text-transform:uppercase}
@@ -1679,6 +1681,7 @@ td.v{font-weight:800;color:#ffd166}
 <h2>Valutazione · /15</h2>
 <div class="fields"><input id="t-name" placeholder="Nome dello studente" autocomplete="off"><input id="t-class" placeholder="Classe (es. 2B)" autocomplete="off"></div>
 <div id="t-rub"></div>
+<div class="link" id="t-link">🔗 I punteggi vanno anche nella LIVE di MyClass, se è aperta su questo computer.</div>
 <div class="tot"><span class="v" id="t-voto">–</span><span class="p" id="t-pts">Scegli un punteggio per ogni voce</span></div>
 <input id="t-note" placeholder="Nota (facoltativa)" autocomplete="off">
 <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva e prossimo</button><button data-act="reset">↺ Azzera</button></div>
@@ -1695,6 +1698,7 @@ function openTeacherWin() {
   const d = teacherWin.document;
   d.open(); d.write(TEACHER_HTML); d.close();
   d.addEventListener('click', onTeacherClick);
+  d.addEventListener('change', e => { if (e.target.id === 't-name' || e.target.id === 't-class') pushLive(); });   // nome scritto dopo i punteggi
   updateTeacherWin(); renderTeacherRubric(); renderTeacherSaved(); renderTimer(); applyHelp();
   moveTeacherWinToOtherScreen();
 }
@@ -1739,7 +1743,7 @@ function onTeacherClick(e) {
   else if (act === 'new') newPicture();
   else if (act === 'q') newQuestion();
   else if (act === 'help') toggleHelp();
-  else if (act === 'pt') { rub[b.dataset.r] = +b.dataset.v; renderTeacherRubric(); }
+  else if (act === 'pt') { rub[b.dataset.r] = +b.dataset.v; renderTeacherRubric(); pushLive(); }
   else if (act === 'reset') resetRubric();
   else if (act === 'save') saveGrade();
   else if (act === 'copy') copyGrades();
@@ -1763,6 +1767,23 @@ function saveGrade() {
   twMsg(`✅ Salvato: ${name} → ${voto(tot)}`);
   help.class = false; applyHelp();   // prossimo alunno: esempi di nuovo nascosti
   resetRubric(); timerReset(); renderTeacherSaved(); newPicture();
+}
+// ── Punteggi anche nella griglia della LIVE di MyClass (myclass-live-link.js) ──
+// In MyClass la griglia si riconosce dai nomi delle voci; se si chiamano in
+// modo diverso vale la griglia scelta nella LIVE, se ha 4 voci da 4-4-4-3.
+function pushLive() {
+  if (!window.MyClassLive || !twOpen()) return;
+  const scores = RUBRIC.map(r => rub[r.id] === undefined ? null : rub[r.id]);
+  if (scores.every(v => v === null)) return;
+  MyClassLive.send({ grid: { id: null, nome: 'What Are They Wearing? – Present Continuous', aree: RUBRIC.map(r => ({ nome: r.name, max: r.max })) },
+    scores, student: tw('t-name').value.trim(), cls: tw('t-class').value.trim() }, showLive);
+}
+function showLive(r) {
+  if (!twOpen()) return;
+  const el = tw('t-link');
+  if (!r) { el.className = 'link'; el.textContent = '⚪ LIVE di MyClass non aperta: i punteggi restano solo qui.'; return; }
+  el.className = 'link ' + (r.ok ? 'ok' : 'err');
+  el.textContent = r.ok ? `🔗 Nella LIVE di MyClass (${r.classe}): ${r.student}` : '⚠️ MyClass: ' + r.msg;
 }
 function copyGrades() {
   const g = loadGrades();

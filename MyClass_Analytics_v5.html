@@ -19045,10 +19045,90 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 try{ if(LV._scrCheck && window.screen && screen.removeEventListener) screen.removeEventListener('change',LV._scrCheck); }catch(e){}
                 if(LV._scrCheck) window.removeEventListener('resize',LV._scrCheck);
                 lvStopRec(true); // salva audio se registrazione in corso
+                try{ LV._bc?.close(); }catch(e){}
                 localStorage.removeItem(autoSaveKey);
                 ov.remove();
                 const b=document.getElementById('lv-minimized-badge');if(b)b.remove();
             };
+
+            // ── Punteggi dalle finestre docente delle attività ─────────────
+            // (What Are They Wearing?, Rules & Obligations… — myclass-live-link.js)
+            // Ogni punteggio scelto lì arriva qui e va nella griglia dell'alunno:
+            // quello scritto nel campo nome dell'attività se lo si trova nella
+            // classe, altrimenti quello selezionato nella LIVE. Stesso browser,
+            // stesso sito: non passa da internet.
+            const _lvNrm = t => String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+                                  .replace(/[^a-z0-9]+/g,' ').trim();
+            function _lvTrovaGriglia(g){
+                const all = data.griglie || [];
+                const aree = (g && g.aree) || [];
+                if (g?.id) { const byId = all.find(x => x.id === g.id); if (byId) return { G: byId, byName: true }; }
+                const firma = x => (x.aree||[]).map(a => _lvNrm(a.nome)).sort().join('|');
+                const want = firma({ aree });
+                const att = LV.grigliaAttiva ? all.find(x => x.id === LV.grigliaAttiva.id) || LV.grigliaAttiva : null;
+                if (att && firma(att) === want) return { G: att, byName: true };
+                const byNames = all.find(x => firma(x) === want);
+                if (byNames) return { G: byNames, byName: true };
+                // Voci con nomi diversi: va bene la griglia scelta nella LIVE se ha la stessa forma
+                if (att && (att.aree||[]).length === aree.length && att.aree.every((a, k) => +a.max === +aree[k].max))
+                    return { G: att, byName: false };
+                return null;
+            }
+            function _lvTrovaAlunno(nome){
+                const w = _lvNrm(nome).split(' ').filter(x => x.length > 1);
+                if (!w.length) return { idx: -1 };
+                const cand = [];
+                studentiDati.forEach((st, i) => { const n = _lvNrm(st.cognome + ' ' + st.nome); if (w.every(x => n.split(' ').includes(x))) cand.push(i); });
+                return { idx: cand.length === 1 ? cand[0] : -1, n: cand.length, cand };
+            }
+            function lvRiceviPunteggi(m){
+                if (m.type !== 'scores' || !Array.isArray(m.scores)) return;
+                const reply = (ok, msg, extra) => { try { LV._bc.postMessage({ type:'ack', reqId:m.reqId, ok, msg, classe:classe.nome, ...(extra||{}) }); } catch(e) {} };
+                if (LV.coppiaMode) { reply(false, 'la LIVE è in modalità coppia/trio: lì i punteggi vanno inseriti a mano.'); return; }
+                const cls = _lvNrm(m.cls).replace(/ /g,'');
+                if (/^[1-5][a-z]$/.test(cls) && cls !== _lvNrm(classe.nome).replace(/ /g,'')) { reply(false, `la LIVE aperta è della ${classe.nome}, non della ${m.cls}.`); return; }
+                const tg = _lvTrovaGriglia(m.grid);
+                if (!tg) { reply(false, `nessuna griglia corrispondente a "${m.grid?.nome||'questa attività'}". Sceglila nella LIVE (stesse voci) e riprova.`); return; }
+                // Alunno: prima il nome scritto nell'attività, poi quello selezionato nella LIVE
+                const selIdx = [...qa('#lv-sl .lv-scard')].findIndex(c => c.classList.contains('sel'));
+                let si = -1;
+                const nome = String(m.student||'').trim();
+                if (nome) {
+                    const r = _lvTrovaAlunno(nome);
+                    if (r.idx >= 0) si = r.idx;
+                    else if (r.n > 1 && r.cand.includes(selIdx)) si = selIdx;
+                    else if (r.n > 1) { reply(false, `"${nome}": più alunni con questo nome, scrivi anche il cognome.`); return; }
+                    else if (selIdx < 0) { reply(false, `"${nome}" non è nella ${classe.nome}: selezionalo nella LIVE.`); return; }
+                }
+                if (si < 0) si = selIdx;
+                if (si < 0) { reply(false, 'seleziona l\'alunno nella LIVE (o scrivi il nome nell\'attività).'); return; }
+                // Pannello Orale con la scheda dell'alunno e la griglia giusta
+                if (q('lv-pnl-vo')?.style.display === 'none') lvSetMod('vo');
+                if (!LV.grigliaAttiva || LV.grigliaAttiva.id !== tg.G.id) {
+                    if ((data.griglie||[]).some(x => x.id === tg.G.id)) lvCambiaGriglia(tg.G.id);
+                    else LV.grigliaAttiva = tg.G;
+                }
+                const selNow = [...qa('#lv-sl .lv-scard')].findIndex(c => c.classList.contains('sel'));
+                if (selNow !== si || q('lv-sd')?.style.display === 'none') lvSelS(si);
+                const GA = LV.grigliaAttiva.aree || [];
+                let n = 0;
+                (m.grid?.aree || []).forEach((a, k) => {
+                    const v = m.scores[k];
+                    if (v === null || v === undefined || isNaN(+v)) return;
+                    const dst = tg.byName ? GA.find(x => _lvNrm(x.nome) === _lvNrm(a.nome)) : GA[k];
+                    if (!dst) return;
+                    const cur = window._lvGrigliaPunteggi?.[si]?.[dst.nome];
+                    const val = Math.max(0, Math.min(+dst.max, +v));
+                    if (cur !== val) lvGrigliaSet(si, dst.nome, val, dst.max);
+                    n++;
+                });
+                const st = studentiDati[si];
+                reply(true, '', { student: `${st.cognome} ${st.nome}`, n });
+            }
+            try {
+                LV._bc = new BroadcastChannel('myclass-live-griglia');
+                LV._bc.onmessage = e => { try { lvRiceviPunteggi(e.data || {}); } catch(err) { console.warn('[LIVE] punteggi da attività:', err); } };
+            } catch(e) { LV._bc = null; }
 
             // ── Esponi funzioni su window (necessario per onclick HTML) ────
             window._lvQ  = (id)  => ov.querySelector('#'+id);
