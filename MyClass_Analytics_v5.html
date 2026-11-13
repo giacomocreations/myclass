@@ -25914,6 +25914,10 @@ ${sectionInstr}`;
 
         list.innerHTML = parDiag + sorted.map(task => {
             const tl = typeLabels[task.type] || { icon:'📄', label: task.type };
+            if ((task.type === 'valorale' || task.type === 'valdialogo') && !task.griglia && !task.grigliaCleared
+                && task.status !== 'approved' && task.status !== 'processing') {
+                try { _agentEnsureGrigliaOrale(task); } catch(e) { console.warn('[Agente] ricerca griglia:', e.message); }
+            }
             const sl = (task.status === 'awaiting_transcript' && task.transcriptToReview)
                 ? '🔎 Trascrizione da approvare'
                 : (statusLabels[task.status] || task.status);
@@ -25998,6 +26002,7 @@ ${sectionInstr}`;
                             <button class="agent-btn-edit" id="agentArgoBtn_${task.id}_${idx}" onclick="agentGenArgo('${task.id}',${idx})" style="font-size:11px;padding:3px 10px;">${(r.argoText||'').trim() ? '🔄 Rigenera Argo' : '📝 Genera Argo'}</button>
                         </div>`).join('');
                     body = `
+                        ${!task.griglia && task.status !== 'approved' ? _agentGrigliaPickerHtml(task, { note: 'Hai scelto la griglia dopo la valutazione: premi 🔄 Rigenera per rifare voto e feedback con questa griglia.' }) : ''}
                         ${task.audioFileName ? `<details style="margin-bottom:10px;border:1px solid #d1c4e9;border-radius:8px;overflow:hidden;"
                                 ontoggle="if(this.open) agentDialogoPlayAudio('${task.id}','agentDlgAudioRdy_${task.id}')">
                             <summary style="padding:7px 12px;cursor:pointer;font-size:12px;font-weight:700;color:#5c35c9;background:#ede7f6;user-select:none;">🎙️ Riascolta — ${task.audioFileName}</summary>
@@ -26071,6 +26076,7 @@ ${sectionInstr}`;
                     };
                     body = `
                         ${mkPrelimPanel()}
+                        ${!task.griglia && task.status !== 'approved' ? _agentGrigliaPickerHtml(task, { note: 'Hai scelto la griglia dopo la valutazione: premi 🔄 Rigenera per rifare voto e feedback con questa griglia.' }) : ''}
                         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
                           ${task.votoValue != null ? `<span style="font-size:15px;font-weight:700;color:#2e7d32;">🏆 Voto:</span>
                           <input id="agentVotoEdit_${task.id}" type="number" step="0.5" min="1" max="10"
@@ -26396,6 +26402,7 @@ ${sectionInstr}`;
                     ${atHead}
                 </div>
                 ${atAudio}
+                ${_agentGrigliaPickerHtml(task)}
                 <textarea id="manualTranscript_${task.id}"
                     style="width:100%;min-height:120px;margin-top:8px;padding:8px;font-size:12px;border:1.5px solid #ce93d8;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;"
                     placeholder="D: What did you do last weekend?&#10;S: I go... I went to the beach with my family..."
@@ -26437,6 +26444,7 @@ ${sectionInstr}`;
                         <summary style="padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700;color:#5c35c9;background:#ede7f6;user-select:none;">🎙️ Ascolta — ${task.audioFileName}</summary>
                         <div style="padding:8px 10px;"><div id="agentDlgAudioSpk_${task.id}"><span style="font-size:12px;color:#9e9e9e;">⏳ Caricamento…</span></div></div>
                     </details>` : ''}
+                    ${_agentGrigliaPickerHtml(task)}
                     <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:4px;">🔗 Associa ogni parlante a uno studente</div>
                     <div style="background:#faf8ff;border:1px solid #e0e4ff;border-radius:8px;padding:8px;margin-bottom:8px;">${speakerRows}</div>
                     <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:4px;">✍️ Trascrizione (rivedi e correggi se serve)</div>
@@ -26455,10 +26463,6 @@ ${sectionInstr}`;
             } else {
                 // Pending card: per valdialogo mostra audio + griglia + studenti + avvia trascrizione
                 if (task.type === 'valdialogo') {
-                    const griglie = (data.griglie||[]);
-                    const grigliaSel = task.griglia
-                        ? `<span style="display:inline-block;background:#e8f5e9;color:#2e7d32;border-radius:8px;padding:2px 10px;font-size:12px;font-weight:700;">✅ ${task.griglia.nome}</span>`
-                        : `<span style="display:inline-block;background:#fff3e0;color:#e65100;border-radius:8px;padding:2px 10px;font-size:12px;font-weight:700;">⚠️ Nessuna griglia</span>`;
                     const hasAudio = _dialogoHasAudio(task);
                     const studentiChips = (task.studenti||[]).map(s =>
                         `<span style="display:inline-block;background:#ede7f6;color:#4527a0;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:600;margin:2px;">${s.studentName}</span>`).join('');
@@ -26475,13 +26479,7 @@ ${sectionInstr}`;
                             </label>
                             ${hasAudio?`<button onclick="agentDialogoPlayAudio('${task.id}','agentDlgAudioPend_${task.id}')" style="font-size:11px;padding:5px 10px;margin-left:6px;border-radius:6px;border:1px solid #7b61ff;background:#ede9ff;color:#5b3fd4;cursor:pointer;font-weight:600;">▶ Ascolta</button><div id="agentDlgAudioPend_${task.id}" style="margin-top:6px;"></div>`:''}
                         </div>
-                        <div style="margin:8px 0;padding:8px;background:#f8f9ff;border:1px solid #e0e4ff;border-radius:8px;">
-                            <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:6px;">📐 Griglia di valutazione (uguale per tutti) ${grigliaSel}</div>
-                            ${griglie.length ? `<select onchange="agentDialogoSetGriglia('${task.id}',this.value)" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid #b39ddb;width:100%;">
-                                <option value="">— Seleziona griglia —</option>
-                                ${griglie.map(g=>`<option value="${g.id}" ${task.griglia?.id===g.id?'selected':''}>${g.nome} (${(g.aree||[]).map(a=>a.nome+'/'+a.max).join(', ')})</option>`).join('')}
-                            </select>` : '<div style="font-size:11px;color:#aaa;">Nessuna griglia salvata in MyClass.</div>'}
-                        </div>
+                        ${_agentGrigliaPickerHtml(task)}
                         <div style="margin:6px 0;">
                             <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:5px 10px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#555'};">
                                 <input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide
@@ -26493,24 +26491,7 @@ ${sectionInstr}`;
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                         </div>`;
                 } else if (task.type === 'valorale') {
-                    const griglie = (data.griglie||[]);
-                    const grigliaSel = task.griglia
-                        ? `<span style="display:inline-block;background:#e8f5e9;color:#2e7d32;border-radius:8px;padding:2px 10px;font-size:12px;font-weight:700;">✅ ${task.griglia.nome}</span>`
-                        : `<span style="display:inline-block;background:#fff3e0;color:#e65100;border-radius:8px;padding:2px 10px;font-size:12px;font-weight:700;">⚠️ Nessuna griglia</span>`;
-                    const grigliaSelectorHtml = `
-                        <div style="margin:8px 0;padding:8px;background:#f8f9ff;border:1px solid #e0e4ff;border-radius:8px;">
-                            <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:6px;">📐 Griglia di valutazione ${grigliaSel}</div>
-                            ${griglie.length ? `<select onchange="agentSetGrigliaManuale('${task.id}',this.value)"
-                                style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid #b39ddb;width:100%;margin-bottom:6px;">
-                                <option value="">— Seleziona griglia —</option>
-                                ${griglie.map(g=>`<option value="${g.id}" ${task.griglia?.id===g.id?'selected':''}>${g.nome} (${(g.aree||[]).map(a=>a.nome+'/'+a.max).join(', ')})</option>`).join('')}
-                            </select>` : '<div style="font-size:11px;color:#aaa;margin-bottom:4px;">Nessuna griglia salvata in MyClass.</div>'}
-                            <label style="font-size:11px;color:#6c47ff;cursor:pointer;display:flex;align-items:center;gap:4px;">
-                                📎 Allega griglia JSON
-                                <input type="file" accept=".json" style="display:none;"
-                                    onchange="agentAttachGrigliaFromJson('${task.id}',this)">
-                            </label>
-                        </div>`;
+                    const grigliaSelectorHtml = _agentGrigliaPickerHtml(task);
                     body = `${task.noLezionePiano ? `<div style="background:#fff3e0;border:1px solid #ffb74d;border-radius:6px;padding:6px 10px;font-size:12px;color:#e65100;margin-bottom:8px;">⚠️ Nessuna lezione orale trovata nel piano entro 3 giorni dalla data del file. Verifica la data prima di avviare.</div>` : ''}
                         <div style="color:#6c47ff;font-size:13px;padding:4px 0 8px;">⏳ In coda — trascrizione avvio automatico tra pochi secondi.</div>
                         ${grigliaSelectorHtml}
@@ -30327,17 +30308,13 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                     console.warn(`[Agente] ${audio.name} (${sessionDate}, ${classe.nome}): nessuna lezione orale nel piano entro 3 giorni — task creato con avviso`);
                 }
 
-                // Griglia dalla lezione abbinata (solo se lezMatch esiste)
-                const _gid = lezMatch?.pianoDettagliato?.grigliaId || null;
-                const griglia = _gid ? (data.griglie||[]).find(g => g.id === _gid) || null : null;
-                if (lezMatch) {
-                    if (_gid && !griglia)
-                        console.warn(`[Agente] Griglia ID "${_gid}" nel piano ${lezMatch.data} (${classe.nome}) NON trovata — verrà chiesta manualmente.`);
-                    else if (griglia)
-                        console.log(`[Agente] Griglia "${griglia.nome}" trovata per ${sessionDate} ${classe.nome} (lezione ${lezMatch.data})`);
-                    else
-                        console.log(`[Agente] ${sessionDate} ${classe.nome}: nessuna griglia nel piano di ${lezMatch.data} — verrà chiesta manualmente.`);
-                }
+                // Griglia: 1) quella usata in LIVE per questo alunno, 2) quella del piano
+                const _gr = _agentTrovaGrigliaOrale(classe, sessionDate, [studente]);
+                const griglia = _gr.griglia;
+                if (griglia)
+                    console.log(`[Agente] Griglia "${griglia.nome}" per ${sessionDate} ${classe.nome} — ${_gr.fonte}`);
+                else
+                    console.log(`[Agente] ${sessionDate} ${classe.nome}: nessuna griglia né in LIVE né nel piano — verrà chiesta manualmente.`);
 
                 // Cerca valutazione preliminare LIVE abbinabile a questa data
                 const _prelimLiveData = (() => {
@@ -30359,6 +30336,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                     studentSafe:   safe,
                     unit:          lezMatch?.unit || lezMatch?.titolo || '',
                     griglia:       griglia ? { id: griglia.id, nome: griglia.nome, aree: griglia.aree, conversione_voto: griglia.conversione_voto || null } : null,
+                    grigliaFonte:  griglia ? _gr.fonte : '',
                     audioFileName: audio.name,
                     audioHandle:   audio.handle,
                     sessionDate,   // ← data reale del file audio
@@ -30521,7 +30499,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                 return;
             }
 
-            // 3. Griglia dal task (rilevata da pianoDettagliato)
+            // 3. Griglia dal task (LIVE → piano → scelta a mano); se manca, riprova a ricavarla
+            _agentEnsureGrigliaOrale(task);
             let grigliaInfo = '';
             if (task.griglia) {
                 const totMax = (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0);
@@ -30882,6 +30861,7 @@ ${base}`, task, true);
     function agentToggleSlides(taskId, checked) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
+        _agentKeepTranscriptDraft(task);
         task.hasSlides = checked;
         agentSaveTasks(agentTasks);
         agentRenderPanel(); // re-render per aggiornare il colore del badge
@@ -30891,19 +30871,112 @@ ${base}`, task, true);
     function agentTogglePrelim(taskId, checked) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
+        _agentKeepTranscriptDraft(task);
         task.usePrelim = checked;
         agentSaveTasks(agentTasks);
         agentRenderPanel();
     }
 
-    // Imposta manualmente la griglia per un task valorale (da selector o JSON)
+    // Cerca la griglia di una verifica orale. Ordine:
+    //   1) LIVE: la griglia con cui il docente ha dato la valutazione preliminare
+    //      (votiPromemoria dell'alunno/degli alunni, entro ±2 giorni dalla data)
+    //   2) Piano: la griglia (pianoDettagliato.grigliaId) della lezione orale più
+    //      vicina entro ±3 giorni; se non c'è, di qualsiasi lezione entro ±3 giorni.
+    // Ritorna { griglia, fonte } (griglia = oggetto di data.griglie oppure null).
+    function _agentTrovaGrigliaOrale(classeOrNome, sessionDate, studenti) {
+        const griglie = data.griglie || [];
+        const byId = id => id ? (griglie.find(g => g.id === id) || null) : null;
+        const classe = typeof classeOrNome === 'string'
+            ? (data.classi||[]).find(c => c.nome === classeOrNome) : classeOrNome;
+        if (!classe || !sessionDate) return { griglia: null, fonte: '' };
+        const ms = d => new Date(String(d||'').slice(0,10)).getTime();
+        const t0 = ms(sessionDate);
+        if (isNaN(t0)) return { griglia: null, fonte: '' };
+        const _n = x => String(x||'').toLowerCase().trim();
+
+        // 1) LIVE
+        let bestLive = null;
+        for (const st of (studenti||[])) {
+            const stObj = (classe.studenti||[]).find(x =>
+                (x.cognome && x.nome && st.cognome && _n(x.cognome) === _n(st.cognome) && _n(x.nome) === _n(st.nome)) ||
+                (st.studentName && _n(`${x.cognome} ${x.nome}`) === _n(st.studentName)));
+            for (const vp of ((stObj || st).votiPromemoria || [])) {
+                const g = byId(vp.grigliaId);
+                if (!g) continue;
+                const d = Math.abs(ms(vp.data) - t0);
+                if (!isNaN(d) && d <= 2 * 86400000 && (!bestLive || d < bestLive.d)) bestLive = { g, d, data: vp.data };
+            }
+        }
+        if (bestLive) return { griglia: bestLive.g, fonte: `usata in LIVE (${String(bestLive.data).slice(0,10)})` };
+
+        // 2) Piano
+        const piano = classe.pianificazione?.piano || [];
+        const isOrale = lz => AGENT_ORALE_TIPI.some(t => String(lz.tipo||'').toLowerCase().includes(t));
+        const vicine = piano
+            .map(lz => ({ lz, d: Math.abs(ms(lz.data) - t0), g: byId(lz.pianoDettagliato?.grigliaId) }))
+            .filter(x => x.g && !isNaN(x.d) && x.d <= 3 * 86400000)
+            .sort((a, b) => (isOrale(b.lz) - isOrale(a.lz)) || (a.d - b.d));
+        if (vicine.length) return { griglia: vicine[0].g, fonte: `dal piano (lezione del ${vicine[0].lz.data})` };
+        return { griglia: null, fonte: '' };
+    }
+
+    // Se il task non ha ancora una griglia, prova a ricavarla (LIVE → piano).
+    function _agentEnsureGrigliaOrale(task) {
+        if (task.griglia || task.grigliaCleared) return;
+        const studenti = task.type === 'valdialogo'
+            ? (task.studenti||[])
+            : [{ studentName: task.studentName }];
+        const r = _agentTrovaGrigliaOrale(task.classe, task.sessionDate, studenti);
+        if (!r.griglia) return;
+        const g = r.griglia;
+        task.griglia = { id: g.id, nome: g.nome, aree: g.aree, conversione_voto: g.conversione_voto || null };
+        task.grigliaFonte = r.fonte;
+        console.log(`[Agente] Griglia "${g.nome}" ricavata per ${task.studentName || task.id} — ${r.fonte}`);
+    }
+
+    // Prima di ridisegnare il pannello (es. cambio griglia) salva nel task la
+    // trascrizione che il docente sta correggendo, così non va persa.
+    function _agentKeepTranscriptDraft(task) {
+        if (!task) return;
+        const ta = document.getElementById(`manualTranscript_${task.id}`) || document.getElementById(`dlgTranscript_${task.id}`);
+        if (ta) task.trascrizione = ta.value;
+    }
+
+    // Selettore griglia riutilizzabile (scheda in coda, trascrizione da approvare, risultati)
+    function _agentGrigliaPickerHtml(task, opts = {}) {
+        const griglie = (data.griglie||[]);
+        const esc = x => String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+        const sel = task.griglia
+            ? `<span style="display:inline-block;background:#e8f5e9;color:#2e7d32;border-radius:8px;padding:2px 10px;font-size:12px;font-weight:700;">✅ ${esc(task.griglia.nome)}</span>${task.grigliaFonte ? ` <span style="font-size:11px;color:#777;font-weight:400;">${esc(task.grigliaFonte)}</span>` : ''}`
+            : `<span style="display:inline-block;background:#fff3e0;color:#e65100;border-radius:8px;padding:2px 10px;font-size:12px;font-weight:700;">⚠️ Nessuna griglia — non trovata né in LIVE né nel piano: sceglila qui</span>`;
+        return `
+            <div style="margin:8px 0;padding:8px;background:${task.griglia ? '#f8f9ff' : '#fff8e1'};border:1px solid ${task.griglia ? '#e0e4ff' : '#ffcc80'};border-radius:8px;">
+                <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:6px;">📐 Griglia di valutazione${task.type === 'valdialogo' ? ' (uguale per tutti)' : ''} ${sel}</div>
+                ${griglie.length ? `<select onchange="agentSetGrigliaManuale('${task.id}',this.value)"
+                    style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid #b39ddb;width:100%;margin-bottom:6px;">
+                    <option value="">— Seleziona griglia —</option>
+                    ${griglie.map(g=>`<option value="${esc(g.id)}" ${task.griglia?.id===g.id?'selected':''}>${esc(g.nome)} (${esc((g.aree||[]).map(a=>a.nome+'/'+a.max).join(', '))})</option>`).join('')}
+                </select>` : '<div style="font-size:11px;color:#aaa;margin-bottom:4px;">Nessuna griglia salvata in MyClass.</div>'}
+                <label style="font-size:11px;color:#6c47ff;cursor:pointer;display:flex;align-items:center;gap:4px;">
+                    📎 Allega griglia JSON
+                    <input type="file" accept=".json" style="display:none;"
+                        onchange="agentAttachGrigliaFromJson('${task.id}',this)">
+                </label>
+                ${opts.note ? `<div style="font-size:11px;color:#777;margin-top:4px;">${opts.note}</div>` : ''}
+            </div>`;
+    }
+
+    // Imposta manualmente la griglia per un task valorale/valdialogo (da selector o JSON)
     function agentSetGrigliaManuale(taskId, grigliaId) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
-        if (!grigliaId) { task.griglia = null; agentSaveTasks(agentTasks); agentRenderPanel(); return; }
+        _agentKeepTranscriptDraft(task);
+        if (!grigliaId) { task.griglia = null; task.grigliaFonte = ''; task.grigliaCleared = true; agentSaveTasks(agentTasks); agentRenderPanel(); return; }
+        task.grigliaCleared = false;
         const g = (data.griglie||[]).find(g => g.id === grigliaId);
         if (!g) return;
         task.griglia = { id: g.id, nome: g.nome, aree: g.aree, conversione_voto: g.conversione_voto || null };
+        task.grigliaFonte = 'scelta a mano';
         agentSaveTasks(agentTasks);
         agentRenderPanel();
         console.log(`[Agente] Griglia manuale impostata per ${task.studentName}: "${g.nome}"`);
@@ -30922,6 +30995,9 @@ ${base}`, task, true);
                 // Accetta sia {id,nome,aree,...} che {griglia:{...}}
                 const gData = g.griglia || g;
                 if (!gData.aree || !Array.isArray(gData.aree)) throw new Error('Campo "aree" mancante o non array.');
+                _agentKeepTranscriptDraft(task);
+                task.grigliaFonte = 'da file JSON';
+                task.grigliaCleared = false;
                 task.griglia = {
                     id:   gData.id || 'manual_' + Date.now(),
                     nome: gData.nome || file.name.replace(/\.json$/i,''),
@@ -31261,6 +31337,7 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
             if (!trascr) { task.status='awaiting_speakers'; task.error='Trascrizione vuota.'; agentRenderPanel(); return; }
             const studenti = (task.studenti||[]).slice(0,3);
             if (studenti.length < 2) { task.status='awaiting_speakers'; task.error='Servono almeno 2 studenti.'; agentRenderPanel(); return; }
+            _agentEnsureGrigliaOrale(task);
 
             // Griglia info (condivisa)
             let grigliaInfo = '';
@@ -31496,6 +31573,9 @@ ${blocchiPerAlunno}`;
     function agentDialogoSetGriglia(taskId, gid) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
+        _agentKeepTranscriptDraft(task);
+        task.grigliaFonte = gid ? 'scelta a mano' : '';
+        task.grigliaCleared = !gid;
         if (!gid) { task.griglia = null; agentSaveTasks(agentTasks); agentRenderPanel(); return; }
         const g = (data.griglie||[]).find(g => g.id === gid);
         if (!g) return;
@@ -31626,11 +31706,17 @@ ${blocchiPerAlunno}`;
         }
         const speakerMap = {}; const slots=['A','B','C'];
         studenti.forEach((s,i)=>{ speakerMap[slots[i]] = s.studentSafe; });
+        let grigliaFonte = griglia ? 'usata in LIVE' : '';
+        if (!griglia) {
+            const r = _agentTrovaGrigliaOrale(classeNome, isoDate, studentiBasic);
+            griglia = r.griglia; grigliaFonte = r.fonte;
+        }
         agentTasks.push({
             id: tid, type: 'valdialogo',
             classe: classeNome,
             studenti,
             griglia: griglia ? { id:griglia.id, nome:griglia.nome, aree:griglia.aree, conversione_voto:griglia.conversione_voto||null } : null,
+            grigliaFonte,
             speakerMap,
             unit: unit || '',
             sessionDate: isoDate,
