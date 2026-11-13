@@ -30992,6 +30992,33 @@ ${base}`, task, true);
         return t;
     }
 
+    // Pronunce segnalate nella trascrizione ([pron: forma errata → forma corretta]),
+    // attribuite all'alunno che parlava (nei dialoghi tramite STUDENTE_A/B/C).
+    // Ritorna [{ nome, pron, parola }] dove parola = parola subito prima della nota.
+    function _agentPronunceSegnalate(task) {
+        const out = [];
+        const studenti = task.type === 'valdialogo' ? (task.studenti||[]) : [];
+        const nomeDi = lbl => {
+            const m = /^STUDENTE_([ABC])$/i.exec(lbl || '');
+            if (!m) return null;
+            const safe = (task.speakerMap||{})[m[1].toUpperCase()];
+            return (studenti.find(s => s.studentSafe === safe) || {}).studentName || ('STUDENTE_' + m[1].toUpperCase());
+        };
+        let speaker = null;
+        String(task.trascrizione||'').split('\n').forEach(riga => {
+            const sm = /^\s*([A-Za-zÀ-ÿ_]+)\s*:/.exec(riga);
+            if (sm) speaker = sm[1].toUpperCase();
+            if (speaker === 'D' || speaker === 'DOCENTE') return;   // battute del docente
+            const re = /([A-Za-z'’-]*)\s*\[\s*pron(?:uncia)?\s*:\s*([^\]]+)\]/gi;
+            let m;
+            while ((m = re.exec(riga))) {
+                const nome = task.type === 'valdialogo' ? (nomeDi(speaker) || 'alunno non identificato') : task.studentName;
+                out.push({ nome, pron: m[2].trim(), parola: (m[1]||'').trim() });
+            }
+        });
+        return out;
+    }
+
     // Costruisce il testo completo da incollare in Claude
     async function _agentClaudeTesto(task) {
         const base = task.type === 'valdialogo'
@@ -31006,7 +31033,24 @@ ${base}`, task, true);
                 ? `\nATTIVITÀ USATA NELLA LEZIONE (aprila per capire consegna, domande e lessico atteso):\n` + att.map(a => `- ${a.titolo}: ${a.url}`).join('\n')
                 : '\nNessuna attività collegata alla lezione.')
             : 'Nessuna lezione del piano trovata vicino alla data della verifica.';
-        return `${base}
+        // Pronunce segnalate: vanno scritte nella valutazione e segnalate all'alunno nel feedback
+        const pron = _agentPronunceSegnalate(task);
+        let pronTxt = '';
+        if (pron.length) {
+            const perNome = {};
+            pron.forEach(p => { (perNome[p.nome] = perNome[p.nome] || []).push(p); });
+            pronTxt = `
+
+PRONUNCE SEGNALATE NELLA TRASCRIZIONE (forma pronunciata → forma corretta)
+` + Object.entries(perNome).map(([nome, arr]) =>
+                (task.type === 'valdialogo' ? `${nome}:\n` : '') + arr.map(p => `- ${p.pron}${p.parola && !p.pron.toLowerCase().includes(p.parola.toLowerCase()) ? ` (parola: ${p.parola})` : ''}`).join('\n')
+            ).join('\n') + `
+ISTRUZIONI SULLA PRONUNCIA (prevalgono sulla regola di menzionare solo gli errori che ostacolano la comprensione):
+- Nella VALUTAZIONE DOCENTE scrivi TUTTE le pronunce segnalate${task.type === 'valdialogo' ? ' di ciascun alunno' : ''}, nell'area della griglia più adatta (pronuncia/fluency) o in una riga "Pronuncia da correggere:", nel formato parola pronunciata → parola corretta.
+- Nel feedback CLASSROOM all'alunno${task.type === 'valdialogo' ? ' (solo le sue)' : ''} segnalale TUTTE in modo chiaro e incoraggiante, dentro la sezione sugli aspetti da migliorare: per ogni parola scrivi come l'ha detta e come si dice correttamente, con un breve consiglio pratico per esercitarsi (ad esempio ascoltarla e ripeterla ad alta voce). Se ce ne sono più di 6, scrivi le 6 più importanti e aggiungi che le altre le rivedrete insieme.
+- Le pronunce incidono sul voto solo se ostacolano la comprensione.`;
+        }
+        return `${base}${pronTxt}
 
 ────────────────────────
 DATI COMPLETI DELLA GRIGLIA
