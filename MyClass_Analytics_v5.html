@@ -30555,6 +30555,19 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
     // Trascrivi audio + genera feedback TXT.
     // Se task.trascrizione è già impostata (manuale o da run precedente), salta
     // i passi 1-2 (audio→base64 + Gemini) e va direttamente al passo 3-4 (valutazione AI).
+    // Istruzioni per il feedback all'alunno (blocco CLASSROOM) delle verifiche orali.
+    // Solo cosa è andato bene e cosa può migliorare: esercizi, attività e consigli
+    // di studio vanno nei piani personalizzati, non qui.
+    function _agentFeedbackAlunnoIstr(nome, dialogo) {
+        return `Feedback personale all'alunno, in italiano, rivolto direttamente a lui o a lei con il "tu", tono incoraggiante ma onesto${dialogo ? ', basato sui SUOI turni nel dialogo (e sull\'interazione con il compagno)' : ''}. Tre parti, separate da un ritorno a capo:
+1) Una riga di apertura: Ciao ${nome}, ecco com'è andata la tua verifica orale.
+2) Un paragrafo che inizia con "Cosa è andato bene:" — 2-4 cose concrete che ha fatto bene, ciascuna con un esempio preso dalla trascrizione (frasi o parole dette correttamente, strutture e lessico usati bene, risposte complete, scioltezza${dialogo ? ', capacità di rispondere al compagno' : ''}).
+3) Un paragrafo che inizia con "Cosa puoi migliorare:" — 2-3 aspetti concreti, ciascuno con l'esempio dalla trascrizione e la forma corretta (es. hai detto "I must to tidy my room", si dice "I must tidy my room"), con una breve spiegazione del perché.
+Chiudi con una sola frase breve di incoraggiamento.
+NON dare esercizi, attività, compiti, consigli di studio o "cosa fare a casa": quelli sono nel piano personalizzato.
+Lunghezza 120-200 parole. Testo scorrevole, niente elenchi puntati, niente grassetti, niente emoji. Non menzionare il voto numerico.`;
+    }
+
     // opts.onlyPrompt → non chiama l'AI: restituisce il prompt (per "Valuta con Claude")
     // opts.raw        → usa questa risposta (incollata da Claude) al posto della chiamata AI
     async function agentTaskValOrale(task, opts = {}) {
@@ -30693,7 +30706,7 @@ Verifica orale di ${task.studentName}, classe ${task.classe}${task.unit?', '+tas
 TRASCRIZIONE:
 ${trascrizioneSlice}
 ${REGOLE}
-Genera SOLO due blocchi (niente ARGO) con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ===\n${task.griglia ? ('Intestazione: ' + task.studentName + ', ' + task.classe + (task.unit ? ', ' + task.unit : '') + ', data ' + task.sessionDate + '.\n\n' + (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n' + '[analisi della prestazione in quest\'area basata sulla trascrizione]').join('\n\n') + '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma dei punteggi per area e Y il voto dalla tabella di conversione.') : ('Intestazione: nome, classe, data (' + task.sessionDate + '), unit, voto. Analisi per area' + (task.hasSlides ? ' (NON commentare le pause [slide])' : ' (includi fluency se rilevante: pause significative, ritmo)') + '. Analisi complessiva.')}\n=== CLASSROOM ===\nFeedback personale scritto allo studente, italiano, tono incoraggiante ma onesto. Struttura OBBLIGATORIA (separa ogni sezione con un ritorno a capo):\nSaluto: Ciao ${nomeBreve}, ecco il feedback sulla tua ultima verifica orale.\nPUNTI DI FORZA (almeno 2-3, specifici e tratti dalla trascrizione): descrivi cosa ha fatto bene con esempi concreti.\nAREE DI MIGLIORAMENTO (almeno 2, costruttive e pratiche): indica cosa migliorare e COME, con suggerimenti pratici per esercitarsi a casa.\nCONSIGLIO FINALE: una frase motivante personalizzata con il prossimo passo utile.\nLunghezza totale: 150-220 parole. Testo scorrevole, niente elenchi puntati, niente grassetti. Non menzionare il voto numerico.`;
+Genera SOLO due blocchi (niente ARGO) con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ===\n${task.griglia ? ('Intestazione: ' + task.studentName + ', ' + task.classe + (task.unit ? ', ' + task.unit : '') + ', data ' + task.sessionDate + '.\n\n' + (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n' + '[analisi della prestazione in quest\'area basata sulla trascrizione]').join('\n\n') + '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma dei punteggi per area e Y il voto dalla tabella di conversione.') : ('Intestazione: nome, classe, data (' + task.sessionDate + '), unit, voto. Analisi per area' + (task.hasSlides ? ' (NON commentare le pause [slide])' : ' (includi fluency se rilevante: pause significative, ritmo)') + '. Analisi complessiva.')}\n=== CLASSROOM ===\n${_agentFeedbackAlunnoIstr(nomeBreve, false)}`;
 
             if (opts.onlyPrompt) return prompt;
             const raw = opts.raw != null ? String(opts.raw) : await agentCallAI(prompt, task, true);
@@ -31198,7 +31211,7 @@ PRONUNCE SEGNALATE NELLA TRASCRIZIONE (forma pronunciata → forma corretta)
             ).join('\n') + `
 ISTRUZIONI SULLA PRONUNCIA (prevalgono sulla regola di menzionare solo gli errori che ostacolano la comprensione):
 - Nella VALUTAZIONE DOCENTE scrivi TUTTE le pronunce segnalate${task.type === 'valdialogo' ? ' di ciascun alunno' : ''}, nell'area della griglia più adatta (pronuncia/fluency) o in una riga "Pronuncia da correggere:", nel formato parola pronunciata → parola corretta.
-- Nel feedback CLASSROOM all'alunno${task.type === 'valdialogo' ? ' (solo le sue)' : ''} segnalale TUTTE in modo chiaro e incoraggiante, dentro la sezione sugli aspetti da migliorare: per ogni parola scrivi come l'ha detta e come si dice correttamente, con un breve consiglio pratico per esercitarsi (ad esempio ascoltarla e ripeterla ad alta voce). Se ce ne sono più di 6, scrivi le 6 più importanti e aggiungi che le altre le rivedrete insieme.
+- Nel feedback CLASSROOM all'alunno${task.type === 'valdialogo' ? ' (solo le sue)' : ''} segnalale TUTTE in modo chiaro e incoraggiante, dentro "Cosa puoi migliorare:": per ogni parola scrivi come l'ha detta e come si dice correttamente (senza esercizi o attività). Se ce ne sono più di 6, scrivi le 6 più importanti e aggiungi che le altre le rivedrete insieme.
 - Le pronunce incidono sul voto solo se ostacolano la comprensione.`;
         }
         return `${base}${pronTxt}
@@ -31783,7 +31796,7 @@ ${pauseRule}`;
                        (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n[analisi della prestazione di questo alunno in quest\'area]').join('\n\n') +
                        '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((t,a)=>t+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma e Y il voto dalla tabella di conversione.')
                     : 'Intestazione: nome, classe, data, unit, voto. Analisi per area e complessiva.';
-                return `### ALUNNO: ${s.studentName}\n=== VALUTAZIONE DOCENTE ===\n${intest}\n=== CLASSROOM ===\nFeedback personale scritto allo studente, italiano, tono incoraggiante ma onesto. Struttura OBBLIGATORIA (separa ogni sezione con un ritorno a capo):\nSaluto: Ciao ${s.studentNome||s.studentName.split(' ')[0]}, ecco il feedback sulla tua ultima verifica orale.\nPUNTI DI FORZA (almeno 2-3, specifici e tratti dalla trascrizione): descrivi cosa ha fatto bene con esempi concreti.\nAREE DI MIGLIORAMENTO (almeno 2, costruttive e pratiche): indica cosa migliorare e COME, con suggerimenti pratici per esercitarsi a casa.\nCONSIGLIO FINALE: una frase motivante personalizzata con il prossimo passo utile.\nLunghezza totale: 150-220 parole. Testo scorrevole, niente elenchi puntati, niente grassetti. Non menzionare il voto numerico.`;
+                return `### ALUNNO: ${s.studentName}\n=== VALUTAZIONE DOCENTE ===\n${intest}\n=== CLASSROOM ===\n${_agentFeedbackAlunnoIstr(s.studentNome||s.studentName.split(' ')[0], true)}`;
             }).join('\n\n');
 
             const prompt = `Sei il prof. Giacomo Cossu, docente di inglese scuola media italiana.
