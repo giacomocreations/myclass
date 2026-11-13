@@ -26005,11 +26005,7 @@ ${sectionInstr}`;
                         </div>`).join('');
                     body = `
                         ${!task.griglia && task.status !== 'approved' ? _agentGrigliaPickerHtml(task, { note: 'Hai scelto la griglia dopo la valutazione: premi 🔄 Rigenera per rifare voto e feedback con questa griglia.' }) : ''}
-                        ${task.audioFileName ? `<details style="margin-bottom:10px;border:1px solid #d1c4e9;border-radius:8px;overflow:hidden;"
-                                ontoggle="if(this.open) agentDialogoPlayAudio('${task.id}','agentDlgAudioRdy_${task.id}')">
-                            <summary style="padding:7px 12px;cursor:pointer;font-size:12px;font-weight:700;color:#5c35c9;background:#ede7f6;user-select:none;">🎙️ Riascolta — ${task.audioFileName}</summary>
-                            <div style="padding:10px 12px;"><div id="agentDlgAudioRdy_${task.id}"><span style="font-size:12px;color:#9e9e9e;">⏳ Caricamento player…</span></div></div>
-                        </details>` : ''}
+                        ${task.audioFileName ? _agentPlayerHtml(task) : ''}
                         ${studentiCards}
                         <div class="agent-task-actions" style="margin-top:4px;">
                             ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')">📥 Importa voti & feedback (tutti)</button>` : ''}
@@ -26089,15 +26085,7 @@ ${sectionInstr}`;
                           >/10
                           <span style="font-size:11px;color:#888;">(modifica → JSON aggiornato)</span>` : ''}
                         </div>
-                        ${task.audioFileName ? `<details style="margin-bottom:8px;border:1px solid #d1c4e9;border-radius:8px;overflow:hidden;"
-                                ontoggle="if(this.open) agentLoadAudioInVO('${task.id}')">
-                            <summary style="padding:7px 12px;cursor:pointer;font-size:12px;font-weight:700;color:#5c35c9;background:#ede7f6;user-select:none;">🎙️ Riascolta — ${task.audioFileName}</summary>
-                            <div style="padding:10px 12px;">
-                                <div id="agentVOAudio_${task.id}">
-                                    <span style="font-size:12px;color:#9e9e9e;">⏳ Caricamento player…</span>
-                                </div>
-                            </div>
-                        </details>` : ''}
+                        ${task.audioFileName ? _agentPlayerHtml(task) : ''}
                         ${mkSection('📊 JSON storico', 'jsonOrale', 200)}
                         ${mkSection('💬 LiveLearn (feedback studente)', 'classroomText', 160)}
                         ${mkSection('📝 Argo (registro) — solo su richiesta', 'argoText', 80)}
@@ -26398,11 +26386,7 @@ ${sectionInstr}`;
                     <small style="color:#555;">Rileggi la trascrizione automatica (riascolta l'audio se serve), correggi gli errori e poi approvala: la valutazione e i feedback vengono generati solo dopo la tua approvazione.</small>`
                     : `✍️ <strong>Trascrizione manuale richiesta</strong><br>
                     <small style="color:#555;">${(task.error||'Inserisci o incolla la trascrizione del colloquio, poi premi Genera valutazione.').replace(/</g,'&lt;')}</small>`;
-                const atAudio = task.audioFileName ? `<details style="margin-top:6px;border:1px solid #d1c4e9;border-radius:8px;overflow:hidden;"
-                        ontoggle="if(this.open) agentLoadAudioInVO('${task.id}')">
-                        <summary style="padding:7px 12px;cursor:pointer;font-size:12px;font-weight:700;color:#5c35c9;background:#ede7f6;user-select:none;">🎙️ Riascolta — ${String(task.audioFileName).replace(/</g,'&lt;')}</summary>
-                        <div style="padding:10px 12px;"><div id="agentVOAudio_${task.id}"><span style="font-size:12px;color:#9e9e9e;">⏳ Caricamento player…</span></div></div>
-                    </details>` : '';
+                const atAudio = task.audioFileName ? _agentPlayerHtml(task) : '';
                 body = `${prelimAT}<div style="color:#6a1e8a;font-size:13px;padding:8px 0 4px;">
                     ${atHead}
                 </div>
@@ -26448,11 +26432,7 @@ ${sectionInstr}`;
                         <div>${studentiChips}</div>
                         ${(task.studenti||[]).length<3?`<button onclick="agentDialogoAddStudent('${task.id}')" style="margin-top:6px;font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid #9575cd;background:white;color:#5b3fd4;cursor:pointer;font-weight:600;">➕ Aggiungi terzo studente</button>`:''}
                     </div>
-                    ${task.audioFileName ? `<details style="margin-bottom:8px;border:1px solid #d1c4e9;border-radius:8px;overflow:hidden;"
-                            ontoggle="if(this.open) agentDialogoPlayAudio('${task.id}','agentDlgAudioSpk_${task.id}')">
-                        <summary style="padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700;color:#5c35c9;background:#ede7f6;user-select:none;">🎙️ Ascolta — ${task.audioFileName}</summary>
-                        <div style="padding:8px 10px;"><div id="agentDlgAudioSpk_${task.id}"><span style="font-size:12px;color:#9e9e9e;">⏳ Caricamento…</span></div></div>
-                    </details>` : ''}
+                    ${task.audioFileName || _dialogoAudioFiles[task.id] ? _agentPlayerHtml(task) : ''}
                     ${_agentGrigliaPickerHtml(task)}
                     <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:4px;">🔗 Associa ogni parlante a uno studente</div>
                     <div style="background:#faf8ff;border:1px solid #e0e4ff;border-radius:8px;padding:8px;margin-bottom:8px;">${speakerRows}</div>
@@ -31978,8 +31958,96 @@ ${blocchiPerAlunno}`;
         _dialogoAudioFiles[taskId] = file;
         task.audioFileName = file.name;
         task.needsAudio = false;
+        // Nuovo file: il lettore deve ricaricarlo
+        if (_agentPlayers[taskId]) { try { _agentPlayers[taskId].audio.pause(); URL.revokeObjectURL(_agentPlayers[taskId].url); } catch(e) {} delete _agentPlayers[taskId]; }
         agentSaveTasks(agentTasks); agentRenderPanel();
     }
+    // ── Lettore audio dell'agente: ▶/⏸, salti indietro/avanti, barra, velocità ──
+    // L'audio vive in memoria (non nel DOM), così continua a suonare anche quando
+    // il pannello si ridisegna (es. cambio griglia) e i comandi si riagganciano.
+    const _agentPlayers = {};   // taskId -> { audio, url, name }
+    const _apFmt = t => { t = Math.max(0, Math.floor(t || 0)); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
+    function _agentPlayerHtml(task) {
+        const id = task.id;
+        const p = _agentPlayers[id];
+        const a = p && p.audio;
+        const playing = a && !a.paused;
+        const cur = a ? a.currentTime : 0, dur = a && isFinite(a.duration) ? a.duration : 0;
+        const rate = a ? a.playbackRate : 1;
+        const name = String(task.audioFileName || (p && p.name) || 'audio').replace(/</g, '&lt;');
+        const b = 'border:1px solid #b39ddb;background:white;color:#4527a0;border-radius:8px;padding:5px 9px;font-size:12px;font-weight:700;cursor:pointer;';
+        return `<div class="agent-player" style="margin:8px 0;padding:8px 10px;background:#f3eefe;border:1.5px solid #d1c4e9;border-radius:10px;">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                <button style="${b}" onclick="agentPlayerSkip('${id}',-10)" title="Indietro di 10 secondi">⏪ 10s</button>
+                <button style="${b}" onclick="agentPlayerSkip('${id}',-5)" title="Indietro di 5 secondi">↺ 5s</button>
+                <button id="apBtn_${id}" style="${b}background:#5b3fd4;color:white;border-color:#5b3fd4;min-width:72px;font-size:13px;" onclick="agentPlayerToggle('${id}')" title="Play / pausa">${playing ? '⏸ Pausa' : '▶ Play'}</button>
+                <button style="${b}" onclick="agentPlayerSkip('${id}',5)" title="Avanti di 5 secondi">5s ↻</button>
+                <button style="${b}" onclick="agentPlayerSkip('${id}',10)" title="Avanti di 10 secondi">10s ⏩</button>
+                <button id="apRate_${id}" style="${b}" onclick="agentPlayerRate('${id}')" title="Velocità di riproduzione">${rate}×</button>
+                <span id="apTime_${id}" style="font-size:12px;color:#555;font-variant-numeric:tabular-nums;margin-left:auto;">${_apFmt(cur)} / ${dur ? _apFmt(dur) : '--:--'}</span>
+            </div>
+            <input id="apSeek_${id}" type="range" min="0" max="${dur || 0}" step="0.1" value="${cur}" style="width:100%;margin-top:6px;accent-color:#5b3fd4;"
+                oninput="agentPlayerSeek('${id}',this.value)" ${dur ? '' : 'disabled'}>
+            <div id="apMsg_${id}" style="font-size:10px;color:#9e9e9e;">🎙️ ${name}</div>
+        </div>`;
+    }
+    function _agentPlayerUi(id) {
+        const p = _agentPlayers[id]; if (!p) return;
+        const a = p.audio, dur = isFinite(a.duration) ? a.duration : 0;
+        const btn = document.getElementById('apBtn_' + id);
+        if (btn) btn.textContent = a.paused ? '▶ Play' : '⏸ Pausa';
+        const t = document.getElementById('apTime_' + id);
+        if (t) t.textContent = _apFmt(a.currentTime) + ' / ' + (dur ? _apFmt(dur) : '--:--');
+        const sk = document.getElementById('apSeek_' + id);
+        if (sk) { sk.max = dur || 0; sk.disabled = !dur; if (document.activeElement !== sk) sk.value = a.currentTime; }
+        const r = document.getElementById('apRate_' + id);
+        if (r) r.textContent = a.playbackRate + '×';
+    }
+    async function _agentPlayerLoad(id) {
+        if (_agentPlayers[id]) return _agentPlayers[id];
+        const task = agentTasks.find(t => t.id === id);
+        if (!task) return null;
+        const msg = document.getElementById('apMsg_' + id);
+        if (msg) msg.textContent = '⏳ Caricamento audio…';
+        const file = await _getDialogoAudioFile(task);   // vale anche per gli orali individuali
+        if (!file) {
+            if (msg) { msg.style.color = '#b35c00'; msg.textContent = agentAudioDirHandle ? '⚠️ File audio non trovato nella cartella.' : '⚠️ Audio non disponibile: riapri la cartella audio nelle impostazioni dell\'agente.'; }
+            return null;
+        }
+        const url = URL.createObjectURL(file);
+        const audio = new Audio(url);
+        audio.preload = 'metadata';
+        ['timeupdate', 'play', 'pause', 'ended', 'loadedmetadata', 'ratechange'].forEach(ev => audio.addEventListener(ev, () => _agentPlayerUi(id)));
+        _agentPlayers[id] = { audio, url, name: file.name };
+        if (msg) { msg.style.color = '#9e9e9e'; msg.textContent = '🎙️ ' + file.name + ' — ' + (file.size / 1048576).toFixed(1) + ' MB'; }
+        return _agentPlayers[id];
+    }
+    async function agentPlayerToggle(id) {
+        const p = await _agentPlayerLoad(id); if (!p) return;
+        // Un solo audio alla volta
+        Object.entries(_agentPlayers).forEach(([k, o]) => { if (k !== id && !o.audio.paused) o.audio.pause(); });
+        if (p.audio.paused) { try { await p.audio.play(); } catch (e) { console.warn('[Agente] play:', e.message); } }
+        else p.audio.pause();
+        _agentPlayerUi(id);
+    }
+    async function agentPlayerSkip(id, sec) {
+        const p = await _agentPlayerLoad(id); if (!p) return;
+        const a = p.audio, dur = isFinite(a.duration) ? a.duration : Infinity;
+        a.currentTime = Math.min(Math.max(0, a.currentTime + sec), dur);
+        _agentPlayerUi(id);
+    }
+    function agentPlayerSeek(id, val) {
+        const p = _agentPlayers[id]; if (!p) return;
+        p.audio.currentTime = Number(val) || 0;
+        _agentPlayerUi(id);
+    }
+    async function agentPlayerRate(id) {
+        const p = await _agentPlayerLoad(id); if (!p) return;
+        const seq = [1, 1.25, 0.75];
+        p.audio.playbackRate = seq[(seq.indexOf(p.audio.playbackRate) + 1) % seq.length] || 1;
+        _agentPlayerUi(id);
+    }
+
     async function agentDialogoPlayAudio(taskId, containerId) {
         const task = agentTasks.find(t => t.id === taskId);
         const container = document.getElementById(containerId || `agentDlgAudio_${taskId}`);
