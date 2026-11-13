@@ -25991,6 +25991,7 @@ ${sectionInstr}`;
                         <div style="border:1px solid #d1c4e9;border-radius:10px;padding:10px;margin-bottom:10px;background:#faf8ff;">
                             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
                                 <span style="font-size:14px;font-weight:700;color:#4527a0;">👤 ${r.studentName}</span>
+                                ${task.status !== 'approved' ? `<button class="agent-btn-edit" style="font-size:11px;padding:2px 8px;" onclick="agentClaudePrepara('${task.id}','${r.studentSafe}')" title="Rifai con Claude la valutazione di ${r.studentName} (gli altri restano invariati)">🟣 Valuta con Claude</button>` : ''}
                                 ${r.votoValue != null ? `<span style="font-size:13px;font-weight:700;color:#2e7d32;">🏆</span>
                                 <input type="number" step="0.5" min="1" max="10" value="${r.votoValue}"
                                     style="width:56px;font-size:13px;font-weight:700;padding:2px 5px;border:1.5px solid #a5d6a7;border-radius:6px;text-align:center;"
@@ -26104,6 +26105,7 @@ ${sectionInstr}`;
                             ${task.status==='approved' ? `<button class="agent-btn-approve" onclick="agentReapproveValOrale('${task.id}')" style="background:#7b3fa0;" title="Sovrascrive il voto e il JSON nello storico con i valori attualmente modificati">🔄 Riscrivi storico</button>` : ''}
                             <button class="agent-btn-edit" id="agentArgoBtn_${task.id}_x" onclick="agentGenArgo('${task.id}')">${(task.argoText||'').trim() ? '🔄 Rigenera Argo' : '📝 Genera Argo'}</button>
                             <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
+                            ${task.status==='ready' && task.trascrizione ? `<button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Rifai la valutazione con Claude (griglia, trascrizione e link dell'attività)">🟣 Valuta con Claude</button>` : ''}
                             ${task.trascrizione ? `<button class="agent-btn-edit" onclick="agentToggleTranscript('${task.id}')">📝 Trascrizione</button>` : ''}
                             <button class="agent-btn-edit" onclick="agentOpenEditTranscript('${task.id}')">✏️ Modifica trascrizione</button>
                             <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause lunghe sono attese per le slide — non penalizzare la fluency"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
@@ -26433,6 +26435,7 @@ ${sectionInstr}`;
                 const studentiChips = (task.studenti||[]).map(s =>
                     `<span style="display:inline-flex;align-items:center;gap:4px;background:#ede7f6;color:#4527a0;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:600;margin:2px;">
                         ${s.studentName}
+                        <span onclick="agentClaudePrepara('${task.id}','${s.studentSafe}')" style="cursor:pointer;background:#5b3fd4;color:white;border-radius:8px;padding:0 6px;font-weight:700;" title="Valuta con Claude solo ${s.studentName}">🟣 Valuta con Claude</span>
                         ${(task.studenti||[]).length>2?`<span onclick="agentDialogoRemoveStudent('${task.id}','${s.studentSafe}')" style="cursor:pointer;color:#b71c1c;font-weight:700;" title="Rimuovi">✕</span>`:''}
                     </span>`).join('');
                 const existing = (task.trascrizione||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
@@ -26456,7 +26459,7 @@ ${sectionInstr}`;
                         placeholder="STUDENTE_A: Hello, how are you?&#10;STUDENTE_B: I'm fine thanks, and you?&#10;DOCENTE: ...">${existing}</textarea>
                     <div class="agent-task-actions" style="margin-top:8px;">
                         <button class="agent-btn-approve" onclick="agentDialogoGenerate('${task.id}')">✅ Approva trascrizione e genera valutazioni</button>
-                        <button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta con Claude</button>
+                        <button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta tutti con Claude</button>
                         <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                         <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                     </div>
@@ -30992,7 +30995,7 @@ ${base}`, task, true);
     // Costruisce il testo completo da incollare in Claude
     async function _agentClaudeTesto(task) {
         const base = task.type === 'valdialogo'
-            ? await agentEvaluateDialogo(task, { onlyPrompt: true })
+            ? await agentEvaluateDialogo(task, { onlyPrompt: true, solo: task.claudeSolo || null })
             : await agentTaskValOrale(task, { onlyPrompt: true });
         if (!base) return '';
         const lz = _agentLezioneDiTask(task);
@@ -31011,7 +31014,7 @@ ${_agentGrigliaTesto(task.griglia)}
 
 ${lezTxt}
 
-ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattamente quei marcatori (=== VALUTAZIONE DOCENTE === e === CLASSROOM ===${task.type === 'valdialogo' ? ', preceduti da ### ALUNNO: Nome per ogni alunno' : ''}), senza commenti prima o dopo: la risposta verrà incollata così com'è in MyClass.`;
+ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattamente quei marcatori (=== VALUTAZIONE DOCENTE === e === CLASSROOM ===${task.type === 'valdialogo' ? (task.claudeSolo ? ', preceduti da ### ALUNNO: Nome' : ', preceduti da ### ALUNNO: Nome per ogni alunno') : ''}), senza commenti prima o dopo: la risposta verrà incollata così com'è in MyClass.`;
     }
 
     async function _agentCopia(testo) {
@@ -31026,11 +31029,21 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
         }
     }
 
-    // Prepara il testo per Claude, lo copia negli appunti e apre il riquadro per incollare la risposta
-    async function agentClaudePrepara(taskId) {
+    // Prepara il testo per Claude, lo copia negli appunti e apre il riquadro per incollare la risposta.
+    // soloSafe (solo dialoghi): valuta con Claude un solo alunno del dialogo.
+    async function agentClaudePrepara(taskId, soloSafe) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
         _agentKeepTranscriptDraft(task);
+        if (task.type === 'valdialogo') {
+            task.claudeSolo = soloSafe || null;
+            // Dialogo già valutato: torna alla scheda trascrizione/parlanti (i risultati restano)
+            if (task.status !== 'awaiting_speakers') { task.status = 'awaiting_speakers'; task.error = ''; }
+        } else if (task.status !== 'awaiting_transcript') {
+            // Orale già valutato: torna alla scheda trascrizione (la valutazione si rifà con la risposta di Claude)
+            task.status = 'awaiting_transcript';
+            task.error = 'Valutazione con Claude: incolla la risposta qui sotto, oppure premi Genera valutazione.';
+        }
         if (!(task.trascrizione||'').trim()) { alert('Inserisci la trascrizione prima di preparare il testo per Claude.'); return; }
         let testo = '';
         try { testo = await _agentClaudeTesto(task); }
@@ -31083,14 +31096,14 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
         task.trascrizione = task.trascrizione.trim();
         task.error = '';
         if (task.type === 'valdialogo') {
-            await agentEvaluateDialogo(task, { raw });
+            await agentEvaluateDialogo(task, { raw, solo: task.claudeSolo || null });
         } else {
             task.transcriptToReview = false;
             task.transcriptApprovedAt = new Date().toISOString();
             await agentTaskValOrale(task, { raw });
         }
         if (task.status === 'ready') {
-            task.claudeOpen = false; task.claudePrompt = ''; task.claudeRisposta = '';
+            task.claudeOpen = false; task.claudePrompt = ''; task.claudeRisposta = ''; task.claudeSolo = null;
         }
         agentSaveTasks(agentTasks); agentBadgeUpdate(); agentRenderPanel();
     }
@@ -31100,7 +31113,7 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
         const esc = x => String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         return `
             <div style="margin:10px 0;padding:10px;background:#f6f0ff;border:1.5px solid #b39ddb;border-radius:10px;">
-                <div style="font-size:12px;font-weight:700;color:#5b3fd4;margin-bottom:4px;">🟣 Valuta con Claude</div>
+                <div style="font-size:12px;font-weight:700;color:#5b3fd4;margin-bottom:4px;">🟣 Valuta con Claude${task.type === 'valdialogo' ? ' — ' + esc(task.claudeSolo ? ('solo ' + ((task.studenti||[]).find(s => s.studentSafe === task.claudeSolo)?.studentName || '')) : 'tutti gli alunni del dialogo') : ''}</div>
                 <div style="font-size:11px;color:#555;margin-bottom:6px;">1) Il testo qui sotto (griglia, trascrizione, link dell'attività della lezione) è già negli appunti: incollalo in Claude. Se correggi la trascrizione, ripremi "🟣 Valuta con Claude" per aggiornarlo.</div>
                 <textarea readonly style="width:100%;min-height:90px;max-height:200px;padding:6px;font-size:11px;border:1px solid #d1c4e9;border-radius:6px;font-family:monospace;box-sizing:border-box;background:white;" onclick="this.select()">${esc(task.claudePrompt)}</textarea>
                 <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0 8px;">
@@ -31522,6 +31535,10 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
             if (!trascr) { if (opts.onlyPrompt) return ''; task.status='awaiting_speakers'; task.error='Trascrizione vuota.'; agentRenderPanel(); return; }
             const studenti = (task.studenti||[]).slice(0,3);
             if (studenti.length < 2) { if (opts.onlyPrompt) return ''; task.status='awaiting_speakers'; task.error='Servono almeno 2 studenti.'; agentRenderPanel(); return; }
+            // opts.solo: valuta un solo alunno (gli altri restano contesto e conservano la valutazione già fatta)
+            const target = opts.solo ? studenti.filter(s => s.studentSafe === opts.solo) : studenti;
+            if (!target.length) { if (opts.onlyPrompt) return ''; task.status='awaiting_speakers'; task.error='Alunno non trovato nel dialogo.'; agentRenderPanel(); return; }
+            const parziale = target.length < studenti.length;
             _agentEnsureGrigliaOrale(task);
 
             // Griglia info (condivisa)
@@ -31561,7 +31578,7 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
 - È un DIALOGO: valuta ciascun alunno principalmente sui PROPRI turni, ma considera anche capacità di interazione, ascolto e collaborazione con il/i compagno/i. NON penalizzare un alunno per gli errori dell'altro.
 ${pauseRule}`;
 
-            const blocchiPerAlunno = studenti.map(s => {
+            const blocchiPerAlunno = target.map(s => {
                 const intest = task.griglia
                     ? ('Intestazione: ' + s.studentName + ', ' + task.classe + (task.unit?', '+task.unit:'') + ', data ' + task.sessionDate + '.\n\n' +
                        (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n[analisi della prestazione di questo alunno in quest\'area]').join('\n\n') +
@@ -31576,8 +31593,9 @@ CORRISPONDENZA PARLANTI:
 ${mapLines || '(non specificata: deduci dai turni)'}
 TRASCRIZIONE DEL DIALOGO:
 ${trascr.slice(0, 12000)}
-${REGOLE}
-Genera la valutazione SEPARATA per OGNI alunno, usando ESATTAMENTE questi marcatori e questo ordine, un blocco per alunno:
+${REGOLE}${parziale ? `
+VALUTA SOLO: ${target.map(s => s.studentName).join(', ')}. Gli altri parlanti (${studenti.filter(s => !target.includes(s)).map(s => s.studentName).join(', ')}) servono solo come contesto dell'interazione: NON scrivere blocchi per loro.` : ''}
+Genera la valutazione SEPARATA per ${parziale ? "l'alunno indicato" : 'OGNI alunno'}, usando ESATTAMENTE questi marcatori e questo ordine, un blocco per alunno:
 ${blocchiPerAlunno}`;
 
             if (opts.onlyPrompt) return prompt;
@@ -31613,9 +31631,9 @@ ${blocchiPerAlunno}`;
                 const nameLine = (nl === -1 ? seg : seg.slice(0, nl)).replace(/#+/g,'').trim();
                 const rest = nl === -1 ? '' : seg.slice(nl+1);
                 // Match al nome studente: esatto, poi per cognome, poi per ordine
-                let stud = studenti.find(s => s.studentName.toLowerCase() === nameLine.toLowerCase() && !usati.has(s.studentSafe));
-                if (!stud) stud = studenti.find(s => nameLine.toLowerCase().includes((s.studentName.split(' ')[0]||'').toLowerCase()) && !usati.has(s.studentSafe));
-                if (!stud) stud = studenti.find(s => !usati.has(s.studentSafe));
+                let stud = target.find(s => s.studentName.toLowerCase() === nameLine.toLowerCase() && !usati.has(s.studentSafe));
+                if (!stud) stud = target.find(s => nameLine.toLowerCase().includes((s.studentName.split(' ')[0]||'').toLowerCase()) && !usati.has(s.studentSafe));
+                if (!stud) stud = target.find(s => !usati.has(s.studentSafe));
                 if (!stud) return;
                 usati.add(stud.studentSafe);
                 const valDocente = extractSection(rest, '=== VALUTAZIONE DOCENTE ===');
@@ -31627,6 +31645,17 @@ ${blocchiPerAlunno}`;
                 r.jsonOrale = _buildJsonOraleEntry(r, task);
                 results.push(r);
             });
+
+            // Alunni non valutati in questo giro: si conserva la valutazione già fatta (se c'è)
+            if (parziale) {
+                const prevResults = Array.isArray(task.results) ? task.results : [];
+                studenti.forEach(s => {
+                    if (target.includes(s) || results.find(r => r.studentSafe === s.studentSafe)) return;
+                    const prev = prevResults.find(r => r.studentSafe === s.studentSafe);
+                    if (prev) results.push(prev);
+                });
+                results.sort((a, b) => studenti.findIndex(s => s.studentSafe === a.studentSafe) - studenti.findIndex(s => s.studentSafe === b.studentSafe));
+            }
 
             // Studenti senza blocco riconosciuto: crea entry vuota da completare a mano
             studenti.forEach(s => {
