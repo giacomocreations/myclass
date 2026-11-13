@@ -30582,18 +30582,19 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
         const parteGriglia = aree.length
             ? `2) La riga "I tuoi punteggi:" e sotto, una riga per ogni area della griglia, nell'ordine e con gli STESSI punteggi della VALUTAZIONE DOCENTE:
 ${aree.map(a => `${a.nome}: X/${a.max} — spiegazione`).join('\n')}
-Totale: X/${totMax}
+Totale: X/${totMax} — Voto: Y/10
+(Y è lo stesso voto in decimi della VALUTAZIONE DOCENTE, ricavato dalla tabella di conversione.)
 La spiegazione di ogni area è di UNA sola frase breve (massimo 20 parole), semplice e comprensibile per un ragazzo di scuola media, con un riferimento concreto a quello che ha detto: molto più corta dell'analisi nella valutazione docente. Queste righe dei punteggi sono l'unica parte con una voce per riga.
 3) `
-            : '2) ';
-        const n = aree.length ? 4 : 3;
+            : '2) La riga "Il tuo voto: Y/10", con lo stesso voto in decimi della VALUTAZIONE DOCENTE.\n3) ';
+        const n = 4;
         return `Feedback personale all'alunno, in italiano, rivolto direttamente a lui o a lei con il "tu", tono incoraggiante ma onesto${dialogo ? ', basato sui SUOI turni nel dialogo (e sull\'interazione con il compagno)' : ''}. Parti separate da un ritorno a capo:
 1) Una riga di apertura: Ciao ${nome}, ecco com'è andata la tua verifica orale.
 ${parteGriglia}Un paragrafo che inizia con "Cosa è andato bene:" — 2-4 cose concrete che ha fatto bene, ciascuna con un esempio preso dalla trascrizione (frasi o parole dette correttamente, strutture e lessico usati bene, risposte complete, scioltezza${dialogo ? ', capacità di rispondere al compagno' : ''}).
 ${n}) Un paragrafo che inizia con "Cosa puoi migliorare:" — 2-3 aspetti concreti, ciascuno con l'esempio dalla trascrizione e la forma corretta (es. hai detto "I must to tidy my room", si dice "I must tidy my room"), con una breve spiegazione del perché.
 Chiudi con una sola frase breve di incoraggiamento.
 NON dare esercizi, attività, compiti, consigli di studio o "cosa fare a casa": quelli sono nel piano personalizzato.
-Lunghezza ${aree.length ? '170-260' : '120-200'} parole in tutto. A parte ${aree.length ? 'le righe dei punteggi' : 'le parti indicate'}, testo scorrevole: niente elenchi puntati, niente grassetti, niente emoji. Non scrivere il voto in decimi.`;
+Lunghezza ${aree.length ? '170-260' : '120-200'} parole in tutto. A parte ${aree.length ? 'le righe dei punteggi e del voto' : 'la riga del voto'}, testo scorrevole: niente elenchi puntati, niente grassetti, niente emoji.`;
     }
 
     // opts.onlyPrompt → non chiama l'AI: restituisce il prompt (per "Valuta con Claude")
@@ -30920,6 +30921,12 @@ ${base}`, task, true);
     }
 
     // Aggiorna voto dal campo input nel card valorale → ricostruisce il JSON
+    // Voto cambiato a mano dal docente: si aggiorna anche nel feedback all'alunno
+    // ("Totale: X/Y — Voto: Z/10" oppure "Il tuo voto: Z/10").
+    function _agentFeedbackSetVoto(testo, v) {
+        if (!testo) return testo;
+        return String(testo).replace(/(\b[Vv]oto\s*:\s*)\d+(?:[.,]\d+)?(\s*\/\s*10)/g, (m, a, b) => a + String(v).replace('.', ',') + b);
+    }
     function agentUpdateVoto(taskId, newVotoStr) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
@@ -30927,6 +30934,7 @@ ${base}`, task, true);
         if (isNaN(v) || v < 1 || v > 10) return;
         task.votoValue = v;
         task.votoLabel = String(v);
+        task.classroomText = _agentFeedbackSetVoto(task.classroomText, v);
         // Aggiorna il campo voto nel JSON storico
         try {
             const j = JSON.parse(task.jsonOrale || '{}');
@@ -32244,6 +32252,7 @@ ${blocchiPerAlunno}`;
         const v = parseFloat(val);
         if (isNaN(v) || v < 1 || v > 10) return;
         task.results[idx].votoValue = v; task.results[idx].votoLabel = String(v);
+        task.results[idx].classroomText = _agentFeedbackSetVoto(task.results[idx].classroomText, v);
         try {
             const j = JSON.parse(task.results[idx].jsonOrale||'{}');
             if (j.alunni?.[0]) { j.alunni[0].voto = v; task.results[idx].jsonOrale = JSON.stringify(j,null,2); }
