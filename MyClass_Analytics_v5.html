@@ -26016,6 +26016,7 @@ ${sectionInstr}`;
                             ${task.status==='approved' ? `<button class="agent-btn-approve" onclick="agentReapproveValDialogo('${task.id}')" style="background:#7b3fa0;" title="Sovrascrive voti e feedback nello storico">🔄 Riscrivi storico</button>` : ''}
                             <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera valutazioni</button>
                             ${task.trascrizione ? `<button class="agent-btn-edit" onclick="agentDialogoEditSpeakers('${task.id}')">👥 Trascrizione / parlanti</button>` : ''}
+                            ${task.status==='ready' && _dialogoHasAudio(task) ? `<button class="agent-btn-edit" onclick="agentRitrascrivi('${task.id}')" title="Rifà la trascrizione dall'audio; poi la rivedi e rigeneri le valutazioni">🔁 Rigenera trascrizione</button>` : ''}
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                         </div>`;
                 } else if (task.type === 'valorale') {
@@ -26108,6 +26109,7 @@ ${sectionInstr}`;
                             ${task.status==='ready' && task.trascrizione ? `<button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Rifai la valutazione con Claude (griglia, trascrizione e link dell'attività)">🟣 Valuta con Claude</button>` : ''}
                             ${task.trascrizione ? `<button class="agent-btn-edit" onclick="agentToggleTranscript('${task.id}')">📝 Trascrizione</button>` : ''}
                             <button class="agent-btn-edit" onclick="agentOpenEditTranscript('${task.id}')">✏️ Modifica trascrizione</button>
+                            ${task.status==='ready' && task.audioFileName ? `<button class="agent-btn-edit" onclick="agentRitrascrivi('${task.id}')" title="Rifà la trascrizione dall'audio; poi la rivedi e rigeneri la valutazione">🔁 Rigenera trascrizione</button>` : ''}
                             <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause lunghe sono attese per le slide — non penalizzare la fluency"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                         </div>`;
@@ -26413,6 +26415,7 @@ ${sectionInstr}`;
                 <div class="agent-task-actions" style="margin-top:8px;">
                     <button class="agent-btn-approve" onclick="agentSubmitManualTranscript('${task.id}')">${toReview ? '✅ Approva trascrizione e genera valutazione' : '🤖 Genera valutazione'}</button>
                     <button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta con Claude</button>
+                    ${task.audioFileName ? _agentRitrascriviBtns(task) : ''}
                     <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause sono attese per le slide — non penalizzare"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                     <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                 </div>
@@ -26460,6 +26463,7 @@ ${sectionInstr}`;
                     <div class="agent-task-actions" style="margin-top:8px;">
                         <button class="agent-btn-approve" onclick="agentDialogoGenerate('${task.id}')">✅ Approva trascrizione e genera valutazioni</button>
                         <button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta tutti con Claude</button>
+                        ${_dialogoHasAudio(task) ? _agentRitrascriviBtns(task) : ''}
                         <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                         <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                     </div>
@@ -30391,6 +30395,29 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
     // RETRY_BASE_MS * 2^tentativo (es. 8s, 16s, 32s).
     // 429 → quota esaurita: attiva il cooldown globale _geminiQuotaUntil.
     // 503 → servizio temporaneamente non disponibile: retry senza cooldown.
+    // Configurazione per le trascrizioni. Con gemini-2.5 il "ragionamento" interno
+    // consuma lo stesso limite di token dell'output: con 8192 token le trascrizioni
+    // lunghe si fermavano a metà. Limite alto e ragionamento al minimo.
+    function _geminiTranscribeConfig() {
+        const m = String(GEMINI_MODEL || '');
+        const cfg = { temperature: 0, maxOutputTokens: /gemini-(1\.5|2\.0)/.test(m) ? 8192 : 32768 };
+        if (/2\.5-flash/.test(m)) cfg.thinkingConfig = { thinkingBudget: 0 };
+        else if (/2\.5-pro/.test(m)) cfg.thinkingConfig = { thinkingBudget: 128 };
+        return cfg;
+    }
+    // Testo completo della risposta: tutte le parti (prima si leggeva solo la prima,
+    // e la trascrizione poteva risultare a metà), senza le parti di "ragionamento".
+    // Se Gemini si è fermato per limite di lunghezza lo segnala in fondo.
+    function _geminiTranscriptText(json) {
+        const cand = json?.candidates?.[0] || {};
+        const text = (cand.content?.parts || []).filter(p => p && !p.thought && typeof p.text === 'string').map(p => p.text).join('');
+        if (text.trim() && cand.finishReason && cand.finishReason !== 'STOP') {
+            console.warn('[Agente] Trascrizione Gemini interrotta:', cand.finishReason);
+            return text.replace(/\s+$/, '') + `\n[⚠️ TRASCRIZIONE INTERROTTA (${cand.finishReason}): manca la parte finale — premi "🔁 Rigenera trascrizione" o completala a mano]`;
+        }
+        return text;
+    }
+
     async function _geminiTranscribeAudio(base64, mimeType, hasSlides = false) {
         const MAX_RETRIES   = 3;
         const RETRY_BASE_MS = 8000; // 8s, 16s, 32s
@@ -30406,7 +30433,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                 { inline_data:{ mime_type: mimeType, data: base64 } },
                 { text: `Trascrivi questa verifica orale di inglese scuola media italiana.\nFormato:\nD: [domanda docente]\nS: [risposta studente]\nSe senti solo lo studente usa solo S:. Trascrivi fedelmente inclusi gli errori.\n${pauseNote}\nSegnala gli errori di pronuncia significativi (che ostacolano la comprensione) con [pron: forma errata → forma corretta] subito dopo la parola.` }
             ]}],
-            generationConfig:{ temperature:0, maxOutputTokens:8192 }
+            generationConfig: _geminiTranscribeConfig()
         });
 
         let lastErr;
@@ -30438,7 +30465,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                 }
                 if (!res.ok) throw await _geminiHttpError(res, 'trascrizione');
                 const json = await res.json();
-                const text = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                const text = _geminiTranscriptText(json);
                 if (!text.trim()) throw new Error('Trascrizione vuota.');
                 return text;
             } catch(e) {
@@ -30855,6 +30882,53 @@ ${base}`, task, true);
         agentSaveTasks(agentTasks);
         agentBadgeUpdate();
         agentRenderPanel();
+    }
+
+    // Rifà la trascrizione dall'audio (orale individuale o dialogo). La trascrizione
+    // attuale resta salvata e si può ripristinare.
+    async function agentRitrascrivi(taskId) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        _agentKeepTranscriptDraft(task);
+        if (!GEMINI_API_KEY) { alert('Per rifare la trascrizione serve la chiave Gemini API.'); return; }
+        if ((task.trascrizione||'').trim() &&
+            !confirm('Rifare la trascrizione dall\'audio?\n\nQuella attuale (con le tue correzioni) viene sostituita, ma resta salvata: potrai ripristinarla con "↩ Ripristina precedente".')) return;
+        if (task.type === 'valorale') {
+            const fh = (task.audioHandle && typeof task.audioHandle.getFile === 'function') ? task.audioHandle : await _reacquireAudioHandle(task);
+            if (!fh) { alert('File audio non disponibile: riapri la cartella audio nelle impostazioni dell\'agente e riprova.'); return; }
+        }
+        if ((task.trascrizione||'').trim()) task.trascrizionePrecedente = task.trascrizione;
+        task.trascrizione = '';
+        task.error = '';
+        task.claudeOpen = false;
+        if (task.type === 'valdialogo') {
+            await agentTranscribeDialogo(task);
+        } else {
+            task.transcriptToReview = false;
+            await agentTaskValOrale(task);   // trascrive e si ferma per l'approvazione
+        }
+        // Errore: la trascrizione precedente non va persa
+        if (!(task.trascrizione||'').trim() && task.trascrizionePrecedente) {
+            task.trascrizione = task.trascrizionePrecedente;
+            task.trascrizionePrecedente = '';
+        }
+        agentSaveTasks(agentTasks); agentBadgeUpdate(); agentRenderPanel();
+    }
+
+    function agentRipristinaTrascrizione(taskId) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task || !task.trascrizionePrecedente) return;
+        _agentKeepTranscriptDraft(task);
+        if (!confirm('Ripristinare la trascrizione precedente? Quella attuale diventa a sua volta la "precedente".')) return;
+        const cur = task.trascrizione || '';
+        task.trascrizione = task.trascrizionePrecedente;
+        task.trascrizionePrecedente = cur;
+        agentSaveTasks(agentTasks); agentRenderPanel();
+    }
+
+    function _agentRitrascriviBtns(task) {
+        return `<button class="agent-btn-edit" onclick="agentRitrascrivi('${task.id}')" title="Rifà la trascrizione dall'audio (utile se è a metà o mancano pezzi)">🔁 Rigenera trascrizione</button>` +
+            (task.trascrizionePrecedente ? `<button class="agent-btn-edit" onclick="agentRipristinaTrascrizione('${task.id}')" title="Torna alla trascrizione prima dell'ultima rigenerazione">↩ Ripristina precedente</button>` : '');
     }
 
     // Apre il pannello di modifica trascrizione (porta il task in awaiting_transcript)
@@ -31441,7 +31515,7 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
                 { inline_data:{ mime_type: mimeType, data: base64 } },
                 { text: promptText }
             ]}],
-            generationConfig:{ temperature:0, maxOutputTokens:8192 }
+            generationConfig: _geminiTranscribeConfig()
         });
         let lastErr;
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -31463,7 +31537,7 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
                 if (res.status === 503) { lastErr = new Error('Gemini servizio non disponibile (503).'); continue; }
                 if (!res.ok) throw await _geminiHttpError(res, 'trascrizione');
                 const json = await res.json();
-                const text = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                const text = _geminiTranscriptText(json);
                 if (!text.trim()) throw new Error('Trascrizione vuota.');
                 return text;
             } catch(e) {
