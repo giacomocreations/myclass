@@ -22053,7 +22053,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         // dalla memoria in QUESTA sessione. Solo i task NON-attivi
         // (approved/dismissed/failed/error esaurito) possono essere sfoltiti, perché
         // i loro dati sono già su Firebase (responses + marker agentDone).
-        const ACTIVE = new Set(['pending','processing','ready','error','awaiting_claude']);
+        // awaiting_transcript / awaiting_speakers: trascrizioni (anche corrette dal docente)
+        // che esistono solo qui, non su Firebase → vanno sempre conservate.
+        const ACTIVE = new Set(['pending','processing','ready','error','awaiting_claude','awaiting_transcript','awaiting_speakers']);
         const isActive = t =>
             ACTIVE.has(t.status) &&
             !(t.status === 'error' && (t.retryCount || 0) >= AGENT_MAX_RETRY);
@@ -25739,7 +25741,21 @@ ${sectionInstr}`;
         try { localStorage.setItem('agent_collapsed_tasks', JSON.stringify([])); } catch(e) {}
     }
 
+    // Il pannello si ridisegna spesso (anche da solo): se il docente sta scrivendo in un
+    // riquadro (es. correggendo la trascrizione) si conservano testo, cursore e scorrimento.
     function agentRenderPanel() {
+        const ae = document.activeElement;
+        const keep = (ae && ae.id && (ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && ae.type === 'text')))
+            ? { id: ae.id, val: ae.value, s: ae.selectionStart, e: ae.selectionEnd, top: ae.scrollTop } : null;
+        _agentRenderPanelInner();
+        if (!keep) return;
+        const el = document.getElementById(keep.id);
+        if (!el || el === ae) return;
+        if (el.value !== keep.val) el.value = keep.val;
+        try { el.focus({ preventScroll: true }); el.setSelectionRange(keep.s, keep.e); } catch(e) {}
+        el.scrollTop = keep.top;
+    }
+    function _agentRenderPanelInner() {
         try { if (typeof agentTabBadgeUpdate === 'function') agentTabBadgeUpdate(); } catch(e) {}
         const lastRun = localStorage.getItem('agent_last_run');
         const elStatus = document.getElementById('agentStatusText');
@@ -26392,12 +26408,13 @@ ${sectionInstr}`;
                 </div>
                 ${atAudio}
                 ${_agentGrigliaPickerHtml(task)}
-                <textarea id="manualTranscript_${task.id}"
+                <textarea id="manualTranscript_${task.id}" oninput="agentTranscriptInput('${task.id}',this.value)"
                     style="width:100%;min-height:120px;margin-top:8px;padding:8px;font-size:12px;border:1.5px solid #ce93d8;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;"
                     placeholder="D: What did you do last weekend?&#10;S: I go... I went to the beach with my family..."
                 >${existing}</textarea>
                 <div class="agent-task-actions" style="margin-top:8px;">
                     <button class="agent-btn-approve" onclick="agentSubmitManualTranscript('${task.id}')">${toReview ? '✅ Approva trascrizione e genera valutazione' : '🤖 Genera valutazione'}</button>
+                    ${_agentTranscriptSaveBtn(task)}
                     <button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta con Claude</button>
                     ${task.audioFileName ? _agentRitrascriviBtns(task) : ''}
                     <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause sono attese per le slide — non penalizzare"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
@@ -26437,10 +26454,11 @@ ${sectionInstr}`;
                     <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:4px;">🔗 Associa ogni parlante a uno studente</div>
                     <div style="background:#faf8ff;border:1px solid #e0e4ff;border-radius:8px;padding:8px;margin-bottom:8px;">${speakerRows}</div>
                     <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:4px;">✍️ Trascrizione (rivedi e correggi se serve)</div>
-                    <textarea id="dlgTranscript_${task.id}"
+                    <textarea id="dlgTranscript_${task.id}" oninput="agentTranscriptInput('${task.id}',this.value)"
                         style="width:100%;min-height:140px;padding:8px;font-size:12px;border:1.5px solid #ce93d8;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;"
                         placeholder="STUDENTE_A: Hello, how are you?&#10;STUDENTE_B: I'm fine thanks, and you?&#10;DOCENTE: ...">${existing}</textarea>
                     <div class="agent-task-actions" style="margin-top:8px;">
+                        ${_agentTranscriptSaveBtn(task)}
                         <button class="agent-btn-approve" onclick="agentDialogoGenerate('${task.id}')">✅ Approva trascrizione e genera valutazioni</button>
                         <button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta tutti con Claude</button>
                         ${_dialogoHasAudio(task) ? _agentRitrascriviBtns(task) : ''}
@@ -30969,6 +30987,45 @@ ${base}`, task, true);
         agentSaveTasks(agentTasks);
         agentBadgeUpdate();
         agentRenderPanel();
+    }
+
+    // ── Salvataggio della trascrizione corretta dal docente ───────────────────
+    // Prima le correzioni restavano solo nel riquadro: se non si generava subito la
+    // valutazione, al primo aggiornamento del pannello tornava la trascrizione vecchia.
+    // Ora si salvano da sole mentre si scrive (dopo 1 s di pausa) e con il pulsante.
+    const _agentTrTimers = {};
+    function _agentTranscriptSaveBtn(task) {
+        const at = task.trascrizioneSalvataAt
+            ? new Date(task.trascrizioneSalvataAt).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : '';
+        return `<button class="agent-btn-edit" onclick="agentTranscriptSave('${task.id}')" title="Salva le correzioni alla trascrizione senza generare la valutazione">💾 Salva trascrizione</button>
+            <span id="trSaved_${task.id}" style="font-size:11px;color:#2e7d32;align-self:center;">${at ? '✓ salvata alle ' + at : ''}</span>`;
+    }
+    function _agentTranscriptSaved(task, testo) {
+        task.trascrizioneSalvataAt = Date.now();
+        agentSaveTasks(agentTasks);
+        const el = document.getElementById('trSaved_' + task.id);
+        if (el) el.textContent = testo + ' ' + new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+    }
+    function agentTranscriptInput(taskId, val) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        task.trascrizione = val;
+        const el = document.getElementById('trSaved_' + taskId);
+        if (el) { el.style.color = '#888'; el.textContent = '… salvataggio'; }
+        clearTimeout(_agentTrTimers[taskId]);
+        _agentTrTimers[taskId] = setTimeout(() => {
+            _agentTranscriptSaved(task, '✓ salvata automaticamente alle');
+            if (el) el.style.color = '#2e7d32';
+        }, 1000);
+    }
+    function agentTranscriptSave(taskId) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        clearTimeout(_agentTrTimers[taskId]);
+        _agentKeepTranscriptDraft(task);
+        const el = document.getElementById('trSaved_' + taskId);
+        if (el) el.style.color = '#2e7d32';
+        _agentTranscriptSaved(task, '✓ salvata alle');
     }
 
     // Rifà la trascrizione dall'audio (orale individuale o dialogo). La trascrizione
