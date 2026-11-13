@@ -30398,12 +30398,73 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
     // Configurazione per le trascrizioni. Con gemini-2.5 il "ragionamento" interno
     // consuma lo stesso limite di token dell'output: con 8192 token le trascrizioni
     // lunghe si fermavano a metà. Limite alto e ragionamento al minimo.
-    function _geminiTranscribeConfig() {
+    // alt=true: nuovo tentativo dopo che Gemini si è bloccato ripetendo una frase
+    // (temperatura un po' più alta e ragionamento libero, che aiutano a uscire dal loop).
+    function _geminiTranscribeConfig(alt = false) {
         const m = String(GEMINI_MODEL || '');
-        const cfg = { temperature: 0, maxOutputTokens: /gemini-(1\.5|2\.0)/.test(m) ? 8192 : 32768 };
-        if (/2\.5-flash/.test(m)) cfg.thinkingConfig = { thinkingBudget: 0 };
-        else if (/2\.5-pro/.test(m)) cfg.thinkingConfig = { thinkingBudget: 128 };
+        const cfg = { temperature: alt ? 0.4 : 0.1, maxOutputTokens: /gemini-(1\.5|2\.0)/.test(m) ? 8192 : 32768 };
+        if (!alt) {
+            if (/2\.5-flash/.test(m)) cfg.thinkingConfig = { thinkingBudget: 1024 };
+            else if (/2\.5-pro/.test(m)) cfg.thinkingConfig = { thinkingBudget: 1024 };
+        }
         return cfg;
+    }
+
+    // Regole aggiunte a tutti i prompt di trascrizione
+    const _GEMINI_TRANSCRIBE_RULES = 'REGOLE IMPORTANTI: trascrivi solo quello che si sente davvero, nell\'ordine in cui viene detto. Non ripetere MAI una frase più volte di quante viene detta nell\'audio: se una parte non si capisce scrivi [incomprensibile] e vai avanti. Quando l\'audio finisce, termina la trascrizione. Usa [pron: ...] solo se la forma pronunciata è DIVERSA da quella corretta. Segna una pausa solo se c\'è davvero silenzio per più di 5 secondi, senza inventare battute vuote.';
+
+    // Gemini a volte si "blocca" e ripete all'infinito la stessa frase fino al
+    // limite di token. Qui le ripetizioni consecutive (oltre 3 volte la stessa frase
+    // di fila, 6+ volte la stessa parola) vengono tolte.
+    // Ritorna { text, looped }.
+    function _deloopTranscript(text) {
+        const src = String(text || '');
+        let looped = false;
+        const norm = x => x.toLowerCase().replace(/\s+/g, ' ').trim();
+        const out = src.split('\n').map(riga => {
+            const pezzi = riga.match(/[^.!?]+[.!?]+\s*|[^.!?]+$/g) || [riga];
+            const tenuti = [];
+            let prev = null, run = 0;
+            for (const p of pezzi) {
+                const k = norm(p);
+                if (k && k === prev) { run++; if (run >= 2) { looped = true; continue; } }
+                else { prev = k; run = 0; }
+                tenuti.push(p);
+            }
+            let r = tenuti.join('');
+            // parola ripetuta 6+ volte di fila ("the the the the the the")
+            r = r.replace(/\b(\w+)(?:[\s,]+\1\b){5,}/gi, (m0, w) => { looped = true; return w; });
+            return r;
+        });
+        // righe identiche consecutive (es. "S: [pausa 5s]" ripetuto all'infinito)
+        const righe = [];
+        let prevR = null, runR = 0;
+        for (const r of out) {
+            const k = norm(r);
+            if (k && k === prevR) { runR++; if (runR >= 2) { looped = true; continue; } }
+            else { prevR = k; runR = 0; }
+            righe.push(r);
+        }
+        return { text: righe.join('\n'), looped };
+    }
+
+    // Esegue una trascrizione; se Gemini si blocca in un loop riprova una volta con
+    // impostazioni diverse. Se si blocca ancora, tiene il risultato ripulito con un avviso.
+    async function _geminiTranscribeAntiLoop(once) {
+        const t1 = await once(false);
+        const d1 = _deloopTranscript(t1);
+        if (!d1.looped) return t1;
+        console.warn('[Agente] Trascrizione: Gemini ha ripetuto in loop la stessa frase — nuovo tentativo con impostazioni diverse…');
+        let t2 = null;
+        try { t2 = await once(true); } catch (e) { console.warn('[Agente] Secondo tentativo fallito:', e.message); }
+        if (t2) {
+            const d2 = _deloopTranscript(t2);
+            if (!d2.looped) return t2;
+            // Tiene il più lungo dopo la pulizia (= quello che ha trascritto più audio)
+            const best = d2.text.length > d1.text.length ? d2.text : d1.text;
+            return best + '\n[⚠️ Gemini si è bloccato ripetendo la stessa frase: le ripetizioni sono state tolte, ma da quel punto potrebbe mancare una parte dell\'audio. Controlla con l\'audio o premi "🔁 Rigenera trascrizione".]';
+        }
+        return d1.text + '\n[⚠️ Gemini si è bloccato ripetendo la stessa frase: le ripetizioni sono state tolte, ma da quel punto potrebbe mancare una parte dell\'audio. Controlla con l\'audio o premi "🔁 Rigenera trascrizione".]';
     }
     // Testo completo della risposta: tutte le parti (prima si leggeva solo la prima,
     // e la trascrizione poteva risultare a metà), senza le parti di "ragionamento".
@@ -30419,6 +30480,9 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
     }
 
     async function _geminiTranscribeAudio(base64, mimeType, hasSlides = false) {
+        return _geminiTranscribeAntiLoop(alt => _geminiTranscribeAudioOnce(base64, mimeType, hasSlides, alt));
+    }
+    async function _geminiTranscribeAudioOnce(base64, mimeType, hasSlides = false, alt = false) {
         const MAX_RETRIES   = 3;
         const RETRY_BASE_MS = 8000; // 8s, 16s, 32s
         const endpoint = `${GEMINI_ENDPOINT}${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
@@ -30431,9 +30495,9 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
         const body = JSON.stringify({
             contents:[{ parts:[
                 { inline_data:{ mime_type: mimeType, data: base64 } },
-                { text: `Trascrivi questa verifica orale di inglese scuola media italiana.\nFormato:\nD: [domanda docente]\nS: [risposta studente]\nSe senti solo lo studente usa solo S:. Trascrivi fedelmente inclusi gli errori.\n${pauseNote}\nSegnala gli errori di pronuncia significativi (che ostacolano la comprensione) con [pron: forma errata → forma corretta] subito dopo la parola.` }
+                { text: `Trascrivi questa verifica orale di inglese scuola media italiana.\nFormato:\nD: [domanda docente]\nS: [risposta studente]\nSe senti solo lo studente usa solo S:. Trascrivi fedelmente inclusi gli errori.\n${pauseNote}\nSegnala gli errori di pronuncia significativi (che ostacolano la comprensione) con [pron: forma errata → forma corretta] subito dopo la parola.\n${_GEMINI_TRANSCRIBE_RULES}` }
             ]}],
-            generationConfig: _geminiTranscribeConfig()
+            generationConfig: _geminiTranscribeConfig(alt)
         });
 
         let lastErr;
@@ -31087,6 +31151,9 @@ ${base}`, task, true);
             let m;
             while ((m = re.exec(riga))) {
                 const nome = task.type === 'valdialogo' ? (nomeDi(speaker) || 'alunno non identificato') : task.studentName;
+                const lati = m[2].split(/→|->/).map(x => x.trim().toLowerCase());
+                if (lati.length === 2 && lati[0] === lati[1]) continue;           // "tidy → tidy": nessun errore
+                if (out.some(p => p.nome === nome && p.pron.toLowerCase() === m[2].trim().toLowerCase())) continue; // già elencata
                 out.push({ nome, pron: m[2].trim(), parola: (m[1]||'').trim() });
             }
         });
@@ -31496,6 +31563,9 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
 
     // Trascrizione Gemini multi-speaker con etichette. nSpeakers = 2 o 3.
     async function _geminiTranscribeDialogo(base64, mimeType, nSpeakers = 2, hasSlides = false) {
+        return _geminiTranscribeAntiLoop(alt => _geminiTranscribeDialogoOnce(base64, mimeType, nSpeakers, hasSlides, alt));
+    }
+    async function _geminiTranscribeDialogoOnce(base64, mimeType, nSpeakers = 2, hasSlides = false, alt = false) {
         const MAX_RETRIES = 3, RETRY_BASE_MS = 8000;
         const endpoint = `${GEMINI_ENDPOINT}${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
         const pauseNote = hasSlides
@@ -31509,13 +31579,13 @@ Usa una riga per ogni turno di parola, nel formato:
 STUDENTE_A: [testo]
 STUDENTE_B: [testo]
 DOCENTE: [testo]
-Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pronuncia significativi (che ostacolano la comprensione) con [pron: forma errata → forma corretta] subito dopo la parola.`;
+Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pronuncia significativi (che ostacolano la comprensione) con [pron: forma errata → forma corretta] subito dopo la parola. ${_GEMINI_TRANSCRIBE_RULES}`;
         const body = JSON.stringify({
             contents:[{ parts:[
                 { inline_data:{ mime_type: mimeType, data: base64 } },
                 { text: promptText }
             ]}],
-            generationConfig: _geminiTranscribeConfig()
+            generationConfig: _geminiTranscribeConfig(alt)
         });
         let lastErr;
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
