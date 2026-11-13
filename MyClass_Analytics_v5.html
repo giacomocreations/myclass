@@ -25914,7 +25914,9 @@ ${sectionInstr}`;
 
         list.innerHTML = parDiag + sorted.map(task => {
             const tl = typeLabels[task.type] || { icon:'📄', label: task.type };
-            const sl = statusLabels[task.status] || task.status;
+            const sl = (task.status === 'awaiting_transcript' && task.transcriptToReview)
+                ? '🔎 Trascrizione da approvare'
+                : (statusLabels[task.status] || task.status);
             const pill = `<span class="agent-status-pill ${task.status}">${sl}</span>`;
             const aiBadge = task.aiProvider ? (aiLabels[task.aiProvider] || '') : '';
 
@@ -26379,16 +26381,27 @@ ${sectionInstr}`;
                         </label>
                     </div>`;
                 })();
+                const toReview = !!task.transcriptToReview;
+                const atHead = toReview
+                    ? `🔎 <strong>Trascrizione da approvare</strong><br>
+                    <small style="color:#555;">Rileggi la trascrizione automatica (riascolta l'audio se serve), correggi gli errori e poi approvala: la valutazione e i feedback vengono generati solo dopo la tua approvazione.</small>`
+                    : `✍️ <strong>Trascrizione manuale richiesta</strong><br>
+                    <small style="color:#555;">${(task.error||'Inserisci o incolla la trascrizione del colloquio, poi premi Genera valutazione.').replace(/</g,'&lt;')}</small>`;
+                const atAudio = task.audioFileName ? `<details style="margin-top:6px;border:1px solid #d1c4e9;border-radius:8px;overflow:hidden;"
+                        ontoggle="if(this.open) agentLoadAudioInVO('${task.id}')">
+                        <summary style="padding:7px 12px;cursor:pointer;font-size:12px;font-weight:700;color:#5c35c9;background:#ede7f6;user-select:none;">🎙️ Riascolta — ${String(task.audioFileName).replace(/</g,'&lt;')}</summary>
+                        <div style="padding:10px 12px;"><div id="agentVOAudio_${task.id}"><span style="font-size:12px;color:#9e9e9e;">⏳ Caricamento player…</span></div></div>
+                    </details>` : '';
                 body = `${prelimAT}<div style="color:#6a1e8a;font-size:13px;padding:8px 0 4px;">
-                    ✍️ <strong>Trascrizione manuale richiesta</strong><br>
-                    <small style="color:#555;">${(task.error||'Inserisci o incolla la trascrizione del colloquio, poi premi Genera valutazione.').replace(/</g,'&lt;')}</small>
+                    ${atHead}
                 </div>
+                ${atAudio}
                 <textarea id="manualTranscript_${task.id}"
                     style="width:100%;min-height:120px;margin-top:8px;padding:8px;font-size:12px;border:1.5px solid #ce93d8;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;"
                     placeholder="D: What did you do last weekend?&#10;S: I go... I went to the beach with my family..."
                 >${existing}</textarea>
                 <div class="agent-task-actions" style="margin-top:8px;">
-                    <button class="agent-btn-approve" onclick="agentSubmitManualTranscript('${task.id}')">🤖 Genera valutazione</button>
+                    <button class="agent-btn-approve" onclick="agentSubmitManualTranscript('${task.id}')">${toReview ? '✅ Approva trascrizione e genera valutazione' : '🤖 Genera valutazione'}</button>
                     <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause sono attese per le slide — non penalizzare"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                     <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                 </div>`;
@@ -26431,7 +26444,7 @@ ${sectionInstr}`;
                         style="width:100%;min-height:140px;padding:8px;font-size:12px;border:1.5px solid #ce93d8;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;"
                         placeholder="STUDENTE_A: Hello, how are you?&#10;STUDENTE_B: I'm fine thanks, and you?&#10;DOCENTE: ...">${existing}</textarea>
                     <div class="agent-task-actions" style="margin-top:8px;">
-                        <button class="agent-btn-approve" onclick="agentDialogoGenerate('${task.id}')">🤖 Genera valutazioni</button>
+                        <button class="agent-btn-approve" onclick="agentDialogoGenerate('${task.id}')">✅ Approva trascrizione e genera valutazioni</button>
                         <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                         <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                     </div>`;
@@ -30497,6 +30510,15 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                     }
                     throw qe; // altri errori: propaga normalmente
                 }
+                // 2b. Approvazione docente: la trascrizione automatica può contenere errori
+                // (parole fraintese, battute attribuite male). Ci si ferma qui finché il
+                // docente non la rivede e la approva: niente valutazione su una trascrizione sbagliata.
+                task.transcriptToReview = true;
+                task.status = 'awaiting_transcript';
+                task.error  = '';
+                agentSaveTasks(agentTasks);
+                agentRenderPanel();
+                return;
             }
 
             // 3. Griglia dal task (rilevata da pianoDettagliato)
@@ -30835,6 +30857,8 @@ ${base}`, task, true);
         if (!text) { alert('Inserisci la trascrizione prima di procedere.'); return; }
         task.trascrizione = text;
         task.error = '';
+        task.transcriptToReview = false;
+        task.transcriptApprovedAt = new Date().toISOString();
         agentSaveTasks(agentTasks);
         await agentTaskValOrale(task);
         agentSaveTasks(agentTasks);
