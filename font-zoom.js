@@ -6,58 +6,68 @@
 //  somma a quello che la pagina mette già sui suoi elementi (es. la
 //  Modalità LIM ingrandisce .container a 1.22) invece di sostituirlo.
 //  La scelta resta su questo computer (vale per tutte le attività).
+//
+//  DrillZoom.attach(doc) mette gli stessi pulsanti in un'altra finestra
+//  della pagina (es. la finestra docente dell'Oral test), con una sua
+//  grandezza ricordata a parte: si ingrandisce il tuo schermo, non la LIM.
+//  ⚠️ Se modifichi questo file alza CACHE_VERSION in sw.js.
 // ═══════════════════════════════════════════════════════════════
 (function () {
-  var KEY = 'drill_zoom', MIN = 0.8, MAX = 2;
-  var z = 1;
-  try {
-    var v = parseFloat(localStorage.getItem(KEY));
-    if (v >= MIN && v <= MAX) z = v;
-  } catch (e) {}
+  var MIN = 0.8, MAX = 2;
 
-  var box, lbl;
+  function install(doc, KEY) {
+    if (!doc || !doc.body || doc.getElementById('drill-zoom')) return;
+    var z = 1;
+    try {
+      var v = parseFloat(localStorage.getItem(KEY));
+      if (v >= MIN && v <= MAX) z = v;
+    } catch (e) {}
 
-  function apply() {
-    document.body.style.zoom = z === 1 ? '' : String(z);
-    lbl.textContent = Math.round(z * 100) + '%';
-  }
-
-  function step(dir) {
-    z = dir === 0 ? 1 : Math.min(MAX, Math.max(MIN, Math.round((z + dir * 0.1) * 10) / 10));
-    try { localStorage.setItem(KEY, String(z)); } catch (e) {}
-    apply();
-  }
-
-  function init() {
-    var css = document.createElement('style');
+    var css = doc.createElement('style');
     css.textContent =
       '#drill-zoom{position:fixed;right:14px;bottom:14px;z-index:2147483000;display:flex;align-items:center;gap:2px;' +
       'padding:3px 4px;background:rgba(20,20,30,.82);border:1px solid rgba(255,255,255,.18);border-radius:20px;' +
       'box-shadow:0 4px 16px rgba(0,0,0,.35);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);' +
       'font:700 13px/1 -apple-system,"Segoe UI",system-ui,sans-serif;color:#fff;user-select:none;-webkit-user-select:none;}' +
       '#drill-zoom button{border:none;background:transparent;color:#fff;cursor:pointer;font:inherit;font-weight:800;' +
-      'padding:6px 10px;border-radius:14px;line-height:1;letter-spacing:0;text-transform:none;transition:none;margin:0;box-shadow:none;min-width:0;}' +
+      'padding:6px 10px;border-radius:14px;line-height:1;letter-spacing:0;text-transform:none;transition:none;margin:0;box-shadow:none;min-width:0;width:auto;height:auto;outline:none;}' +
       '#drill-zoom button:hover{background:rgba(255,255,255,.14);}' +
       '#drill-zoom .dz-minus{font-size:14px;}#drill-zoom .dz-plus{font-size:18px;}' +
       '#drill-zoom .dz-lbl{font-size:12px;font-weight:600;opacity:.75;width:46px;padding:6px 0;text-align:center;font-variant-numeric:tabular-nums;}' +
       '@media print{#drill-zoom{display:none!important;}}';
-    document.head.appendChild(css);
+    (doc.head || doc.documentElement).appendChild(css);
 
-    box = document.createElement('div');
+    var box = doc.createElement('div');
     box.id = 'drill-zoom';
     box.innerHTML =
       '<button type="button" class="dz-minus" title="Riduci il testo">A−</button>' +
       '<button type="button" class="dz-lbl" title="Torna al 100%"></button>' +
       '<button type="button" class="dz-plus" title="Ingrandisci il testo">A+</button>';
-    lbl = box.querySelector('.dz-lbl');
-    box.querySelector('.dz-minus').addEventListener('click', function () { step(-1); });
-    box.querySelector('.dz-plus').addEventListener('click', function () { step(1); });
-    lbl.addEventListener('click', function () { step(0); });
-    document.documentElement.appendChild(box);
+    var lbl = box.querySelector('.dz-lbl');
 
+    function apply() {
+      doc.body.style.zoom = z === 1 ? '' : String(z);
+      lbl.textContent = Math.round(z * 100) + '%';
+    }
+    function step(dir, e) {
+      if (e) e.stopPropagation();   // i clic non arrivano ai gestori della pagina
+      z = dir === 0 ? 1 : Math.min(MAX, Math.max(MIN, Math.round((z + dir * 0.1) * 10) / 10));
+      try { localStorage.setItem(KEY, String(z)); } catch (e2) {}
+      apply();
+    }
+    box.querySelector('.dz-minus').addEventListener('click', function (e) { step(-1, e); });
+    box.querySelector('.dz-plus').addEventListener('click', function (e) { step(1, e); });
+    lbl.addEventListener('click', function (e) { step(0, e); });
+    // Fuori dal <body>: lo zoom non lo sposta né lo ingrandisce
+    doc.documentElement.appendChild(box);
     apply();
   }
 
+  window.DrillZoom = {
+    attach: function (doc, key) { install(doc, key || 'drill_zoom_docente'); }
+  };
+
+  function init() { install(document, 'drill_zoom'); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
