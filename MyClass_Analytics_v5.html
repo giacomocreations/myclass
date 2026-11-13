@@ -30448,6 +30448,33 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
         return { text: righe.join('\n'), looped };
     }
 
+    // Errore 429 leggibile: dice QUALE limite di Gemini è stato superato
+    // (al minuto o giornaliero) leggendo il corpo della risposta.
+    async function _gemini429Error(res) {
+        let msg = '', ids = [], retry = '';
+        try {
+            const j = await res.json();
+            msg = j?.error?.message || '';
+            (j?.error?.details || []).forEach(d => {
+                (d.violations || []).forEach(v => ids.push(String(v.quotaId || v.quotaMetric || '')));
+                if (d.retryDelay) retry = String(d.retryDelay);
+            });
+        } catch (e) {}
+        const all = (ids.join(' ') + ' ' + msg).toLowerCase();
+        const perDay = /perday|per day|daily/.test(all);
+        const perMin = /perminute|per minute/.test(all);
+        const tokens = /token/.test(all);
+        const secs = parseInt(retry) || null;
+        let testo;
+        if (perDay) testo = `Limite GIORNALIERO di Gemini esaurito per questa chiave (${GEMINI_MODEL}): si azzera verso le 9 del mattino (ora italiana). Intanto puoi incollare la trascrizione a mano, usare un'altra chiave o scegliere un altro modello Gemini nelle impostazioni.`;
+        else if (perMin) testo = `Limite AL MINUTO di Gemini superato (${tokens ? 'troppi token' : 'troppe richieste'} in un minuto): non è esaurita la chiave, basta riprovare tra ${secs ? secs + ' secondi' : 'un minuto'}.`;
+        else testo = 'Limite API Gemini raggiunto (429)' + (msg ? ': ' + msg.split('\n')[0].slice(0, 200) : '') + '.';
+        console.warn('[Agente] Gemini 429:', ids.join(', ') || msg);
+        const e = new GeminiQuotaError(testo);
+        e.perDay = perDay; e.perMinute = perMin;
+        return e;
+    }
+
     // Esegue una trascrizione; se Gemini si blocca in un loop riprova una volta con
     // impostazioni diverse. Se si blocca ancora, tiene il risultato ripulito con un avviso.
     async function _geminiTranscribeAntiLoop(once) {
@@ -30455,8 +30482,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
         const d1 = _deloopTranscript(t1);
         if (!d1.looped) return t1;
         console.warn('[Agente] Trascrizione: Gemini ha ripetuto in loop la stessa frase — nuovo tentativo con impostazioni diverse…');
-        let t2 = null;
-        try { t2 = await once(true); } catch (e) { console.warn('[Agente] Secondo tentativo fallito:', e.message); }
+        let t2 = null, err2 = '';
+        try { t2 = await once(true); } catch (e) { console.warn('[Agente] Secondo tentativo fallito:', e.message); err2 = e.message; }
         if (t2) {
             const d2 = _deloopTranscript(t2);
             if (!d2.looped) return t2;
@@ -30464,7 +30491,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
             const best = d2.text.length > d1.text.length ? d2.text : d1.text;
             return best + '\n[⚠️ Gemini si è bloccato ripetendo la stessa frase: le ripetizioni sono state tolte, ma da quel punto potrebbe mancare una parte dell\'audio. Controlla con l\'audio o premi "🔁 Rigenera trascrizione".]';
         }
-        return d1.text + '\n[⚠️ Gemini si è bloccato ripetendo la stessa frase: le ripetizioni sono state tolte, ma da quel punto potrebbe mancare una parte dell\'audio. Controlla con l\'audio o premi "🔁 Rigenera trascrizione".]';
+        return d1.text + '\n[⚠️ Gemini si è bloccato ripetendo la stessa frase: le ripetizioni sono state tolte, ma da quel punto potrebbe mancare una parte dell\'audio. Controlla con l\'audio o premi "🔁 Rigenera trascrizione".' +
+            (err2 ? ' Il secondo tentativo automatico non è riuscito: ' + err2 : '') + ']';
     }
     // Testo completo della risposta: tutte le parti (prima si leggeva solo la prima,
     // e la trascrizione poteva risultare a metà), senza le parti di "ragionamento".
@@ -30515,7 +30543,9 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                     signal: agentAbortController?.signal
                 });
                 if (res.status === 429) {
-                    lastErr = new GeminiQuotaError('Limite API Gemini raggiunto (429) — trascrizione automatica non disponibile.');
+                    lastErr = await _gemini429Error(res);
+                    // Limite giornaliero: inutile riprovare adesso
+                    if (lastErr.perDay) { _geminiMarkQuota(); throw lastErr; }
                     if (attempt === MAX_RETRIES) {
                         // Quota esaurita per tutti i tentativi: attiva cooldown globale
                         _geminiMarkQuota();
@@ -31600,7 +31630,8 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
                     signal: agentAbortController?.signal
                 });
                 if (res.status === 429) {
-                    lastErr = new GeminiQuotaError('Limite API Gemini raggiunto (429) — trascrizione automatica non disponibile.');
+                    lastErr = await _gemini429Error(res);
+                    if (lastErr.perDay) { _geminiMarkQuota(); throw lastErr; }
                     if (attempt === MAX_RETRIES) _geminiMarkQuota();
                     continue;
                 }
