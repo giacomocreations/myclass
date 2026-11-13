@@ -25872,6 +25872,7 @@ ${sectionInstr}`;
             gemma:     '<span class="agent-ai-badge ollama">🟡 Gemma</span>',
             qwen:      '<span class="agent-ai-badge qwen">🔵 Qwen3</span>',
             claude:    '<span class="agent-ai-badge anthropic">🟣 Claude Code</span>',
+            claudechat:'<span class="agent-ai-badge anthropic">🟣 Claude</span>',
         };
 
         // Ordina: ready → processing → awaiting_transcript → pending → error → approved
@@ -26409,9 +26410,11 @@ ${sectionInstr}`;
                 >${existing}</textarea>
                 <div class="agent-task-actions" style="margin-top:8px;">
                     <button class="agent-btn-approve" onclick="agentSubmitManualTranscript('${task.id}')">${toReview ? '✅ Approva trascrizione e genera valutazione' : '🤖 Genera valutazione'}</button>
+                    <button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta con Claude</button>
                     <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause sono attese per le slide — non penalizzare"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                     <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
-                </div>`;
+                </div>
+                ${_agentClaudePanelHtml(task)}`;
             } else if (task.status === 'awaiting_speakers') {
                 // Card mappatura parlanti dialogo: trascrizione editabile + player + speaker→studente
                 const studOpts = (selSafe) => (task.studenti||[]).map(s =>
@@ -26453,9 +26456,11 @@ ${sectionInstr}`;
                         placeholder="STUDENTE_A: Hello, how are you?&#10;STUDENTE_B: I'm fine thanks, and you?&#10;DOCENTE: ...">${existing}</textarea>
                     <div class="agent-task-actions" style="margin-top:8px;">
                         <button class="agent-btn-approve" onclick="agentDialogoGenerate('${task.id}')">✅ Approva trascrizione e genera valutazioni</button>
+                        <button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta con Claude</button>
                         <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                         <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
-                    </div>`;
+                    </div>
+                    ${_agentClaudePanelHtml(task)}`;
             } else if (task.status === 'processing') {
                 body = `<div style="color:#1565c0;font-size:13px;padding:8px 0;">
                     <span class="agent-spinner" style="border-top-color:#1565c0;border-color:rgba(0,0,0,0.1);"></span>
@@ -30446,10 +30451,12 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
     // Trascrivi audio + genera feedback TXT.
     // Se task.trascrizione è già impostata (manuale o da run precedente), salta
     // i passi 1-2 (audio→base64 + Gemini) e va direttamente al passo 3-4 (valutazione AI).
-    async function agentTaskValOrale(task) {
-        task.status = 'processing'; agentRenderPanel();
-
+    // opts.onlyPrompt → non chiama l'AI: restituisce il prompt (per "Valuta con Claude")
+    // opts.raw        → usa questa risposta (incollata da Claude) al posto della chiamata AI
+    async function agentTaskValOrale(task, opts = {}) {
         const skipTranscription = !!(task.trascrizione && task.trascrizione.trim());
+        if (opts.onlyPrompt && !skipTranscription) return '';
+        if (!opts.onlyPrompt) { task.status = 'processing'; agentRenderPanel(); }
 
         if (!skipTranscription) {
             // FileSystemFileHandle perde i metodi se serializzato/deserializzato da JSON.
@@ -30584,7 +30591,9 @@ ${trascrizioneSlice}
 ${REGOLE}
 Genera SOLO due blocchi (niente ARGO) con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ===\n${task.griglia ? ('Intestazione: ' + task.studentName + ', ' + task.classe + (task.unit ? ', ' + task.unit : '') + ', data ' + task.sessionDate + '.\n\n' + (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n' + '[analisi della prestazione in quest\'area basata sulla trascrizione]').join('\n\n') + '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma dei punteggi per area e Y il voto dalla tabella di conversione.') : ('Intestazione: nome, classe, data (' + task.sessionDate + '), unit, voto. Analisi per area' + (task.hasSlides ? ' (NON commentare le pause [slide])' : ' (includi fluency se rilevante: pause significative, ritmo)') + '. Analisi complessiva.')}\n=== CLASSROOM ===\nFeedback personale scritto allo studente, italiano, tono incoraggiante ma onesto. Struttura OBBLIGATORIA (separa ogni sezione con un ritorno a capo):\nSaluto: Ciao ${nomeBreve}, ecco il feedback sulla tua ultima verifica orale.\nPUNTI DI FORZA (almeno 2-3, specifici e tratti dalla trascrizione): descrivi cosa ha fatto bene con esempi concreti.\nAREE DI MIGLIORAMENTO (almeno 2, costruttive e pratiche): indica cosa migliorare e COME, con suggerimenti pratici per esercitarsi a casa.\nCONSIGLIO FINALE: una frase motivante personalizzata con il prossimo passo utile.\nLunghezza totale: 150-220 parole. Testo scorrevole, niente elenchi puntati, niente grassetti. Non menzionare il voto numerico.`;
 
-            const raw = await agentCallAI(prompt, task, true);
+            if (opts.onlyPrompt) return prompt;
+            const raw = opts.raw != null ? String(opts.raw) : await agentCallAI(prompt, task, true);
+            if (opts.raw != null) task.aiProvider = 'claudechat';
             // Accetta anche titoli senza "===" su una riga da soli: "## VALUTAZIONE DOCENTE",
             // "**VALUTAZIONE DOCENTE**", "VALUTAZIONE DOCENTE:". Prima, se il modello non metteva
             // gli "===", il task restava "pronto" ma vuoto e il controllo periodico lo rigenerava.
@@ -30641,7 +30650,7 @@ Genera SOLO due blocchi (niente ARGO) con esattamente questi marcatori:\n=== VAL
             task.jsonOrale = _buildJsonOrale(task);
             task.status    = 'ready';
             task.generatedAt = new Date().toISOString();
-        } catch(e) { task.status='error'; task.error=e.message; agentRenderPanel(); }
+        } catch(e) { if (opts.onlyPrompt) throw e; task.status='error'; task.error=e.message; agentRenderPanel(); }
     }
     // Argo per orale/dialogo: non si genera piu' in automatico. Su richiesta lo
     // si ricava dalla valutazione docente gia' scritta (una chiamata breve).
@@ -30932,6 +30941,181 @@ ${base}`, task, true);
         task.griglia = { id: g.id, nome: g.nome, aree: g.aree, conversione_voto: g.conversione_voto || null };
         task.grigliaFonte = r.fonte;
         console.log(`[Agente] Griglia "${g.nome}" ricavata per ${task.studentName || task.id} — ${r.fonte}`);
+    }
+
+    // ── "Valuta con Claude": prompt da incollare in Claude + risposta incollata ──
+    // Lezione del piano a cui si riferisce la verifica orale (orale preferita, ±3 giorni)
+    function _agentLezioneDiTask(task) {
+        const classe = (data.classi||[]).find(c => c.nome === task.classe);
+        const piano = classe?.pianificazione?.piano || [];
+        const ms = d => new Date(String(d||'').slice(0,10)).getTime();
+        const t0 = ms(task.sessionDate);
+        if (isNaN(t0)) return null;
+        const isOrale = lz => AGENT_ORALE_TIPI.some(t => String(lz.tipo||'').toLowerCase().includes(t));
+        const c = piano
+            .map(lz => ({ lz, d: Math.abs(ms(lz.data) - t0) }))
+            .filter(x => !isNaN(x.d) && x.d <= 3 * 86400000)
+            .sort((a, b) => (isOrale(b.lz) - isOrale(a.lz)) || (a.d - b.d));
+        return c.length ? c[0].lz : null;
+    }
+
+    // Attività/risorse collegate alla lezione (prima quelle usate a lezione), con link assoluto
+    function _agentAttivitaLezione(lz) {
+        if (!lz) return [];
+        const soloCompiti = new Set(lz.risorseCompiti || []);
+        const tutte = (lz.risorse||[])
+            .map(id => ({ id, r: (data.risorseLezioni||[]).find(x => x.id === id) }))
+            .filter(x => x.r && x.r.url);
+        const aLezione = tutte.filter(x => !soloCompiti.has(x.id));
+        return (aLezione.length ? aLezione : tutte).map(({ r }) => {
+            let url = r.url;
+            try { url = new URL(r.url, location.href).href; } catch {}
+            return { titolo: r.titolo || r.url, url };
+        });
+    }
+
+    function _agentGrigliaTesto(g) {
+        if (!g) return 'Nessuna griglia: valuta con un voto in decimi motivato.';
+        const tot = (g.aree||[]).reduce((s,a)=>s+(a.max||0),0);
+        let t = `Griglia: ${g.nome}\n` + (g.aree||[]).map(a => `- ${a.nome}: max ${a.max}` +
+            (Array.isArray(a.descrittori) && a.descrittori.length
+                ? '\n' + a.descrittori.map(d => `    ${d.pt} pt — ${d.testo || ''}`).join('\n')
+                : (typeof a.descrittori === 'string' && a.descrittori ? `\n    ${a.descrittori}` : '')) +
+            (a.descrizione ? `\n  ${a.descrizione}` : '')).join('\n') + `\nTotale: /${tot}`;
+        if (g.conversione_voto && Object.keys(g.conversione_voto).length) {
+            t += '\nTabella conversione punti → voto/10: ' + Object.entries(g.conversione_voto)
+                .sort((a,b) => parseFloat(a[0]) - parseFloat(b[0])).map(([k,v]) => `${k}→${v}`).join(', ');
+        }
+        return t;
+    }
+
+    // Costruisce il testo completo da incollare in Claude
+    async function _agentClaudeTesto(task) {
+        const base = task.type === 'valdialogo'
+            ? await agentEvaluateDialogo(task, { onlyPrompt: true })
+            : await agentTaskValOrale(task, { onlyPrompt: true });
+        if (!base) return '';
+        const lz = _agentLezioneDiTask(task);
+        const att = _agentAttivitaLezione(lz);
+        const lezTxt = lz
+            ? `LEZIONE DEL PIANO: ${lz.data}${lz.titolo ? ' — ' + lz.titolo : ''}${lz.unit ? ' (' + lz.unit + ')' : ''}` +
+              (att.length
+                ? `\nATTIVITÀ USATA NELLA LEZIONE (aprila per capire consegna, domande e lessico atteso):\n` + att.map(a => `- ${a.titolo}: ${a.url}`).join('\n')
+                : '\nNessuna attività collegata alla lezione.')
+            : 'Nessuna lezione del piano trovata vicino alla data della verifica.';
+        return `${base}
+
+────────────────────────
+DATI COMPLETI DELLA GRIGLIA
+${_agentGrigliaTesto(task.griglia)}
+
+${lezTxt}
+
+ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattamente quei marcatori (=== VALUTAZIONE DOCENTE === e === CLASSROOM ===${task.type === 'valdialogo' ? ', preceduti da ### ALUNNO: Nome per ogni alunno' : ''}), senza commenti prima o dopo: la risposta verrà incollata così com'è in MyClass.`;
+    }
+
+    async function _agentCopia(testo) {
+        try { await navigator.clipboard.writeText(testo); return true; }
+        catch {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = testo; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                document.body.appendChild(ta); ta.select();
+                const ok = document.execCommand('copy'); ta.remove(); return ok;
+            } catch { return false; }
+        }
+    }
+
+    // Prepara il testo per Claude, lo copia negli appunti e apre il riquadro per incollare la risposta
+    async function agentClaudePrepara(taskId) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        _agentKeepTranscriptDraft(task);
+        if (!(task.trascrizione||'').trim()) { alert('Inserisci la trascrizione prima di preparare il testo per Claude.'); return; }
+        let testo = '';
+        try { testo = await _agentClaudeTesto(task); }
+        catch(e) { alert('Errore nella preparazione del testo per Claude: ' + e.message); return; }
+        if (!testo) { alert('Impossibile preparare il testo: controlla trascrizione e studenti.'); return; }
+        task.claudePrompt = testo;
+        task.claudeOpen = true;
+        agentSaveTasks(agentTasks);
+        agentRenderPanel();
+        const ok = await _agentCopia(testo);
+        const msg = document.getElementById(`claudeMsg_${taskId}`);
+        if (msg) msg.textContent = ok
+            ? '✅ Copiato negli appunti: incollalo in Claude, poi incolla qui sotto la sua risposta.'
+            : '⚠️ Copia automatica non riuscita: seleziona il testo qui sopra e copialo a mano.';
+    }
+
+    async function agentClaudeCopia(taskId) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task?.claudePrompt) return;
+        const ok = await _agentCopia(task.claudePrompt);
+        const msg = document.getElementById(`claudeMsg_${taskId}`);
+        if (msg) msg.textContent = ok ? '✅ Copiato di nuovo negli appunti.' : '⚠️ Copia non riuscita: copia a mano.';
+    }
+
+    function agentClaudeChiudi(taskId) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        _agentKeepTranscriptDraft(task);
+        task.claudeOpen = false;
+        agentSaveTasks(agentTasks); agentRenderPanel();
+    }
+
+    function agentClaudeSalvaBozza(taskId, val) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (task) { task.claudeRisposta = val; agentSaveTasks(agentTasks); }
+    }
+
+    // Usa la risposta incollata da Claude: approva la trascrizione corrente e genera i risultati
+    async function agentClaudeUsaRisposta(taskId) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        _agentKeepTranscriptDraft(task);
+        const ta = document.getElementById(`claudeResp_${taskId}`);
+        const raw = (ta ? ta.value : (task.claudeRisposta || '')).trim();
+        if (!raw) { alert('Incolla prima la risposta di Claude.'); return; }
+        if (!/VALUTAZIONE\s+DOCENTE/i.test(raw)) {
+            if (!confirm('Nella risposta non trovo il blocco "VALUTAZIONE DOCENTE". Usarla comunque?')) return;
+        }
+        if (!(task.trascrizione||'').trim()) { alert('Manca la trascrizione.'); return; }
+        task.trascrizione = task.trascrizione.trim();
+        task.error = '';
+        if (task.type === 'valdialogo') {
+            await agentEvaluateDialogo(task, { raw });
+        } else {
+            task.transcriptToReview = false;
+            task.transcriptApprovedAt = new Date().toISOString();
+            await agentTaskValOrale(task, { raw });
+        }
+        if (task.status === 'ready') {
+            task.claudeOpen = false; task.claudePrompt = ''; task.claudeRisposta = '';
+        }
+        agentSaveTasks(agentTasks); agentBadgeUpdate(); agentRenderPanel();
+    }
+
+    function _agentClaudePanelHtml(task) {
+        if (!task.claudeOpen) return '';
+        const esc = x => String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return `
+            <div style="margin:10px 0;padding:10px;background:#f6f0ff;border:1.5px solid #b39ddb;border-radius:10px;">
+                <div style="font-size:12px;font-weight:700;color:#5b3fd4;margin-bottom:4px;">🟣 Valuta con Claude</div>
+                <div style="font-size:11px;color:#555;margin-bottom:6px;">1) Il testo qui sotto (griglia, trascrizione, link dell'attività della lezione) è già negli appunti: incollalo in Claude. Se correggi la trascrizione, ripremi "🟣 Valuta con Claude" per aggiornarlo.</div>
+                <textarea readonly style="width:100%;min-height:90px;max-height:200px;padding:6px;font-size:11px;border:1px solid #d1c4e9;border-radius:6px;font-family:monospace;box-sizing:border-box;background:white;" onclick="this.select()">${esc(task.claudePrompt)}</textarea>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0 8px;">
+                    <button class="agent-btn-edit" onclick="agentClaudeCopia('${task.id}')">📋 Copia di nuovo</button>
+                    <span id="claudeMsg_${task.id}" style="font-size:11px;color:#2e7d32;"></span>
+                </div>
+                <div style="font-size:11px;color:#555;margin-bottom:4px;">2) Incolla qui la risposta di Claude:</div>
+                <textarea id="claudeResp_${task.id}" oninput="agentClaudeSalvaBozza('${task.id}',this.value)"
+                    style="width:100%;min-height:120px;padding:8px;font-size:12px;border:1.5px solid #9575cd;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;"
+                    placeholder="=== VALUTAZIONE DOCENTE ===&#10;...&#10;=== CLASSROOM ===&#10;...">${esc(task.claudeRisposta)}</textarea>
+                <div class="agent-task-actions" style="margin-top:6px;">
+                    <button class="agent-btn-approve" onclick="agentClaudeUsaRisposta('${task.id}')">📥 Approva trascrizione e usa la risposta di Claude</button>
+                    <button class="agent-btn-reject" onclick="agentClaudeChiudi('${task.id}')">✖ Chiudi</button>
+                </div>
+            </div>`;
     }
 
     // Prima di ridisegnare il pannello (es. cambio griglia) salva nel task la
@@ -31330,13 +31514,14 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
     }
 
     // FASE 3: valuta tutti gli studenti del dialogo in una singola chiamata AI.
-    async function agentEvaluateDialogo(task) {
-        task.status = 'processing'; agentRenderPanel();
+    // opts.onlyPrompt / opts.raw: come agentTaskValOrale (per "Valuta con Claude")
+    async function agentEvaluateDialogo(task, opts = {}) {
+        if (!opts.onlyPrompt) { task.status = 'processing'; agentRenderPanel(); }
         try {
             const trascr = (task.trascrizione||'').trim();
-            if (!trascr) { task.status='awaiting_speakers'; task.error='Trascrizione vuota.'; agentRenderPanel(); return; }
+            if (!trascr) { if (opts.onlyPrompt) return ''; task.status='awaiting_speakers'; task.error='Trascrizione vuota.'; agentRenderPanel(); return; }
             const studenti = (task.studenti||[]).slice(0,3);
-            if (studenti.length < 2) { task.status='awaiting_speakers'; task.error='Servono almeno 2 studenti.'; agentRenderPanel(); return; }
+            if (studenti.length < 2) { if (opts.onlyPrompt) return ''; task.status='awaiting_speakers'; task.error='Servono almeno 2 studenti.'; agentRenderPanel(); return; }
             _agentEnsureGrigliaOrale(task);
 
             // Griglia info (condivisa)
@@ -31395,7 +31580,9 @@ ${REGOLE}
 Genera la valutazione SEPARATA per OGNI alunno, usando ESATTAMENTE questi marcatori e questo ordine, un blocco per alunno:
 ${blocchiPerAlunno}`;
 
-            const raw = await agentCallAI(prompt, task, true);
+            if (opts.onlyPrompt) return prompt;
+            const raw = opts.raw != null ? String(opts.raw) : await agentCallAI(prompt, task, true);
+            if (opts.raw != null) task.aiProvider = 'claudechat';
 
             // Accetta anche titoli senza "===" su una riga da soli: "## VALUTAZIONE DOCENTE",
             // "**VALUTAZIONE DOCENTE**", "VALUTAZIONE DOCENTE:". Prima, se il modello non metteva
@@ -31456,7 +31643,7 @@ ${blocchiPerAlunno}`;
             task.error = '';
             task.generatedAt = new Date().toISOString();
             agentSaveTasks(agentTasks); agentRenderPanel();
-        } catch(e) { task.status='error'; task.error=e.message; agentRenderPanel(); }
+        } catch(e) { if (opts.onlyPrompt) throw e; task.status='error'; task.error=e.message; agentRenderPanel(); }
     }
 
     // Approvazione dialogo: per ogni alunno → feedback Firebase + voto MyClass + file TXT/JSON
