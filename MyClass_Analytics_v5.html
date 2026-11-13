@@ -30576,14 +30576,24 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
     // Istruzioni per il feedback all'alunno (blocco CLASSROOM) delle verifiche orali.
     // Solo cosa è andato bene e cosa può migliorare: esercizi, attività e consigli
     // di studio vanno nei piani personalizzati, non qui.
-    function _agentFeedbackAlunnoIstr(nome, dialogo) {
-        return `Feedback personale all'alunno, in italiano, rivolto direttamente a lui o a lei con il "tu", tono incoraggiante ma onesto${dialogo ? ', basato sui SUOI turni nel dialogo (e sull\'interazione con il compagno)' : ''}. Tre parti, separate da un ritorno a capo:
+    function _agentFeedbackAlunnoIstr(nome, dialogo, griglia) {
+        const aree = (griglia && Array.isArray(griglia.aree)) ? griglia.aree : [];
+        const totMax = aree.reduce((t, a) => t + (Number(a.max) || 0), 0);
+        const parteGriglia = aree.length
+            ? `2) La riga "I tuoi punteggi:" e sotto, una riga per ogni area della griglia, nell'ordine e con gli STESSI punteggi della VALUTAZIONE DOCENTE:
+${aree.map(a => `${a.nome}: X/${a.max} — spiegazione`).join('\n')}
+Totale: X/${totMax}
+La spiegazione di ogni area è di UNA sola frase breve (massimo 20 parole), semplice e comprensibile per un ragazzo di scuola media, con un riferimento concreto a quello che ha detto: molto più corta dell'analisi nella valutazione docente. Queste righe dei punteggi sono l'unica parte con una voce per riga.
+3) `
+            : '2) ';
+        const n = aree.length ? 4 : 3;
+        return `Feedback personale all'alunno, in italiano, rivolto direttamente a lui o a lei con il "tu", tono incoraggiante ma onesto${dialogo ? ', basato sui SUOI turni nel dialogo (e sull\'interazione con il compagno)' : ''}. Parti separate da un ritorno a capo:
 1) Una riga di apertura: Ciao ${nome}, ecco com'è andata la tua verifica orale.
-2) Un paragrafo che inizia con "Cosa è andato bene:" — 2-4 cose concrete che ha fatto bene, ciascuna con un esempio preso dalla trascrizione (frasi o parole dette correttamente, strutture e lessico usati bene, risposte complete, scioltezza${dialogo ? ', capacità di rispondere al compagno' : ''}).
-3) Un paragrafo che inizia con "Cosa puoi migliorare:" — 2-3 aspetti concreti, ciascuno con l'esempio dalla trascrizione e la forma corretta (es. hai detto "I must to tidy my room", si dice "I must tidy my room"), con una breve spiegazione del perché.
+${parteGriglia}Un paragrafo che inizia con "Cosa è andato bene:" — 2-4 cose concrete che ha fatto bene, ciascuna con un esempio preso dalla trascrizione (frasi o parole dette correttamente, strutture e lessico usati bene, risposte complete, scioltezza${dialogo ? ', capacità di rispondere al compagno' : ''}).
+${n}) Un paragrafo che inizia con "Cosa puoi migliorare:" — 2-3 aspetti concreti, ciascuno con l'esempio dalla trascrizione e la forma corretta (es. hai detto "I must to tidy my room", si dice "I must tidy my room"), con una breve spiegazione del perché.
 Chiudi con una sola frase breve di incoraggiamento.
 NON dare esercizi, attività, compiti, consigli di studio o "cosa fare a casa": quelli sono nel piano personalizzato.
-Lunghezza 120-200 parole. Testo scorrevole, niente elenchi puntati, niente grassetti, niente emoji. Non menzionare il voto numerico.`;
+Lunghezza ${aree.length ? '170-260' : '120-200'} parole in tutto. A parte ${aree.length ? 'le righe dei punteggi' : 'le parti indicate'}, testo scorrevole: niente elenchi puntati, niente grassetti, niente emoji. Non scrivere il voto in decimi.`;
     }
 
     // opts.onlyPrompt → non chiama l'AI: restituisce il prompt (per "Valuta con Claude")
@@ -30724,7 +30734,7 @@ Verifica orale di ${task.studentName}, classe ${task.classe}${task.unit?', '+tas
 TRASCRIZIONE:
 ${trascrizioneSlice}
 ${REGOLE}
-Genera SOLO due blocchi (niente ARGO) con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ===\n${task.griglia ? ('Intestazione: ' + task.studentName + ', ' + task.classe + (task.unit ? ', ' + task.unit : '') + ', data ' + task.sessionDate + '.\n\n' + (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n' + '[analisi della prestazione in quest\'area basata sulla trascrizione]').join('\n\n') + '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma dei punteggi per area e Y il voto dalla tabella di conversione.') : ('Intestazione: nome, classe, data (' + task.sessionDate + '), unit, voto. Analisi per area' + (task.hasSlides ? ' (NON commentare le pause [slide])' : ' (includi fluency se rilevante: pause significative, ritmo)') + '. Analisi complessiva.')}\n=== CLASSROOM ===\n${_agentFeedbackAlunnoIstr(nomeBreve, false)}`;
+Genera SOLO due blocchi (niente ARGO) con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ===\n${task.griglia ? ('Intestazione: ' + task.studentName + ', ' + task.classe + (task.unit ? ', ' + task.unit : '') + ', data ' + task.sessionDate + '.\n\n' + (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n' + '[analisi della prestazione in quest\'area basata sulla trascrizione]').join('\n\n') + '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma dei punteggi per area e Y il voto dalla tabella di conversione.') : ('Intestazione: nome, classe, data (' + task.sessionDate + '), unit, voto. Analisi per area' + (task.hasSlides ? ' (NON commentare le pause [slide])' : ' (includi fluency se rilevante: pause significative, ritmo)') + '. Analisi complessiva.')}\n=== CLASSROOM ===\n${_agentFeedbackAlunnoIstr(nomeBreve, false, task.griglia)}`;
 
             if (opts.onlyPrompt) return prompt;
             const raw = opts.raw != null ? String(opts.raw) : await agentCallAI(prompt, task, true);
@@ -31853,7 +31863,7 @@ ${pauseRule}`;
                        (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n[analisi della prestazione di questo alunno in quest\'area]').join('\n\n') +
                        '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((t,a)=>t+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma e Y il voto dalla tabella di conversione.')
                     : 'Intestazione: nome, classe, data, unit, voto. Analisi per area e complessiva.';
-                return `### ALUNNO: ${s.studentName}\n=== VALUTAZIONE DOCENTE ===\n${intest}\n=== CLASSROOM ===\n${_agentFeedbackAlunnoIstr(s.studentNome||s.studentName.split(' ')[0], true)}`;
+                return `### ALUNNO: ${s.studentName}\n=== VALUTAZIONE DOCENTE ===\n${intest}\n=== CLASSROOM ===\n${_agentFeedbackAlunnoIstr(s.studentNome||s.studentName.split(' ')[0], true, task.griglia)}`;
             }).join('\n\n');
 
             const prompt = `Sei il prof. Giacomo Cossu, docente di inglese scuola media italiana.
