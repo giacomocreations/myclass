@@ -11164,8 +11164,26 @@ function renderStudentResultsTeacher(name, response) {
       '</div>' +
     '</div>' +
     timelineCard + focusCard + connCard +
+    _attemptsTeacherBox(response, studentKey, displayName, effectiveScore, effectiveTotalPts, submitted) +
     recoveryHtml +
     '<div id="teacher-answer-cards">' + cardsHtml + '</div>';
+}
+
+// Tentativi ripetuti (esercitazioni e assegnate ripetibili): progressi sempre
+// visibili nella scheda dell'alunno e, a richiesta, le risposte dei precedenti.
+function _attemptsTeacherBox(response, studentKey, displayName, score, maxPts, submitted) {
+  try {
+    if (!response || !response.attempts) return '';
+    const h = _llAttemptsPdfHtml(response, studentKey, displayName,
+      { score, maxPts, submittedAt: submitted ? response.submittedAt : null });
+    if (!h.summary) return '';
+    _ensurePdfqCss();
+    return '<div style="margin-bottom:16px;">' + h.summary +
+      (submitted ? '' : '<div style="font-size:12px;color:#5b21b6;margin:-8px 0 10px;">⏳ L\'ultimo tentativo è in corso: le schede qui sotto mostrano le risposte date finora.</div>') +
+      (h.detail ? '<details style="margin-top:-6px;"><summary style="cursor:pointer;font-size:13px;font-weight:800;color:#5b21b6;padding:4px 0;">👁 Risposte dei tentativi precedenti</summary>' +
+        '<div class="pq-live" style="margin-top:8px;">' + h.detail + '</div></details>' : '') +
+      '</div>';
+  } catch (e) { console.warn('[tentativi] riepilogo docente:', e.message); return ''; }
 }
 
 // Stile delle domande del PDF, riusato nelle schede del docente
@@ -11882,7 +11900,8 @@ async function studentEnter() {
   if (S._hintOff) { S._hintOff(); S._hintOff = null; }
   if (S._audioOff) { S._audioOff(); S._audioOff = null; }
   if (S._revealOff) { S._revealOff(); S._revealOff = null; } S._revealOpenQ = null;
-  S.sessionRepeatable = session.status === 'assigned' && !!session.repeatable;
+  // Ripetibili: assegnate con "Ripetibile" e tutte le esercitazioni
+  S.sessionRepeatable = (session.status === 'assigned' && !!session.repeatable) || S.sessionMode === 'practice';
   S._attempts = null; S._retryLocal = false; S._retryNext = null;
   _syncPassageBtn(); // mostra/nascondi il pulsante 📄 Testo
   // Legge il provider AI scelto dal docente per questa sessione
@@ -13346,6 +13365,20 @@ function _clozeFormatAlternatives(correctRaw) {
 // `earnedPoints` proporzionale alle parti corrette, così studente e docente
 // vedono la stessa percentuale. Default punti uniformato a `|| 1`.
 // ═══════════════════════════════════════════════════════════════
+// Tipi con più spazi/elementi valutati uno per uno
+function _qPerItemType(q) {
+  const t = q && q.type === 'listening' ? (q.subtype || (q.question && q.question.type)) : (q && q.type);
+  return t === 'cloze' || t === 'fill-blanks' || t === 'drag-drop' || t === 'reorder';
+}
+// Elenco colorato spazio per spazio: verde ✓ se giusto, rosso barrato ✗ + soluzione se sbagliato
+function _perItemDetail(label, items) {
+  return items.map((it, i) => {
+    const g = (it.given == null || String(it.given).trim() === '') ? '—' : esc(String(it.given));
+    if (it.ok) return '<span style="color:#059669;font-weight:700;white-space:nowrap;">' + label + (i + 1) + ': ' + g + ' ✓</span>';
+    return '<span style="color:#dc2626;font-weight:700;">' + label + (i + 1) + ': <s>' + g + '</s> ✗</span>' +
+      (it.correct != null && it.correct !== '' ? ' → <strong style="color:#059669;">' + esc(String(it.correct)) + '</strong>' : '');
+  }).join(' · ');
+}
 function _evalCloze(corrects, a, pts) {
   const total = corrects.length || 1;
   // Firebase restituisce l'array con uno spazio vuoto come oggetto {1:"x"}
@@ -13353,12 +13386,12 @@ function _evalCloze(corrects, a, pts) {
   else if (typeof a === 'string' && a.trim() !== '') a = [a];
   if (!Array.isArray(a)) return {scorable:true,correct:false,points:pts,earnedPoints:0,correctCount:0,totalCount:total,detail:'Nessuna risposta.'};
   let n = 0;
-  corrects.forEach((corr, bi) => { if (_clozeAnswerMatches(a[bi], corr).ok) n++; });
+  const okC = corrects.map((corr, bi) => _clozeAnswerMatches(a[bi], corr).ok);
+  okC.forEach(ok => { if (ok) n++; });
   const earned = Math.round((n/total) * pts * 100) / 100;
   const allOk = n === total;
-  const detail = allOk ? '' : corrects.map((corr, bi) =>
-    'Sp.' + (bi+1) + ': ' + esc(a[bi]||'—') + ' → <strong>' + esc(_clozeFormatAlternatives(corr)) + '</strong>'
-  ).join(' · ');
+  const detail = allOk ? '' : _perItemDetail('Sp.', corrects.map((corr, bi) =>
+    ({ given: a[bi], ok: okC[bi], correct: _clozeFormatAlternatives(corr) })));
   return { scorable:true, correct:allOk, points:pts, earnedPoints:earned,
     partial: n > 0 && !allOk, correctCount: n, totalCount: total, detail };
 }
@@ -13368,6 +13401,7 @@ function _evalDragDrop(corrects, a, pts, sentences, unordered) {
   const normA = Array.isArray(a) ? a : (a && typeof a === 'object' ? fbArr(a) : null);
   if (!normA) return {scorable:true,correct:false,points:pts,earnedPoints:0,correctCount:0,totalCount:total,detail:'Nessuna risposta.'};
   let n = 0;
+  const okD = [];
   // UNORDERED MODE: quando unordered=true e sentences fornite, confronto per-gruppo come insieme
   // (ordine delle risposte all'interno di ogni riga/zona non conta — es. categorizzazione Isa/Kyle)
   if (unordered && sentences && sentences.length > 0) {
@@ -13382,15 +13416,24 @@ function _evalDragDrop(corrects, a, pts, sentences, unordered) {
         const idx = pool.indexOf(ans);
         if (idx >= 0) { n++; pool.splice(idx, 1); }
       });
+      // Esito per spazio (per i colori)
+      const pool2 = [...groupCorrects];
+      for (let j = blankIdx; j < blankIdx + blankCount; j++) {
+        const g = normA[j] ? String(normA[j]).toLowerCase() : null;
+        const p = g == null ? -1 : pool2.indexOf(g);
+        okD[j] = p >= 0;
+        if (p >= 0) pool2.splice(p, 1);
+      }
       blankIdx += blankCount;
     });
   } else {
     // POSITIONAL MODE (default): ogni blank deve corrispondere esattamente per posizione
-    corrects.forEach((ans, i) => { if ((normA[i]||'').toLowerCase() === String(ans||'').toLowerCase() && normA[i]) n++; });
+    corrects.forEach((ans, i) => { okD[i] = !!normA[i] && String(normA[i]).toLowerCase() === String(ans||'').toLowerCase(); if (okD[i]) n++; });
   }
   const earned = Math.round((n/total) * pts * 100) / 100;
   const allOk = n === total;
-  const detail = allOk ? '' : corrects.map((ans, i) => 'Sp.' + (i+1) + ': ' + esc(normA[i]||'—') + ' → <strong>' + esc(ans) + '</strong>').join(' · ');
+  const detail = allOk ? '' : _perItemDetail('Sp.', corrects.map((ans, i) =>
+    ({ given: normA[i], ok: !!okD[i], correct: (unordered && sentences && sentences.length) ? null : ans })));
   return { scorable:true, correct:allOk, points:pts, earnedPoints:earned,
     partial: n > 0 && !allOk, correctCount: n, totalCount: total, detail };
 }
@@ -13401,10 +13444,11 @@ function _evalReorder(sentences, a, pts) {
   if (!normA) return {scorable:true,correct:false,points:pts,earnedPoints:0,correctCount:0,totalCount:total,detail:'Nessuna risposta.'};
   let n = 0;
   // FIX: String() coercion per evitare crash se un elemento è oggetto/array annidato
-  sentences.forEach((s, i) => { if (String(normA[i]||'').trim().toLowerCase() === String(s||'').trim().toLowerCase() && normA[i]) n++; });
+  const okR = sentences.map((s, i) => !!normA[i] && String(normA[i]||'').trim().toLowerCase() === String(s||'').trim().toLowerCase());
+  okR.forEach(ok => { if (ok) n++; });
   const earned = Math.round((n/total) * pts * 100) / 100;
   const allOk = n === total;
-  const detail = allOk ? '' : sentences.map((s, i) => 'Fr.' + (i+1) + ': <strong>' + esc(s) + '</strong>').join(' · ');
+  const detail = allOk ? '' : _perItemDetail('Fr.', sentences.map((s, i) => ({ given: normA[i], ok: okR[i], correct: s })));
   return { scorable:true, correct:allOk, points:pts, earnedPoints:earned,
     partial: n > 0 && !allOk, correctCount: n, totalCount: total, detail };
 }
@@ -16537,7 +16581,9 @@ async function showStudentDone() {
       '<span style="font-size:11px;color:var(--muted);">🔍</span>' +
       '</div>' +
       '<div style="font-size:14px;font-weight:700;margin-bottom:3px;color:var(--text);">'+esc(_qText(q, a).replace(/\*\*/g,'').substring(0,80))+'</div>' +
-      '<div style="font-size:12px;color:var(--muted);">Risposta: <em>'+ans+'</em>'+(r.scorable&&!r.correct&&!aiPts?' · '+r.detail:'')+'</div>' +
+      ((r.scorable && !r.correct && !aiPts && r.detail && _qPerItemType(q))
+        ? '<div style="font-size:12px;color:var(--muted);line-height:1.6;">Risposta: '+r.detail+'</div>'
+        : '<div style="font-size:12px;color:var(--muted);">Risposta: <em>'+ans+'</em>'+(r.scorable&&!r.correct&&!aiPts?' · '+r.detail:'')+'</div>') +
       aiFeedbackHtml +
       '</div>';
   }).join('');
@@ -16577,6 +16623,10 @@ async function showStudentDone() {
     _showPlanRetryButton();
     return;
   }
+
+  // Esercitazione: si può rifare quante volte si vuole (i tentativi restano salvati)
+  document.getElementById('assigned-retry-box')?.remove();
+  if (mode === 'practice' && S.sessionRepeatable) _showAssignedRetryButton();
 
   // Chiama sempre: runAIAnalysis farà fallback a sharedApiKey se locale manca
   if (!S.aiAnalysisDone) runAIAnalysis(apiKey, questions, answers, pct, mode, false, _canDoNext);
@@ -24821,6 +24871,16 @@ function _qdRenderDetail(q, i, answer, opts) {
       '<div style="font-size:13px;font-weight:800;color:' + statusColor + ';margin-top:2px;">' + statusLabel + '</div>' +
     '</div></div>';
 
+  // Domande valutate in automatico: stesso corpo delle schede del docente e del PDF
+  // (frase compilata, ogni spazio/opzione verde o rosso, soluzione accanto agli errori).
+  // Prima qui c'era un unico riquadro "risposta data" tutto rosso anche con un solo errore.
+  if (r.scorable && typeof _pdfQuestionBlock === 'function') {
+    _ensurePdfqCss();
+    if (q.type === 'listening' && q.audioData)
+      h += '<audio controls style="margin-bottom:10px;width:100%;"><source src="' + q.audioData + '"></audio>';
+    h += '<div class="pq-live" style="margin-bottom:14px;padding:14px;background:white;border:1.5px solid var(--border);border-radius:10px;">' +
+      _pdfQuestionBlock(q, answer) + '</div>';
+  } else {
   // Testo consegna
   h += '<div style="margin-bottom:16px;padding:14px;background:white;border:1.5px solid var(--border);border-radius:10px;">' +
     '<div style="font-size:11px;font-weight:800;color:var(--muted);margin-bottom:6px;letter-spacing:0.3px;">CONSEGNA / DOMANDA</div>' +
@@ -24864,6 +24924,7 @@ function _qdRenderDetail(q, i, answer, opts) {
       '</div>';
   }
   h += '</div>';
+  }
 
   // Feedback AI se presente
   if (aiFb) {
