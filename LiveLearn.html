@@ -501,6 +501,7 @@ html.ll-zoom-off #ll-zoom { display:none; }
 .ic-opt:focus-visible { outline: 3px solid rgba(108,71,255,0.35); outline-offset: 2px; }
 .ic-opt.selected { background: var(--primary); border-color: var(--primary); color: #fff; box-shadow: 0 2px 8px rgba(108,71,255,0.35); }
 .ic-opt.selected::before { content: '✓ '; }
+.ic-opt.selected.ic-wrong::before { content: '✗ '; }
 .ic-opt:disabled { cursor: not-allowed; opacity: 0.65; }
 .ic-opt.selected:disabled { opacity: 0.9; }
 .vl1-mode .ic-opt { font-size: 120% !important; padding: 8px 16px; min-height: 44px; }
@@ -13393,7 +13394,7 @@ function _evalCloze(corrects, a, pts) {
   const detail = allOk ? '' : _perItemDetail('Sp.', corrects.map((corr, bi) =>
     ({ given: a[bi], ok: okC[bi], correct: _clozeFormatAlternatives(corr) })));
   return { scorable:true, correct:allOk, points:pts, earnedPoints:earned,
-    partial: n > 0 && !allOk, correctCount: n, totalCount: total, detail };
+    partial: n > 0 && !allOk, correctCount: n, totalCount: total, detail, okList: okC };
 }
 function _evalDragDrop(corrects, a, pts, sentences, unordered) {
   const total = corrects.length || 1;
@@ -13435,7 +13436,8 @@ function _evalDragDrop(corrects, a, pts, sentences, unordered) {
   const detail = allOk ? '' : _perItemDetail('Sp.', corrects.map((ans, i) =>
     ({ given: normA[i], ok: !!okD[i], correct: (unordered && sentences && sentences.length) ? null : ans })));
   return { scorable:true, correct:allOk, points:pts, earnedPoints:earned,
-    partial: n > 0 && !allOk, correctCount: n, totalCount: total, detail };
+    partial: n > 0 && !allOk, correctCount: n, totalCount: total, detail,
+    okList: corrects.map((_, i) => !!okD[i]) };
 }
 function _evalReorder(sentences, a, pts) {
   const total = sentences.length || 1;
@@ -14013,6 +14015,8 @@ function showFeedbackAndAdvance() {
   if (q.type==='multiple-choice' && !q.poll) {
     document.querySelectorAll('.option-btn').forEach((btn,i)=>{ if(i===q.correct) btn.classList.add('correct'); else if(i===a) btn.classList.add('wrong'); });
   }
+  // Cloze / drag & drop: ogni spazio verde o rosso, con la soluzione accanto agli errori
+  if (Array.isArray(r.okList)) { try { _colorBlanksAfterAnswer(q, r.okList); } catch(e) { console.warn('[feedback spazi]', e.message); } }
   const fbArea = document.getElementById('s-feedback-area');
   if (fbArea) {
     const isPartial = r.partial && typeof r.earnedPoints === 'number' && r.earnedPoints > 0;
@@ -14042,7 +14046,52 @@ function showFeedbackAndAdvance() {
     } catch(e) { console.warn('progress save error:', e); }
     const isLast = S.qIndex === S.activity.questions.length-1;
     showLeaderboard(isLast);
-  }, 2200);
+  }, (Array.isArray(r.okList) && !r.correct) ? 5000 : 2200); // con errori negli spazi: più tempo per leggere le soluzioni
+}
+
+// Esercitazione: dopo la risposta colora ogni spazio nell'esercizio stesso
+function _colorBlanksAfterAnswer(q, okList) {
+  const src = q.type === 'listening' ? (q.question || {}) : q;
+  const t = q.type === 'listening' ? (q.subtype || src.type) : q.type;
+  const G = '#059669', R = '#dc2626';
+  const paint = (el, ok) => {
+    el.style.background = ok ? '#d1fae5' : '#fee2e2';
+    el.style.borderColor = ok ? G : R;
+    el.style.color = ok ? '#065f46' : '#991b1b';
+    el.style.opacity = '1';
+  };
+  const fix = (el, txt) => {
+    if (txt == null || txt === '') return;
+    const tip = document.createElement('span');
+    tip.className = 'blank-fix';
+    tip.style.cssText = 'color:' + G + ';font-weight:800;font-size:.85em;margin:0 4px;white-space:nowrap;';
+    tip.textContent = '→ ' + txt;
+    el.insertAdjacentElement('afterend', tip);
+  };
+  okList.forEach((ok, b) => {
+    const corr = Array.isArray(src.answers) ? src.answers[b] : null;
+    if (t === 'cloze' || t === 'fill-blanks') {
+      const el = document.getElementById('blank-' + b);
+      if (!el) return;
+      const grp = el.closest('.ic-group');
+      if (grp) {
+        grp.querySelectorAll('.ic-opt').forEach(btn => {
+          const sel = btn.getAttribute('aria-pressed') === 'true';
+          const isC = corr != null && _clozeAnswerMatches(btn.dataset.val, corr).ok;
+          if (sel) { paint(btn, ok); if (!ok) btn.classList.add('ic-wrong'); }
+          else if (!ok && isC) { btn.style.borderColor = G; btn.style.color = '#065f46'; btn.style.boxShadow = 'inset 0 0 0 2px ' + G; btn.style.opacity = '1'; }
+        });
+      } else {
+        paint(el, ok);
+        if (!ok) fix(el, _clozeFormatAlternatives(corr));
+      }
+    } else if (t === 'drag-drop') {
+      const el = document.getElementById('ddblank-' + S.qIndex + '-' + b);
+      if (!el) return;
+      paint(el, ok);
+      if (!ok && !(src.unordered && Array.isArray(src.sentences) && src.sentences.length)) fix(el, corr);
+    }
+  });
 }
 
 // ── CLASSIFICA ANONIMA ───────────────────────────────────────────────────
