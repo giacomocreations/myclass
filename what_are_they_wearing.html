@@ -1765,6 +1765,7 @@ function saveGrade() {
   const nota = [tw('t-note').value.trim(), help.class ? '💡 con esempi' : ''].filter(Boolean).join(' · ');
   g.push({ name, cls: tw('t-class').value.trim(), voto: voto(tot), punti: tot, det: RUBRIC.map(r => rub[r.id]).join('-'), note: nota, date: new Date().toLocaleDateString('it-IT'), tempo: timerElapsed() ? fmtTime(timerElapsed()) : '' });
   storeGrades(g);
+  pushLive(true);   // salva il promemoria anche nella LIVE di MyClass
   twMsg(`✅ Salvato: ${name} → ${voto(tot)}`);
   help.class = false; applyHelp();   // prossimo alunno: esempi di nuovo nascosti
   resetRubric(); timerReset(); renderTeacherSaved(); newPicture();
@@ -1772,19 +1773,19 @@ function saveGrade() {
 // ── Punteggi anche nella griglia della LIVE di MyClass (myclass-live-link.js) ──
 // In MyClass la griglia si riconosce dai nomi delle voci; se si chiamano in
 // modo diverso vale la griglia scelta nella LIVE, se ha 4 voci da 4-4-4-3.
-function pushLive() {
+function pushLive(save) {
   if (!window.MyClassLive || !twOpen()) return;
   const scores = RUBRIC.map(r => rub[r.id] === undefined ? null : rub[r.id]);
   if (scores.every(v => v === null)) return;
   MyClassLive.send({ grid: { id: null, nome: 'What Are They Wearing? – Present Continuous', aree: RUBRIC.map(r => ({ nome: r.name, max: r.max })) },
-    scores, student: tw('t-name').value.trim(), cls: tw('t-class').value.trim() }, showLive);
+    scores, student: tw('t-name').value.trim(), cls: tw('t-class').value.trim(), save: !!save }, showLive);
 }
 function showLive(r) {
   if (!twOpen()) return;
   const el = tw('t-link');
   if (!r) { el.className = 'link'; el.textContent = '⚪ LIVE di MyClass non aperta: i punteggi restano solo qui.'; return; }
   el.className = 'link ' + (r.ok ? 'ok' : 'err');
-  el.textContent = r.ok ? `🔗 Nella LIVE di MyClass (${r.classe}): ${r.student}` : '⚠️ MyClass: ' + r.msg;
+  el.textContent = r.ok ? (r.saved ? `💾 Salvato in MyClass (${r.classe}): ${r.student} — promemoria ${String(r.voto10).replace('.', ',')}/10` : `🔗 Nella LIVE di MyClass (${r.classe}): ${r.student}`) : '⚠️ MyClass: ' + r.msg;
 }
 function copyGrades() {
   const g = loadGrades();

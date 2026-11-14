@@ -942,24 +942,25 @@ function saveGrade() {
   const g = loadGrades();
   g.push({ name, cls: tw('t-class').value.trim(), voto: voto(tot), punti: tot, det: GRID.aree.map((a, i) => rub[i]).join('-'), card: isChores() ? '–' : `${state.card.n}. ${state.card.title}`, tempo: `${t1} + ${t2}`, note: tw('t-note').value.trim() + (swapCap ? (tw('t-note').value.trim() ? ' · ' : '') + "scambio mustn't/don't have to" : ''), date: new Date().toLocaleDateString('it-IT') });
   storeGrades(g);
+  pushLive(true);   // salva il promemoria anche nella LIVE di MyClass
   twMsg(`✅ Salvato: ${name} → ${voto(tot)}`);
   Object.keys(partTimes).forEach(k => delete partTimes[k]);
   resetRubric(); renderTeacherSaved(); goPart1();
 }
 // ── Punteggi anche nella griglia della LIVE di MyClass (myclass-live-link.js) ──
-function pushLive() {
+function pushLive(save) {
   if (!window.MyClassLive || !twOpen()) return;
   const scores = GRID.aree.map((a, i) => rub[i] === undefined ? null : rub[i]);
   if (scores.every(v => v === null)) return;
   MyClassLive.send({ grid: { id: GRID.id, nome: GRID.nome, aree: GRID.aree.map(a => ({ nome: a.nome, max: a.max })) },
-    scores, student: tw('t-name').value.trim(), cls: tw('t-class').value.trim() }, showLive);
+    scores, student: tw('t-name').value.trim(), cls: tw('t-class').value.trim(), save: !!save }, showLive);
 }
 function showLive(r) {
   if (!twOpen()) return;
   const el = tw('t-link');
   if (!r) { el.className = 'link'; el.textContent = '⚪ LIVE di MyClass non aperta: i punteggi restano solo qui.'; return; }
   el.className = 'link ' + (r.ok ? 'ok' : 'err');
-  el.textContent = r.ok ? `🔗 Nella LIVE di MyClass (${r.classe}): ${r.student}` : '⚠️ MyClass: ' + r.msg;
+  el.textContent = r.ok ? (r.saved ? `💾 Salvato in MyClass (${r.classe}): ${r.student} — promemoria ${String(r.voto10).replace('.', ',')}/10` : `🔗 Nella LIVE di MyClass (${r.classe}): ${r.student}`) : '⚠️ MyClass: ' + r.msg;
 }
 function copyGrades() {
   const g = loadGrades();

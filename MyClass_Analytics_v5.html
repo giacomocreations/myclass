@@ -18297,6 +18297,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             };
 
             window.lvSelS=function(i){
+                // Promemoria dell'alunno precedente salvato in automatico (se ha punteggi nuovi)
+                if(LV._selIdx!=null&&LV._selIdx!==i&&!LV.coppiaMode){try{lvGrigliaSalva(LV._selIdx,{silent:true});}catch(e){console.warn('[LIVE] salvataggio automatico promemoria:',e);}}
+                LV._selIdx=i;
                 qa('.lv-scard').forEach((c,j)=>c.classList.toggle('sel',j===i));
                 const s=studentiDati[i],el=q('lv-sd');if(!el)return;
                 el.style.display='block';
@@ -18437,9 +18440,23 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 const totEl=q('lv-g-tot-'+si);
                 if(totEl)totEl.textContent=`Totale: ${tot}/${totMax} → voto: ${voto10}/10`;
             };
-            window.lvGrigliaSalva=function(si){
-                const G=LV.grigliaAttiva;if(!G){alert('Nessuna griglia attiva.');return;}
-                const punti=window._lvGrigliaPunteggi[si]||{};
+            // opts.silent: salvataggio automatico (cambio alunno, chiusura LIVE, "Salva e
+            // prossimo" della finestra docente): niente alert, solo un avviso breve; non
+            // salva se non c'è nessun punteggio, se la griglia è incompleta o se è già salvato.
+            window.lvGrigliaSalva=function(si,opts){
+                opts=opts||{};
+                const G=LV.grigliaAttiva;if(!G){if(!opts.silent)alert('Nessuna griglia attiva.');return {ok:false,msg:'nessuna griglia attiva'};}
+                const punti=window._lvGrigliaPunteggi?.[si]||{};
+                const date=G.aree.filter(a=>punti[a.nome]!==undefined).length;
+                if(!date){if(!opts.silent)alert('Scegli almeno un punteggio della griglia.');return {ok:false,msg:'nessun punteggio'};}
+                const mancano=G.aree.length-date;
+                if(mancano>0){
+                    if(opts.silent){const s0=studentiDati[si];if(s0&&!opts.noToast)_lvToast(`⚠️ ${s0.cognome} ${s0.nome}: griglia incompleta (${date}/${G.aree.length} aree) — promemoria NON salvato`,false);return {ok:false,incompleta:true,msg:`griglia incompleta (${date}/${G.aree.length} aree)`};}
+                    if(!confirm(`Mancano ${mancano} aree della griglia: verranno contate 0. Salvare comunque?`))return {ok:false,msg:'annullato'};
+                }
+                const firma=G.id+'|'+JSON.stringify(G.aree.map(a=>punti[a.nome]??null));
+                if(!window._lvSalvati)window._lvSalvati={};
+                if(opts.silent&&window._lvSalvati[si]===firma&&!opts.force){return {ok:true,gia:true};}
                 const tot=G.aree.reduce((s,a)=>s+(punti[a.nome]||0),0);
                 const totMax=G.aree.reduce((s,a)=>s+a.max,0);
                 let voto10;
@@ -18458,9 +18475,25 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                     const punteggiArr = G.aree.map(a => ({nome: a.nome, voto: punti[a.nome]??0, max: a.max}));
                     stObj.votiPromemoria.push({data:isoDate,grigliaId:G.id,grigliaNome:G.nome,voto10,tot,totMax,punteggi:punteggiArr,ts:Date.now()});
                     saveData();
+                    window._lvSalvati[si]=firma;
+                } else {
+                    if(!opts.silent)alert('Alunno non trovato nella classe: promemoria non salvato.');
+                    return {ok:false,msg:'alunno non trovato nella classe'};
                 }
-                alert(`✅ Promemoria salvato: ${s.cognome} ${s.nome} — ${voto10}/10 (${tot}/${totMax})`);
+                if(opts.silent){if(!opts.noToast)_lvToast(`💾 Promemoria salvato: ${s.cognome} ${s.nome} — ${voto10}/10 (${tot}/${totMax})`,true);}
+                else alert(`✅ Promemoria salvato: ${s.cognome} ${s.nome} — ${voto10}/10 (${tot}/${totMax})`);
+                return {ok:true,voto10,tot,totMax,student:`${s.cognome} ${s.nome}`};
             };
+            // Avviso breve in basso nella LIVE (al posto degli alert per i salvataggi automatici)
+            function _lvToast(msg,ok){
+                const t=document.createElement('div');
+                t.textContent=msg;
+                t.style.cssText='position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483600;max-width:90vw;padding:10px 16px;border-radius:10px;font:600 14px system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.35);'
+                    +(ok?'background:#065f46;color:#d1fae5;':'background:#7c2d12;color:#ffedd5;');
+                ov.appendChild(t);
+                setTimeout(()=>{t.style.transition='opacity .4s';t.style.opacity='0';setTimeout(()=>t.remove(),450);},3200);
+            }
+            window._lvToast=_lvToast;
 
             function lvRendScr(){
                 const el=q('lv-scr-list');if(!el)return;
@@ -19057,6 +19090,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 liveOverlayDestroy();
             };
             window.liveOverlayDestroy=function(){
+                if(LV._selIdx!=null&&!LV.coppiaMode){try{lvGrigliaSalva(LV._selIdx,{silent:true,noToast:true});}catch(e){}}
                 clearInterval(orologioInt);clearInterval(LV.tInt);clearInterval(autoSaveInt);clearInterval(lvScrInt);
                 if(LV._visHandler)document.removeEventListener('visibilitychange',LV._visHandler);
                 if(LV._keyHandler)document.removeEventListener('keydown',LV._keyHandler,true);
@@ -19141,6 +19175,12 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                     n++;
                 });
                 const st = studentiDati[si];
+                // "💾 Salva e prossimo" nella finestra docente: salva anche il promemoria
+                if (m.save) {
+                    const r = lvGrigliaSalva(si, { silent: true, force: true }) || {};
+                    reply(!!r.ok, r.ok ? '' : 'promemoria non salvato: ' + (r.msg || 'errore'), { student: `${st.cognome} ${st.nome}`, n, saved: !!r.ok, voto10: r.voto10, tot: r.tot, totMax: r.totMax });
+                    return;
+                }
                 reply(true, '', { student: `${st.cognome} ${st.nome}`, n });
             }
             try {
