@@ -26449,7 +26449,7 @@ ${sectionInstr}`;
                             </div>
                             ${_vdBloccoHtml(task, idx)}
                             ${mkDlgSection('📊 JSON storico','jsonOrale',idx,160)}
-                            ${mkDlgSection('💬 LiveLearn (feedback)','classroomText',idx,160)}
+                            ${(r.classroomText||'').trim() ? _vdBloccoHtml(task, idx, 'classroomText') : mkDlgSection('💬 LiveLearn (feedback)','classroomText',idx,160)}
                             ${mkDlgSection('📝 Argo (registro) — solo su richiesta','argoText',idx,70)}
                             <button class="agent-btn-edit" id="agentArgoBtn_${task.id}_${idx}" onclick="agentGenArgo('${task.id}',${idx})" style="font-size:11px;padding:3px 10px;">${(r.argoText||'').trim() ? '🔄 Rigenera Argo' : '📝 Genera Argo'}</button>
                         </div>`).join('');
@@ -26540,7 +26540,7 @@ ${sectionInstr}`;
                         ${task.audioFileName ? _agentPlayerHtml(task) : ''}
                         ${_vdBloccoHtml(task, null)}
                         ${mkSection('📊 JSON storico', 'jsonOrale', 200)}
-                        ${mkSection('💬 LiveLearn (feedback studente)', 'classroomText', 160)}
+                        ${(task.classroomText||'').trim() ? _vdBloccoHtml(task, null, 'classroomText') : mkSection('💬 LiveLearn (feedback studente)', 'classroomText', 160)}
                         ${mkSection('📝 Argo (registro) — solo su richiesta', 'argoText', 80)}
                         <div class="agent-task-actions" style="margin-top:4px;">
                             ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')">📥 Importa feedback</button>` : ''}
@@ -26862,7 +26862,8 @@ ${sectionInstr}`;
                     <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause sono attese per le slide — non penalizzare"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                     <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                 </div>
-                ${_agentClaudePanelHtml(task)}`;
+                ${_agentClaudePanelHtml(task)}
+                ${_agentVersioniHtml(task)}`;
             } else if (task.status === 'awaiting_speakers') {
                 // Card mappatura parlanti dialogo: trascrizione editabile + player + speaker→studente
                 const studOpts = (selSafe) => (task.studenti||[]).map(s =>
@@ -26908,7 +26909,8 @@ ${sectionInstr}`;
                         <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                         <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                     </div>
-                    ${_agentClaudePanelHtml(task)}`;
+                    ${_agentClaudePanelHtml(task)}
+                    ${_agentVersioniHtml(task)}`;
             } else if (task.status === 'processing') {
                 body = `<div style="color:#1565c0;font-size:13px;padding:8px 0;">
                     <span class="agent-spinner" style="border-top-color:#1565c0;border-color:rgba(0,0,0,0.1);"></span>
@@ -31645,7 +31647,9 @@ ${base}`, task, true);
         const task = agentTasks.find(t => t.id === taskId);
         const v = task?.versioniPrecedenti?.[idx];
         if (!v) return;
-        if (!confirm('Usare questa versione? Quella attuale non si perde: passa tra le versioni precedenti.')) return;
+        _agentKeepTranscriptDraft(task);
+        if (!confirm('Usare questa versione?' + ((task.valDocente || (task.results||[]).length) ? ' Quella attuale non si perde: passa tra le versioni precedenti.' : '') +
+            (task.status === 'awaiting_transcript' || task.status === 'awaiting_speakers' ? '\nLa trascrizione attuale viene considerata approvata.' : ''))) return;
         task.versioniPrecedenti = task.versioniPrecedenti.filter((_, i) => i !== idx);
         _agentSalvaVersione(task);
         if (task.type === 'valdialogo') task.results = JSON.parse(JSON.stringify(v.results || []));
@@ -31655,6 +31659,7 @@ ${base}`, task, true);
             task.content = v.valDocente;
         }
         task.aiProvider = v.provider; task.generatedAt = v.at;
+        task.transcriptToReview = false;
         if (task.status !== 'approved') task.status = 'ready';
         agentSaveTasks(agentTasks); agentRenderPanel();
     }
@@ -31672,7 +31677,7 @@ ${base}`, task, true);
                 ? (v.results||[]).map(r => `<div style="margin-top:6px;font-weight:800;color:#4527a0;">👤 ${e(r.studentName)}</div>` + blocco('Valutazione docente', r.valDocente) + blocco('Feedback alunno', r.classroomText)).join('')
                 : blocco('Valutazione docente', v.valDocente) + blocco('Feedback alunno', v.classroomText);
             return `<details style="margin-top:6px;border:1px solid #e0e4ff;border-radius:8px;background:#fafaff;">
-                <summary style="padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700;color:#3949ab;">${e(_AGENT_PROV_LBL[v.provider] || v.provider || 'AI')} · ${e(dt(v.at))} · ${voto}</summary>
+                <summary style="padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700;color:#3949ab;">${e(_AGENT_PROV_LBL[v.provider] || v.provider || 'AI')} · ${e(dt(v.at))} · ${voto}${v.nonUsata ? ' · <span style="color:#7b3fa0;">💾 salvata, non ancora usata</span>' : ''}</summary>
                 <div style="padding:4px 10px 10px;">${corpo}
                     ${task.status !== 'approved' ? `<button class="agent-btn-edit" style="margin-top:8px;" onclick="agentUsaVersione('${task.id}',${i})">↩ Usa questa versione</button>` : ''}
                 </div></details>`;
@@ -31700,7 +31705,7 @@ ${base}`, task, true);
     function _vdPunteggi(testo, griglia) {
         const aree = (griglia?.aree || []).map(a => {
             const esc = a.nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const m = String(testo || '').match(new RegExp(esc + '\\s*\\((\\d+(?:[.,]\\d+)?)\\s*\\/\\s*' + a.max + '\\)', 'i'));
+            const m = String(testo || '').match(new RegExp(esc + '\\s*(?:\\(\\s*|:\\s*)(\\d+(?:[.,]\\d+)?)\\s*\\/\\s*' + a.max + '(?!\\d)', 'i'));
             return { nome: a.nome, max: a.max, punti: m ? parseFloat(m[1].replace(',', '.')) : null };
         });
         const completi = aree.length > 0 && aree.every(a => a.punti != null);
@@ -31728,24 +31733,46 @@ ${base}`, task, true);
              .replace(/\n{3,}/g, '\n\n');
         return t.trim();
     }
-    function _vdBloccoHtml(task, idx) {
+    // Etichette del feedback in grassetto nell'anteprima
+    function _fbAnteprimaTesto(t) {
+        return String(t || '').replace(/^[ \t]*(I tuoi punteggi\s*:|Il tuo voto\s*:|Cosa è andato bene\s*:|Cosa puoi migliorare\s*:)/gim, '**$1**');
+    }
+    function _vdBloccoHtml(task, idx, campo = 'valDocente') {
         const tg = _vdTarget(task, idx);
-        if (!tg || !(tg.valDocente || '').trim()) return '';
+        const fb = campo === 'classroomText';
+        if (!tg || !(tg[campo] || '').trim()) return '';
         const sx = idx == null ? 'null' : idx;
-        return `<div style="margin:8px 0;border:1px solid #d1c4e9;border-radius:10px;background:#fff;">
-            <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:#f3eefe;border-radius:10px 10px 0 0;">
-                <span style="font-size:12px;font-weight:800;color:#4527a0;flex:1;">📝 Valutazione docente</span>
-                <button class="agent-btn-edit" style="font-size:11px;padding:3px 10px;" onclick="apriEditorValDocente('${task.id}',${sx})">✏️ Modifica e impagina</button>
+        const html = fb ? _analisiFormatHtml(_fbAnteprimaTesto(tg[campo])) : _analisiFormatHtml(_vdAnteprimaTesto(tg[campo]));
+        return `<div style="margin:8px 0;border:1px solid ${fb ? '#b2dfdb' : '#d1c4e9'};border-radius:10px;background:#fff;">
+            <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:${fb ? '#e0f2f1' : '#f3eefe'};border-radius:10px 10px 0 0;">
+                <span style="font-size:12px;font-weight:800;color:${fb ? '#00695c' : '#4527a0'};flex:1;">${fb ? '💬 Feedback all\'alunno (LiveLearn / StudentApp)' : '📝 Valutazione docente'}</span>
+                <button class="agent-btn-edit" style="font-size:11px;padding:3px 10px;" onclick="apriEditorValDocente('${task.id}',${sx},'${campo}')">✏️ Modifica e impagina</button>
             </div>
-            <div style="padding:8px 14px;max-height:280px;overflow:auto;font-size:13px;line-height:1.7;color:#222;">${_analisiFormatHtml(_vdAnteprimaTesto(tg.valDocente))}</div>
+            <div style="padding:8px 14px;max-height:280px;overflow:auto;font-size:13px;line-height:1.7;color:#222;">${html}</div>
         </div>`;
     }
+    // Impaginazione del feedback: etichette su righe proprie, una riga per area nei punteggi
+    function _fbSistema(text, griglia) {
+        let t = String(text || '').replace(/\r/g, '');
+        (griglia?.aree || []).forEach(a => {
+            const esc = a.nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            t = t.replace(new RegExp('[ \\t]*(' + esc + '\\s*:\\s*\\d+(?:[.,]\\d+)?\\s*\\/\\s*' + a.max + '(?!\\d))', 'gi'), '\n$1');
+        });
+        t = t.replace(/[ \t]*(Totale\s*:\s*\d)/gi, '\n$1')
+             .replace(/[ \t]*(I tuoi punteggi\s*:|Il tuo voto\s*:|Cosa è andato bene\s*:|Cosa puoi migliorare\s*:)/gi, '\n\n$1');
+        // "I tuoi punteggi:" su una riga da sola
+        t = t.replace(/(I tuoi punteggi\s*:)[ \t]*(?=\S)/gi, '$1\n');
+        // righe dei punteggi consecutive: niente righe vuote in mezzo; resto: max una riga vuota
+        t = t.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '');
+        return t.split('\n').map(r => r.replace(/[ \t]+$/, '')).join('\n').trim();
+    }
     let _vdEd = null;
-    function apriEditorValDocente(taskId, idx) {
+    function apriEditorValDocente(taskId, idx, campo = 'valDocente') {
         const task = agentTasks.find(t => t.id === taskId);
         const tg = task && _vdTarget(task, idx);
         if (!tg) return;
-        _vdEd = { taskId, idx: idx == null ? null : idx };
+        _vdEd = { taskId, idx: idx == null ? null : idx, campo };
+        const fb = campo === 'classroomText';
         const nome = tg.studentName || task.studentName || '';
         document.getElementById('vdEdOverlay')?.remove();
         const ov = document.createElement('div');
@@ -31755,12 +31782,14 @@ ${base}`, task, true);
         const approvato = task.status === 'approved';
         ov.innerHTML = `<div style="background:#fff;border-radius:14px;width:min(1200px,100%);height:min(92vh,900px);display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.35);">
             <div style="padding:12px 16px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <div style="font-size:16px;font-weight:800;color:#311b92;flex:1;">📝 Valutazione docente — ${nome} (${task.classe || ''}${task.sessionDate ? ', ' + task.sessionDate : ''})</div>
+                <div style="font-size:16px;font-weight:800;color:#311b92;flex:1;">${fb ? '💬 Feedback all\'alunno' : '📝 Valutazione docente'} — ${nome} (${task.classe || ''}${task.sessionDate ? ', ' + task.sessionDate : ''})</div>
                 <button onclick="_vdEdSistema()" style="${b}border:1px solid #b39ddb;background:#f3eefe;color:#4527a0;" title="Aree su righe proprie, riga vuota tra i paragrafi">✨ Sistema impaginazione</button>
                 <button onclick="document.getElementById('vdEdOverlay').remove()" style="${b}border:1px solid #e5e7eb;background:#fff;color:#555;">✕ Chiudi</button>
             </div>
             <div id="vdEdPunti" style="font-size:12px;padding:6px 16px 0;color:#374151;"></div>
-            <div style="font-size:11px;color:#6b7280;padding:2px 16px 0;">Ogni area su una riga da sola con il punteggio, es. <b>Grammatica — I modali (3/5)</b>, poi il commento · riga vuota tra i paragrafi · in fondo <b>Totale: X/Y — Voto: Z/10</b>. Il voto si ricalcola dai punteggi delle aree.</div>
+            <div style="font-size:11px;color:#6b7280;padding:2px 16px 0;">${fb
+                ? 'Lo legge l\'alunno. "I tuoi punteggi:" con una riga per area (es. <b>Grammatica — I modali: 3/5 — spiegazione</b>) e <b>Totale: X/Y — Voto: Z/10</b> · poi "Cosa è andato bene:" e "Cosa puoi migliorare:" · riga vuota tra i paragrafi. I punteggi devono coincidere con la valutazione docente.'
+                : 'Ogni area su una riga da sola con il punteggio, es. <b>Grammatica — I modali (3/5)</b>, poi il commento · riga vuota tra i paragrafi · in fondo <b>Totale: X/Y — Voto: Z/10</b>. Il voto si ricalcola dai punteggi delle aree.'}</div>
             <div style="flex:1;display:flex;gap:12px;padding:10px 16px;min-height:0;flex-wrap:wrap;">
                 <textarea id="vdEdTesto" oninput="_vdEdAnteprima()" style="flex:1 1 380px;min-height:220px;height:100%;resize:none;padding:10px;font-size:13px;line-height:1.6;border:1.5px solid #d1c4e9;border-radius:10px;font-family:inherit;box-sizing:border-box;"></textarea>
                 <div style="flex:1 1 380px;min-height:220px;height:100%;overflow:auto;border:1.5px solid #ede7f6;border-radius:10px;padding:12px 14px;background:#faf8ff;box-sizing:border-box;">
@@ -31774,7 +31803,7 @@ ${base}`, task, true);
                 ${approvato ? `<button onclick="_vdEdSalva(true)" style="${b}border:none;background:#7b3fa0;color:#fff;">💾 Salva e reimporta</button>` : ''}
             </div></div>`;
         document.body.appendChild(ov);
-        document.getElementById('vdEdTesto').value = tg.valDocente || '';
+        document.getElementById('vdEdTesto').value = tg[campo] || '';
         _vdEdAnteprima();
     }
     function _vdEdInfo() {
@@ -31783,16 +31812,30 @@ ${base}`, task, true);
         return { task, testo, p: task?.griglia ? _vdPunteggi(testo, task.griglia) : null };
     }
     function _vdEdAnteprima() {
-        const { testo, p } = _vdEdInfo();
-        const prev = document.getElementById('vdEdPrev'); if (prev) prev.innerHTML = _analisiFormatHtml(_vdAnteprimaTesto(testo));
+        const { task, testo, p } = _vdEdInfo();
+        const fb = _vdEd?.campo === 'classroomText';
+        const prev = document.getElementById('vdEdPrev'); if (prev) prev.innerHTML = _analisiFormatHtml(fb ? _fbAnteprimaTesto(testo) : _vdAnteprimaTesto(testo));
         const el = document.getElementById('vdEdPunti'); if (!el) return;
-        if (!p) { el.innerHTML = '<span style="color:#888;">Nessuna griglia: il voto non si ricalcola dal testo.</span>'; return; }
+        if (!p) { el.innerHTML = '<span style="color:#888;">' + (fb ? 'Nessuna griglia.' : 'Nessuna griglia: il voto non si ricalcola dal testo.') + '</span>'; return; }
+        if (fb) {
+            // Confronto con i punteggi della valutazione docente
+            const tg = _vdTarget(task, _vdEd.idx);
+            const ref = _vdPunteggi(tg?.valDocente || '', task.griglia);
+            el.innerHTML = '📊 Punteggi nel feedback: ' + p.aree.map((a, i) => {
+                const r = ref.aree[i]?.punti;
+                if (a.punti == null) return `<span style="color:#888;">${a.nome}: —</span>`;
+                const ok = r == null || r === a.punti;
+                return `<span style="${ok ? '' : 'color:#c62828;font-weight:700;'}">${a.nome} <b>${String(a.punti).replace('.', ',')}/${a.max}</b>${ok ? '' : ' (docente: ' + r + ')'}</span>`;
+            }).join(' · ');
+            return;
+        }
         const pz = p.aree.map(a => a.punti == null ? `<span style="color:#c62828;font-weight:700;">${a.nome}: punteggio non trovato</span>` : `${a.nome} <b>${String(a.punti).replace('.', ',')}/${a.max}</b>`).join(' · ');
         el.innerHTML = '📊 ' + pz + (p.completi ? ` → <b>Totale ${String(p.tot).replace('.', ',')}/${p.totMax} → voto ${String(p.voto).replace('.', ',')}</b>` : ' → <span style="color:#c62828;">completa i punteggi delle aree per ricalcolare il voto</span>');
     }
     function _vdEdSistema() {
         const ta = document.getElementById('vdEdTesto'); if (!ta) return;
-        ta.value = _vdSistema(ta.value, agentTasks.find(t => t.id === _vdEd?.taskId)?.griglia); _vdEdAnteprima();
+        const g = agentTasks.find(t => t.id === _vdEd?.taskId)?.griglia;
+        ta.value = _vdEd?.campo === 'classroomText' ? _fbSistema(ta.value, g) : _vdSistema(ta.value, g); _vdEdAnteprima();
         const m = document.getElementById('vdEdMsg'); if (m) m.textContent = '✨ Impaginazione sistemata: controlla e salva.';
     }
     async function _vdEdSalva(reimporta) {
@@ -31802,6 +31845,14 @@ ${base}`, task, true);
         if (!testo) { alert('Il testo è vuoto.'); return; }
         const tg = _vdTarget(task, _vdEd.idx);
         const msg = [];
+        if (_vdEd.campo === 'classroomText') {
+            tg.classroomText = testo;
+            agentSaveTasks(agentTasks);
+            document.getElementById('vdEdOverlay')?.remove();
+            agentRenderPanel();
+            if (reimporta) { if (task.type === 'valdialogo') await agentReapproveValDialogo(task.id); else await agentReapproveValOrale(task.id); }
+            return;
+        }
         if (p && p.completi && p.voto != null) {
             // riga del totale coerente con i punteggi delle aree
             testo = testo.replace(/(Totale\s*:\s*)\d+(?:[.,]\d+)?(\s*\/\s*\d+)(\s*[—–-]\s*Voto\s*:\s*)\d+(?:[.,]\d+)?/i, (m0, a, b, c) => a + p.tot + b + c + p.voto);
@@ -32046,6 +32097,36 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
         agentSaveTasks(agentTasks); agentBadgeUpdate(); agentRenderPanel();
     }
 
+    // Salva la risposta di Claude tra le versioni senza usarla (né approvare la trascrizione)
+    async function agentClaudeSalvaRisposta(taskId) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        _agentKeepTranscriptDraft(task);
+        const ta = document.getElementById(`claudeResp_${taskId}`);
+        const raw = (ta ? ta.value : (task.claudeRisposta || '')).trim();
+        if (!raw) { alert('Incolla prima la risposta di Claude.'); return; }
+        if (!(task.trascrizione||'').trim()) { alert('Manca la trascrizione.'); return; }
+        task.claudeRisposta = raw;
+        // Elaborazione su una copia: la scheda resta com'è
+        const tmp = JSON.parse(JSON.stringify(task));
+        tmp.versioniPrecedenti = [];
+        let v = null;
+        if (task.type === 'valdialogo') {
+            await agentEvaluateDialogo(tmp, { raw, solo: task.claudeSolo || null });
+            if (tmp.status === 'ready') v = { results: tmp.results };
+        } else {
+            await agentTaskValOrale(tmp, { raw });
+            if (tmp.status === 'ready') v = { valDocente: tmp.valDocente || '', classroomText: tmp.classroomText || '', argoText: '',
+                jsonOrale: tmp.jsonOrale || '', votoValue: tmp.votoValue ?? null, votoLabel: tmp.votoLabel || '' };
+        }
+        if (!v) { agentRenderPanel(); alert('Non riesco a leggere la risposta: ' + (tmp.error || 'mancano i blocchi VALUTAZIONE DOCENTE / CLASSROOM.')); return; }
+        Object.assign(v, { provider: 'claudechat', at: new Date().toISOString(), nonUsata: true });
+        task.versioniPrecedenti = [v, ...(task.versioniPrecedenti || [])].slice(0, 5);
+        task.claudeOpen = false; task.claudePrompt = ''; task.claudeRisposta = '';
+        agentSaveTasks(agentTasks); agentRenderPanel();
+        alert('💾 Risposta di Claude salvata tra le "🕘 Versioni precedenti" della scheda.\nNon ho approvato la trascrizione né cambiato la valutazione: quando vuoi, apri la versione e premi "↩ Usa questa versione".');
+    }
+
     function _agentClaudePanelHtml(task) {
         if (!task.claudeOpen) return '';
         const esc = x => String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -32064,6 +32145,7 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
                     placeholder="=== VALUTAZIONE DOCENTE ===&#10;...&#10;=== CLASSROOM ===&#10;...">${esc(task.claudeRisposta)}</textarea>
                 <div class="agent-task-actions" style="margin-top:6px;">
                     <button class="agent-btn-approve" onclick="agentClaudeUsaRisposta('${task.id}')">📥 Approva trascrizione e usa la risposta di Claude</button>
+                    <button class="agent-btn-edit" onclick="agentClaudeSalvaRisposta('${task.id}')" title="La risposta viene elaborata e salvata tra le versioni: non approva la trascrizione e non sostituisce nulla. Potrai usarla dopo.">💾 Salva la risposta senza usarla</button>
                     <button class="agent-btn-reject" onclick="agentClaudeChiudi('${task.id}')">✖ Chiudi</button>
                 </div>
             </div>`;
