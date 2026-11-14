@@ -30772,7 +30772,7 @@ Lunghezza ${aree.length ? '170-260' : '120-200'} parole in tutto. A parte ${aree
 - Aggrega le aree della griglia senza frammentare
 - PRIORITÀ ALLA COMUNICAZIONE: si tratta di ragazzi di scuola media${anno ? ` (${anno}ª media)` : ''}. Privilegia la capacità comunicativa complessiva rispetto alla correttezza grammaticale. Gli errori grammaticali che non ostacolano la comprensione non devono penalizzare il voto. Penalizza solo gli errori che compromettono la comunicazione o che sono lacune strutturali importanti per questo livello.
 ${pauseRule}
-- Se nella trascrizione compaiono errori di pronuncia segnalati [pron: ...], menziona solo quelli che ostacolano la comprensione; non elencare ogni singola imperfezione fonetica.`;
+- Errori di pronuncia segnalati [pron: ...]: se più sotto c'è la sezione PRONUNCE SEGNALATE, seguila (vanno riportati tutti); in ogni caso nel voto contano solo se ostacolano la comprensione.`;
 
             // 4. Contesto valutazione preliminare LIVE (riservato — non menzionare nel testo)
             const prelimContext = (() => {
@@ -30801,8 +30801,10 @@ ${trascrizioneSlice}
 ${REGOLE}
 Genera SOLO due blocchi (niente ARGO) con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ===\n${task.griglia ? ('Intestazione: ' + task.studentName + ', ' + task.classe + (task.unit ? ', ' + task.unit : '') + ', data ' + task.sessionDate + '.\n\n' + (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n' + '[analisi della prestazione in quest\'area basata sulla trascrizione]').join('\n\n') + '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma dei punteggi per area e Y il voto dalla tabella di conversione.') : ('Intestazione: nome, classe, data (' + task.sessionDate + '), unit, voto. Analisi per area' + (task.hasSlides ? ' (NON commentare le pause [slide])' : ' (includi fluency se rilevante: pause significative, ritmo)') + '. Analisi complessiva.')}\n=== CLASSROOM ===\n${_agentFeedbackAlunnoIstr(nomeBreve, false, task.griglia)}`;
 
-            if (opts.onlyPrompt) return prompt;
-            const raw = opts.raw != null ? String(opts.raw) : await agentCallAI(prompt, task, true);
+            // Prompt COMPLETO, identico per Gemini, Haiku e "Valuta con Claude"
+            const promptFull = prompt + _agentPromptExtra(task, opts.solo || null);
+            if (opts.onlyPrompt) return promptFull;
+            const raw = opts.raw != null ? String(opts.raw) : await agentCallAI(promptFull, task, true);
             if (opts.raw != null) task.aiProvider = 'claudechat';
             // Accetta anche titoli senza "===" su una riga da soli: "## VALUTAZIONE DOCENTE",
             // "**VALUTAZIONE DOCENTE**", "VALUTAZIONE DOCENTE:". Prima, se il modello non metteva
@@ -31331,11 +31333,10 @@ ${base}`, task, true);
     }
 
     // Costruisce il testo completo da incollare in Claude
-    async function _agentClaudeTesto(task) {
-        const base = task.type === 'valdialogo'
-            ? await agentEvaluateDialogo(task, { onlyPrompt: true, solo: task.claudeSolo || null })
-            : await agentTaskValOrale(task, { onlyPrompt: true });
-        if (!base) return '';
+    // Parti del prompt di valutazione orale comuni a TUTTI i modelli (Gemini, Haiku,
+    // Claude): pronunce segnalate, lezione del piano con l'attività, istruzioni di
+    // risposta. Si aggiungono in coda al prompt base in agentTaskValOrale / agentEvaluateDialogo.
+    function _agentPromptExtra(task, solo) {
         const lz = _agentLezioneDiTask(task);
         const att = _agentAttivitaLezione(lz);
         const lezTxt = lz
@@ -31356,17 +31357,27 @@ PRONUNCE SEGNALATE NELLA TRASCRIZIONE (forma pronunciata → forma corretta)
 ` + Object.entries(perNome).map(([nome, arr]) =>
                 (task.type === 'valdialogo' ? `${nome}:\n` : '') + arr.map(p => `- ${p.pron}${p.parola && !p.pron.toLowerCase().includes(p.parola.toLowerCase()) ? ` (parola: ${p.parola})` : ''}`).join('\n')
             ).join('\n') + `
-ISTRUZIONI SULLA PRONUNCIA (prevalgono sulla regola di menzionare solo gli errori che ostacolano la comprensione):
+ISTRUZIONI SULLA PRONUNCIA:
 - Nella VALUTAZIONE DOCENTE scrivi TUTTE le pronunce segnalate${task.type === 'valdialogo' ? ' di ciascun alunno' : ''}, nell'area della griglia più adatta (pronuncia/fluency) o in una riga "Pronuncia da correggere:", nel formato parola pronunciata → parola corretta.
 - Nel feedback CLASSROOM all'alunno${task.type === 'valdialogo' ? ' (solo le sue)' : ''} segnalale TUTTE in modo chiaro e incoraggiante, dentro "Cosa puoi migliorare:": per ogni parola scrivi come l'ha detta e come si dice correttamente (senza esercizi o attività). Se ce ne sono più di 6, scrivi le 6 più importanti e aggiungi che le altre le rivedrete insieme.
 - Le pronunce incidono sul voto solo se ostacolano la comprensione.`;
         }
-        return `${base}${pronTxt}
+        return `${pronTxt}
 
 ────────────────────────
 ${lezTxt}
 
-ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattamente quei marcatori (=== VALUTAZIONE DOCENTE === e === CLASSROOM ===${task.type === 'valdialogo' ? (task.claudeSolo ? ', preceduti da ### ALUNNO: Nome' : ', preceduti da ### ALUNNO: Nome per ogni alunno') : ''}), senza commenti prima o dopo: la risposta verrà incollata così com'è in MyClass.`;
+ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattamente quei marcatori (=== VALUTAZIONE DOCENTE === e === CLASSROOM ===${task.type === 'valdialogo' ? (solo ? ', preceduti da ### ALUNNO: Nome' : ', preceduti da ### ALUNNO: Nome per ogni alunno') : ''}), senza commenti prima o dopo: la risposta verrà incollata così com'è in MyClass.`;
+    }
+
+    // Testo da incollare in Claude: le stesse regole di sistema date a Gemini/Haiku
+    // (AGENT_SYSTEM) + lo stesso identico prompt completo.
+    async function _agentClaudeTesto(task) {
+        const full = task.type === 'valdialogo'
+            ? await agentEvaluateDialogo(task, { onlyPrompt: true, solo: task.claudeSolo || null })
+            : await agentTaskValOrale(task, { onlyPrompt: true });
+        if (!full) return '';
+        return `${AGENT_SYSTEM}\n\n────────────────────────\n${full}`;
     }
 
     async function _agentCopia(testo) {
@@ -31948,8 +31959,10 @@ VALUTA SOLO: ${target.map(s => s.studentName).join(', ')}. Gli altri parlanti ($
 Genera la valutazione SEPARATA per ${parziale ? "l'alunno indicato" : 'OGNI alunno'}, usando ESATTAMENTE questi marcatori e questo ordine, un blocco per alunno:
 ${blocchiPerAlunno}`;
 
-            if (opts.onlyPrompt) return prompt;
-            const raw = opts.raw != null ? String(opts.raw) : await agentCallAI(prompt, task, true);
+            // Prompt COMPLETO, identico per Gemini, Haiku e "Valuta con Claude"
+            const promptFull = prompt + _agentPromptExtra(task, opts.solo || null);
+            if (opts.onlyPrompt) return promptFull;
+            const raw = opts.raw != null ? String(opts.raw) : await agentCallAI(promptFull, task, true);
             if (opts.raw != null) task.aiProvider = 'claudechat';
 
             // Accetta anche titoli senza "===" su una riga da soli: "## VALUTAZIONE DOCENTE",
