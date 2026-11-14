@@ -4674,7 +4674,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             if(!data.griglie) data.griglie=[];
             if(_grigliaEditId){
                 const g=data.griglie.find(x=>x.id===_grigliaEditId);
-                if(g){g.nome=nome;g.aree=aree;if(gOrig?.conversione_voto)g.conversione_voto=gOrig.conversione_voto;}
+                if(g){g.nome=nome;g.aree=aree;if(gOrig?.conversione_voto)g.conversione_voto=gOrig.conversione_voto;if(gOrig?.guida)g.guida=gOrig.guida;}
             } else {
                 data.griglie.push({id:'g_'+Date.now(),nome,aree});
             }
@@ -4685,6 +4685,13 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             if(!confirm('Eliminare questa griglia?')) return;
             data.griglie=(data.griglie||[]).filter(g=>g.id!==id);
             saveData(); renderGriglieSettings();
+        }
+
+        // "guida" nel JSON può essere testo o un elenco di righe
+        function _grigliaGuidaTesto(v) {
+            if (!v) return null;
+            if (Array.isArray(v)) return v.map(x => String(x)).join('\n').trim() || null;
+            return String(v).trim() || null;
         }
 
         function grigliaImportaJSON(input) {
@@ -4702,6 +4709,8 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                         if(!data.griglie) data.griglie=[];
                         const obj={id:'g_'+Date.now()+'_'+n,nome,aree};
                         if(g.conversione_voto) obj.conversione_voto=g.conversione_voto;
+                        // Guida della verifica (struttura, chiave delle schede, regole): la usa l'agente per valutare
+                        const _gd=_grigliaGuidaTesto(g.guida); if(_gd) obj.guida=_gd;
                         data.griglie.push(obj); n++;
                     });
                     if(!n){alert('❌ Nessuna griglia valida trovata.');return;}
@@ -26664,7 +26673,7 @@ ${sectionInstr}`;
             const _gid = lezMatch.pianoDettagliato?.grigliaId || null;
             if (_gid) {
                 const g = (data.griglie||[]).find(g => g.id === _gid);
-                if (g) griglia = { id: g.id, nome: g.nome, aree: g.aree, conversione_voto: g.conversione_voto || null };
+                if (g) griglia = { id: g.id, nome: g.nome, aree: g.aree, conversione_voto: g.conversione_voto || null, guida: g.guida || null };
             }
         }
 
@@ -30345,7 +30354,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                     studentNome:   studente.nome,
                     studentSafe:   safe,
                     unit:          lezMatch?.unit || lezMatch?.titolo || '',
-                    griglia:       griglia ? { id: griglia.id, nome: griglia.nome, aree: griglia.aree, conversione_voto: griglia.conversione_voto || null } : null,
+                    griglia:       griglia ? { id: griglia.id, nome: griglia.nome, aree: griglia.aree, conversione_voto: griglia.conversione_voto || null, guida: griglia.guida || null } : null,
                     grigliaFonte:  griglia ? _gr.fonte : '',
                     audioFileName: audio.name,
                     audioHandle:   audio.handle,
@@ -30657,17 +30666,9 @@ Lunghezza ${aree.length ? '170-260' : '120-200'} parole in tutto. A parte ${aree
             let grigliaInfo = '';
             if (task.griglia) {
                 const totMax = (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0);
-                grigliaInfo = `\nGRIGLIA: ${task.griglia.nome}\n` +
-                    (task.griglia.aree||[]).map(a=>`- ${a.nome}: /${a.max}`).join('\n') +
-                    `\nTotale: /${totMax}`;
-                // Includi la tabella di conversione nel prompt così l'AI propone il voto corretto
-                if (task.griglia.conversione_voto && Object.keys(task.griglia.conversione_voto).length) {
-                    const convEntries = Object.entries(task.griglia.conversione_voto)
-                        .sort((a,b) => parseInt(a[0]) - parseInt(b[0]))
-                        .map(([k,v]) => `${k}pt→${v}`)
-                        .join(', ');
-                    grigliaInfo += `\nTABELLA CONVERSIONE (punti→voto/10): ${convEntries}`;
-                }
+                // Griglia COMPLETA: descrittori di ogni livello, tabella di conversione e guida
+                // della verifica. Prima arrivavano solo nomi delle aree e massimi.
+                grigliaInfo = `\n${_agentGrigliaTesto(task.griglia)}`;
             }
 
             // Helper: converte totale punti griglia → voto /10 usando la tabella reale
@@ -31177,7 +31178,7 @@ ${base}`, task, true);
         const r = _agentTrovaGrigliaOrale(task.classe, task.sessionDate, studenti);
         if (!r.griglia) return;
         const g = r.griglia;
-        task.griglia = { id: g.id, nome: g.nome, aree: g.aree, conversione_voto: g.conversione_voto || null };
+        task.griglia = { id: g.id, nome: g.nome, aree: g.aree, conversione_voto: g.conversione_voto || null, guida: g.guida || null };
         task.grigliaFonte = r.fonte;
         console.log(`[Agente] Griglia "${g.nome}" ricavata per ${task.studentName || task.id} — ${r.fonte}`);
     }
@@ -31225,6 +31226,14 @@ ${base}`, task, true);
             t += '\nTabella conversione punti → voto/10: ' + Object.entries(g.conversione_voto)
                 .sort((a,b) => parseFloat(a[0]) - parseFloat(b[0])).map(([k,v]) => `${k}→${v}`).join(', ');
         }
+        if ((g.aree||[]).some(a => Array.isArray(a.descrittori) && a.descrittori.length)) {
+            t += '\nCOME USARE LA GRIGLIA: per ogni area scegli il livello il cui descrittore corrisponde meglio a quello che si vede nella trascrizione; ogni errore si valuta solo nell\'area a cui appartiene (niente doppie penalizzazioni); se il docente non ha dato occasione di mostrare una competenza, non togliere punti per la sua assenza.';
+        }
+        // Guida della verifica (quella data agli alunni): presa anche dalla griglia salvata,
+        // così vale pure per le schede create prima che la guida fosse aggiunta.
+        const src = (data.griglie||[]).find(x => x.id === g.id);
+        const guida = g.guida || (src && src.guida);
+        if (guida) t += '\n\nGUIDA DELLA VERIFICA (è quella data agli alunni: struttura della prova, chiave delle schede, regole). Usala per capire cosa è stato chiesto e qual è la risposta attesa:\n' + guida;
         return t;
     }
 
@@ -31292,9 +31301,6 @@ ISTRUZIONI SULLA PRONUNCIA (prevalgono sulla regola di menzionare solo gli error
         return `${base}${pronTxt}
 
 ────────────────────────
-DATI COMPLETI DELLA GRIGLIA
-${_agentGrigliaTesto(task.griglia)}
-
 ${lezTxt}
 
 ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattamente quei marcatori (=== VALUTAZIONE DOCENTE === e === CLASSROOM ===${task.type === 'valdialogo' ? (task.claudeSolo ? ', preceduti da ### ALUNNO: Nome' : ', preceduti da ### ALUNNO: Nome per ogni alunno') : ''}), senza commenti prima o dopo: la risposta verrà incollata così com'è in MyClass.`;
@@ -31455,7 +31461,7 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
         task.grigliaCleared = false;
         const g = (data.griglie||[]).find(g => g.id === grigliaId);
         if (!g) return;
-        task.griglia = { id: g.id, nome: g.nome, aree: g.aree, conversione_voto: g.conversione_voto || null };
+        task.griglia = { id: g.id, nome: g.nome, aree: g.aree, conversione_voto: g.conversione_voto || null, guida: g.guida || null };
         task.grigliaFonte = 'scelta a mano';
         agentSaveTasks(agentTasks);
         agentRenderPanel();
@@ -31482,7 +31488,8 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
                     id:   gData.id || 'manual_' + Date.now(),
                     nome: gData.nome || file.name.replace(/\.json$/i,''),
                     aree: gData.aree,
-                    conversione_voto: gData.conversione_voto || null
+                    conversione_voto: gData.conversione_voto || null,
+                    guida: _grigliaGuidaTesto(gData.guida)
                 };
                 agentSaveTasks(agentTasks);
                 agentRenderPanel();
@@ -31832,14 +31839,7 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
             let grigliaInfo = '';
             if (task.griglia) {
                 const totMax = (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0);
-                grigliaInfo = `\nGRIGLIA (uguale per tutti): ${task.griglia.nome}\n` +
-                    (task.griglia.aree||[]).map(a=>`- ${a.nome}: /${a.max}`).join('\n') +
-                    `\nTotale: /${totMax}`;
-                if (task.griglia.conversione_voto && Object.keys(task.griglia.conversione_voto).length) {
-                    const convEntries = Object.entries(task.griglia.conversione_voto)
-                        .sort((a,b)=>parseInt(a[0])-parseInt(b[0])).map(([k,v])=>`${k}pt→${v}`).join(', ');
-                    grigliaInfo += `\nTABELLA CONVERSIONE (punti→voto/10): ${convEntries}`;
-                }
+                grigliaInfo = `\n(griglia uguale per tutti gli alunni del dialogo)\n${_agentGrigliaTesto(task.griglia)}`;
             }
 
             const annoMatch = (task.classe||'').match(/^([123])/);
@@ -32170,7 +32170,7 @@ ${blocchiPerAlunno}`;
         if (!gid) { task.griglia = null; agentSaveTasks(agentTasks); agentRenderPanel(); return; }
         const g = (data.griglie||[]).find(g => g.id === gid);
         if (!g) return;
-        task.griglia = { id:g.id, nome:g.nome, aree:g.aree, conversione_voto:g.conversione_voto||null };
+        task.griglia = { id: g.id, nome: g.nome, aree: g.aree, conversione_voto: g.conversione_voto || null, guida: g.guida || null };
         agentSaveTasks(agentTasks); agentRenderPanel();
     }
     function agentDialogoAddStudent(taskId) {
@@ -32307,7 +32307,7 @@ ${blocchiPerAlunno}`;
             id: tid, type: 'valdialogo',
             classe: classeNome,
             studenti,
-            griglia: griglia ? { id:griglia.id, nome:griglia.nome, aree:griglia.aree, conversione_voto:griglia.conversione_voto||null } : null,
+            griglia: griglia ? { id: griglia.id, nome: griglia.nome, aree: griglia.aree, conversione_voto: griglia.conversione_voto || null, guida: griglia.guida || null } : null,
             grigliaFonte,
             speakerMap,
             unit: unit || '',
