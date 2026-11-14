@@ -7220,6 +7220,8 @@ async function openLive(code, activityId, roster, silent) {
     }
     // Consegne (e voti cambiati) subito nelle cronologie personali
     try { _llQueueLiveHistorySync(code, responses); } catch(e) {}
+    // Tentativi vuoti (esercitazioni e compiti ripetibili): si tolgono da soli
+    try { _llAutoCleanAttempts(code, responses); } catch(e) {}
     const keys = Object.keys(responses);
     if (!keys.length) return;
     // Auto-switch from code-screen to teacher-live when first student joins
@@ -11172,6 +11174,86 @@ function renderStudentResultsTeacher(name, response) {
 
 // Tentativi ripetuti (esercitazioni e assegnate ripetibili): progressi sempre
 // visibili nella scheda dell'alunno e, a richiesta, le risposte dei precedenti.
+// ── Tentativi: cancellazione dal docente e pulizia dei tentativi vuoti ──────
+// response.attempts = consegne precedenti archiviate da "Rifai"; il record è
+// l'ultimo tentativo. Cancellando l'ultimo torna attuale il precedente.
+const _LL_ATT_EMPTY_MS = 2 * 60 * 60 * 1000;   // tentativo aperto e vuoto da 2 ore → si elimina
+function _llAttemptList(r) { return r && r.attempts ? (fbArr(r.attempts) || []).filter(Boolean) : []; }
+function _llAnsEmpty(a) {
+  const arr = Array.isArray(a) ? a : (a && typeof a === 'object' ? (fbArr(a) || []) : (a == null ? [] : [a]));
+  const piena = v => {
+    if (v === null || v === undefined) return false;
+    if (typeof v === 'string') return v.trim() !== '';
+    if (Array.isArray(v)) return v.some(piena);
+    if (typeof v === 'object') return Object.values(v).some(piena);
+    return true;
+  };
+  return !arr.some(piena);
+}
+// Campi del record per far tornare "attuale" un tentativo archiviato
+function _llAttemptRestore(t) {
+  return {
+    answers: t.answers || null, score: t.score != null ? t.score : 0, submittedAt: t.submittedAt || null,
+    status: 'submitted', aiScores: t.aiScores || null, aiFeedbacks: t.aiFeedbacks || null,
+    manualScores: t.manualScores || null, questionTimes: t.questionTimes || null,
+    joinedAt: t.joinedAt || null, studentVersion: t.studentVersion || 'originale',
+    retryStartedAt: null, aiScoringPending: null, forcedSubmit: null, forcedByTeacher: null
+  };
+}
+async function llAttemptDelete(which) {
+  const code = S.liveCode, key = S.selectedStudent;
+  if (!db || !code || !key) return;
+  const ref = db.ref('livelearn/responses/' + code + '/' + key);
+  const r = (await ref.get()).val() || {};
+  const list = _llAttemptList(r);
+  if (which === 'cur') {
+    if (!list.length) { alert('È l\'unico tentativo: per toglierlo usa 🗑 Elimina (toglie l\'alunno dalla sessione).'); return; }
+    const prev = list[list.length - 1];
+    if (!confirm('Eliminare l\'ultimo tentativo (' + (list.length + 1) + '°)?\n\nTorna attuale il ' + list.length + '° tentativo' + (prev.pct != null ? ' (' + prev.pct + '%)' : '') + '.')) return;
+    list.pop();
+    await ref.update(Object.assign(_llAttemptRestore(prev), { attempts: list.length ? list : null }));
+  } else {
+    const t = list[which];
+    if (!t) return;
+    if (!confirm('Eliminare il ' + (which + 1) + '° tentativo' + (t.pct != null ? ' (' + t.pct + '%)' : '') + '? Non si può annullare.')) return;
+    list.splice(which, 1);
+    await ref.update({ attempts: list.length ? list : null });
+  }
+  try { await _llSyncStudentHistory(code, key, null); } catch (e) { console.warn('[tentativi] cronologia:', e.message); }
+  if (typeof toast === 'function') toast('🗑 Tentativo eliminato');
+  selectStudent(key);
+}
+// Pulizia automatica (pannello docente della sessione): toglie i tentativi
+// archiviati senza nessuna risposta e, se l'ultimo tentativo è stato aperto ma
+// lasciato vuoto da più di 2 ore, rimette attuale il tentativo precedente.
+const _llAttCleanAt = {};
+async function _llAutoCleanAttempts(code, responses) {
+  if (!db || !code || !responses) return;
+  const now = Date.now();
+  for (const [key, r] of Object.entries(responses)) {
+    if (!r || r.removed || !r.attempts) continue;
+    const k = code + '/' + key;
+    if (_llAttCleanAt[k] && now - _llAttCleanAt[k] < 10 * 60 * 1000) continue;
+    _llAttCleanAt[k] = now;
+    const list = _llAttemptList(r);
+    const pieni = list.filter(t => !_llAnsEmpty(t.answers));
+    const upd = {};
+    if (pieni.length !== list.length) upd.attempts = pieni.length ? pieni : null;
+    const apertoVuoto = !r.submittedAt && _llAnsEmpty(r.answers) && pieni.length &&
+      now - (r.retryStartedAt || r.joinedAt || now) > _LL_ATT_EMPTY_MS;
+    if (apertoVuoto) {
+      const prev = pieni[pieni.length - 1];
+      Object.assign(upd, _llAttemptRestore(prev), { attempts: pieni.length > 1 ? pieni.slice(0, -1) : null });
+    }
+    if (!Object.keys(upd).length) continue;
+    try {
+      await db.ref('livelearn/responses/' + code + '/' + key).update(upd);
+      console.log('[tentativi] pulizia automatica', key, apertoVuoto ? '(ultimo tentativo vuoto tolto)' : '(tentativi vuoti tolti)');
+      if (apertoVuoto) { try { await _llSyncStudentHistory(code, key, null, { onlyIfChanged: true }); } catch (e) {} }
+    } catch (e) { console.warn('[tentativi] pulizia automatica:', e.message); }
+  }
+}
+
 function _attemptsTeacherBox(response, studentKey, displayName, score, maxPts, submitted) {
   try {
     if (!response || !response.attempts) return '';
@@ -11179,7 +11261,13 @@ function _attemptsTeacherBox(response, studentKey, displayName, score, maxPts, s
       { score, maxPts, submittedAt: submitted ? response.submittedAt : null });
     if (!h.summary) return '';
     _ensurePdfqCss();
-    return '<div style="margin-bottom:16px;">' + h.summary +
+    const _att = _llAttemptList(response);
+    const _bs = 'font-size:11px;padding:3px 9px;border-radius:8px;border:1px solid #fca5a5;background:#fff;color:#b91c1c;cursor:pointer;font-weight:700;margin:2px 4px 2px 0;';
+    const delBtns = '<div style="margin:-8px 0 12px;font-size:12px;color:#555;">🗑 Elimina un tentativo: ' +
+      _att.map((t, i) => '<button style="' + _bs + '" onclick="llAttemptDelete(' + i + ')" title="Elimina il ' + (i + 1) + '° tentativo">' + (i + 1) + '°' + (t.pct != null ? ' · ' + t.pct + '%' : '') + '</button>').join('') +
+      '<button style="' + _bs + '" onclick="llAttemptDelete(\'cur\')" title="Elimina l\'ultimo tentativo: torna attuale il precedente">' + (_att.length + 1) + '° (ultimo)</button>' +
+      '<div style="font-size:11px;color:#888;margin-top:2px;">I tentativi aperti e lasciati senza risposte per più di 2 ore si eliminano da soli.</div></div>';
+    return '<div style="margin-bottom:16px;">' + h.summary + delBtns +
       (submitted ? '' : '<div style="font-size:12px;color:#5b21b6;margin:-8px 0 10px;">⏳ L\'ultimo tentativo è in corso: le schede qui sotto mostrano le risposte date finora.</div>') +
       (h.detail ? '<details style="margin-top:-6px;"><summary style="cursor:pointer;font-size:13px;font-weight:800;color:#5b21b6;padding:4px 0;">👁 Risposte dei tentativi precedenti</summary>' +
         '<div class="pq-live" style="margin-top:8px;">' + h.detail + '</div></details>' : '') +
