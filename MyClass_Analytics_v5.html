@@ -35808,8 +35808,12 @@ FORMATO: solo un array JSON di 3 oggetti, nessun testo fuori.
     // Toglie nome e cognome dell'alunno da un testo diretto a Claude (anche con lettere accentate)
     function _ppAnonymize(text, studente) {
         let t = String(text || '');
-        const parts = [`${studente?.cognome || ''} ${studente?.nome || ''}`, `${studente?.nome || ''} ${studente?.cognome || ''}`, studente?.cognome, studente?.nome]
+        const cap = x => x.toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());   // "ROSSI" / "rossi" → "Rossi"
+        const words = x => String(x || '').split(/\s+/);   // nomi doppi: "Gabriele Maria" → anche "Gabriele"
+        const base = [`${studente?.cognome || ''} ${studente?.nome || ''}`, `${studente?.nome || ''} ${studente?.cognome || ''}`, studente?.cognome, studente?.nome,
+                      ...words(studente?.nome)]   // solo il nome: le particelle del cognome ("Del", "De") sono parole comuni
             .map(x => String(x || '').trim()).filter(x => x.length > 2);
+        const parts = [...new Set(base.flatMap(x => [x, cap(x)]))].sort((a, b) => b.length - a.length);   // prima i più lunghi
         for (const p of parts) {
             const re = new RegExp('(^|[^\\p{L}])(' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')(?![\\p{L}])', 'gu');   // maiuscole come nei dati: "Del" cognome ≠ "del" preposizione
             t = t.replace(re, '$1[NOME]');
@@ -35964,6 +35968,24 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
         const stu = _ppDraftStudent(d);
         if (!stu) throw new Error('studente non trovato nei dati');
         const verInfo = await _ppDetectTestVersion(stu, d.studentSafe, d.unit);
+        // Piano solo orale o scritto + orale: stessa struttura del piano originale (speaking al microfono)
+        if (d.soloOrale || d.misto) {
+            const S = await _ppDraftSpeakingSetup(d, stu, verInfo);
+            let e;
+            if (d.soloOrale) {
+                e = _ppBuildSpeakingExportEntry({ studentSafe: d.studentSafe, studentName: d.studentName, classeNome: d.classeNome,
+                    unit: d.unit, prefix: d.prefix, voto: d.voto, code: d.code,
+                    spec: S.challengeO ? { ...S.spec, nGuided: 5, nFree: 0, challenge: true } : S.spec });
+            } else {
+                e = await _ppBuildExportEntry({ studente: stu, studentSafe: d.studentSafe, studentName: d.studentName, classeNome: d.classeNome,
+                    unit: d.unit, prefix: S.pS, voto: S.votoS, code: d.code, errorDetails: S.errS, tagBreakdown: d.tagBreakdown || {}, verInfo, nQ: 8,
+                    speaking: S.challengeO ? { ...S.spec, nGuided: 4, nFree: 0, challenge: true } : S.spec });
+                Object.assign(e.local, { prefix: d.prefix, voto: d.voto, misto: d.misto });
+            }
+            e.local.draftId = d.id;
+            if (S.challengeO) e.local.sfidaOrale = _ppOralChallengeKey(d.classeNome, d.unit);
+            return e;
+        }
         const errorDetails = await _ppPlanErrorDetails(stu, d.studentSafe, d.classeNome, d.unit, d.prefix);
         const challenge = d.prefix === 'APP' && _ppChallengeEligible(stu, d.unit, verInfo);
         return _ppBuildExportEntry({ studente: stu, studentSafe: d.studentSafe, studentName: d.studentName, classeNome: d.classeNome,
@@ -36046,7 +36068,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             const L = manifest[al.ref];
             const stu = _ppFindStudent(L.classeNome, L.studentSafe);
             if (!stu) continue;
-            for (const k of ['consegna_quiz', 'consegna_listening', 'consegna_testo']) {
+            for (const k of ['consegna_quiz', 'consegna_listening', 'consegna_testo', 'consegna_speaking_esercizi']) {
                 if (typeof al[k] === 'string') al[k] = _ppAnonymize(al[k], stu);
             }
         }
@@ -37285,6 +37307,22 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             : `✅ Inviate tutte le ${sent} attività della classe ${classeNome}.`);
     }
 
+    // Bozza solo orale / scritto + orale: parametri dello speaking come alla creazione
+    // (_ppOralSpeakingPlan: 6 guidati + 2 liberi = 8; _ppMixedPlan: 8 scritte + 5 guidati + 2 liberi)
+    async function _ppDraftSpeakingSetup(d, stu, verInfo) {
+        const gO = _ppLatestGrade(stu, 'orale', d.unit);
+        const challengeO = _ppOralChallengeEligible(stu, d.unit, verInfo);
+        if (d.soloOrale) {
+            return { challengeO, spec: { unit: d.unit, classeNome: d.classeNome, voto: d.voto, prefix: d.prefix, focus: _ppOralNotes(gO), orale: true, nGuided: 6, nFree: 2, verInfo } };
+        }
+        const gS = _ppLatestGrade(stu, 'scritto', d.unit);
+        const votoS = d.misto.votoScritto ?? gS?.voto ?? d.voto, votoO = d.misto.votoOrale ?? gO?.voto ?? d.voto;
+        const pS = d.misto.scritto || _ppFascia(votoS), pO = d.misto.orale || _ppFascia(votoO);
+        const errS = await _ppPlanErrorDetails(stu, d.studentSafe, d.classeNome, d.unit, pS);
+        return { challengeO, pS, votoS, errS,
+                 spec: { unit: d.unit, classeNome: d.classeNome, voto: votoO, prefix: pO, focus: _ppOralNotes(gO), orale: true, nGuided: 5, nFree: 2, verInfo } };
+    }
+
     // Alunno della bozza nei dati locali (prima nella sua classe, poi ovunque)
     function _ppDraftStudent(d) {
         const match = s => _mcToSafe(`${s.cognome} ${s.nome}`) === d.studentSafe || _mcToSafe(`${s.nome} ${s.cognome}`) === d.studentSafe;
@@ -37325,6 +37363,29 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
     // Rigenera una bozza con il generatore già impostato (_ppSetGenProvider). Lancia in caso di errore.
     async function _ppRegenDraftCore(d, stu) {
         const verInfo = await _ppDetectTestVersion(stu, d.studentSafe, d.unit);
+        if (d.soloOrale || d.misto) {
+            const S = await _ppDraftSpeakingSetup(d, stu, verInfo);
+            let activity;
+            if (d.soloOrale) {
+                const qs = await _pianoSpeakingWithChallenge(S.spec, S.challengeO, d.classeNome, d.unit, 8);
+                if (!qs.length) throw new Error('generazione esercizi di speaking fallita');
+                activity = { title: '🎤 Speaking — ' + d.unit, questions: qs, ...(S.challengeO ? { challengeOrale: true } : {}) };
+            } else {
+                activity = await _pianoGenerateActivity(stu, S.votoS, d.unit, S.pS, S.errS, d.tagBreakdown || {}, d.classeNome, verInfo, { nQ: 8 });
+                if (!activity) throw new Error('generazione della parte scritta fallita (errore AI)');
+                const spk = await _pianoSpeakingWithChallenge(S.spec, S.challengeO, d.classeNome, d.unit, 7);
+                if (!spk.length) throw new Error('generazione esercizi di speaking fallita');
+                if (S.challengeO) activity.challengeOrale = true;
+                activity.questions = [...activity.questions, ...spk.map(q => (verInfo ? { ...q, dsaLargeText: true } : q))];
+                activity.misto = d.misto;
+            }
+            d.activity = activity;
+            d.source = _ppGenProvider;
+            if (verInfo) d.versione = verInfo.label; else delete d.versione;
+            d.regenAt = Date.now();
+            _ppSavDraftScritto();
+            return { activity, verInfo };
+        }
         const errorDetails = await _ppPlanErrorDetails(stu, d.studentSafe, d.classeNome, d.unit, d.prefix);
         const challenge = d.prefix === 'APP' && _ppChallengeEligible(stu, d.unit, verInfo);
         const activity = await _pianoGenerateActivity(stu, d.voto, d.unit, d.prefix, errorDetails, d.tagBreakdown || {}, d.classeNome, verInfo, { challenge, ...(d.dopoRecupero ? { nQ: 10, soloErrori: true } : {}) });
