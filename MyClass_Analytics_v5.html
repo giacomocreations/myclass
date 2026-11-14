@@ -22499,6 +22499,32 @@ NON dare indicazioni su cosa ripassare, esercizi da fare o percorsi di recupero/
 Chi ha RECUPERO_FAST: un solo feedback che tiene conto di entrambe le prove. Nei punti di forza indica anche cosa e' migliorato nel recupero rispetto alla prima prova (aree e strutture, con esempi dalla tabella del recupero); nei punti deboli distingui gli errori corretti nel recupero da quelli rimasti. Nomina le due prove come "la prima prova" e "il recupero".
 Lunghezza 140-200 parole per alunno (fino a 260 per chi ha fatto il recupero). Frasi complete, niente elenchi puntati, niente grassetti, niente simboli.`;
 
+    // ── Verifiche scritte: istruzioni UNICHE per tutte le strade (generazione, "Rigenera
+    // mancanti", rigenera sezione di un alunno) e per tutti i modelli (Gemini, Haiku,
+    // Claude Code tramite "Esporta per Claude"), così le valutazioni seguono le stesse regole.
+    const AGENT_VS_REGOLE = `REGOLE AGGIUNTIVE (già nel tuo ruolo, solo promemoria):
+- Menziona un'area solo se presente nel test
+- L'esercizio sulle funzioni comunicative è solitamente uno solo: non generalizzare
+- Aggrega i tag: grammatica aggregata, lessico aggregato, funzioni aggregate, listening aggregato
+- Una risposta con tick ma 0 punti = accettata per obiettivo non pertinente
+- NON inventare numeri: quante domande/risposte giuste o totali ci sono (soprattutto nel LISTENING) si ricava SOLO dalla tabella per-domanda ([elementi corretti k/n], punti x/ypt). Se il dato non c'e', parla solo della percentuale per area.
+- RECUPERO FAST — se un alunno ha RECUPERO_FAST nei risultati ha svolto due prove: la prima prova (pct e aree nella riga dei risultati, risposte in PROVA ORIGINALE) e il recupero (percentuali per area e risposte in RECUPERO FAST). Valuta ENTRAMBE e confrontale area per area: cosa è migliorato, quali errori sono stati corretti, quali sono rimasti. Il voto è quello indicato nella riga (se c'è VOTO_CAP:6, è 6 indipendentemente dal punteggio del recupero): non ricalcolarlo.
+SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55-58%=5.5 | 59%=6- | 60-61%=6 | 62-64%=6+ | 65-68%=6.5 | 69%=7- | 70-71%=7 | 72-74%=7+ | 75-78%=7.5 | 79%=8- | 80-81%=8 | 82-84%=8+ | 85-88%=8.5 | 89%=9- | 90-91%=9 | 92-94%=9+ | 95-98%=9.5 | 99%=10- | 100%=10`;
+    const AGENT_VS_DOC_INSTR = `Poi la scheda strutturata:
+- Prima riga: classe, data, attivita, accuratezza percentuale, voto.
+- Analisi per area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING, READING, WRITING se presenti): 2-3 frasi per area. Se hai la tabella per-domanda, cita gli errori specifici con la risposta data e quella attesa (es. Q3: "what did you see" invece di "Did you see"). Spiega l'errore grammaticale sottostante.
+- Tempi di risposta: commenta avgTime_* e tempoTotale se disponibili. Tempo alto + errore = incertezza sulla struttura; tempo basso + errore = risposta superficiale/impulsiva. Segnala le domande con tempo anomalo (>3min o <10s con errore).
+- Analisi complessiva: 3-4 frasi su pattern di errore ricorrente (es. "confusione sistematica tra Do/Does e Did nelle Wh-questions"), punti di forza, priorita di recupero, suggerimento metodologico concreto.
+- Solo per chi ha RECUPERO_FAST: dopo l'analisi della prima prova aggiungi la parte "Recupero (T1: x%, T2: y%)": analisi per area del recupero con gli errori specifici dalla tabella del recupero, poi un confronto con la prima prova (aree migliorate, errori corretti, errori persistenti) e una valutazione globale che spiega il voto finale.
+Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiungere separatori tra schede oltre all'header.`;
+    function _agentVsTipoSessione(task) {
+        return task.isRecupero
+            ? '\nTIPO SESSIONE: RECUPERO — questa è la prova di recupero che l\'alunno ha svolto dopo aver ottenuto un voto insufficiente. Valuta il livello raggiunto e, nella sezione CLASSROOM, menziona esplicitamente che si tratta del recupero e indica nei punti di forza i miglioramenti dimostrati.'
+            : task.isConsolidamento
+            ? '\nTIPO SESSIONE: CONSOLIDAMENTO — questa è un\'attività di rinforzo per studenti che hanno già raggiunto la sufficienza. Valorizza il consolidamento delle competenze raggiunte.'
+            : '';
+    }
+
     // Cooldown quota Gemini — solo in memoria, si azzera al ricaricamento pagina
     let _geminiQuotaUntil = 0;
     function _geminiIsQuotaOk()  { return Date.now() > _geminiQuotaUntil; }
@@ -25096,9 +25122,8 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
             const sectionInstrs = [];
             if (bNeedsDoc) {
                 sectionInstrs.push(`=== VALUTAZIONE DOCENTE ===
-Per ogni alunno usa OBBLIGATORIAMENTE: --- ALUNNO: Nome Cognome ---
-Poi scheda strutturata: prima riga (classe/data/attivita/pct/voto), analisi per area (GRAMMAR/VOCABULARY/FUNCTIONS/LISTENING/READING/WRITING se presenti: 2-3 frasi con errori specifici dalla tabella per-domanda), tempi di risposta (commenta avgTime_*/tempoTotale), analisi complessiva (3-4 frasi su pattern errori, punti di forza, priorita recupero, suggerimento metodologico). Min 12-14 righe per alunno.
-Solo per chi ha RECUPERO_FAST: aggiungi la parte "Recupero (T1: x%, T2: y%)" con analisi per area del recupero, confronto con la prima prova (aree migliorate, errori corretti, errori persistenti) e valutazione globale che spiega il voto finale.`);
+Per ogni alunno usa OBBLIGATORIAMENTE questo header (sostituisci con il nome reale): --- ALUNNO: Nome Cognome ---
+${AGENT_VS_DOC_INSTR}`);
             }
             if (bNeedsArgo) {
                 sectionInstrs.push(`=== ARGO ===
@@ -25107,15 +25132,13 @@ Poi 2-3 frasi valutative sintetiche. Max 300 caratteri per alunno.`);
             }
             if (bNeedsCls) {
                 sectionInstrs.push(`=== CLASSROOM ===
-Per ogni alunno usa OBBLIGATORIAMENTE: --- ALUNNO: Nome Cognome ---
-${AGENT_LL_FEEDBACK_INSTR}
-Chi ha fatto recupero: menziona il miglioramento rispetto alla prima prova.`);
+Per ogni alunno usa OBBLIGATORIAMENTE questo header (sostituisci con il nome reale): --- ALUNNO: Nome Cognome ---
+${AGENT_LL_FEEDBACK_INSTR}`);
             }
 
-            const prompt = `CLASSE: ${classe} | DATA: ${sessionDate} | ATTIVITA: ${unit || 'N/D'}
-${REGOLE}
-- RECUPERO FAST: chi ha RECUPERO_FAST ha svolto la prima prova e il recupero: valuta entrambe e confrontale. Il voto indicato è già quello finale.
-RISULTATI (non ricalcolare, usa le percentuali indicate):
+            const prompt = `CLASSE: ${classe} | DATA: ${sessionDate} | ATTIVITA: ${unit || 'N/D'}${_agentVsTipoSessione(task)}
+${AGENT_VS_REGOLE}
+RISULTATI AGGREGATI (usa l'accuracy indicata, non ricalcolare):
 ${resultLines}${detailSection}
 Genera SOLO i blocchi seguenti con i marcatori esatti:
 ${sectionInstrs.join('\n')}`;
@@ -25194,25 +25217,19 @@ ${sectionInstrs.join('\n')}`;
         }
         if (r.recoveryDetailLines && field !== 'argo') detailBlock += `\nRISPOSTE PER DOMANDA — RECUPERO FAST:\n${r.recoveryDetailLines}\n`;
 
-        const REGOLE_EXTRA = `REGOLE AGGIUNTIVE:
-- Menziona un'area solo se presente nel test
-- Aggrega i tag: grammatica aggregata, lessico aggregato, funzioni aggregate, listening aggregato
-- Una risposta con tick ma 0 punti = accettata per obiettivo non pertinente
-- NON inventare numeri: quante domande/risposte giuste o totali ci sono (soprattutto nel LISTENING) si ricava SOLO dalla tabella per-domanda ([elementi corretti k/n], punti x/ypt). Se il dato non c'e', parla solo della percentuale per area.
-- RECUPERO FAST: se l'alunno ha RECUPERO_FAST ha svolto la prima prova e il recupero: valuta entrambe e confrontale (aree migliorate, errori corretti, errori rimasti). Il voto indicato è già quello finale.
-SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55-58%=5.5 | 59%=6- | 60-61%=6 | 62-64%=6+ | 65-68%=6.5 | 69%=7- | 70-71%=7 | 72-74%=7+ | 75-78%=7.5 | 79%=8- | 80-81%=8 | 82-84%=8+ | 85-88%=8.5 | 89%=9- | 90-91%=9 | 92-94%=9+ | 95-98%=9.5 | 99%=10- | 100%=10`;
+        const REGOLE_EXTRA = AGENT_VS_REGOLE;
 
         const sectionLabel = field === 'doc' ? 'VALUTAZIONE DOCENTE'
                            : field === 'argo' ? 'ARGO'
                            : 'CLASSROOM';
 
         const sectionInstr = field === 'doc'
-            ? `=== VALUTAZIONE DOCENTE ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\nPoi la scheda strutturata:\n- Prima riga: classe, data, attivita, accuratezza percentuale, voto.\n- Analisi per area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING, READING, WRITING se presenti): 2-3 frasi per area. Se hai la tabella per-domanda, cita gli errori specifici con la risposta data e quella attesa. Spiega l'errore grammaticale sottostante.\n- Tempi di risposta: commenta avgTime_* e tempoTotale se disponibili.\n- Analisi complessiva: 3-4 frasi su pattern di errore ricorrente, punti di forza, priorita di recupero, suggerimento metodologico concreto.\n- Solo se l'alunno ha RECUPERO_FAST: aggiungi la parte "Recupero (T1: x%, T2: y%)" con analisi per area del recupero, confronto con la prima prova (aree migliorate, errori corretti, errori persistenti) e valutazione globale che spiega il voto finale.\nMinimo 12-14 righe (18-22 con il recupero).`
+            ? `=== VALUTAZIONE DOCENTE ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header (sostituisci con il nome reale): --- ALUNNO: Nome Cognome ---\n${AGENT_VS_DOC_INSTR}`
             : field === 'argo'
             ? `=== ARGO ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\nPoi 2-3 frasi valutative sintetiche. Max 300 caratteri.`
             : `=== CLASSROOM ===\nPer l'alunno usa OBBLIGATORIAMENTE questo header: --- ALUNNO: Nome Cognome ---\n${AGENT_LL_FEEDBACK_INSTR}`;
 
-        const prompt = `CLASSE: ${task.classe} | DATA: ${task.sessionDate} | ATTIVITA: ${task.unit || 'N/D'}
+        const prompt = `CLASSE: ${task.classe} | DATA: ${task.sessionDate} | ATTIVITA: ${task.unit || 'N/D'}${_agentVsTipoSessione(task)}
 ${REGOLE_EXTRA}
 ALUNNO: ${resultLine}${detailBlock}
 Genera SOLO la sezione ${sectionLabel} per questo alunno. Non aggiungere altri blocchi.
@@ -29409,14 +29426,7 @@ ${sectionInstr}`;
             .map(r => r.recoveryDetailLines)
             .join('\n\n');
 
-        const REGOLE_EXTRA = `REGOLE AGGIUNTIVE (già nel tuo ruolo, solo promemoria):
-- Menziona un'area solo se presente nel test
-- L'esercizio sulle funzioni comunicative è solitamente uno solo: non generalizzare
-- Aggrega i tag: grammatica aggregata, lessico aggregato, funzioni aggregate, listening aggregato
-- Una risposta con tick ma 0 punti = accettata per obiettivo non pertinente
-- NON inventare numeri: quante domande/risposte giuste o totali ci sono (soprattutto nel LISTENING) si ricava SOLO dalla tabella per-domanda ([elementi corretti k/n], punti x/ypt). Se il dato non c'e', parla solo della percentuale per area.
-- RECUPERO FAST — se un alunno ha RECUPERO_FAST nei risultati ha svolto due prove: la prima prova (pct e aree nella riga dei risultati, risposte in PROVA ORIGINALE) e il recupero (percentuali per area e risposte in RECUPERO FAST). Valuta ENTRAMBE e confrontale area per area: cosa è migliorato, quali errori sono stati corretti, quali sono rimasti. Il voto è quello indicato nella riga (se c'è VOTO_CAP:6, è 6 indipendentemente dal punteggio del recupero): non ricalcolarlo.
-SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55-58%=5.5 | 59%=6- | 60-61%=6 | 62-64%=6+ | 65-68%=6.5 | 69%=7- | 70-71%=7 | 72-74%=7+ | 75-78%=7.5 | 79%=8- | 80-81%=8 | 82-84%=8+ | 85-88%=8.5 | 89%=9- | 90-91%=9 | 92-94%=9+ | 95-98%=9.5 | 99%=10- | 100%=10`;
+        const REGOLE_EXTRA = AGENT_VS_REGOLE;
 
         const detailSection = detailBlocks
             ? `\nRISPOSTE PER DOMANDA — PROVA ORIGINALE (usa per citare errori reali):\n${detailBlocks}\n`
@@ -29426,11 +29436,7 @@ SCALA VOTI: 0-39%=4 | 40-44%=4 | 45-48%=4.5 | 49%=5- | 50-51%=5 | 52-54%=5+ | 55
             ? `\nRISPOSTE PER DOMANDA — RECUPERO FAST (usa per valutare il miglioramento):\n${recoveryDetailBlocks}\n`
             : '';
 
-        const _tipoSessioneLabel = task.isRecupero
-            ? '\nTIPO SESSIONE: RECUPERO — questa è la prova di recupero che l\'alunno ha svolto dopo aver ottenuto un voto insufficiente. Valuta il livello raggiunto e, nella sezione CLASSROOM, menziona esplicitamente che si tratta del recupero e indica nei punti di forza i miglioramenti dimostrati.'
-            : task.isConsolidamento
-            ? '\nTIPO SESSIONE: CONSOLIDAMENTO — questa è un\'attività di rinforzo per studenti che hanno già raggiunto la sufficienza. Valorizza il consolidamento delle competenze raggiunte.'
-            : '';
+        const _tipoSessioneLabel = _agentVsTipoSessione(task);
         const prompt = `CLASSE: ${classe} | DATA: ${sessionDate} | ATTIVITA: ${unit || 'N/D'}${_tipoSessioneLabel}
 ${REGOLE_EXTRA}
 RISULTATI AGGREGATI (usa l'accuracy indicata, non ricalcolare):
@@ -29442,13 +29448,7 @@ ${AGENT_LL_FEEDBACK_INSTR}
 === VALUTAZIONE DOCENTE ===
 Per ogni alunno usa OBBLIGATORIAMENTE questo header (sostituisci con il nome reale):
 --- ALUNNO: Nome Cognome ---
-Poi la scheda strutturata:
-- Prima riga: classe, data, attivita, accuratezza percentuale, voto.
-- Analisi per area (GRAMMAR, VOCABULARY, FUNCTIONS, LISTENING, READING, WRITING se presenti): 2-3 frasi per area. Se hai la tabella per-domanda, cita gli errori specifici con la risposta data e quella attesa (es. Q3: "what did you see" invece di "Did you see"). Spiega l'errore grammaticale sottostante.
-- Tempi di risposta: commenta avgTime_* e tempoTotale se disponibili. Tempo alto + errore = incertezza sulla struttura; tempo basso + errore = risposta superficiale/impulsiva. Segnala le domande con tempo anomalo (>3min o <10s con errore).
-- Analisi complessiva: 3-4 frasi su pattern di errore ricorrente (es. "confusione sistematica tra Do/Does e Did nelle Wh-questions"), punti di forza, priorita di recupero, suggerimento metodologico concreto.
-- Solo per chi ha RECUPERO_FAST: dopo l'analisi della prima prova aggiungi la parte "Recupero (T1: x%, T2: y%)": analisi per area del recupero con gli errori specifici dalla tabella del recupero, poi un confronto con la prima prova (aree migliorate, errori corretti, errori persistenti) e una valutazione globale che spiega il voto finale.
-Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiungere separatori tra schede oltre all'header.`;
+${AGENT_VS_DOC_INSTR}`;
 
         // Claude Code: niente chiamata AI, la consegna si esporta su file (📤) e il testo
         // torna con 📥 Importa. I dati per alunno restano nel task fino all'import.
