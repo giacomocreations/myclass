@@ -26449,7 +26449,7 @@ ${sectionInstr}`;
                             </div>
                             ${_vdBloccoHtml(task, idx)}
                             ${mkDlgSection('📊 JSON storico','jsonOrale',idx,160)}
-                            ${(r.classroomText||'').trim() ? _vdBloccoHtml(task, idx, 'classroomText') : mkDlgSection('💬 LiveLearn (feedback)','classroomText',idx,160)}
+                            ${_vdBloccoHtml(task, idx, 'classroomText')}
                             ${mkDlgSection('📝 Argo (registro) — solo su richiesta','argoText',idx,70)}
                             <button class="agent-btn-edit" id="agentArgoBtn_${task.id}_${idx}" onclick="agentGenArgo('${task.id}',${idx})" style="font-size:11px;padding:3px 10px;">${(r.argoText||'').trim() ? '🔄 Rigenera Argo' : '📝 Genera Argo'}</button>
                         </div>`).join('');
@@ -26540,7 +26540,7 @@ ${sectionInstr}`;
                         ${task.audioFileName ? _agentPlayerHtml(task) : ''}
                         ${_vdBloccoHtml(task, null)}
                         ${mkSection('📊 JSON storico', 'jsonOrale', 200)}
-                        ${(task.classroomText||'').trim() ? _vdBloccoHtml(task, null, 'classroomText') : mkSection('💬 LiveLearn (feedback studente)', 'classroomText', 160)}
+                        ${_vdBloccoHtml(task, null, 'classroomText')}
                         ${mkSection('📝 Argo (registro) — solo su richiesta', 'argoText', 80)}
                         <div class="agent-task-actions" style="margin-top:4px;">
                             ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')">📥 Importa feedback</button>` : ''}
@@ -31643,7 +31643,7 @@ ${base}`, task, true);
         v.at = (prima ? prima.at : task.generatedAt) || new Date().toISOString();
         task.versioniPrecedenti = [v, ...(task.versioniPrecedenti || [])].slice(0, 5);
     }
-    function agentUsaVersione(taskId, idx) {
+    function agentUsaVersione(taskId, idx, modifica) {
         const task = agentTasks.find(t => t.id === taskId);
         const v = task?.versioniPrecedenti?.[idx];
         if (!v) return;
@@ -31662,6 +31662,7 @@ ${base}`, task, true);
         task.transcriptToReview = false;
         if (task.status !== 'approved') task.status = 'ready';
         agentSaveTasks(agentTasks); agentRenderPanel();
+        if (modifica) apriEditorValDocente(taskId, task.type === 'valdialogo' ? 0 : null, 'valDocente');
     }
     function _agentVersioniHtml(task) {
         const vs = task.versioniPrecedenti || [];
@@ -31679,7 +31680,8 @@ ${base}`, task, true);
             return `<details style="margin-top:6px;border:1px solid #e0e4ff;border-radius:8px;background:#fafaff;">
                 <summary style="padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700;color:#3949ab;">${e(_AGENT_PROV_LBL[v.provider] || v.provider || 'AI')} · ${e(dt(v.at))} · ${voto}${v.nonUsata ? ' · <span style="color:#7b3fa0;">💾 salvata, non ancora usata</span>' : ''}</summary>
                 <div style="padding:4px 10px 10px;">${corpo}
-                    ${task.status !== 'approved' ? `<button class="agent-btn-edit" style="margin-top:8px;" onclick="agentUsaVersione('${task.id}',${i})">↩ Usa questa versione</button>` : ''}
+                    ${task.status !== 'approved' ? `<button class="agent-btn-edit" style="margin-top:8px;" onclick="agentUsaVersione('${task.id}',${i})">↩ Usa questa versione</button>
+                    <button class="agent-btn-edit" style="margin-top:8px;" onclick="agentUsaVersione('${task.id}',${i},true)" title="La rende attuale e apre l'editor della valutazione docente">✏️ Usa e modifica</button>` : ''}
                 </div></details>`;
         }).join('');
         return `<div style="margin-top:10px;padding:8px 10px;background:#f3f4ff;border:1px dashed #9fa8da;border-radius:10px;">
@@ -31737,16 +31739,30 @@ ${base}`, task, true);
     function _fbAnteprimaTesto(t) {
         return String(t || '').replace(/^[ \t]*(I tuoi punteggi\s*:|Il tuo voto\s*:|Cosa è andato bene\s*:|Cosa puoi migliorare\s*:)/gim, '**$1**');
     }
+    // Testo da mostrare/modificare. Valutazioni vecchie o risposte senza i titoli di
+    // sezione: il testo docente può stare solo nel JSON storico o nella risposta grezza.
+    function _vdTesto(task, idx, campo) {
+        const tg = _vdTarget(task, idx);
+        if (!tg) return '';
+        if ((tg[campo] || '').trim()) return tg[campo];
+        if (campo === 'valDocente') {
+            try { const j = JSON.parse(tg.jsonOrale || '{}'); const v = j?.alunni?.[0]?.valutazione_docente; if (v && String(v).trim()) return String(v); } catch (e) {}
+            if (idx == null && (task.content || '').trim()) return task.content;
+        }
+        return '';
+    }
     function _vdBloccoHtml(task, idx, campo = 'valDocente') {
         const tg = _vdTarget(task, idx);
         const fb = campo === 'classroomText';
-        if (!tg || !(tg[campo] || '').trim()) return '';
+        if (!tg) return '';
         const sx = idx == null ? 'null' : idx;
-        const html = fb ? _analisiFormatHtml(_fbAnteprimaTesto(tg[campo])) : _analisiFormatHtml(_vdAnteprimaTesto(tg[campo]));
+        const testo = _vdTesto(task, idx, campo);
+        const html = !testo.trim() ? '<div style="color:#999;font-style:italic;">Nessun testo: premi ✏️ per scriverlo.</div>'
+            : fb ? _analisiFormatHtml(_fbAnteprimaTesto(testo)) : _analisiFormatHtml(_vdAnteprimaTesto(testo));
         return `<div style="margin:8px 0;border:1px solid ${fb ? '#b2dfdb' : '#d1c4e9'};border-radius:10px;background:#fff;">
             <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:${fb ? '#e0f2f1' : '#f3eefe'};border-radius:10px 10px 0 0;">
                 <span style="font-size:12px;font-weight:800;color:${fb ? '#00695c' : '#4527a0'};flex:1;">${fb ? '💬 Feedback all\'alunno (LiveLearn / StudentApp)' : '📝 Valutazione docente'}</span>
-                <button class="agent-btn-edit" style="font-size:11px;padding:3px 10px;" onclick="apriEditorValDocente('${task.id}',${sx},'${campo}')">✏️ Modifica e impagina</button>
+                <button class="agent-btn-edit" style="font-size:11px;padding:3px 10px;" onclick="apriEditorValDocente('${task.id}',${sx},'${campo}')">${testo.trim() ? '✏️ Modifica e impagina' : '✏️ Scrivi'}</button>
             </div>
             <div style="padding:8px 14px;max-height:280px;overflow:auto;font-size:13px;line-height:1.7;color:#222;">${html}</div>
         </div>`;
@@ -31803,7 +31819,7 @@ ${base}`, task, true);
                 ${approvato ? `<button onclick="_vdEdSalva(true)" style="${b}border:none;background:#7b3fa0;color:#fff;">💾 Salva e reimporta</button>` : ''}
             </div></div>`;
         document.body.appendChild(ov);
-        document.getElementById('vdEdTesto').value = tg[campo] || '';
+        document.getElementById('vdEdTesto').value = _vdTesto(task, idx == null ? null : idx, campo);
         _vdEdAnteprima();
     }
     function _vdEdInfo() {
