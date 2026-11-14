@@ -1082,6 +1082,7 @@ const CONFIG = {
       <span id="ll-model-badge-builder" style="display:inline-flex;align-items:center;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:#f0fdf4;color:#065f46;border:1.5px solid #86efac;cursor:pointer;" onclick="openApiKeyModal()" title="Modello AI attivo — clicca per cambiare">🤖 —</span>
       <button class="btn btn-sm" onclick="openApiKeyModal()" title="Gestisci chiave API Gemini">🔑 API Key</button>
       <button class="btn btn-sm" onclick="openPreview()" id="btn-preview-activity" style="display:none;">👁 Preview</button>
+      <button class="btn btn-sm" onclick="simulaAttivita()" id="btn-sim-activity" style="display:none;background:#fef3c7;border-color:#f59e0b;color:#92400e;" title="Svolgi l'attività come un alunno, con feedback e punteggio: non viene salvato niente">🧪 Simula come alunno</button>
       <button class="btn btn-primary btn-sm" id="btn-save-activity" onclick="saveActivity()">💾 Salva attività</button>
     </div>
   </div>
@@ -5575,6 +5576,87 @@ function _getActivePreviewQs() {
   return S.questions;
 }
 
+// ══ SIMULAZIONE: il docente svolge l'attività come un alunno ════════════════
+// Stesso svolgimento dell'alunno (feedback, punteggio, consegna, correzione
+// finale), ma con un database FINTO: ogni lettura torna vuota e ogni scrittura
+// va a vuoto, quindi niente risposte, consegne, cronologie, classifiche o voti.
+function _simFakeRef() {
+  const r = {
+    get: async () => ({ val: () => null, exists: () => false, forEach: () => false }),
+    once: async () => ({ val: () => null, exists: () => false, forEach: () => false }),
+    set: async () => {}, update: async () => {}, remove: async () => {},
+    push: () => { const x = Promise.resolve({ key: 'sim' }); x.key = 'sim_' + Date.now(); x.set = async () => {}; x.update = async () => {}; return x; },
+    transaction: async () => ({ committed: true, snapshot: { val: () => null } }),
+    on: () => () => {}, off: () => {},
+    onDisconnect: () => ({ set: async () => {}, update: async () => {}, remove: async () => {}, cancel: async () => {} })
+  };
+  ['child', 'orderByChild', 'orderByKey', 'orderByValue', 'equalTo', 'startAt', 'endAt', 'limitToLast', 'limitToFirst'].forEach(k => r[k] = () => r);
+  return r;
+}
+const _SIM_DB = { ref: () => _simFakeRef() };
+function simulaAttivita() {
+  const qs = (typeof _getActivePreviewQs === 'function' ? _getActivePreviewQs() : S.questions) || [];
+  if (!qs.length) { alert('Nessuna domanda da simulare.'); return; }
+  document.getElementById('sim-choose')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'sim-choose';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;padding:16px;';
+  const b = 'display:block;width:100%;text-align:left;padding:12px 14px;border-radius:10px;border:1.5px solid #c4b5fd;background:#fff;cursor:pointer;margin-bottom:8px;font-family:inherit;';
+  ov.innerHTML = `<div style="background:#fff;border-radius:14px;padding:18px;max-width:440px;width:100%;">
+    <div style="font-size:16px;font-weight:800;color:#4c1d95;margin-bottom:4px;">🧪 Simula come alunno</div>
+    <div style="font-size:12px;color:#6b7280;margin-bottom:12px;">${qs.length} domande. Non viene salvato niente: nessun alunno risulterà averla svolta.</div>
+    <button style="${b}" onclick="_simAvvia('practice')"><b>🎮 Esercitazione</b><br><span style="font-size:12px;color:#6b7280;">Feedback subito dopo ogni risposta (come gli alunni nei piani e nelle esercitazioni)</span></button>
+    <button style="${b}" onclick="_simAvvia('test')"><b>📝 Test</b><br><span style="font-size:12px;color:#6b7280;">Rispondi a tutto, poi consegna e vedi punteggio e correzione</span></button>
+    <div style="text-align:right;"><button class="btn btn-ghost btn-sm" onclick="document.getElementById('sim-choose').remove()">Annulla</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+}
+function _simAvvia(mode) {
+  document.getElementById('sim-choose')?.remove();
+  const qs = JSON.parse(JSON.stringify((typeof _getActivePreviewQs === 'function' ? _getActivePreviewQs() : S.questions) || []));
+  const titolo = (document.getElementById('activity-title')?.value || S.activity?.title || 'Attività').trim();
+  const passage = document.getElementById('activity-passage')?.value || '';
+  // Stato del docente da rimettere a posto all'uscita
+  S._simSnap = Object.assign({}, S);
+  S._simDbVero = db;
+  db = _SIM_DB;
+  Object.assign(S, {
+    simulazione: true, removed: false, submitted: false,
+    sessionCode: 'SIMULAZIONE', studentName: 'Simulazione docente', safeName: 'simulazione_docente',
+    sessionMode: mode, sessionRepeatable: false, sessionTournament: false, _planCode: null, _retryLocal: true,
+    activity: { title: titolo, questions: qs, ...(passage ? { passageText: passage } : {}) },
+    qOrigMap: qs.map((_, i) => i), qIndex: 0, studentScore: 0,
+    answers: new Array(qs.length).fill(undefined), skipped: [],
+    questionStartTimes: [], questionEndTimes: [], joinedAt: Date.now(),
+    aiScores: {}, aiFeedbacks: {}, aiAnalysisDone: true, recoveryAttempt: 0, spkTries: {}, spkNoMic: {}
+  });
+  Object.keys(S).forEach(k => { if (/^(ddState_|matchShuffle_|matchColors_|roState_|reorderState_|catState_)/.test(k)) delete S[k]; });
+  closePreview && document.getElementById('modal-preview') && closePreview();
+  showView('student-activity');
+  renderQuestion();
+  _simBanner();
+}
+function _simBanner() {
+  if (document.getElementById('sim-banner')) return;
+  const d = document.createElement('div');
+  d.id = 'sim-banner';
+  d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#f59e0b;color:#1f2937;font-weight:800;font-size:14px;padding:8px 14px;display:flex;align-items:center;justify-content:center;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,.2);';
+  d.innerHTML = '🧪 SIMULAZIONE — non viene salvato niente, nessun alunno risulta averla svolta <button onclick="simulaEsci()" style="background:#1f2937;color:#fff;border:none;border-radius:8px;padding:5px 12px;font-weight:800;cursor:pointer;font-family:inherit;">✕ Esci dalla simulazione</button>';
+  document.body.appendChild(d);
+}
+function simulaEsci() {
+  if (!S.simulazione) { document.getElementById('sim-banner')?.remove(); return; }
+  try { if (typeof _spkRec !== 'undefined' && _spkRec) _spkRec.abort(); } catch (e) {}
+  if (S.timerInterval) { clearInterval(S.timerInterval); }
+  const snap = S._simSnap || {};
+  db = S._simDbVero || db;
+  Object.keys(S).forEach(k => delete S[k]);
+  Object.assign(S, snap);
+  delete S._simSnap; delete S._simDbVero; delete S.simulazione;
+  document.getElementById('sim-banner')?.remove();
+  showView('teacher-builder');
+}
+
 function openPreview() {
   _previewQsList = _getActivePreviewQs();
   if (!_previewQsList.length) return alert('Nessuna domanda da visualizzare in anteprima.');
@@ -5662,6 +5744,8 @@ renderQList = function() {
   _origRenderQList();
   const btn = document.getElementById('btn-preview-activity');
   if (btn) btn.style.display = S.questions.length > 0 ? 'inline-flex' : 'none';
+  const sbtn = document.getElementById('btn-sim-activity');
+  if (sbtn) sbtn.style.display = S.questions.length > 0 ? 'inline-flex' : 'none';
 };
 
 
@@ -16769,6 +16853,16 @@ async function showStudentDone() {
     if (_aiEl) _aiEl.style.display = 'none';
     document.getElementById('assigned-retry-box')?.remove();
     if (S.sessionRepeatable) _showAssignedRetryButton();
+    return;
+  }
+
+  // ── SIMULAZIONE DEL DOCENTE: solo punteggio e correzione ─────────────────
+  if (S.simulazione) {
+    document.getElementById('done-title').textContent = '🧪 Fine simulazione';
+    document.getElementById('done-subtitle').textContent = (pct !== null ? pct + '% — ' : '') + 'Simulazione: non è stato salvato niente e nessun alunno risulta averla svolta.';
+    const _aiEl = document.getElementById('done-ai-analysis');
+    if (_aiEl) _aiEl.style.display = 'none';
+    _simBanner();
     return;
   }
 
