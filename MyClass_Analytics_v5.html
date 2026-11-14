@@ -33922,23 +33922,28 @@ ${blocchiPerAlunno}`;
         else         { _ppDeferredExcluded.add(key); }
         _ppSavExcluded();
         // Aggiorna il pulsante "Elabora selezionati" con il conteggio corrente
-        const btn = document.getElementById('ppDefElabBtn');
-        if (btn) {
-            const n = _ppDeferredQueue.filter(i => !_ppDeferredExcluded.has(_ppDefKey(i))).length;
-            btn.textContent = `⚡ Elabora selezionati (${n})`;
-        }
-        // Aggiorna la checkbox "seleziona tutti"
-        const allChk = document.getElementById('ppDefChkAll');
-        if (allChk) allChk.checked = _ppDeferredExcluded.size === 0;
+        // Conteggi della scheda aperta (Scritto / Orale)
+        if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
     }
-    function _ppDeferredToggleAll(checked) {
-        if (checked) { _ppDeferredExcluded.clear(); }
-        else { _ppDeferredQueue.forEach(i => _ppDeferredExcluded.add(_ppDefKey(i))); }
+    // Scheda della coda/bozza: 🎤 Orale per i piani nati da un orale, 📝 Scritto per il resto
+    function _ppDraftOrale(d) { return !!(d && (d.soloOrale || d.tipo === 'orale' || d.prefix === 'ORALE')); }
+    function _ppInVista(item, vista) { return !vista ? true : (vista === 'orale') === (item && item.tipo === 'orale'); }
+    function _ppDeferredToggleAll(checked, vista) {
+        const its = _ppDeferredQueue.filter(i => _ppInVista(i, vista));
+        if (checked) { its.forEach(i => _ppDeferredExcluded.delete(_ppDefKey(i))); }
+        else { its.forEach(i => _ppDeferredExcluded.add(_ppDefKey(i))); }
         _ppSavExcluded();
         if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
     }
-    function _ppClearDeferred() {
-        if (!confirm('Svuotare la coda differita? Le attività NON verranno generate.')) return;
+    function _ppClearDeferred(vista) {
+        if (!confirm(`Svuotare la coda${vista ? ' dei piani ' + (vista === 'orale' ? 'orali' : 'scritti') : ''}? Le attività NON verranno generate.`)) return;
+        if (vista) {
+            _ppDeferredQueue.filter(i => _ppInVista(i, vista)).forEach(i => _ppDeferredExcluded.delete(_ppDefKey(i)));
+            _ppDeferredQueue = _ppDeferredQueue.filter(i => !_ppInVista(i, vista));
+            _ppSavDeferred(); _ppSavExcluded();
+            if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
+            return;
+        }
         _ppDeferredQueue = [];
         _ppDeferredExcluded.clear();
         try { localStorage.removeItem('pp_deferred_queue'); } catch {}
@@ -34014,8 +34019,8 @@ ${blocchiPerAlunno}`;
         _ppRiepilogoCoda([{ nome: item.studentName, unit: item.unit, ppStatus: item.ppStatus, ppReason: item.ppReason }]);
     }
     // Elabora solo gli item NON esclusi (rispetta la selezione persistente)
-    async function _ppProcessSelected() {
-        await _ppRunQueue(_ppDeferredQueue.filter(i => !_ppDeferredExcluded.has(_ppDefKey(i))));
+    async function _ppProcessSelected(vista) {
+        await _ppRunQueue(_ppDeferredQueue.filter(i => _ppInVista(i, vista) && !_ppDeferredExcluded.has(_ppDefKey(i))));
     }
 
     // Elabora elementi della coda scegliendo il generatore CLASSE PER CLASSE
@@ -34118,9 +34123,9 @@ ${blocchiPerAlunno}`;
     }
 
     // Rimuove dalla coda gli item già elaborati (done/skipped/error)
-    function _ppClearProcessed() {
+    function _ppClearProcessed(vista) {
         const before = _ppDeferredQueue.length;
-        _ppDeferredQueue = _ppDeferredQueue.filter(i => !i.ppStatus || i.ppStatus === 'processing' || i.ppStatus === 'pending');
+        _ppDeferredQueue = _ppDeferredQueue.filter(i => !_ppInVista(i, vista) || !i.ppStatus || i.ppStatus === 'processing' || i.ppStatus === 'pending');
         _ppSavDeferred();
         const removed = before - _ppDeferredQueue.length;
         if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
@@ -35704,7 +35709,7 @@ FORMATO: solo un array JSON di 3 oggetti, nessun testo fuori.
                 { v: 'haiku', icon: '🔵', t: 'Claude Haiku 5.5', dis: !hasKey,
                   d: hasKey ? 'Consigliato. Veloce ed economico, con controllo e revisione automatica di ogni domanda.'
                             : '⚠️ Manca la chiave API Anthropic: inseriscila nelle impostazioni dell\'agente.' },
-                { v: 'auto', icon: '⚙️', t: 'Automatico (come prima)',
+                { v: 'auto', icon: '🟢', t: 'Gemini (automatico)',
                   d: 'Gemini → Ollama locale → Haiku 5.5 se gli altri non rispondono.' },
                 ...(allowClaude ? [{ v: 'claude', icon: '🟣', t: 'Claude Code',
                   d: 'Scarica un file con i dati delle verifiche (senza nomi) e la consegna. Lo carichi in Claude Code, poi importi qui il file che ti restituisce con 📥 Importa da Claude.' }] : [])
@@ -35749,9 +35754,9 @@ FORMATO: solo un array JSON di 3 oggetti, nessun testo fuori.
             let def = localStorage.getItem('pp_gen_last_choice') || 'haiku';
             if (def === 'haiku' && !hasKey) def = 'auto';
             const OPTS = [
-                { v: 'haiku', t: '🔵 Haiku 5.5', dis: !hasKey },
-                { v: 'auto', t: '⚙️ Automatico' },
-                { v: 'claude', t: '🟣 Claude Code' },
+                { v: 'haiku', t: '🔵 Claude Haiku (API)', dis: !hasKey },
+                { v: 'auto', t: '🟢 Gemini (automatico)' },
+                { v: 'claude', t: '🟣 Claude Code (file)' },
                 { v: 'skip', t: '⏭️ Salta' }
             ];
             const scelte = new Map(groups.map(g => [g.classe, def]));
@@ -36582,7 +36587,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
     // Svuota la coda differita SOLO in un giorno senza verifiche programmate.
     // Elabora un trigger alla volta con pausa, per non saturare le API AI.
     let _ppDeferredRunning = false;
-    async function _ppProcessDeferred(manuale = false) {
+    async function _ppProcessDeferred(manuale = false, vista) {
         if (_ppDeferredRunning) return;
         if (!_ppDeferredQueue.length) return;
         // Blocca se ci sono verifiche programmate e NON è una richiesta manuale.
@@ -36593,7 +36598,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             return;
         }
         // Manuale ("▶ Elabora tutti"): stessa scelta classe per classe di "Elabora selezionati"
-        if (manuale) return _ppRunQueue(_ppDeferredQueue.filter(i => !_ppDeferredExcluded.has(_ppDefKey(i))));
+        if (manuale) return _ppRunQueue(_ppDeferredQueue.filter(i => _ppInVista(i, vista) && !_ppDeferredExcluded.has(_ppDefKey(i))));
         _ppDeferredRunning = true;
         console.log(`[Piano] ▶️ Elaborazione coda differita: ${_ppDeferredQueue.length} attività`);
         try {
@@ -39070,7 +39075,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         // Aggiorna badge tab 0 con conteggio bozze
         const tab0Btn = document.getElementById('ppTab0');
         if (tab0Btn) {
-            const draftCount = _ppDraftScritto.length;
+            const draftCount = _ppDraftScritto.filter(d => !_ppDraftOrale(d)).length;
             tab0Btn.textContent = draftCount > 0 ? `📝 Scritto (${draftCount} da approvare)` : '📝 Scritto';
             tab0Btn.style.background = (_ppTabActive === 0) ? '#6c47ff' : (draftCount > 0 ? '#fef9c3' : '#f0eeff');
             tab0Btn.style.color = (_ppTabActive === 0) ? '#fff' : (draftCount > 0 ? '#92400e' : '#6c47ff');
@@ -39079,12 +39084,15 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         _ppDraftScritto.forEach(d => { if (d.llEditAt) _ppLLWatch(d.id); });
         if (!renderPianoPersPanel._llClean) { renderPianoPersPanel._llClean = true; _ppLLCleanup(); }
         // ── Tab 0: Scritto ───────────────────────────────────────────────
-        if (_ppTabActive === 0) {
-            const el = document.getElementById('ppBody0');
-            if (!el) return;
+        // Bozze e coda dei piani, filtrate per scheda: 📝 Scritto (piani da verifiche
+        // scritte) e 🎤 Orale (piani nati da orali: speaking). Prima tutto stava nello Scritto.
+        const _renderBozzeCoda = (el, vista) => {
+            const _drafts = _ppDraftScritto.filter(d => vista === 'orale' ? _ppDraftOrale(d) : !_ppDraftOrale(d));
+            const _qv = _ppDeferredQueue.map((item, idx) => ({ item, idx })).filter(x => _ppInVista(x.item, vista));
+            const _qItems = _qv.map(x => x.item);
             // ── SEZIONE BOZZE (in attesa approvazione docente) ───────────────
             let draftsHtml = '';
-            if (_ppDraftScritto.length) {
+            if (_drafts.length) {
                 // Colori per tipo di domanda nell'editor
                 const _qTypeMeta = {
                     'multiple-choice': { label:'MC', bg:'#ede9ff', col:'#6c47ff' },
@@ -39253,26 +39261,26 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     </div>`;
                 };
                 let draftCards = '';
-                _ppGroupByClass(_ppDraftScritto).forEach((list, classeNome) => {
+                _ppGroupByClass(_drafts).forEach((list, classeNome) => {
                     draftCards += _ppClassGroupHeader(classeNome, list.length, 'scritto') + list.map(_draftCard).join('');
                 });
-                draftsHtml = `<div style="margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ IN ATTESA DI APPROVAZIONE (${_ppDraftScritto.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire la sua attività</span></div>
-                  <button onclick="ppOpenReview()" title="Tutte le bozze a schermo intero, come in LiveLearn: esercizi completi, soluzioni in verde e possibili errori segnalati" style="width:100%;margin:2px 0 10px;padding:11px;border-radius:10px;border:none;background:#6c47ff;color:#fff;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;">🔍 Rivedi le bozze a schermo intero (${_ppDraftScritto.length})</button>${draftCards}</div>`;
+                draftsHtml = `<div style="margin-bottom:14px;"><div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ IN ATTESA DI APPROVAZIONE (${_drafts.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire la sua attività</span></div>
+                  <button onclick="ppOpenReview()" title="Tutte le bozze a schermo intero, come in LiveLearn: esercizi completi, soluzioni in verde e possibili errori segnalati" style="width:100%;margin:2px 0 10px;padding:11px;border-radius:10px;border:none;background:#6c47ff;color:#fff;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;">🔍 Rivedi le bozze a schermo intero (${_drafts.length})</button>${draftCards}</div>`;
             }
-            const claudeBar = `<div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+            const claudeBar = vista === 'orale' ? '' : `<div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
                 <button onclick="ppAddStudentDialog()" title="Rimetti in coda un alunno (es. dopo aver scartato la sua bozza) e generane il piano" style="font-size:12px;padding:6px 14px;border-radius:8px;border:1.5px solid #6c47ff;background:#fff;color:#6c47ff;cursor:pointer;font-weight:700;font-family:inherit;">➕ Piano per un alunno</button>
               </div>` + _ppClaudeBarHtml();
             // Banner coda differita (attività in attesa di un giorno libero da verifiche)
             let deferredBanner = '';
             _ppPruneDeferred();
-            if (_ppDeferredQueue.length) {
-                const nAttesa = _ppDeferredQueue.filter(i => !['done', 'skipped', 'error'].includes(i.ppStatus)).length;
-                const nElab = _ppDeferredQueue.length - nAttesa;
+            if (_qItems.length) {
+                const nAttesa = _qItems.filter(i => !['done', 'skipped', 'error'].includes(i.ppStatus)).length;
+                const nElab = _qItems.length - nAttesa;
                 const hasVer = _ppHasVerificaNelleProssimeOre(1);
                 const tipoLabel = { scritto:'Scritto', orale:'Orale', approfondimento:'Approfondimento' };
-                const selectedCount = _ppDeferredQueue.filter(i => !_ppDeferredExcluded.has(_ppDefKey(i))).length;
-                const allSelected  = _ppDeferredExcluded.size === 0;
-                const defRows = _ppDeferredQueue.map((item, idx) => {
+                const selectedCount = _qItems.filter(i => !_ppDeferredExcluded.has(_ppDefKey(i))).length;
+                const allSelected  = _qItems.every(i => !_ppDeferredExcluded.has(_ppDefKey(i)));
+                const defRows = _qv.map(({ item, idx }) => {
                     const key      = _ppDefKey(item);
                     const checked  = !_ppDeferredExcluded.has(key);
                     const pfx      = (item.prefix || item.tipo || '').toUpperCase().slice(0,3);
@@ -39319,7 +39327,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                       <table style="width:100%;border-collapse:collapse;font-size:12px;">
                         <thead><tr style="background:#fef3c7;">
                           <th style="padding:5px 4px;text-align:center;width:28px;">
-                            <input type="checkbox" id="ppDefChkAll" ${allSelected?'checked':''} title="Seleziona/deseleziona tutti" onchange="_ppDeferredToggleAll(this.checked)" style="cursor:pointer;width:14px;height:14px;">
+                            <input type="checkbox" id="ppDefChkAll" ${allSelected?'checked':''} title="Seleziona/deseleziona tutti" onchange="_ppDeferredToggleAll(this.checked,'${vista}')" style="cursor:pointer;width:14px;height:14px;">
                           </th>
                           <th style="padding:5px 4px;text-align:left;font-size:10px;color:#78350f;">Studente</th>
                           <th style="padding:5px 4px;text-align:left;font-size:10px;color:#78350f;">Classe</th>
@@ -39334,16 +39342,21 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                       </table>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-                      <button id="ppDefElabBtn" onclick="_ppProcessSelected()" style="font-size:11px;padding:5px 14px;border-radius:8px;border:1.5px solid #ea580c;background:#ea580c;color:#fff;cursor:pointer;font-weight:700;">⚡ Elabora selezionati (${selectedCount})</button>
-                      <button onclick="_ppProcessDeferred(true)" style="font-size:11px;padding:5px 14px;border-radius:8px;border:1.5px solid #f97316;background:#fff;color:#ea580c;cursor:pointer;font-weight:600;">▶ Elabora tutti</button>
-                      ${_ppDeferredQueue.some(i => i.ppStatus && i.ppStatus !== 'processing') ? `<button onclick="_ppClearProcessed()" style="font-size:11px;padding:5px 12px;border-radius:8px;border:1.5px solid #6366f1;background:#eef2ff;color:#3730a3;cursor:pointer;font-weight:600;">🧹 Pulisci elaborati</button>` : ''}
-                      <button onclick="_ppClearDeferred()" style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid #d1d5db;background:#fff;color:#666;cursor:pointer;">🗑 Svuota coda</button>
+                      <button id="ppDefElabBtn" onclick="_ppProcessSelected('${vista}')" style="font-size:11px;padding:5px 14px;border-radius:8px;border:1.5px solid #ea580c;background:#ea580c;color:#fff;cursor:pointer;font-weight:700;">⚡ Elabora selezionati (${selectedCount})</button>
+                      <button onclick="_ppProcessDeferred(true,'${vista}')" style="font-size:11px;padding:5px 14px;border-radius:8px;border:1.5px solid #f97316;background:#fff;color:#ea580c;cursor:pointer;font-weight:600;">▶ Elabora tutti</button>
+                      ${_qItems.some(i => i.ppStatus && i.ppStatus !== 'processing') ? `<button onclick="_ppClearProcessed('${vista}')" style="font-size:11px;padding:5px 12px;border-radius:8px;border:1.5px solid #6366f1;background:#eef2ff;color:#3730a3;cursor:pointer;font-weight:600;">🧹 Pulisci elaborati</button>` : ''}
+                      <button onclick="_ppClearDeferred('${vista}')" style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid #d1d5db;background:#fff;color:#666;cursor:pointer;">🗑 Svuota coda</button>
                     </div>
                 </div>`;
             }
             const nInv = Object.keys(_ppActiveScritto).length;
-            el.innerHTML = claudeBar + draftsHtml + deferredBanner + (_ppDraftScritto.length ? '' :
+            el.innerHTML = claudeBar + draftsHtml + deferredBanner + (_drafts.length ? '' :
                 `<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">Nessuna bozza da approvare.${nInv ? `<br><span style="font-size:11px;">Le ${nInv} attività già inviate sono nel tab <a href="#" onclick="ppSwitchTab(2);return false;" style="color:#6c47ff;font-weight:700;">📋 Attività inviate</a>.</span>` : ''}</div>`);
+        };
+        if (_ppTabActive === 0) {
+            const el = document.getElementById('ppBody0');
+            if (!el) return;
+            _renderBozzeCoda(el, 'scritto');
         }
 
         // ── Tab 2: Attività inviate (per classe e unit) ──────────────────
@@ -39383,8 +39396,15 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             if (!el) return;
             const pending = _ppOraleQueue.filter(x => x.status !== 'approved');
             const approved = _ppOraleQueue.filter(x => x.status === 'approved');
+            const _plOrali = () => {
+                if (!_ppDraftScritto.some(_ppDraftOrale) && !_ppDeferredQueue.some(q => _ppInVista(q, 'orale'))) return;
+                const box = document.createElement('div');
+                el.insertBefore(box, el.children[1] || null);
+                _renderBozzeCoda(box, 'orale');
+            };
             if (!_ppOraleQueue.length) {
                 el.innerHTML = _ppClaudeBarHtml() + '<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">Nessun testo orale in attesa.<br><span style="font-size:11px;">Vengono generati automaticamente per voti < 6 nella finestra 14:30–07:00.</span></div>';
+                _plOrali();
                 return;
             }
             let html = _ppClaudeBarHtml();
@@ -39417,6 +39437,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 html += `<div style="margin-top:8px;font-size:11px;font-weight:700;color:#059669;padding:6px 0;">✅ ${approved.length} testo/i approvato/i in questa sessione</div>`;
             }
             el.innerHTML = html;
+            _plOrali();
         }
     }
 
