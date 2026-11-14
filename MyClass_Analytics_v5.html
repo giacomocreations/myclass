@@ -22935,11 +22935,55 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
         const oggi = new Date();
         const inizioAnno = new Date(oggi.getMonth() >= 8 ? oggi.getFullYear() : oggi.getFullYear() - 1, 8, 1).getTime();
         const TIPI = { practice: 'Esercitazione', teacher: 'Spiegazione interattiva', assigned: 'Compito assegnato' };
+        // Compiti assegnati alla classe NON svolti: sessioni assegnate dell'anno senza una
+        // voce nella cronologia dell'alunno. Le esercitazioni e le spiegazioni in classe
+        // no: chi era assente non le ha fatte e non è un problema.
+        let nonSvolte = [];
+        try {
+            const tutte = (await db.ref('livelearn/sessions').orderByChild('createdAt').startAt(inizioAnno).get()).val() || {};
+            nonSvolte = Object.entries(tutte)
+                .filter(([sc, v]) => v && v.classId === classId && !sess[sc] && (v.status === 'assigned' || v.mode === 'assigned'))
+                .map(([sc, v]) => {
+                    const compito = v.status === 'assigned' || v.mode === 'assigned';
+                    const scad = v.deadline ? new Date(String(v.deadline).length <= 10 ? v.deadline + 'T23:59:59' : v.deadline).getTime() : null;
+                    const stato = compito ? (scad && scad < Date.now() ? 'scaduto' : scad ? 'ancora aperto, scade il ' + new Date(scad).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }) : 'senza scadenza') : 'in classe: verificare eventuali assenze';
+                    return { sc, ts: v.createdAt || 0, compito, tipo: compito ? 'Compito assegnato' : (v.mode === 'teacher' ? 'Spiegazione interattiva' : 'Esercitazione'), titolo: v.title || sc, stato, aperto: compito && !(scad && scad < Date.now()) && !!scad };
+                })
+                .sort((a, b) => b.ts - a.ts);
+        } catch (e) { console.warn('[Agente] analisi: sessioni della classe non lette:', e.message); }
+        const fmtNs = ts => { try { return new Date(ts).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }); } catch { return ''; } };
+        // Piani personalizzati (recupero, consolidamento, approfondimento) dell'anno
+        let pianiTxt = '', pianiNonSvolti = 0;
+        try {
+            const pr = (await db.ref('livelearn/recovery_sessions/' + code).get()).val() || {};
+            const TP = { REC: 'Recupero', CON: 'Consolidamento', APP: 'Approfondimento' };
+            const piani = Object.entries(pr)
+                .filter(([, v]) => v && typeof v === 'object' && (v.createdAt || 0) >= inizioAnno)
+                .map(([pc, v]) => {
+                    const att = (Array.isArray(v.attempts) ? v.attempts : Object.values(v.attempts || {})).filter(a => a && typeof a.pct === 'number').sort((a, b) => (a.n || 0) - (b.n || 0));
+                    const svolto = att.length > 0 || (v.attemptCount || 0) > 0 || v.lastScore != null;
+                    return { pc, ts: v.createdAt || 0, tipo: (TP[v.prefix] || 'Piano') + (v.orale ? ' orale' : ''), unit: v.unit || '', voto: v.voto, att, svolto, best: att.length ? Math.max(...att.map(a => a.pct)) : (v.bestScore ?? v.lastScore ?? null) };
+                })
+                .sort((a, b) => b.ts - a.ts);
+            pianiNonSvolti = piani.filter(x => !x.svolto).length;
+            pianiTxt = piani.length
+                ? `PIANI PERSONALIZZATI assegnati dal docente (anno in corso): ${piani.length} · svolti: ${piani.length - pianiNonSvolti} · NON svolti: ${pianiNonSvolti}
+${piani.map(x => `- ${fmtNs(x.ts)} · ${x.tipo}${x.unit ? ' · ' + String(x.unit).slice(0, 50) : ''}${x.voto != null && x.voto !== '' ? ' (voto della verifica: ' + x.voto + ')' : ''} · ` +
+    (x.svolto ? `svolto${x.att.length ? ': ' + x.att.length + ' tentativ' + (x.att.length === 1 ? 'o' : 'i') + ' (' + x.att.map(a => a.pct + '%').join(' → ') + ')' : ''}${x.best != null ? ', migliore ' + x.best + '%' : ''}` : 'NON SVOLTO')).join('\n')}
+`
+                : 'PIANI PERSONALIZZATI: nessun piano assegnato quest\'anno.\n';
+        } catch (e) { console.warn('[Agente] analisi: piani personalizzati non letti:', e.message); }
+        const nsTxt = nonSvolte.length
+            ? `COMPITI ASSEGNATI NON SVOLTI (nessuna consegna dell'alunno): ${nonSvolte.length} (di cui ancora aperti: ${nonSvolte.filter(x => x.aperto).length})
+${nonSvolte.slice(0, 30).map(x => `- ${fmtNs(x.ts)} · ${x.tipo} · "${String(x.titolo).slice(0, 60)}" · NON SVOLTO (${x.stato})`).join('\n')}
+`
+            : 'COMPITI ASSEGNATI NON SVOLTI: nessuno, ha svolto tutti i compiti assegnati alla classe.\n';
+        const extraTxt = nsTxt + pianiTxt;
         const voci = Object.entries(sess)
             .map(([sc, e]) => ({ sc, ...e }))
             .filter(e => e && TIPI[e.mode] && (e.ts || 0) >= inizioAnno)
             .sort((a, b) => (b.ts || 0) - (a.ts || 0));
-        if (!voci.length) return { n: 0, dati: 'ESERCITAZIONI, SPIEGAZIONI INTERATTIVE E COMPITI (anno scolastico in corso): nessuna attività svolta.\n' };
+        if (!voci.length) return { n: 0, nonSvolte: nonSvolte.length + pianiNonSvolti, dati: 'ESERCITAZIONI, SPIEGAZIONI INTERATTIVE E COMPITI (anno scolastico in corso): nessuna attività svolta.\n' + extraTxt };
         // Tentativi ripetuti (esercitazioni e compiti "Rifai")
         await Promise.all(voci.slice(0, 40).map(async e => {
             if (!e.respKey) return;
@@ -22968,8 +23012,8 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
 Riepilogo: ${voci.length} attività · ${perTipo}${ripetute ? ` · rifatte più volte: ${ripetute}` : ''}
 ${areeTxt ? 'Aree (media su queste attività): ' + areeTxt + '\n' : ''}Elenco (dalla più recente${voci.length > 40 ? ', ultime 40' : ''}):
 ${righe}
-`;
-        return { n: voci.length, dati };
+${extraTxt}`;
+        return { n: voci.length, nonSvolte: nonSvolte.length + pianiNonSvolti, dati };
     }
 
     async function agentTaskAnalisDidattica(task) {
@@ -23043,7 +23087,7 @@ ${righe}
             const att = await _agentAttivitaNonValutate(task, studente, classId);
             prompt = prompt.replace('ISTRUZIONI:\n', att.dati + '\nISTRUZIONI:\n');
             prompt = prompt.replace('**PUNTI DI FORZA**', `**ESERCITAZIONI E COMPITI**
-Analizza le attività NON valutate (esercitazioni in classe, spiegazioni interattive, compiti assegnati a casa) dai dati "ESERCITAZIONI, SPIEGAZIONI INTERATTIVE E COMPITI": quante ne ha svolte e con che regolarità, i risultati medi e le aree più forti e più deboli, e se rifà le attività per migliorare (tentativi ripetuti e progressi da un tentativo all'altro). Non sono voti: non trattarli come tali e non confonderli con le verifiche. Se non risultano attività svolte, scrivilo in una frase.
+Analizza le attività NON valutate (esercitazioni in classe, spiegazioni interattive, compiti assegnati a casa) dai dati "ESERCITAZIONI, SPIEGAZIONI INTERATTIVE E COMPITI": quante ne ha svolte e con che regolarità, i risultati medi e le aree più forti e più deboli, e se rifà le attività per migliorare (tentativi ripetuti e progressi da un tentativo all'altro). Segnala in modo chiaro, con tono costruttivo, i COMPITI ASSEGNATI NON SVOLTI (quanti e quali); per quelli ancora aperti ricorda che può ancora farli. Non segnalare come mancanze le esercitazioni o le spiegazioni in classe che non compaiono: se era assente non le ha svolte e va bene così. Analizza anche i PIANI PERSONALIZZATI (recupero, consolidamento, approfondimento): se li ha svolti, con che risultati e se è migliorato da un tentativo all'altro; segnala chiaramente quelli NON SVOLTI e ricorda che può ancora farli. Non sono voti: non trattarli come tali e non confonderli con le verifiche. Se non risultano attività svolte, scrivilo in una frase.
 **PUNTI DI FORZA**`);
             task.attivitaNonValutate = att.n;
         } catch (e) { console.warn('[Agente] analisi didattica: attività non valutate non lette:', e.message); }
