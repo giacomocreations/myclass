@@ -1938,6 +1938,7 @@
                         </select>
                     </label>
                     <button class="agent-btn-clear" onclick="agentForceRediscoverScritta()" style="background:#fff3e0;color:#e65100;border-color:#ffb74d;" title="Rimuove i task valscritta dismissed dal localStorage e rilancia la scansione">🔁 Riscopri scritto</button>
+                    <button class="agent-btn-clear" onclick="agentRiscopriOrale()" style="background:#ede7f6;color:#4527a0;border-color:#b39ddb;" title="Ripristina un orale o un dialogo rimosso, o cerca di nuovo gli audio nella cartella">🎙️ Riscopri orale</button>
                     <button class="agent-btn-clear" onclick="agentRiscopriAlunno()" style="background:#e8f5e9;color:#1b5e20;border-color:#81c784;" title="Rimette in coda la verifica di UN alunno (es. passato da esercitazione a test in LiveLearn) per generarne la valutazione e importarne il voto">👤 Riscopri un alunno</button>
                     <span style="font-size:12px;color:#aaa;" id="agentNextRunLabel"></span>
                 </div>
@@ -22238,9 +22239,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             const cleaned = tasks.filter(t => {
                 if (t.type !== 'valorale') return true;
                 if (t.status !== 'dismissed') return true;
-                // dismissed valorale: mantieni solo se effettivamente approvato prima del dismiss
-                // (ha approvedAt) oppure se dismissedAt è troppo recente per essere un errore legacy
-                return !!t.approvedAt;
+                // dismissed valorale: mantieni se approvato prima del dismiss (approvedAt)
+                // o rimosso dal docente (recuperabile da "Riscopri orale")
+                return !!t.approvedAt || !!t.rimossoDaUtente;
             });
             // Pulizia retroattiva localStorage: i valscritta già conclusi
             // (approved/dismissed) hanno i dati su Firebase → all'avvio li riduciamo
@@ -25699,13 +25700,14 @@ ${sectionInstr}`;
             }
         } else if (task.type === 'valorale' || task.type === 'valdialogo') {
             // I task valorale/valdialogo NON sono calendar-triggered: sono scansione audio/dialogo.
-            // Se approvati → dismissed (blocca ri-elaborazione). Altrimenti → vera eliminazione.
-            if (task.status === 'approved') {
-                task.status      = 'dismissed';
-                task.dismissedAt = new Date().toISOString();
-            } else {
-                agentTasks = agentTasks.filter(t => t.id !== taskId);
-            }
+            // Rimossi → 'dismissed' (nascosti, con trascrizione e valutazione): si
+            // ripristinano per 30 giorni da "🎙️ Riscopri orale". Prima quelli non
+            // approvati si cancellavano subito e un errore faceva perdere tutto il lavoro.
+            if (!confirm(`Rimuovere la scheda di ${task.studentName || (task.studenti||[]).map(s => s.studentName).join(' + ') || 'questo orale'}?\n\nResta recuperabile per 30 giorni da "🎙️ Riscopri orale".`)) return;
+            task.statusPrimaRimozione = task.status;
+            task.status      = 'dismissed';
+            task.dismissedAt = new Date().toISOString();
+            task.rimossoDaUtente = true;
         } else {
             agentTasks = agentTasks.filter(t => t.id !== taskId);
         }
@@ -25957,6 +25959,63 @@ ${sectionInstr}`;
         task.esclusi = task.esclusi.filter(x => x.safe !== safe);
         agentSaveTasks(agentTasks);
         await agentRegenerate(taskId);
+    }
+
+    // ── Riscopri un ORALE (o dialogo) rimosso ─────────────────────────────
+    function agentRiscopriOrale() {
+        document.getElementById('riscopriOraleModal')?.remove();
+        const e = x => String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+        const rimossi = agentTasks.filter(t => (t.type === 'valorale' || t.type === 'valdialogo') && t.status === 'dismissed')
+            .sort((a, b) => String(b.dismissedAt || '').localeCompare(String(a.dismissedAt || '')));
+        const nome = t => t.type === 'valdialogo' ? (t.studenti || []).map(s => s.studentName).join(' + ') : (t.studentName || '');
+        const voto = t => t.type === 'valdialogo' ? (t.results || []).map(r => r.votoValue ?? '—').join(' / ') : (t.votoValue ?? '—');
+        const stato = t => t.approvedAt ? '✔ era approvata' : (t.valDocente || (t.results || []).length) ? '✅ valutata, non approvata' : t.trascrizione ? '✍️ con trascrizione' : '⏳ da trascrivere';
+        const ov = document.createElement('div');
+        ov.id = 'riscopriOraleModal';
+        ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center;';
+        ov.innerHTML = `<div style="background:#fff;border-radius:14px;padding:22px 26px;max-width:680px;width:92%;max-height:86vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25);">
+            <div style="font-weight:800;font-size:16px;color:#311b92;margin-bottom:4px;">🎙️ Riscopri un orale</div>
+            <div style="font-size:12px;color:#777;margin-bottom:12px;">Le schede degli orali rimosse restano recuperabili per 30 giorni, con trascrizione e valutazione.</div>
+            <div style="font-size:12px;font-weight:800;color:#555;margin-bottom:6px;">ORALI E DIALOGHI RIMOSSI (${rimossi.length})</div>
+            ${rimossi.length ? rimossi.map(t => `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid #ede7f6;border-radius:8px;margin-bottom:6px;">
+                <div style="flex:1;min-width:0;">
+                    <div style="font-weight:800;color:#1a237e;"><span style="background:#3949ab;color:#fff;border-radius:6px;padding:1px 7px;font-size:12px;margin-right:6px;">${e(String(t.classe || '').toUpperCase())}</span>${e(nome(t))}</div>
+                    <div style="font-size:11px;color:#666;">${t.type === 'valdialogo' ? 'Dialogo · ' : ''}📅 ${e(t.sessionDate || '')} · voto ${e(voto(t))} · ${stato(t)} · rimossa il ${e(t.dismissedAt ? new Date(t.dismissedAt).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '')}</div>
+                </div>
+                <button onclick="agentRipristinaOrale('${t.id}')" style="padding:6px 12px;border-radius:8px;border:1px solid #81c784;background:#e8f5e9;color:#1b5e20;font-weight:700;cursor:pointer;">↩ Ripristina</button>
+            </div>`).join('') : '<div style="font-size:13px;color:#999;margin-bottom:8px;">Nessun orale rimosso da recuperare.</div>'}
+            <div style="margin-top:14px;padding-top:12px;border-top:1px solid #eee;">
+                <div style="font-size:12px;font-weight:800;color:#555;margin-bottom:4px;">NON È IN ELENCO?</div>
+                <div style="font-size:12px;color:#666;margin-bottom:8px;">Le schede cancellate prima di questo aggiornamento non si possono ripristinare, ma l'audio è ancora nella cartella: l'agente ricrea la scheda (da trascrivere di nuovo) se per quella data l'alunno non ha già un voto orale in MyClass.</div>
+                <button onclick="agentRicercaAudioOrali()" style="padding:8px 14px;border-radius:8px;border:1px solid #b39ddb;background:#ede7f6;color:#4527a0;font-weight:700;cursor:pointer;">🔍 Cerca di nuovo gli audio nella cartella</button>
+                <span id="roMsg" style="font-size:12px;color:#1b5e20;margin-left:8px;"></span>
+            </div>
+            <div style="text-align:right;margin-top:14px;"><button onclick="document.getElementById('riscopriOraleModal').remove()" style="padding:8px 16px;border-radius:8px;border:1px solid #ccc;background:#f5f5f5;cursor:pointer;">Chiudi</button></div>
+        </div>`;
+        ov.addEventListener('click', ev => { if (ev.target === ov) ov.remove(); });
+        document.body.appendChild(ov);
+    }
+    function agentRipristinaOrale(taskId) {
+        const t = agentTasks.find(x => x.id === taskId);
+        if (!t) return;
+        t.status = t.approvedAt ? 'approved'
+            : (t.statusPrimaRimozione && t.statusPrimaRimozione !== 'dismissed' && t.statusPrimaRimozione !== 'processing') ? t.statusPrimaRimozione
+            : (t.valDocente || (t.results || []).length) ? 'ready'
+            : t.trascrizione ? (t.type === 'valdialogo' ? 'awaiting_speakers' : 'awaiting_transcript') : 'pending';
+        delete t.dismissedAt; delete t.rimossoDaUtente; delete t.statusPrimaRimozione;
+        agentSaveTasks(agentTasks); agentBadgeUpdate(); agentRenderPanel();
+        agentRiscopriOrale();
+        const m = document.getElementById('roMsg'); if (m) m.textContent = '✅ Ripristinata: la trovi nella coda.';
+    }
+    async function agentRicercaAudioOrali() {
+        const m = document.getElementById('roMsg');
+        if (!agentAudioDirHandle) { if (m) { m.style.color = '#b35c00'; m.textContent = '⚠️ Prima riapri la cartella audio nelle impostazioni dell\'agente.'; } return; }
+        const prima = new Set(agentTasks.map(t => t.id));
+        if (m) { m.style.color = '#555'; m.textContent = '⏳ Cerco…'; }
+        try { await agentCheckAudioFolder(); } catch (e) { if (m) { m.style.color = '#c62828'; m.textContent = '⚠️ ' + e.message; } return; }
+        agentSaveTasks(agentTasks); agentRenderPanel();
+        const nuovi = agentTasks.filter(t => !prima.has(t.id) && (t.type === 'valorale' || t.type === 'audio_abbina'));
+        if (m) { m.style.color = '#1b5e20'; m.textContent = nuovi.length ? `✅ ${nuovi.length} schede ricreate: ${nuovi.map(t => t.studentName || t.audioFileName).join(', ')}` : 'Nessuna scheda nuova: gli audio hanno già una scheda o un voto orale per quella data.'; }
     }
 
     // ── Riscopri UN alunno ───────────────────────────────────────────────
@@ -27695,10 +27754,11 @@ ${sectionInstr}`;
         // Rimuovi task 'dismissed' più vecchi di 48 ore (non servono più come guardia anti-regen)
         const cutoff = Date.now() - 48 * 60 * 60 * 1000;
         const before = agentTasks.length;
+        const cutoffOrali = Date.now() - 30 * 24 * 60 * 60 * 1000;   // orali rimossi: recuperabili 30 giorni
         agentTasks = agentTasks.filter(t => {
             if (t.status !== 'dismissed') return true;
             const ts = t.dismissedAt ? new Date(t.dismissedAt).getTime() : 0;
-            return ts > cutoff;
+            return ts > ((t.type === 'valorale' || t.type === 'valdialogo') ? cutoffOrali : cutoff);
         });
         if (agentTasks.length < before) {
             agentSaveTasks(agentTasks);
