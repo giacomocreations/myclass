@@ -13931,6 +13931,25 @@ function _evalSpeaking(q, a, pts) {
 // domanda risulta svolta ma, non sapendo cosa ha detto, esce dal punteggio.
 const _SpkRec = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 let _spkRec = null, _spkBusy = false;
+// Esercizi guidati (frase breve): il riconoscimento "a frase singola" del browser si chiude
+// dopo circa 1 secondo di pausa e non si può regolare. Si ascolta in continuo e si chiude noi:
+// dopo _SPK_SILENCE_MS di silenzio quando l'alunno ha già parlato, dopo _SPK_WAIT_MS se non ha ancora iniziato.
+const _SPK_SILENCE_MS = 3500, _SPK_WAIT_MS = 10000;
+// Unisce i risultati definitivi. Su Android Chrome in modalità continua un risultato può
+// ripetere il precedente allungandolo ("I have" → "I have to walk"): si tiene solo il più lungo.
+function _spkJoinFinals(results) {
+  const out = [];
+  for (let k = 0; k < results.length; k++) {
+    if (!results[k].isFinal) continue;
+    const t = String(results[k][0].transcript || '').trim();
+    if (!t) continue;
+    const prev = out.length ? out[out.length - 1].toLowerCase() : null;
+    if (prev != null && t.toLowerCase().startsWith(prev)) out[out.length - 1] = t;
+    else if (prev != null && prev.startsWith(t.toLowerCase())) continue;
+    else out.push(t);
+  }
+  return out.join(' ');
+}
 function _spkKey(i) { return (S.sessionCode || '') + '|' + i; }
 function _spkState(i) {
   S.spkNoMic = S.spkNoMic || {}; S.spkTries = S.spkTries || {};
@@ -13950,7 +13969,7 @@ function _spkQuestionHTML(q, i, qLabel, qImg) {
   const noSupport = canMic ? '' : `<div style="background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;padding:10px 12px;font-size:13px;color:#92400e;margin-top:10px;">⚠️ Questo browser non riconosce la voce: usa <b>Chrome</b> o <b>Safari</b>. Se proprio non puoi, spunta la casella qui sotto e scrivi la risposta.</div>`;
   const help = q.free
     ? 'Premi 🎤, parla con calma e premi <b>⏹ Ho finito</b> quando hai finito.'
-    : 'Premi 🎤 e di\' la frase: la registrazione si ferma da sola quando smetti di parlare.';
+    : 'Premi 🎤 e di\' la frase con calma: la registrazione si ferma da sola dopo qualche secondo di silenzio (oppure premi ⏹ Stop).';
   return `<div class="question-card">${qLabel}${qImg}
     <div style="display:inline-block;background:#ede9ff;color:#4c1d95;font-size:11px;font-weight:800;padding:3px 10px;border-radius:999px;margin-bottom:8px;">🎤 SPEAKING${q.free ? ' · parlato libero' : ''}</div>
     <div class="q-text">${richText(q.text || '')}</div>
@@ -14033,11 +14052,24 @@ function spkToggleMic(i) {
   const inPv = !!_spkPv(i);
   const note = document.getElementById('spk-note');
   const btn = document.getElementById('spk-mic');
-  let text = '';
+  let text = '', silT = null, spoke = false;
+  // Solo per i guidati: chiusura automatica dopo una pausa lunga (vedi _SPK_SILENCE_MS)
+  const armSilence = () => {
+    if (q.free) return;
+    clearTimeout(silT);
+    silT = setTimeout(() => { if (_spkBusy && rec === _spkRec) { try { rec.stop(); } catch(e) {} } }, spoke ? _SPK_SILENCE_MS : _SPK_WAIT_MS);
+  };
+  let rec;
   try {
-    _spkRec = new _SpkRec();
-    _spkRec.lang = 'en-GB'; _spkRec.interimResults = false; _spkRec.maxAlternatives = 1; _spkRec.continuous = !!q.free;
-    _spkRec.onresult = e => { for (let k = e.resultIndex; k < e.results.length; k++) if (e.results[k].isFinal) text += ' ' + e.results[k][0].transcript; };
+    rec = _spkRec = new _SpkRec();
+    _spkRec.lang = 'en-GB'; _spkRec.interimResults = !q.free; _spkRec.maxAlternatives = 1; _spkRec.continuous = true;
+    _spkRec.onresult = e => {
+      text = _spkJoinFinals(e.results);
+      // Anche i risultati provvisori dicono che l'alunno sta parlando: il conto del silenzio riparte
+      for (let k = e.resultIndex; k < e.results.length; k++) if (String(e.results[k][0].transcript || '').trim()) spoke = true;
+      armSilence();
+    };
+    _spkRec.onspeechstart = () => { spoke = true; armSilence(); };
     _spkRec.onerror = e => {
       if (!note) return;
       note.textContent = e.error === 'not-allowed' || e.error === 'service-not-allowed'
@@ -14046,6 +14078,8 @@ function spkToggleMic(i) {
         : '⚠️ Non ho sentito bene: riprova.';
     };
     _spkRec.onend = () => {
+      clearTimeout(silT);
+      if (rec !== _spkRec) return;   // registrazione vecchia, già sostituita
       _spkBusy = false;
       if (text.trim()) {
         const n = document.getElementById('spk-note'); if (n) n.textContent = '';
@@ -14058,8 +14092,8 @@ function spkToggleMic(i) {
       const b = document.getElementById('spk-mic');
       if (b) b.textContent = inPv ? (_spkPv(i)?.tries ? '🎤 Riprova' : '🎤 Parla') : _spkMicLabel(q, i);
     };
-    _spkRec.start(); _spkBusy = true;
-  } catch(e) { _spkBusy = false; if (note) note.textContent = '⚠️ Microfono non disponibile.'; return; }
+    _spkRec.start(); _spkBusy = true; armSilence();
+  } catch(e) { clearTimeout(silT); _spkBusy = false; if (note) note.textContent = '⚠️ Microfono non disponibile.'; return; }
   if (btn) btn.textContent = q.free ? '⏹ Ho finito' : '⏹ Stop';
   if (note) note.textContent = q.free ? '🔴 Ti ascolto… premi ⏹ quando hai finito.' : '🔴 Parla adesso…';
 }
