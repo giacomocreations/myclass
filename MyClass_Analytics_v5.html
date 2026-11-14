@@ -4701,12 +4701,21 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 try {
                     const raw=JSON.parse(e.target.result);
                     const lista=Array.isArray(raw)?raw:[raw];
-                    let n=0;
+                    let n=0, aggiornate=0;
                     lista.forEach(g=>{
                         const nome=(g.nome||'').trim();
                         const aree=(g.aree||[]).filter(a=>a.nome&&a.max>0);
                         if(!nome||!aree.length) return;
                         if(!data.griglie) data.griglie=[];
+                        // Stesso id di una griglia già presente → la si AGGIORNA (restano validi i
+                        // collegamenti: lezioni del piano, LIVE, attività come gli English Drill)
+                        const esistente=g.id?data.griglie.find(x=>x.id===g.id):null;
+                        if(esistente && confirm('Esiste già la griglia "'+esistente.nome+'" con lo stesso id.\n\nOK = aggiornala con questa versione (i collegamenti a lezioni e attività restano)\nAnnulla = importala come griglia nuova')){
+                            esistente.nome=nome; esistente.aree=aree;
+                            if(g.conversione_voto) esistente.conversione_voto=g.conversione_voto;
+                            const _gdU=_grigliaGuidaTesto(g.guida); if(_gdU) esistente.guida=_gdU; else delete esistente.guida;
+                            n++; aggiornate++; return;
+                        }
                         const obj={id:'g_'+Date.now()+'_'+n,nome,aree};
                         if(g.conversione_voto) obj.conversione_voto=g.conversione_voto;
                         // Guida della verifica (struttura, chiave delle schede, regole): la usa l'agente per valutare
@@ -4715,7 +4724,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                     });
                     if(!n){alert('❌ Nessuna griglia valida trovata.');return;}
                     saveData(); renderGriglieSettings();
-                    alert('✅ '+n+' griglia'+(n>1?'e importate':' importata')+'!');
+                    alert('✅ '+(aggiornate===n ? (n>1?n+' griglie aggiornate':'Griglia aggiornata') : n+' griglia'+(n>1?'e importate':' importata')+(aggiornate?' ('+aggiornate+' aggiornate)':''))+'!');
                 } catch(err){alert('❌ JSON non valido: '+err.message);}
             };
             reader.readAsText(file);
