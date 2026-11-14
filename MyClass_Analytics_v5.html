@@ -6180,7 +6180,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                     studente.aiReport.text, 
                     `🤖 Analisi Didattica - ${studente.nome} ${studente.cognome}`,
                     studente.aiReport.generatedAt
-                ) + `<button onclick="inviaAnalisiStudentApp()" style="margin-top:8px;padding:7px 14px;border-radius:8px;border:1px solid #9fa8da;background:#e8eaf6;color:#283593;font-weight:700;cursor:pointer;" title="Manda questa analisi all'alunno in StudentApp (Statistiche → La tua analisi didattica)">📤 Invia a StudentApp</button>`;
+) + `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"><button onclick="apriEditorAnalisi({})" style="padding:7px 14px;border-radius:8px;border:1px solid #9fa8da;background:#fff;color:#283593;font-weight:700;cursor:pointer;">✏️ Modifica e impagina</button><button onclick="inviaAnalisiStudentApp()" style="padding:7px 14px;border-radius:8px;border:1px solid #9fa8da;background:#e8eaf6;color:#283593;font-weight:700;cursor:pointer;" title="Manda questa analisi all'alunno in StudentApp (Statistiche → La tua analisi didattica)">📤 Invia a StudentApp</button></div>`;
                 btnStudentAI.textContent = '🔄 Rigenera Analisi Didattica AI';
             } else {
                 aiContainer.innerHTML = '';
@@ -21743,11 +21743,146 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
       }
     }
     // Invia (o reinvia) a StudentApp l'analisi didattica salvata nella scheda dell'alunno
+    // ── Editor dell'analisi didattica: testo + anteprima come in StudentApp ──
+    // Il testo vive in studente.aiReport.text (fonte per StudentApp) e, se arriva
+    // dall'agente, anche in task.content: si aggiornano sempre insieme.
+    function _analisiFormatHtml(text) {
+        const e = x => String(x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const inl = x => e(x).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        const isTit = t => { const l = t.replace(/[^A-Za-zÀ-ÿ]/g, ''); return l.length >= 3 && l.replace(/[^A-ZÀ-Þ]/g, '').length / l.length >= 0.6; };
+        const out = []; let par = [], lista = [];
+        const chiudi = () => {
+            if (par.length) { out.push(`<p style="margin:0 0 12px;">${par.join('<br>')}</p>`); par = []; }
+            if (lista.length) { out.push(`<ul style="margin:0 0 12px;padding-left:20px;">${lista.map(x => `<li style="margin-bottom:4px;">${x}</li>`).join('')}</ul>`); lista = []; }
+        };
+        String(text || '').replace(/\r/g, '').split('\n').forEach(riga => {
+            const r = riga.trim();
+            if (!r) { chiudi(); return; }
+            let m = r.match(/^#{1,4}\s*(.+?)\s*#*$/) || r.match(/^\*\*(.+?)\*\*\s*:?$/);
+            let resto = '';
+            if (!m) { const m2 = r.match(/^\*\*([^*]{3,80}?)\*\*\s*[:\-–]?\s*(.+)$/); if (m2 && isTit(m2[1])) { m = m2; resto = m2[2]; } }
+            if (m) {
+                chiudi();
+                out.push(`<div style="font-size:14px;font-weight:800;color:#4c1d95;margin:18px 0 6px;letter-spacing:.2px;">${inl(m[1].replace(/\*\*/g, ''))}</div>`);
+                if (resto) par.push(inl(resto));
+                return;
+            }
+            const b = r.match(/^(?:[-•*]|\d+[.)])\s+(.+)$/);
+            if (b) { if (par.length) { out.push(`<p style="margin:0 0 12px;">${par.join('<br>')}</p>`); par = []; } lista.push(inl(b[1])); return; }
+            if (lista.length) chiudi();
+            par.push(inl(r));
+        });
+        chiudi();
+        return out.join('');
+    }
+    // "✨ Sistema impaginazione": titoli su una riga propria con spazio sopra e sotto,
+    // una riga vuota tra i paragrafi, niente righe vuote in eccesso
+    function _analisiSistema(text) {
+        let t = String(text || '').replace(/\r/g, '').replace(/[ \t]+$/gm, '');
+        // titolo in grassetto attaccato al testo → titolo da solo
+        t = t.replace(/^[ \t]*\*\*([^*\n]{3,80}?)\*\*[ \t]*[:\-–]?[ \t]+(?=\S)/gm, (m0, tit) => {
+            const l = tit.replace(/[^A-Za-zÀ-ÿ]/g, ''); return l && l.replace(/[^A-ZÀ-Þ]/g, '').length / l.length >= 0.6 ? `**${tit.trim()}**\n` : m0;
+        });
+        const righe = t.split('\n'), out = [];
+        const tit = r => /^\s*(#{1,4}\s*.+|\*\*[^*]+\*\*\s*:?)\s*$/.test(r);
+        const pt = r => /^\s*(?:[-•*]|\d+[.)])\s+/.test(r);
+        righe.forEach((r, i) => {
+            const prev = out.length ? out[out.length - 1] : '';
+            if (tit(r)) { if (prev.trim()) out.push(''); out.push(r.trim()); out.push(''); return; }
+            if (r.trim() && prev.trim() && !tit(prev) && !(pt(r) && pt(prev)) && /[.!?:)»"]$/.test(prev.trim()) && !pt(r)) out.push('');
+            out.push(r);
+        });
+        return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    }
+    let _anEd = null;
+    function apriEditorAnalisi(o) {
+        let classeIdx, studIdx, task = null;
+        if (o.taskId) {
+            task = agentTasks.find(t => t.id === o.taskId);
+            if (!task) return;
+            classeIdx = task.classIdx;
+            const c = data.classi[classeIdx];
+            studIdx = (c?.studenti || []).findIndex(s => `${s.cognome} ${s.nome}`.replace(/[.#$[\]/ ]/g, '_').toLowerCase() === task.studentSafe);
+        } else { classeIdx = currentClass; studIdx = currentStudent; }
+        const classe = data.classi[classeIdx], studente = classe?.studenti?.[studIdx];
+        if (!studente) { alert('Alunno non trovato in MyClass.'); return; }
+        const testo = (task && task.content) || studente.aiReport?.text || '';
+        _anEd = { classeIdx, studIdx, taskId: task ? task.id : null };
+        document.getElementById('anEdOverlay')?.remove();
+        const ov = document.createElement('div');
+        ov.id = 'anEdOverlay';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px;';
+        const b = 'padding:8px 14px;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;';
+        ov.innerHTML = `<div style="background:#fff;border-radius:14px;width:min(1200px,100%);height:min(92vh,900px);display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.35);">
+            <div style="padding:12px 16px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <div style="font-size:16px;font-weight:800;color:#312e81;flex:1;">✏️ Analisi didattica — ${studente.cognome} ${studente.nome}</div>
+                <button onclick="_anEdSistema()" style="${b}border:1px solid #a5b4fc;background:#eef2ff;color:#3730a3;" title="Titoli su una riga propria, una riga vuota tra i paragrafi">✨ Sistema impaginazione</button>
+                <button onclick="document.getElementById('anEdOverlay').remove()" style="${b}border:1px solid #e5e7eb;background:#fff;color:#555;">✕ Chiudi</button>
+            </div>
+            <div style="font-size:11px;color:#6b7280;padding:6px 16px 0;">Titoli su una riga da soli tra due asterischi (es. **PUNTI DI FORZA**) · una riga vuota tra un paragrafo e l'altro · elenchi con "- " all'inizio della riga. A destra vedi come lo legge l'alunno.</div>
+            <div style="flex:1;display:flex;gap:12px;padding:10px 16px;min-height:0;flex-wrap:wrap;">
+                <textarea id="anEdTesto" oninput="_anEdAnteprima()" style="flex:1 1 380px;min-height:220px;height:100%;resize:none;padding:10px;font-size:13px;line-height:1.6;border:1.5px solid #c7d2fe;border-radius:10px;font-family:inherit;box-sizing:border-box;"></textarea>
+                <div style="flex:1 1 380px;min-height:220px;height:100%;overflow:auto;border:1.5px solid #e9d5ff;border-radius:10px;padding:12px 14px;background:#faf5ff;box-sizing:border-box;">
+                    <div style="font-size:11px;font-weight:800;color:#7c3aed;margin-bottom:8px;">👁 ANTEPRIMA (StudentApp)</div>
+                    <div id="anEdPrev" style="font-size:13px;color:#1f2937;line-height:1.85;"></div>
+                </div>
+            </div>
+            <div style="padding:10px 16px;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+                <span id="anEdMsg" style="font-size:12px;color:#059669;align-self:center;margin-right:auto;"></span>
+                <button onclick="_anEdSalva(false)" style="${b}border:1px solid #c7d2fe;background:#fff;color:#3730a3;">💾 Salva</button>
+                <button onclick="_anEdSalva(true)" style="${b}border:none;background:#4f46e5;color:#fff;">📤 Salva e invia a StudentApp</button>
+            </div></div>`;
+        document.body.appendChild(ov);
+        document.getElementById('anEdTesto').value = testo;
+        _anEdAnteprima();
+    }
+    function _anEdAnteprima() {
+        const t = document.getElementById('anEdTesto')?.value || '';
+        const vis = _cleanAIReportForStudent(t).replace(/\*\*PUNTEGGI COMPETENZE[\s\S]*$/i, '');
+        const el = document.getElementById('anEdPrev'); if (el) el.innerHTML = _analisiFormatHtml(vis);
+    }
+    function _anEdSistema() {
+        const ta = document.getElementById('anEdTesto'); if (!ta) return;
+        ta.value = _analisiSistema(ta.value); _anEdAnteprima();
+        const m = document.getElementById('anEdMsg'); if (m) m.textContent = '✨ Impaginazione sistemata: controlla e salva.';
+    }
+    async function _anEdSalva(invia) {
+        if (!_anEd) return;
+        const testo = (document.getElementById('anEdTesto')?.value || '').trim();
+        if (!testo) { alert('Il testo è vuoto.'); return; }
+        const classe = data.classi[_anEd.classeIdx], studente = classe?.studenti?.[_anEd.studIdx];
+        if (!studente) return;
+        const task = _anEd.taskId ? agentTasks.find(t => t.id === _anEd.taskId) : null;
+        if (!studente.aiReport) studente.aiReport = {};
+        studente.aiReport.text = _cleanAIReportForStudent(testo);
+        if (!studente.aiReport.generatedAt) studente.aiReport.generatedAt = (task && task.generatedAt) || new Date().toISOString();
+        studente.aiReport.editedAt = new Date().toISOString();
+        const comp = _extractScoresFromAIText(testo); if (comp) studente.competenzeAI = comp;
+        saveData();
+        if (task) { task.content = testo; agentSaveTasks(agentTasks); }
+        const m = document.getElementById('anEdMsg');
+        if (!invia) { if (m) m.textContent = '💾 Salvata in MyClass (non ancora inviata).'; if (typeof agentRenderPanel === 'function') agentRenderPanel(); if (_anEd.classeIdx === currentClass && _anEd.studIdx === currentStudent && typeof renderStudentDetail === 'function') { try { renderStudentDetail(); } catch(e) {} } return; }
+        // Invio: dall'agente con l'approvazione (se non ancora approvata), altrimenti reinvio
+        document.getElementById('anEdOverlay')?.remove();
+        if (task && task.status === 'ready') { await agentApprove(task.id); return; }
+        await inviaAnalisiStudentApp(_anEd.classeIdx, _anEd.studIdx);
+        if (typeof agentRenderPanel === 'function') agentRenderPanel();
+        if (_anEd.classeIdx === currentClass && _anEd.studIdx === currentStudent && typeof renderStudentDetail === 'function') { try { renderStudentDetail(); } catch(e) {} }
+    }
+
     async function agentReinviaAnalisi(taskId) {
         const task = agentTasks.find(t => t.id === taskId);
         const classe = task && data.classi[task.classIdx];
         const i = (classe?.studenti || []).findIndex(s => `${s.cognome} ${s.nome}`.replace(/[.#$[\]/ ]/g, '_').toLowerCase() === task.studentSafe);
         if (i < 0) { alert('Alunno non trovato in MyClass.'); return; }
+        // Le modifiche fatte nell'agente valgono anche per il reinvio
+        const st = classe.studenti[i];
+        if (task.content && (st.aiReport?.text || '') !== _cleanAIReportForStudent(task.content)) {
+            if (!st.aiReport) st.aiReport = {};
+            st.aiReport.text = _cleanAIReportForStudent(task.content);
+            if (!st.aiReport.generatedAt) st.aiReport.generatedAt = task.generatedAt || new Date().toISOString();
+            saveData();
+        }
         return inviaAnalisiStudentApp(task.classIdx, i);
     }
     async function inviaAnalisiStudentApp(classeIdx, studIdx) {
@@ -24956,6 +25091,10 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
     async function agentApprove(taskId) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task || task.status !== 'ready') return;
+        // Riquadro "✏️ Modifica" ancora aperto: le modifiche entrano nell'approvazione
+        // (prima si perdevano se non si richiudeva il riquadro prima di approvare)
+        const _ed = document.getElementById(`agentEdit_${taskId}`);
+        if (_ed && _ed.style.display !== 'none' && _ed.value.trim()) { task.content = _ed.value; agentSaveTasks(agentTasks); }
 
         if (task.type === 'cdc') {
             const classe = data.classi[task.classIdx];
@@ -26581,7 +26720,9 @@ ${sectionInstr}`;
                                   : task.type==='analisididattica' ? '📤 Approva & Invia allo studente'
                                   : '✅ Approva & Salva'}
                             </button>` : ''}
-                            <button class="agent-btn-edit" onclick="agentToggleEdit('${task.id}','${editId}')">✏️ Modifica</button>
+                            ${task.type==='analisididattica'
+                                ? `<button class="agent-btn-edit" onclick="apriEditorAnalisi({taskId:'${task.id}'})">✏️ Modifica e impagina</button>`
+                                : `<button class="agent-btn-edit" onclick="agentToggleEdit('${task.id}','${editId}')">✏️ Modifica</button>`}
                             <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
                             ${task.type==='valscritta' ? `<button class="agent-btn-edit" onclick="agentRecalcAndRegenerate('${task.id}')">📊 Riprendi con dati aggiornati</button>` : ''}
                             ${task.type==='valscritta' ? `<button class="agent-btn-edit" onclick="agentValToClaude('${task.id}')" title="Prepara la consegna per Claude Code: la valutazione attuale resta finché non importi il file">🟣 Rifai con Claude Code</button>` : ''}
@@ -26848,7 +26989,7 @@ ${sectionInstr}`;
                 <div class="agent-task-body">
                     ${meta ? `<div class="agent-task-meta" style="margin-bottom:8px;">${meta}</div>` : ''}
                     ${_agentAiPickerHtml(task)}
-                    ${task.type === 'analisididattica' && task.status === 'approved' ? `<div style="margin-bottom:8px;"><button class="agent-btn-edit" onclick="agentReinviaAnalisi('${task.id}')" title="Rimanda a StudentApp l'analisi salvata in MyClass">📤 Invia di nuovo a StudentApp</button></div>` : ''}
+                    ${task.type === 'analisididattica' && task.status === 'approved' ? `<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;"><button class="agent-btn-edit" onclick="apriEditorAnalisi({taskId:'${task.id}'})">✏️ Modifica e reinvia</button><button class="agent-btn-edit" onclick="agentReinviaAnalisi('${task.id}')" title="Rimanda a StudentApp l'analisi salvata in MyClass">📤 Invia di nuovo a StudentApp</button></div>` : ''}
                     ${body}
                 </div>
             </div>`;
