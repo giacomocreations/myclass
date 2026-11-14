@@ -26123,7 +26123,9 @@ ${sectionInstr}`;
                             ${task.trascrizione ? `<button class="agent-btn-edit" onclick="agentDialogoEditSpeakers('${task.id}')">👥 Trascrizione / parlanti</button>` : ''}
                             ${task.status==='ready' && _dialogoHasAudio(task) ? `<button class="agent-btn-edit" onclick="agentRitrascrivi('${task.id}')" title="Rifà la trascrizione dall'audio; poi la rivedi e rigeneri le valutazioni">🔁 Rigenera trascrizione</button>` : ''}
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
-                        </div>`;
+                        </div>
+                        ${_agentClaudePanelHtml(task)}
+                        ${_agentVersioniHtml(task)}`;
                 } else if (task.type === 'valorale') {
                     // Tre sezioni editabili indipendenti (accordion) per i 3 file
                     const mkSection = (label, fieldKey, minH) => {
@@ -26209,7 +26211,9 @@ ${sectionInstr}`;
                             ${task.status==='ready' && task.audioFileName ? `<button class="agent-btn-edit" onclick="agentRitrascrivi('${task.id}')" title="Rifà la trascrizione dall'audio; poi la rivedi e rigeneri la valutazione">🔁 Rigenera trascrizione</button>` : ''}
                             <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause lunghe sono attese per le slide — non penalizzare la fluency"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
-                        </div>`;
+                        </div>
+                        ${_agentClaudePanelHtml(task)}
+                        ${_agentVersioniHtml(task)}`;
                 } else if (task.type === 'valscritta') {
                     // ── Alunni esclusi dal docente da questa valutazione ───────
                     const _vsJs = x => String(x == null ? '' : x).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
@@ -26510,6 +26514,7 @@ ${sectionInstr}`;
                     ${_agentTranscriptSaveBtn(task)}
                     <button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta con Claude</button>
                     ${task.audioFileName ? _agentRitrascriviBtns(task) : ''}
+                    ${(task.valDocente||'').trim() ? `<button class="agent-btn-edit" onclick="agentTornaAiRisultati('${task.id}')" title="Riapri la valutazione già fatta, senza rigenerarla">↩ Torna alla valutazione già fatta</button>` : ''}
                     <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause sono attese per le slide — non penalizzare"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                     <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                 </div>
@@ -26555,6 +26560,7 @@ ${sectionInstr}`;
                         <button class="agent-btn-approve" onclick="agentDialogoGenerate('${task.id}')">✅ Approva trascrizione e genera valutazioni</button>
                         <button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta tutti con Claude</button>
                         ${_dialogoHasAudio(task) ? _agentRitrascriviBtns(task) : ''}
+                        ${Array.isArray(task.results) && task.results.some(r => (r.valDocente||'').trim()) ? `<button class="agent-btn-edit" onclick="agentTornaAiRisultati('${task.id}')" title="Riapri le valutazioni già fatte, senza rigenerarle">↩ Torna alle valutazioni già fatte</button>` : ''}
                         <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
                         <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
                     </div>
@@ -30692,6 +30698,7 @@ Lunghezza ${aree.length ? '170-260' : '120-200'} parole in tutto. A parte ${aree
     // opts.onlyPrompt → non chiama l'AI: restituisce il prompt (per "Valuta con Claude")
     // opts.raw        → usa questa risposta (incollata da Claude) al posto della chiamata AI
     async function agentTaskValOrale(task, opts = {}) {
+        const _prima = { provider: task.aiProvider, at: task.generatedAt };   // per le versioni precedenti
         const skipTranscription = !!(task.trascrizione && task.trascrizione.trim());
         if (opts.onlyPrompt && !skipTranscription) return '';
         if (!opts.onlyPrompt) { task.status = 'processing'; agentRenderPanel(); }
@@ -30845,6 +30852,7 @@ Genera SOLO due blocchi (niente ARGO) con esattamente questi marcatori:\n=== VAL
                 return after.slice(0, end).trim();
             };
             const extractSection = (text, marker) => _exSec(text, marker);
+            _agentSalvaVersione(task, _prima);   // la valutazione di prima resta tra le versioni precedenti
             task.valDocente    = extractSection(raw, '=== VALUTAZIONE DOCENTE ===');
             task.argoText      = '';   // Argo solo su richiesta (agentGenArgo)
             task.classroomText = extractSection(raw, '=== CLASSROOM ===');
@@ -31268,6 +31276,68 @@ ${base}`, task, true);
         console.log(`[Agente] Griglia "${g.nome}" ricavata per ${task.studentName || task.id} — ${r.fonte}`);
     }
 
+    // ── Versioni precedenti di una valutazione orale (per confrontarle) ──────
+    const _AGENT_PROV_LBL = { gemini: 'Gemini', anthropic: 'Haiku / Sonnet', claudechat: 'Claude', claude: 'Claude Code', llama: 'Llama', gemma: 'Gemma', qwen: 'Qwen' };
+    function _agentSalvaVersione(task, prima) {
+        const v = task.type === 'valdialogo'
+            ? (Array.isArray(task.results) && task.results.some(r => (r.valDocente||'').trim() || (r.classroomText||'').trim())
+                ? { results: JSON.parse(JSON.stringify(task.results)) } : null)
+            : ((task.valDocente||'').trim() || (task.classroomText||'').trim()
+                ? { valDocente: task.valDocente || '', classroomText: task.classroomText || '', argoText: task.argoText || '',
+                    jsonOrale: task.jsonOrale || '', votoValue: task.votoValue ?? null, votoLabel: task.votoLabel || '' } : null);
+        if (!v) return;
+        v.provider = (prima ? prima.provider : task.aiProvider) || '';
+        v.at = (prima ? prima.at : task.generatedAt) || new Date().toISOString();
+        task.versioniPrecedenti = [v, ...(task.versioniPrecedenti || [])].slice(0, 5);
+    }
+    function agentUsaVersione(taskId, idx) {
+        const task = agentTasks.find(t => t.id === taskId);
+        const v = task?.versioniPrecedenti?.[idx];
+        if (!v) return;
+        if (!confirm('Usare questa versione? Quella attuale non si perde: passa tra le versioni precedenti.')) return;
+        task.versioniPrecedenti = task.versioniPrecedenti.filter((_, i) => i !== idx);
+        _agentSalvaVersione(task);
+        if (task.type === 'valdialogo') task.results = JSON.parse(JSON.stringify(v.results || []));
+        else {
+            task.valDocente = v.valDocente; task.classroomText = v.classroomText; task.argoText = v.argoText || '';
+            task.jsonOrale = v.jsonOrale; task.votoValue = v.votoValue; task.votoLabel = v.votoLabel;
+            task.content = v.valDocente;
+        }
+        task.aiProvider = v.provider; task.generatedAt = v.at;
+        if (task.status !== 'approved') task.status = 'ready';
+        agentSaveTasks(agentTasks); agentRenderPanel();
+    }
+    function _agentVersioniHtml(task) {
+        const vs = task.versioniPrecedenti || [];
+        if (!vs.length) return '';
+        const e = x => String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+        const dt = x => { try { return new Date(x).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }); } catch { return ''; } };
+        const blocco = (tit, txt) => (txt||'').trim() ? `<div style="font-size:11px;font-weight:700;color:#5c35c9;margin-top:6px;">${tit}</div><div style="font-size:12px;color:#333;white-space:pre-wrap;background:white;border:1px solid #e0e4ff;border-radius:6px;padding:6px 8px;max-height:220px;overflow:auto;">${e(txt)}</div>` : '';
+        const items = vs.map((v, i) => {
+            const voto = task.type === 'valdialogo'
+                ? (v.results||[]).map(r => `${e(r.studentName)}: ${r.votoValue ?? '—'}`).join(' · ')
+                : `voto ${v.votoValue ?? '—'}`;
+            const corpo = task.type === 'valdialogo'
+                ? (v.results||[]).map(r => `<div style="margin-top:6px;font-weight:800;color:#4527a0;">👤 ${e(r.studentName)}</div>` + blocco('Valutazione docente', r.valDocente) + blocco('Feedback alunno', r.classroomText)).join('')
+                : blocco('Valutazione docente', v.valDocente) + blocco('Feedback alunno', v.classroomText);
+            return `<details style="margin-top:6px;border:1px solid #e0e4ff;border-radius:8px;background:#fafaff;">
+                <summary style="padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700;color:#3949ab;">${e(_AGENT_PROV_LBL[v.provider] || v.provider || 'AI')} · ${e(dt(v.at))} · ${voto}</summary>
+                <div style="padding:4px 10px 10px;">${corpo}
+                    ${task.status !== 'approved' ? `<button class="agent-btn-edit" style="margin-top:8px;" onclick="agentUsaVersione('${task.id}',${i})">↩ Usa questa versione</button>` : ''}
+                </div></details>`;
+        }).join('');
+        return `<div style="margin-top:10px;padding:8px 10px;background:#f3f4ff;border:1px dashed #9fa8da;border-radius:10px;">
+            <div style="font-size:12px;font-weight:800;color:#3949ab;">🕘 Versioni precedenti (${vs.length}) — per confrontarle con quella attuale</div>${items}</div>`;
+    }
+    // Scheda tornata alla trascrizione ma con una valutazione già fatta: si può riaprirla
+    function agentTornaAiRisultati(taskId) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        _agentKeepTranscriptDraft(task);
+        task.status = 'ready'; task.error = ''; task.transcriptToReview = false;
+        agentSaveTasks(agentTasks); agentRenderPanel();
+    }
+
     // ── "Valuta con Claude": prompt da incollare in Claude + risposta incollata ──
     // Lezione del piano a cui si riferisce la verifica orale (orale preferita, ±3 giorni)
     function _agentLezioneDiTask(task) {
@@ -31418,15 +31488,10 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
         _agentKeepTranscriptDraft(task);
-        if (task.type === 'valdialogo') {
-            task.claudeSolo = soloSafe || null;
-            // Dialogo già valutato: torna alla scheda trascrizione/parlanti (i risultati restano)
-            if (task.status !== 'awaiting_speakers') { task.status = 'awaiting_speakers'; task.error = ''; }
-        } else if (task.status !== 'awaiting_transcript') {
-            // Orale già valutato: torna alla scheda trascrizione (la valutazione si rifà con la risposta di Claude)
-            task.status = 'awaiting_transcript';
-            task.error = 'Valutazione con Claude: incolla la risposta qui sotto, oppure premi Genera valutazione.';
-        }
+        if (task.type === 'valdialogo') task.claudeSolo = soloSafe || null;
+        // Valutazione già pronta: la scheda resta sui risultati (il riquadro per Claude si
+        // apre lì sotto) e la valutazione attuale finisce tra le versioni precedenti solo
+        // quando si usa la risposta di Claude: si possono confrontare.
         if (!(task.trascrizione||'').trim()) { alert('Inserisci la trascrizione prima di preparare il testo per Claude.'); return; }
         let testo = '';
         try { testo = await _agentClaudeTesto(task); }
@@ -31917,6 +31982,7 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
     // FASE 3: valuta tutti gli studenti del dialogo in una singola chiamata AI.
     // opts.onlyPrompt / opts.raw: come agentTaskValOrale (per "Valuta con Claude")
     async function agentEvaluateDialogo(task, opts = {}) {
+        const _prima = { provider: task.aiProvider, at: task.generatedAt };   // per le versioni precedenti
         if (!opts.onlyPrompt) { task.status = 'processing'; agentRenderPanel(); }
         try {
             const trascr = (task.trascrizione||'').trim();
@@ -32050,6 +32116,7 @@ ${blocchiPerAlunno}`;
                 }
             });
 
+            _agentSalvaVersione(task, _prima);   // la valutazione di prima resta tra le versioni precedenti
             task.results = results;
             task.status = 'ready';
             task.error = '';
