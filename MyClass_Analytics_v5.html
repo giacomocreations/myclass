@@ -22551,6 +22551,9 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
     }
 
     async function agentCallAI(prompt, task, isValutazione = false) {
+        // 0. AI scelta per QUESTA valutazione (menu nella scheda): si usa solo quella
+        const scelta = task && task.aiScelta;
+        if (scelta && scelta !== 'auto' && scelta !== 'claude') return await _agentCallAIScelta(scelta, prompt, task, isValutazione);
         // 1. Tenta Gemini diretto (solo se quota non in cooldown)
         if (GEMINI_API_KEY && _geminiIsQuotaOk()) {
             try {
@@ -22593,6 +22596,67 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
                 return await agentAnthropicLightCall(prompt, AGENT_SYSTEM);
             }
         }
+    }
+
+    // AI scelta dal docente per una singola valutazione: nessun ripiego automatico,
+    // se non funziona l'errore dice quale AI e perché.
+    async function _agentCallAIScelta(scelta, prompt, task, isValutazione) {
+        const sys = AGENT_SYSTEM;
+        try {
+            if (scelta === 'gemini') {
+                if (!GEMINI_API_KEY) throw new Error('manca la chiave Gemini nelle impostazioni');
+                task.aiProvider = 'gemini';
+                const r = await agentGeminiDirect(prompt, isValutazione ? sys : null);
+                _geminiResetQuota();
+                return r;
+            }
+            if (scelta === 'haiku' || scelta === 'sonnet') {
+                if (!AGENT_ANTHROPIC_KEY) throw new Error('manca la chiave Anthropic nelle impostazioni');
+                task.aiProvider = scelta;
+                return scelta === 'haiku' ? await agentAnthropicLightCall(prompt, sys) : await agentAnthropicCall(prompt, sys);
+            }
+            if (scelta === 'locale') {
+                task.aiProvider = AI_PROVIDER === 'llama' ? 'llama' : AI_PROVIDER === 'qwen' ? 'qwen' : 'gemma';
+                return await agentOllamaCall(isValutazione ? sys + '\n\n' + prompt : prompt);
+            }
+            throw new Error('AI sconosciuta');
+        } catch (e) {
+            if (e.name === 'AbortError') throw e;
+            const nomi = { gemini: 'Gemini', haiku: 'Haiku', sonnet: 'Sonnet', locale: 'AI locale (Ollama)' };
+            throw new Error(`${nomi[scelta] || scelta}: ${e.message}. Scegli un'altra AI nel menu della scheda (o "Automatico") e riprova.`);
+        }
+    }
+    // AI disponibili per il menu di ogni valutazione
+    function _agentAiOpzioni(task) {
+        const loc = AI_PROVIDER === 'llama' ? OLLAMA_LLAMA_MODEL : AI_PROVIDER === 'qwen' ? OLLAMA_QWEN_MODEL : OLLAMA_GEMMA_MODEL;
+        const o = [{ v: 'auto', t: 'Automatico (Gemini, poi riserva)' }];
+        if (GEMINI_API_KEY) o.push({ v: 'gemini', t: 'Gemini' });
+        if (AGENT_ANTHROPIC_KEY) { o.push({ v: 'haiku', t: 'Claude Haiku (API)' }); o.push({ v: 'sonnet', t: 'Claude Sonnet (API)' }); }
+        o.push({ v: 'locale', t: `Locale · Ollama (${loc})` });
+        if (task.type === 'valscritta') o.push({ v: 'claude', t: 'Claude Code (📤 file da esportare)' });
+        if (task.type === 'valorale' || task.type === 'valdialogo') o.push({ v: 'claude', t: 'Claude (🟣 copia e incolla)' });
+        return o;
+    }
+    function _agentAiPickerHtml(task) {
+        if (!['valorale', 'valdialogo', 'valscritta', 'analisididattica'].includes(task.type)) return '';
+        if (task.status === 'approved' || task.status === 'processing') return '';
+        const cur = task.aiScelta || 'auto';
+        const opts = _agentAiOpzioni(task);
+        if (!opts.some(o => o.v === cur)) opts.push({ v: cur, t: cur + ' (non disponibile)' });
+        return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:#555;">
+            <span style="font-weight:700;">🤖 AI per questa valutazione:</span>
+            <select onchange="agentSetAiScelta('${task.id}',this.value)" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid #c5cae9;background:white;">
+                ${opts.map(o => `<option value="${o.v}" ${o.v === cur ? 'selected' : ''}>${o.t}</option>`).join('')}
+            </select>
+            <span style="font-size:11px;color:#888;">vale per Genera / Rigenera di questa scheda</span>
+        </div>`;
+    }
+    function agentSetAiScelta(taskId, v) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        _agentKeepTranscriptDraft(task);
+        task.aiScelta = v;
+        agentSaveTasks(agentTasks);
     }
 
     // ── Task: CdC ─────────────────────────────────────────────────────────
@@ -24947,6 +25011,7 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
     async function agentRegenerate(taskId) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
+        if (task.aiScelta === 'claude' && (task.type === 'valorale' || task.type === 'valdialogo') && (task.trascrizione||'').trim()) { await agentClaudePrepara(taskId); return; }
         task.status = 'pending';
         agentRenderPanel();
         // Per i task valscritta: ricarica sempre le responses fresche da Firebase
@@ -25976,6 +26041,8 @@ ${sectionInstr}`;
         };
         const aiLabels = {
             gemini:    '<span class="agent-ai-badge gemini">🟢 Gemini</span>',
+            haiku:     '<span class="agent-ai-badge anthropic">🔵 Haiku</span>',
+            sonnet:    '<span class="agent-ai-badge anthropic">🔵 Sonnet</span>',
             anthropic: `<span class="agent-ai-badge anthropic">🔵 ${AGENT_ANTHROPIC_MODEL === 'haiku' ? 'Haiku 5.5' : 'Sonnet 4.6'}</span>`,
             llama:     '<span class="agent-ai-badge ollama">🟡 Llama</span>',
             gemma:     '<span class="agent-ai-badge ollama">🟡 Gemma</span>',
@@ -26690,6 +26757,7 @@ ${sectionInstr}`;
                 </div>
                 <div class="agent-task-body">
                     ${meta ? `<div class="agent-task-meta" style="margin-bottom:8px;">${meta}</div>` : ''}
+                    ${_agentAiPickerHtml(task)}
                     ${body}
                 </div>
             </div>`;
@@ -29458,7 +29526,11 @@ ${AGENT_VS_DOC_INSTR}`;
 
         // Claude Code: niente chiamata AI, la consegna si esporta su file (📤) e il testo
         // torna con 📥 Importa. I dati per alunno restano nel task fino all'import.
-        if ((AGENT_VAL_GEN === 'claude' && !task._forceAuto) || task._viaClaude) {
+        const _viaClaude = task._forceAuto ? false
+            : task._viaClaude ? true
+            : (task.aiScelta && task.aiScelta !== 'auto') ? task.aiScelta === 'claude'
+            : AGENT_VAL_GEN === 'claude';
+        if (_viaClaude) {
             delete task._viaClaude; delete task._forceAuto;
             task.importData   = results;
             task.claudePrompt = prompt;
@@ -31087,6 +31159,7 @@ ${base}`, task, true);
     async function agentSubmitManualTranscript(taskId) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
+        if (task.aiScelta === 'claude') { await agentClaudePrepara(taskId); return; }
         const ta = document.getElementById(`manualTranscript_${taskId}`);
         const text = ta ? ta.value.trim() : '';
         if (!text) { alert('Inserisci la trascrizione prima di procedere.'); return; }
@@ -32367,6 +32440,7 @@ ${blocchiPerAlunno}`;
     async function agentDialogoGenerate(taskId) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
+        if (task.aiScelta === 'claude') { await agentClaudePrepara(taskId); return; }
         const ta = document.getElementById(`dlgTranscript_${taskId}`);
         if (ta) task.trascrizione = ta.value.trim();
         if (!task.trascrizione) { alert('Inserisci o genera la trascrizione prima di procedere.'); return; }
