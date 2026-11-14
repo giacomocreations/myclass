@@ -21676,7 +21676,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
     // le classi (l'auto-sync normale copre solo la classe aperta dopo un
     // salvataggio), così i recuperi 'media' arrivano come voti singoli.
     async function _syncVotiSingoliUnaVolta() {
-      const FLAG = 'myclass_sync_voti_singoli_v1';
+      // v2: rifatto una volta perché gli orali approvati per una classe non aperta non
+      // aggiornavano il profilo StudentApp (niente voto grande nelle valutazioni orali)
+      const FLAG = 'myclass_sync_voti_singoli_v2';
       try { if (localStorage.getItem(FLAG)) return; } catch(e) { return; }
       if (!data?.classi?.length) return;
       let n = 0;
@@ -32400,7 +32402,8 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
                 }
                 await db.ref(`${_adB}/feedback`).push({
                     title: `Verifica orale ${task.unit||''}`.trim(),
-                    text: task.classroomText, date: task.sessionDate, ts: Date.now(), source: 'agent'
+                    text: task.classroomText, date: task.sessionDate, ts: Date.now(), source: 'agent',
+                    ...(task.votoValue != null ? { voto: task.votoValue } : {})   // voto grande in StudentApp
                 });
             } catch(e) { console.warn('[Agente] Firebase push orale:', e.message); }
         }
@@ -32449,6 +32452,8 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
             }
 
             saveData();
+            // Profilo StudentApp (elenco voti, medie) aggiornato come per gli scritti
+            try { const _cO = data.classi.find(c => c.nome === task.classe); if (_cO) await _autoSyncStudentMyClass(studente, _cO.nome); } catch(e) { console.warn('[Agente] sync profilo orale:', e.message); }
             if (typeof _pianoCheckTrigger === 'function') {
                 // Passa la valutazione orale come oraleDetails: nota del docente (da JSON o valDocente)
                 // + breve estratto del testo Classroom (max 600 char per non sovraccaricare il prompt)
@@ -32838,7 +32843,8 @@ ${blocchiPerAlunno}`;
                     }
                     await db.ref(`${_arB}/feedback`).push({
                         title: `Verifica orale ${task.unit||''}`.trim() + ' (dialogo)',
-                        text: r.classroomText, date: task.sessionDate, ts: Date.now(), source: 'agent'
+                        text: r.classroomText, date: task.sessionDate, ts: Date.now(), source: 'agent',
+                        ...(r.votoValue != null ? { voto: r.votoValue } : {})   // voto grande in StudentApp
                     });
                 } catch(e) { console.warn('[Agente] Firebase push dialogo:', e.message); }
             }
@@ -32865,6 +32871,7 @@ ${blocchiPerAlunno}`;
                 }
                 if (typeof _pianoCheckTrigger === 'function')
                     _pianoCheckTrigger(studente, 'orale', task.unit || '', task.classe).catch(e => console.warn('[Piano]', e.message));
+                (task._syncDopo = task._syncDopo || []).push(studente);
             }
 
             // File TXT/JSON
@@ -32876,6 +32883,9 @@ ${blocchiPerAlunno}`;
         }
 
         saveData();
+        // Profili StudentApp (elenco voti, medie) aggiornati come per gli scritti
+        const _syncD = task._syncDopo || []; delete task._syncDopo;
+        if (classeObj) for (const st of _syncD) { try { await _autoSyncStudentMyClass(st, classeObj.nome); } catch(e) {} }
         task.status = 'approved'; task.approvedAt = new Date().toISOString();
         const verb = isReapprove ? 'riscritto' : 'approvato';
         alert(`Dialogo ${verb}: ${okCount} alunni valutati.\nFirebase: ${db?'ok':'skip'}\nFile TXT/JSON scaricati per ogni alunno.`);
