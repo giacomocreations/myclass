@@ -26211,6 +26211,8 @@ ${sectionInstr}`;
         const card = document.querySelector(`.agent-task-card[data-task-id="${CSS.escape(taskId)}"]`);
         if (!card) return;
         const isCollapsed = card.classList.toggle('collapsed');
+        if (!window._agentCollapsedMem) window._agentCollapsedMem = new Set();
+        if (isCollapsed) window._agentCollapsedMem.add(taskId); else window._agentCollapsedMem.delete(taskId);
         try {
             const set = new Set(JSON.parse(localStorage.getItem('agent_collapsed_tasks') || '[]'));
             if (isCollapsed) set.add(taskId); else set.delete(taskId);
@@ -26222,6 +26224,7 @@ ${sectionInstr}`;
         const cards = document.querySelectorAll('.agent-task-card');
         const ids = [];
         cards.forEach(c => { c.classList.add('collapsed'); ids.push(c.dataset.taskId); });
+        window._agentCollapsedMem = new Set(ids);
         try { localStorage.setItem('agent_collapsed_tasks', JSON.stringify(ids)); } catch(e) {}
     }
 
@@ -26229,11 +26232,45 @@ ${sectionInstr}`;
         const cards = document.querySelectorAll('.agent-task-card');
         cards.forEach(c => c.classList.remove('collapsed'));
         try { localStorage.setItem('agent_collapsed_tasks', JSON.stringify([])); } catch(e) {}
+        window._agentCollapsedMem = new Set();
     }
 
     // Il pannello si ridisegna spesso (anche da solo): se il docente sta scrivendo in un
     // riquadro (es. correggendo la trascrizione) si conservano testo, cursore e scorrimento.
+    // Scheda su cui il docente sta lavorando (ultimo clic o tasto dentro una scheda):
+    // dopo ogni ridisegno lo schermo resta su di lei, anche se cambia posto nell'elenco
+    // (es. "Rigenera trascrizione" la sposta da "pronte" a "in elaborazione").
+    function _agentTrackFocusCard(ev) {
+        const c = ev.target && ev.target.closest && ev.target.closest('.agent-task-card');
+        if (c && c.dataset.taskId) window._agentFocusTask = c.dataset.taskId;
+    }
+    if (!window._agentFocusTrackOn) {
+        window._agentFocusTrackOn = true;
+        document.addEventListener('pointerdown', _agentTrackFocusCard, true);
+        document.addEventListener('keydown', _agentTrackFocusCard, true);
+    }
+    function _agentScrollParent(el) {
+        for (let n = el && el.parentElement; n && n !== document.body; n = n.parentElement) {
+            const st = getComputedStyle(n);
+            if (/(auto|scroll)/.test(st.overflowY) && n.scrollHeight > n.clientHeight + 2) return n;
+        }
+        return document.scrollingElement || document.documentElement;
+    }
     function agentRenderPanel() {
+        const _fid = window._agentFocusTask;
+        const _fcard = _fid ? document.querySelector(`.agent-task-card[data-task-id="${CSS.escape(_fid)}"]`) : null;
+        const _ftop = _fcard ? _fcard.getBoundingClientRect().top : null;
+        const _vis = _fcard && _ftop > -_fcard.offsetHeight && _ftop < window.innerHeight;
+        _agentRenderPanelKeep();
+        if (_vis) {
+            const nc = document.querySelector(`.agent-task-card[data-task-id="${CSS.escape(_fid)}"]`);
+            if (nc) {
+                const d = nc.getBoundingClientRect().top - _ftop;
+                if (Math.abs(d) > 1) { const sp = _agentScrollParent(nc); sp.scrollTop += d; }
+            }
+        }
+    }
+    function _agentRenderPanelKeep() {
         const ae = document.activeElement;
         const keep = (ae && ae.id && (ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && ae.type === 'text')))
             ? { id: ae.id, val: ae.value, s: ae.selectionStart, e: ae.selectionEnd, top: ae.scrollTop } : null;
@@ -26410,6 +26447,9 @@ ${sectionInstr}`;
         // Stato collapsed: approved = collassato di default, oppure se già in localStorage
         let collapsedSet = new Set();
         try { collapsedSet = new Set(JSON.parse(localStorage.getItem('agent_collapsed_tasks') || '[]')); } catch(e) {}
+        // La voce in localStorage si cancella quando lo spazio è poco: quella in memoria resta
+        if (window._agentCollapsedMem) { if (!collapsedSet.size) collapsedSet = new Set(window._agentCollapsedMem); else window._agentCollapsedMem.forEach(id => collapsedSet.add(id)); }
+        window._agentCollapsedMem = collapsedSet;
         // Auto-collassa approved che non sono già noti (prima volta che li vediamo come approved)
         let collapsedSetChanged = false;
         sorted.forEach(t => {
