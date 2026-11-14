@@ -18385,6 +18385,16 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             };
 
             window._lvGrigliaPunteggi={};
+            // Tabella punti→voto: quella della griglia; se la griglia di MyClass non ce l'ha,
+            // quella mandata dall'attività (English Drill) che ha inviato i punteggi.
+            // Se ci sono entrambe, quella della griglia vale e quella dell'attività completa i
+            // totali che mancano (es. 0-2 punti).
+            function _lvConv(G){
+                const own=(G&&G.conversione_voto&&Object.keys(G.conversione_voto).length)?G.conversione_voto:null;
+                const ext=(G&&LV._convExt&&LV._convExt.gid===G.id)?LV._convExt.conv:null;
+                if(own&&ext)return {...ext,...own};
+                return own||ext||null;
+            }
             window.lvGrigliaSet=function(si,areaNome,val,max){
                 if(!window._lvGrigliaPunteggi[si])window._lvGrigliaPunteggi[si]={};
                 window._lvGrigliaPunteggi[si][areaNome]=val;
@@ -18431,9 +18441,10 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 const totMax=G.aree.reduce((s,a)=>s+a.max,0);
                 // Usa conversione_voto se presente, altrimenti formula lineare
                 let voto10;
-                if(G.conversione_voto){
+                const _cv=_lvConv(G);
+                if(_cv){
                     const totKey=String(Math.round(tot));
-                    voto10=G.conversione_voto[totKey]??Math.round((tot/totMax)*10*10)/10;
+                    voto10=_cv[totKey]??Math.round((tot/totMax)*10*10)/10;
                 } else {
                     voto10=Math.round((tot/totMax)*10*10)/10;
                 }
@@ -18460,9 +18471,10 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 const tot=G.aree.reduce((s,a)=>s+(punti[a.nome]||0),0);
                 const totMax=G.aree.reduce((s,a)=>s+a.max,0);
                 let voto10;
-                if(G.conversione_voto){
+                const _cv=_lvConv(G);
+                if(_cv){
                     const totKey=String(Math.round(tot));
-                    voto10=G.conversione_voto[totKey]??Math.round((tot/totMax)*10*10)/10;
+                    voto10=_cv[totKey]??Math.round((tot/totMax)*10*10)/10;
                 } else {
                     voto10=Math.round((tot/totMax)*10*10)/10;
                 }
@@ -19160,6 +19172,8 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                     if ((data.griglie||[]).some(x => x.id === tg.G.id)) lvCambiaGriglia(tg.G.id);
                     else LV.grigliaAttiva = tg.G;
                 }
+                // Tabella punti→voto dell'attività, se la griglia di MyClass non ne ha una
+                if (m.grid?.conversione_voto) LV._convExt = { gid: LV.grigliaAttiva.id, conv: m.grid.conversione_voto };
                 const selNow = [...qa('#lv-sl .lv-scard')].findIndex(c => c.classList.contains('sel'));
                 if (selNow !== si || q('lv-sd')?.style.display === 'none') lvSelS(si);
                 const GA = LV.grigliaAttiva.aree || [];
