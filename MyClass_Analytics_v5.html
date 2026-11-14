@@ -22765,6 +22765,56 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
     }
 
     // ── Task: Analisi Didattica (richiesta da StudentApp) ─────────────────
+    // Attività non valutate dell'alunno nell'anno scolastico in corso (cronologia
+    // LiveLearn: esercitazioni, spiegazioni interattive "controllo docente",
+    // compiti assegnati), con i tentativi ripetuti letti dalle risposte.
+    async function _agentAttivitaNonValutate(task, studente, classId) {
+        const db = firebase.database();
+        const code = task.stuCode && !/_/.test(task.stuCode) ? task.stuCode
+            : await _mcCodeOf(`${studente.cognome} ${studente.nome}`, classId);
+        const vuoto = { n: 0, dati: 'ESERCITAZIONI, SPIEGAZIONI INTERATTIVE E COMPITI: nessun dato disponibile.\n' };
+        if (!code) return vuoto;
+        const sess = (await db.ref('livelearn/history_priv/' + code + '/sessions').get()).val() || {};
+        const oggi = new Date();
+        const inizioAnno = new Date(oggi.getMonth() >= 8 ? oggi.getFullYear() : oggi.getFullYear() - 1, 8, 1).getTime();
+        const TIPI = { practice: 'Esercitazione', teacher: 'Spiegazione interattiva', assigned: 'Compito assegnato' };
+        const voci = Object.entries(sess)
+            .map(([sc, e]) => ({ sc, ...e }))
+            .filter(e => e && TIPI[e.mode] && (e.ts || 0) >= inizioAnno)
+            .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+        if (!voci.length) return { n: 0, dati: 'ESERCITAZIONI, SPIEGAZIONI INTERATTIVE E COMPITI (anno scolastico in corso): nessuna attività svolta.\n' };
+        // Tentativi ripetuti (esercitazioni e compiti "Rifai")
+        await Promise.all(voci.slice(0, 40).map(async e => {
+            if (!e.respKey) return;
+            try {
+                const a = (await db.ref('livelearn/responses/' + e.sc + '/' + e.respKey + '/attempts').get()).val();
+                const list = (Array.isArray(a) ? a : Object.values(a || {})).filter(t => t && t.pct != null);
+                if (list.length) e.tentativi = list.map(t => Number(t.pct)).concat(e.pct != null ? [Number(e.pct)] : []);
+            } catch (_) {}
+        }));
+        const media = arr => arr.length ? Math.round(arr.reduce((s, x) => s + x, 0) / arr.length) : null;
+        const perTipo = Object.keys(TIPI).map(m => {
+            const v = voci.filter(e => e.mode === m);
+            return v.length ? `${TIPI[m]}: ${v.length} (media ${media(v.map(e => Number(e.pct) || 0))}%)` : '';
+        }).filter(Boolean).join(' · ');
+        const aree = {};
+        voci.forEach(e => Object.entries(e.tagBreakdown || {}).forEach(([k, v]) => { (aree[k] = aree[k] || []).push(Number(v)); }));
+        const areeTxt = Object.entries(aree).map(([k, v]) => `${k} ${media(v)}%`).join(' | ');
+        const ripetute = voci.filter(e => e.tentativi && e.tentativi.length > 1).length;
+        const fmt = ts => { try { return new Date(ts).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }); } catch { return ''; } };
+        const righe = voci.slice(0, 40).map(e => {
+            const t = e.tentativi && e.tentativi.length > 1 ? ` · tentativi: ${e.tentativi.length} (${e.tentativi.map(x => x + '%').join(' → ')})` : '';
+            const tags = Object.entries(e.tagBreakdown || {}).map(([k, v]) => `${k} ${v}%`).join(', ');
+            return `- ${fmt(e.ts)} · ${TIPI[e.mode]} · "${String(e.activityTitle || e.sc).slice(0, 60)}" · ${e.pct != null ? e.pct + '%' : '—'}${t}${tags ? ' · ' + tags : ''}`;
+        }).join('\n');
+        const dati = `ESERCITAZIONI, SPIEGAZIONI INTERATTIVE E COMPITI (anno scolastico in corso — NON sono voti: servono a capire impegno, costanza e progressi):
+Riepilogo: ${voci.length} attività · ${perTipo}${ripetute ? ` · rifatte più volte: ${ripetute}` : ''}
+${areeTxt ? 'Aree (media su queste attività): ' + areeTxt + '\n' : ''}Elenco (dalla più recente${voci.length > 40 ? ', ultime 40' : ''}):
+${righe}
+`;
+        return { n: voci.length, dati };
+    }
+
     async function agentTaskAnalisDidattica(task) {
         task.status = 'processing'; agentRenderPanel();
 
@@ -22830,6 +22880,16 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
 
         task.classIdx    = idx;
         task.studentName = `${studente.cognome} ${studente.nome}`;
+
+        // ── Esercitazioni, spiegazioni interattive e compiti a casa (non sono test) ──
+        try {
+            const att = await _agentAttivitaNonValutate(task, studente, classId);
+            prompt = prompt.replace('ISTRUZIONI:\n', att.dati + '\nISTRUZIONI:\n');
+            prompt = prompt.replace('**PUNTI DI FORZA**', `**ESERCITAZIONI E COMPITI**
+Analizza le attività NON valutate (esercitazioni in classe, spiegazioni interattive, compiti assegnati a casa) dai dati "ESERCITAZIONI, SPIEGAZIONI INTERATTIVE E COMPITI": quante ne ha svolte e con che regolarità, i risultati medi e le aree più forti e più deboli, e se rifà le attività per migliorare (tentativi ripetuti e progressi da un tentativo all'altro). Non sono voti: non trattarli come tali e non confonderli con le verifiche. Se non risultano attività svolte, scrivilo in una frase.
+**PUNTI DI FORZA**`);
+            task.attivitaNonValutate = att.n;
+        } catch (e) { console.warn('[Agente] analisi didattica: attività non valutate non lette:', e.message); }
 
         // Marca come "processing" su Firebase
         try {
