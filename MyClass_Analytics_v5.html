@@ -6180,7 +6180,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                     studente.aiReport.text, 
                     `🤖 Analisi Didattica - ${studente.nome} ${studente.cognome}`,
                     studente.aiReport.generatedAt
-                );
+                ) + `<button onclick="inviaAnalisiStudentApp()" style="margin-top:8px;padding:7px 14px;border-radius:8px;border:1px solid #9fa8da;background:#e8eaf6;color:#283593;font-weight:700;cursor:pointer;" title="Manda questa analisi all'alunno in StudentApp (Statistiche → La tua analisi didattica)">📤 Invia a StudentApp</button>`;
                 btnStudentAI.textContent = '🔄 Rigenera Analisi Didattica AI';
             } else {
                 aiContainer.innerHTML = '';
@@ -21587,6 +21587,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
           // Competenze dai dati reali delle prove; un'area assente (NP) non c'e'
           competenze:          _compForSync(s),
           aiReportText:        aiText,
+          aiReportGeneratedAt: s.aiReport?.generatedAt || null,
           aiPuntiForza:        _extractAISection(aiText, 'PUNTI DI FORZA'),
           aiAreeMiglioramento: _extractAISection(aiText, 'AREE DI MIGLIORAMENTO'),
           orarioSettimana:     orarioSettimana.length ? orarioSettimana : null,
@@ -21720,6 +21721,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         // Competenze dai dati reali delle prove; un'area assente (NP) non c'e'
         competenze:          _compForSync(studente),
         aiReportText:        aiText,
+        aiReportGeneratedAt: studente.aiReport?.generatedAt || null,
         aiPuntiForza:        _extractAISection(aiText, 'PUNTI DI FORZA'),
         aiAreeMiglioramento: _extractAISection(aiText, 'AREE DI MIGLIORAMENTO'),
         orarioSettimana:     orarioSettimana.length ? orarioSettimana : null,
@@ -21731,12 +21733,32 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
       Object.keys(payload).forEach(k=>{ if(payload[k]===null) delete payload[k]; });
       try {
         const _asB = await _mcHistBase(safe);
-        if (!_asB) { console.warn('[Auto-sync] nessun codice per', fullName); return; }
+        if (!_asB) { console.warn('[Auto-sync] nessun codice per', fullName); return { ok: false, reason: `${fullName} non ha un codice personale di StudentApp (non risulta tra gli alunni registrati): il profilo non si può inviare.` }; }
         await db.ref(_asB+'/myclass').set(payload);
         console.log('✅ Auto-sync myclass →', fullName);
+        return { ok: true };
       } catch(e) {
         console.warn('Auto-sync fallito per', fullName, e.message);
+        return { ok: false, reason: 'errore di invio: ' + e.message };
       }
+    }
+    // Invia (o reinvia) a StudentApp l'analisi didattica salvata nella scheda dell'alunno
+    async function agentReinviaAnalisi(taskId) {
+        const task = agentTasks.find(t => t.id === taskId);
+        const classe = task && data.classi[task.classIdx];
+        const i = (classe?.studenti || []).findIndex(s => `${s.cognome} ${s.nome}`.replace(/[.#$[\]/ ]/g, '_').toLowerCase() === task.studentSafe);
+        if (i < 0) { alert('Alunno non trovato in MyClass.'); return; }
+        return inviaAnalisiStudentApp(task.classIdx, i);
+    }
+    async function inviaAnalisiStudentApp(classeIdx, studIdx) {
+        const classe = data.classi[classeIdx ?? currentClass];
+        const studente = classe?.studenti?.[studIdx ?? currentStudent];
+        if (!studente) { alert('Alunno non trovato.'); return; }
+        if (!studente.aiReport?.text) { alert('Questo alunno non ha un\'analisi didattica salvata.'); return; }
+        const r = await _autoSyncStudentMyClass(studente, classe.nome) || {};
+        alert(r.ok ? `✅ Analisi di ${studente.cognome} ${studente.nome} inviata a StudentApp.\nLa trova in "Statistiche" → 📄 "La tua analisi didattica".`
+                   : `⚠️ Analisi NON inviata a StudentApp: ${r.reason || 'errore sconosciuto'}`);
+        return r;
     }
     async function publishFutureLesson(data_iso) {
       const db = firebase.database();
@@ -25002,14 +25024,22 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
             const comp = _extractScoresFromAIText(task.content || '');
             if (comp) studente.competenzeAI = comp;
             saveData();
-            // Push su Firebase (StudentApp si aggiorna via real-time)
+            // Push su Firebase (StudentApp si aggiorna via real-time). Se l'invio non riesce
+            // l'analisi resta salvata in MyClass e la scheda resta "pronta" per riprovare.
+            let _inv = { ok: false, reason: 'Firebase non disponibile' };
             try {
                 const dbRef = firebase.database();
-                await _autoSyncStudentMyClass(studente, classe.nome);
-                // Marca la richiesta come done
-                await dbRef.ref(`myclass/agentRequests/${task.fbClassId}/${task.stuCode || task.studentSafe}/status`).set('done');
-                console.log('[Agente] Analisi didattica pubblicata su Firebase per:', task.studentName);
-            } catch(e) { console.warn('[Agente] Firebase push analisi skip:', e.message); }
+                _inv = await _autoSyncStudentMyClass(studente, classe.nome) || { ok: false, reason: 'errore sconosciuto' };
+                if (_inv.ok) {
+                    await dbRef.ref(`myclass/agentRequests/${task.fbClassId}/${task.stuCode || task.studentSafe}/status`).set('done');
+                    console.log('[Agente] Analisi didattica pubblicata su Firebase per:', task.studentName);
+                }
+            } catch(e) { _inv = { ok: false, reason: e.message }; console.warn('[Agente] Firebase push analisi:', e.message); }
+            if (!_inv.ok) {
+                agentSaveTasks(agentTasks); agentRenderPanel();
+                alert(`⚠️ Analisi di ${task.studentName} salvata in MyClass ma NON inviata a StudentApp:\n${_inv.reason}\n\nLa scheda resta pronta: risolvi e premi di nuovo Approva.`);
+                return;
+            }
             // Notifica push individuale allo studente
             try {
                 const _classId = classe.nome.replace(/\s+/g,'_').toLowerCase();
@@ -25022,7 +25052,7 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
                 );
             } catch(e) { console.warn('[Agente] Push notifica analisi skip:', e.message); }
             task.status = 'approved'; task.approvedAt = new Date().toISOString();
-            alert(`✅ Analisi didattica di ${task.studentName} salvata e inviata allo studente!`);
+            alert(`✅ Analisi didattica di ${task.studentName} salvata e inviata allo studente!\nIn StudentApp: "Statistiche" → 📄 "La tua analisi didattica".`);
         }
 
         agentSaveTasks(agentTasks);
@@ -26818,6 +26848,7 @@ ${sectionInstr}`;
                 <div class="agent-task-body">
                     ${meta ? `<div class="agent-task-meta" style="margin-bottom:8px;">${meta}</div>` : ''}
                     ${_agentAiPickerHtml(task)}
+                    ${task.type === 'analisididattica' && task.status === 'approved' ? `<div style="margin-bottom:8px;"><button class="agent-btn-edit" onclick="agentReinviaAnalisi('${task.id}')" title="Rimanda a StudentApp l'analisi salvata in MyClass">📤 Invia di nuovo a StudentApp</button></div>` : ''}
                     ${body}
                 </div>
             </div>`;
