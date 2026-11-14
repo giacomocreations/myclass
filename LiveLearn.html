@@ -5617,6 +5617,8 @@ function renderPreviewQuestion() {
   S.answers = new Array(qs.length).fill(undefined);
   S.skipped = [];
 
+  // Speaking in anteprima: il microfono lavora su questa domanda (vedi _spkPv)
+  S._pvSpk = { qs, i, tries: (S._pvSpk && S._pvSpk.qs === qs && S._pvSpk.i === i) ? S._pvSpk.tries : 0 };
   let html = buildQuestionHTML(q, i);
   // Inietta referenceTable nella stringa HTML (più affidabile del DOM post-render)
   if (q.referenceTable) {
@@ -13924,10 +13926,27 @@ function _spkSetAnswer(i, raw) {
   const lbl = document.getElementById('s-progress-label');
   if (lbl) lbl.textContent = S.answers.filter(a => a !== undefined && a !== null).length + '/' + S.activity.questions.length + ' risposte';
 }
+// Anteprima docente (modale "👁 Anteprima"): la domanda sta in S._pvSpk, non in
+// S.activity. Prima "🎤 Parla" registrava ma il risultato non compariva mai.
+function _spkPv(i) {
+  const m = document.getElementById('modal-preview');
+  return (m && !m.classList.contains('hidden') && S._pvSpk && S._pvSpk.i === i) ? S._pvSpk : null;
+}
+function _spkQ(i) { const pv = _spkPv(i); return pv ? pv.qs[i] : S.activity.questions[i]; }
+function _spkPreviewResult(i, raw) {
+  const pv = _spkPv(i); if (!pv) return;
+  pv.tries = (pv.tries || 0) + 1;
+  const out = document.getElementById('spk-out');
+  if (out) out.innerHTML = _spkResultHTML(pv.qs[i], raw, pv.tries) +
+    '<div style="margin-top:6px;font-size:11px;color:var(--muted);">👁 Anteprima: la risposta non viene salvata.</div>';
+  const mb = document.getElementById('spk-model-box'); if (mb) mb.style.display = '';
+  const b = document.getElementById('spk-mic'); if (b && typeof raw === 'string') b.textContent = '🎤 Riprova';
+}
 function spkToggleMic(i) {
   if (_spkBusy && _spkRec) { try { _spkRec.stop(); } catch(e) {} return; }
   if (!_SpkRec) return;
-  const q = S.activity.questions[i];
+  const q = _spkQ(i);
+  const inPv = !!_spkPv(i);
   const note = document.getElementById('spk-note');
   const btn = document.getElementById('spk-mic');
   let text = '';
@@ -13946,11 +13965,14 @@ function spkToggleMic(i) {
       _spkBusy = false;
       if (text.trim()) {
         const n = document.getElementById('spk-note'); if (n) n.textContent = '';
+        if (inPv) { _spkPreviewResult(i, text.trim()); return; }
         if (S.qIndex === i) _spkSetAnswer(i, text.trim());
+      } else if (inPv) {
+        const n = document.getElementById('spk-note'); if (n && !n.textContent.startsWith('⚠️')) n.textContent = '⚠️ Non ho sentito niente: riprova.';
       }
       // Dopo la risposta il pulsante diventa "Riprova"
       const b = document.getElementById('spk-mic');
-      if (b) b.textContent = _spkMicLabel(q, i);
+      if (b) b.textContent = inPv ? (_spkPv(i)?.tries ? '🎤 Riprova' : '🎤 Parla') : _spkMicLabel(q, i);
     };
     _spkRec.start(); _spkBusy = true;
   } catch(e) { _spkBusy = false; if (note) note.textContent = '⚠️ Microfono non disponibile.'; return; }
@@ -13961,14 +13983,15 @@ function spkNoMicToggle(i, on) {
   if (_spkBusy && _spkRec) { try { _spkRec.abort(); } catch(e) {} _spkBusy = false; }
   const st = _spkState(i);
   if (on) S.spkNoMic[st.k] = true;
-  else { delete S.spkNoMic[st.k]; if (_spkIsNoMic(S.answers[i])) S.answers[i] = null; }
+  else { delete S.spkNoMic[st.k]; if (S.answers && _spkIsNoMic(S.answers[i])) S.answers[i] = null; }
+  if (_spkPv(i)) { renderPreviewQuestion(); return; }
   document.getElementById('s-question-area').innerHTML = buildQuestionHTML(S.activity.questions[i], i);
   restoreAnswer(i);
 }
-function spkSaidAloud(i) { _spkSetAnswer(i, { noMic: true }); }
+function spkSaidAloud(i) { if (_spkPv(i)) { _spkPreviewResult(i, { noMic: true }); return; } _spkSetAnswer(i, { noMic: true }); }
 function spkToggleModel() { const m = document.getElementById('spk-model'); if (m) m.style.display = m.style.display === 'none' ? '' : 'none'; }
 function spkSpeak(i) {
-  const q = S.activity.questions[i];
+  const q = _spkQ(i);
   if (!q || !q.model || !window.speechSynthesis) return;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(q.model); u.lang = 'en-GB'; u.rate = 0.9;
@@ -25893,7 +25916,7 @@ var QE_TYPES = [
   ['fill-blanks','📝 Fill in the Blanks'],['matching','🔗 Matching'],
   ['free-response','💬 Risposta libera'],['drag-drop','🎯 Drag & Drop'],
   ['reorder','🔀 Riordina frasi'],['categorization','🗂️ Categorizzazione'],
-  ['listening','🎧 Listening']
+  ['listening','🎧 Listening'],['speaking','🎤 Speaking (microfono)']
 ];
 var QE_FILA_LABELS = { '':'Originale', dsa:'DSA', pei:'PEI', pei_2:'PEI 2', training_dsa:'Training DSA', training_pei:'Training PEI', recupero:'Recupero', recupero_1:'Recupero Fast 1', recupero_2:'Recupero Fast 2', fila_b:'Fila B', fila_c:'Fila C' };
 
@@ -26132,6 +26155,25 @@ function qeBuildBody(type, q, scope) {
     });
     h += '</div>';
     h += '<button class="qe-addrow" onclick="qeAddItem(this)">+ Parola</button>';
+  } else if (type === 'speaking') {
+    // Speaking: l'alunno parla al microfono, LiveLearn controlla subito gli obiettivi
+    var ta = function(field, val, ph, rows) {
+      return '<textarea class="qe-ce" data-field="'+field+'" rows="'+(rows||1)+'" placeholder="'+esc(ph)+'" style="white-space:pre-wrap;" '+
+        'oninput="qeAutoGrow(this);QE.dirty=true;">'+esc(val)+'</textarea>';
+    };
+    h += '<div class="qe-section-lbl">Consegna (cosa deve dire l\'alunno)</div>';
+    h += qeField('text', q.text || '', 'Di\' in inglese che devi fare i compiti ogni giorno.', 'qe-qtext');
+    h += '<div class="qe-section-lbl">Frase d\'esempio <span style="font-weight:400;">(facoltativa: l\'alunno la vede/ascolta dopo il primo tentativo)</span></div>';
+    h += ta('model', q.model || '', 'I have to do my homework every day.');
+    h += '<div class="qe-section-lbl">Obiettivi da dire — uno per riga <span style="font-weight:400;">(<code>etichetta: frase | alternativa x2</code>; * = qualsiasi parola)</span></div>';
+    h += ta('targets', _spkTargetsToText(q.targets), 'obbligo: have to | has to | must\nhomework\nbecause x2', 4);
+    h += '<div class="qe-section-lbl">Errori tipici — uno per riga <span style="font-weight:400;">(<code>errore =&gt; consiglio</code>; contano come obiettivo mancato)</span></div>';
+    h += ta('avoid', _spkAvoidToText(q.avoid), 'must to => Dopo must non si mette to', 2);
+    h += '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:8px 0;font-size:13px;">' +
+      '<label style="cursor:pointer;"><input type="checkbox" data-field="free"' + (q.free ? ' checked' : '') + ' onchange="QE.dirty=true;"> 🗣️ Parlato libero (registra finché l\'alunno preme ⏹)</label>' +
+      '<label>Parole minime <input type="number" data-field="minWords" min="0" step="1" value="' + (Number(q.minWords) || '') + '" style="width:70px;" oninput="QE.dirty=true;"></label></div>';
+    h += '<div class="qe-section-lbl">💡 Suggerimento (facoltativo)</div>';
+    h += qeField('hint', q.hint || '', 'Suggerimento…');
   } else {
     h += '<div style="color:var(--muted);font-size:13px;">Tipo non supportato nell\'editor visuale.</div>';
   }
@@ -26426,12 +26468,20 @@ function qeReadBody(body) {
       answers.push(sel ? (parseInt(sel.value)||0) : 0);
     });
     q.items = items; q.answers = answers;
+  } else if (type === 'speaking') {
+    var fv = function(f) { var el = body.querySelector('[data-field="'+f+'"]'); return el ? el.value : ''; };
+    var model = fv('model').trim(); if (model) q.model = model;
+    q.targets = _spkTargetsFromText(fv('targets'));
+    var avoid = _spkAvoidFromText(fv('avoid')); if (avoid.length) q.avoid = avoid;
+    var freeEl = body.querySelector('[data-field="free"]'); if (freeEl && freeEl.checked) q.free = true;
+    var mw = parseInt(fv('minWords')); if (mw > 0) q.minWords = mw;
+    var hn = fv('hint').trim(); if (hn) q.hint = hn;
   }
   return q;
 }
 
 // Legge l'intera domanda corrente (compresi toolbar/media), pronta per il salvataggio
-var QE_CONTENT_KEYS = ['options','correct','answers','left','right','sentences','words','categories','items','hint'];
+var QE_CONTENT_KEYS = ['options','correct','answers','left','right','sentences','words','categories','items','hint','targets','model','avoid','free','minWords'];
 function qeReadCurrentQ() {
   var q = JSON.parse(JSON.stringify(QE.base || {}));
   var type = (document.querySelector('#qedit-toolbar select') || {}).value || q.type;
