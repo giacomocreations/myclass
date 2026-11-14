@@ -1499,6 +1499,10 @@
         .agent-task-title-block { flex: 1; min-width: 120px; }
         .agent-task-title { font-weight: 700; font-size: 14px; color: #3c4a8a; display: block; }
         .agent-task-subtitle { font-size: 11px; color: #7986cb; margin-top: 1px; display: block; }
+        /* Orali e analisi di un alunno: il NOME è la cosa più visibile della scheda */
+        .agent-task-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 18px; font-weight: 800; color: #1a237e; line-height: 1.25; letter-spacing: .2px; }
+        .agent-task-classe { font-size: 13px; font-weight: 800; color: #fff; background: #3949ab; border-radius: 7px; padding: 2px 9px; letter-spacing: .5px; }
+        .agent-task-name + .agent-task-subtitle { font-size: 12px; color: #5c6bc0; margin-top: 3px; }
         .agent-task-chevron {
             font-size: 13px; color: #9fa8da; flex-shrink: 0;
             transition: transform 0.2s ease; display: inline-block;
@@ -26634,13 +26638,29 @@ ${sectionInstr}`;
                 }
             }
 
+            // Intestazione: per gli orali (e le analisi di un alunno) in grande classe e
+            // nome, così si capisce subito a chi si riferisce la scheda.
+            function _agentTaskHeadHtml(task, tl, subtitle) {
+                const e = x => String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+                const nome = task.type === 'valdialogo'
+                    ? (task.studenti||[]).map(st => st.studentName).filter(Boolean).join(' + ')
+                    : (['valorale','analisididattica'].includes(task.type) ? (task.studentName || '') : '');
+                if (!nome) return `<span class="agent-task-title-block">
+                        <span class="agent-task-title">${tl.label}</span>
+                        ${subtitle ? `<span class="agent-task-subtitle">${subtitle}</span>` : ''}
+                    </span>`;
+                const dt = /^\d{4}-\d{2}-\d{2}/.test(task.sessionDate || '')
+                    ? '📅 ' + task.sessionDate.slice(8,10) + '/' + task.sessionDate.slice(5,7) + '/' + task.sessionDate.slice(0,4) : '';
+                const sub2 = [tl.label, task.unit, dt].filter(Boolean).map(e).join(' · ');
+                return `<span class="agent-task-title-block">
+                        <span class="agent-task-name">${task.classe ? `<span class="agent-task-classe">${e(String(task.classe).toUpperCase())}</span>` : ''}${e(nome)}</span>
+                        <span class="agent-task-subtitle">${sub2}</span>
+                    </span>`;
+            }
             return `<div class="agent-task-card${collapsedClass}" data-task-id="${task.id}">
                 <div class="agent-task-header" onclick="agentToggleTaskCollapse('${task.id}', event)">
                     <span class="agent-task-icon">${tl.icon}</span>
-                    <span class="agent-task-title-block">
-                        <span class="agent-task-title">${tl.label}</span>
-                        ${subtitle ? `<span class="agent-task-subtitle">${subtitle}</span>` : ''}
-                    </span>
+                    ${_agentTaskHeadHtml(task, tl, subtitle)}
                     ${pill}
                     ${aiBadge && task.status !== 'processing' ? aiBadge : ''}
                     <span class="agent-task-chevron">▼</span>
