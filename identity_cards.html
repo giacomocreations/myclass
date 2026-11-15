@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meet My Friend! – Identity Cards</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700;800&family=Patrick+Hand&display=swap');
+
+  :root {
+    --bg: #0a100f;
+    --surface: #111b1a;
+    --card: #182624;
+    --accent: #2ec46e;
+    --accent2: #ffd166;
+    --blue: #3ec6ff;
+    --gold: #ffd166;
+    --text: #f1f6f4;
+    --muted: #94a8a3;
+    --correct: #06d6a0;
+    --wrong: #ff4d6d;
+    --border: rgba(255,255,255,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; overflow-x: hidden; }
+  body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(ellipse 60% 40% at 15% 10%, rgba(46,196,110,0.13) 0%, transparent 60%), radial-gradient(ellipse 50% 50% at 85% 90%, rgba(255,209,102,0.09) 0%, transparent 60%); pointer-events: none; z-index: 0; }
+  .container { max-width: 1080px; margin: 0 auto; padding: 24px 16px 80px; position: relative; z-index: 1; }
+  .header { text-align: center; margin: 34px 0 18px; }
+  .header .eyebrow { font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  .header h1 { font-family: 'Bebas Neue', sans-serif; font-size: clamp(38px, 8vw, 66px); letter-spacing: 2px; line-height: 1; background: linear-gradient(135deg, #fff 30%, var(--accent) 70%, var(--accent2) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 8px; }
+  .header .subtitle { color: var(--muted); font-size: 14px; }
+
+  .home-link { position: fixed; top: 14px; left: 14px; z-index: 100; display: inline-flex; align-items: center; gap: 7px; padding: 8px 16px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; color: #aaa; text-decoration: none; font-size: 13px; font-weight: 500; backdrop-filter: blur(6px); }
+  .home-link:hover { color: #fff; }
+  #mode-switch { position: fixed; top: 14px; right: 14px; z-index: 101; display: inline-flex; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 3px; backdrop-filter: blur(6px); }
+  #mode-switch button { border: none; background: transparent; color: #aaa; font-family: inherit; font-size: 13px; font-weight: 500; padding: 6px 12px; border-radius: 7px; cursor: pointer; }
+  #mode-switch button[aria-pressed="true"] { background: var(--gold); color: var(--bg); font-weight: 700; }
+  body.mode-home .class-only, body.mode-class .home-only { display: none !important; }
+  body:not(.teacher) .teacher-only { display: none !important; }
+  #lock-btn { padding: 6px 9px; }
+
+  /* ── barre, pulsanti, pannelli ── */
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0 6px; align-items: center; }
+  .seg { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 4px; gap: 2px; flex-wrap: wrap; justify-content: center; }
+  .seg button { border: none; background: transparent; color: var(--muted); font-family: inherit; font-size: 13px; font-weight: 700; padding: 8px 11px; border-radius: 9px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #04140b; }
+  .btn { cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 700; padding: 9px 14px; border-radius: 10px; background: var(--card); color: var(--text); border: 1px solid var(--border); }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #04140b; border-color: transparent; }
+  .btn.orange { background: var(--accent2); color: #1d1300; border-color: transparent; }
+  .btn.pink { background: #ff5d8f; color: #fff; border-color: transparent; }
+  .btn.mic { background: #ff5d8f; color: #fff; border-color: transparent; font-size: 16px; padding: 11px 18px; }
+  .btn.mic.on { background: var(--wrong); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 8px rgba(255,77,109,.18); } }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .score { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; color: var(--gold); }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 18px 20px; }
+  .panel h3 { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; margin-bottom: 10px; }
+  .panel p, .panel li { font-size: 14px; line-height: 1.6; color: #dde6e3; }
+  .panel ol, .panel ul { padding-left: 20px; }
+  .note { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+  .ok { color: var(--correct); font-weight: 700; } .ko { color: var(--wrong); font-weight: 700; } .half { color: var(--gold); font-weight: 700; }
+
+  /* ── i 3 step ── */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .step { background: var(--card); border-radius: 16px; padding: 14px 16px; border-top: 5px solid var(--sc); }
+  .step.s1 { --sc: #2ec46e; } .step.s2 { --sc: #3ec6ff; } .step.s3 { --sc: #ffd166; }
+  .step .sh { font-family: 'Bebas Neue', sans-serif; font-size: 23px; letter-spacing: 1px; color: var(--sc); line-height: 1.05; }
+  .step .so { font-size: 12.5px; color: var(--muted); margin: 2px 0 8px; }
+  .step .lbl { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 9px 0 4px; }
+  .say { display: inline-block; font-family: inherit; font-size: 13.5px; font-weight: 600; color: var(--text); background: rgba(255,255,255,.06); border: 1px solid transparent; border-radius: 8px; padding: 4px 8px; margin: 2px 2px 2px 0; cursor: pointer; text-align: left; line-height: 1.35; }
+  .say:hover { border-color: var(--sc, var(--accent)); }
+  .say::after { content: '🔊'; font-size: 11px; opacity: .55; margin-left: 5px; }
+  .say b { color: var(--sc, var(--accent)); }
+  .say .who { font-weight: 800; color: var(--muted); }
+  .rule-box { background: rgba(62,198,255,.1); border: 1px solid rgba(62,198,255,.35); border-radius: 10px; padding: 8px 10px; font-size: 13px; line-height: 1.45; margin: 8px 0 2px; }
+  .schema { list-style: none; padding: 0 !important; }
+  .schema li { font-size: 13.5px; padding: 3px 0; }
+  .schema li .k { display: inline-block; min-width: 54px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: var(--sc); }
+
+  .dialog { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+  .dialog .say { width: 100%; display: flex; justify-content: space-between; align-items: center; }
+  .dialog .say.a { background: rgba(46,196,110,.1); } .dialog .say.b { background: rgba(62,198,255,.1); }
+  .dialog .gap { text-align: center; color: var(--muted); font-size: 12.5px; font-style: italic; }
+  .errs { list-style: none; padding: 0 !important; }
+  .errs li { font-size: 13.5px; padding: 4px 0; border-bottom: 1px dashed var(--border); }
+  .errs li:last-child { border-bottom: none; }
+  .errs s { color: var(--wrong); } .errs b { color: var(--correct); }
+
+  /* ── chat con il robot ── */
+  .chat-log { display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow-y: auto; padding: 4px 2px 8px; margin-bottom: 10px; scroll-behavior: smooth; }
+  .bub { max-width: 86%; padding: 9px 12px; border-radius: 14px; font-size: 14.5px; line-height: 1.45; }
+  .bub.bot { align-self: flex-start; background: var(--card); border-bottom-left-radius: 4px; }
+  .bub.bot::before { content: '🤖 '; }
+  .bub.me { align-self: flex-end; background: rgba(46,196,110,.16); border-bottom-right-radius: 4px; }
+  .bub.me::before { content: '🧑 '; }
+  .bub.sys { align-self: center; background: none; color: var(--muted); font-size: 12.5px; font-style: italic; text-align: center; }
+  .bub .fbl { display: block; font-size: 12.5px; margin-top: 4px; }
+  .turn { background: var(--card); border-radius: 14px; padding: 12px 14px; }
+  .turn .ti { font-size: 14px; font-weight: 700; }
+  .turn .th { font-size: 14px; color: var(--correct); margin-top: 4px; }
+  .turn .th::before { content: '💡 '; }
+  .turn .tacts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+  .turn .fb { list-style: none; padding: 0 !important; margin-top: 8px; }
+  .turn .fb li { font-size: 13.5px; line-height: 1.45; }
+  .turn input, .guest-type input { flex: 1; min-width: 160px; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 14px; padding: 9px 11px; border-radius: 10px; }
+  .end-box { text-align: center; padding: 8px 0; }
+  .end-box .big { font-family: 'Bebas Neue', sans-serif; font-size: 34px; letter-spacing: 1px; color: var(--gold); }
+
+  /* ── carta d'identità ── */
+  .idcard { container-type: inline-size; width: 100%; border-radius: 18px; overflow: hidden; position: relative; background: linear-gradient(135deg, #fdfaf1 0%, #f1ead6 100%); color: #1d2a2a; box-shadow: 0 10px 28px rgba(0,0,0,.4); display: flex; flex-direction: column; font-family: 'DM Sans', sans-serif; }
+  .idcard::after { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(-35deg, rgba(46,196,110,.05) 0 1.2cqw, transparent 1.2cqw 2.4cqw); pointer-events: none; }
+  .id-top { display: flex; justify-content: space-between; align-items: center; padding: 2.4cqw 4.5cqw; background: linear-gradient(90deg, #1f8f55, #2ec46e); color: #fff; font-weight: 800; font-size: 4.2cqw; letter-spacing: .06em; }
+  .idcard.gf .id-top { background: linear-gradient(90deg, #c2417a, #ff7eb0); }
+  .id-n { font-family: 'Space Mono', monospace; font-size: 3.4cqw; background: rgba(0,0,0,.18); padding: .6cqw 2cqw; border-radius: 2cqw; }
+  .id-body { flex: 1; display: grid; grid-template-columns: 26% 1fr; gap: 3.5cqw; padding: 3.6cqw 4.5cqw 1.5cqw; position: relative; z-index: 1; min-height: 0; }
+  .id-photo { border-radius: 3cqw; background: radial-gradient(circle at 50% 35%, #fff 0%, var(--fav) 120%); border: .9cqw solid #fff; box-shadow: 0 .6cqw 2cqw rgba(0,0,0,.18); display: flex; align-items: center; justify-content: center; font-size: 17cqw; line-height: 1; align-self: start; aspect-ratio: 4 / 5; }
+  .id-data { display: flex; flex-direction: column; justify-content: center; gap: .6cqw; min-width: 0; }
+  .id-data .r { display: grid; grid-template-columns: 22cqw 1fr; align-items: baseline; gap: 1.5cqw; border-bottom: .25cqw dashed rgba(0,0,0,.14); padding-bottom: .5cqw; }
+  .id-data .k { font-size: 2.8cqw; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #5e6f6c; white-space: nowrap; }
+  .id-data .v { font-size: 4cqw; font-weight: 700; display: flex; align-items: center; gap: 1.4cqw; flex-wrap: wrap; line-height: 1.15; }
+  .id-data .v.big { font-size: 6cqw; font-weight: 800; }
+  .id-data .v.nw { flex-wrap: nowrap; white-space: nowrap; font-size: 3.7cqw; }
+  .id-data .sw { display: inline-block; width: 3.8cqw; height: 3.8cqw; border-radius: 50%; background: var(--fav); border: .4cqw solid rgba(0,0,0,.25); }
+  .flag { width: 6.4cqw; height: auto; aspect-ratio: 3 / 2; border-radius: .6cqw; box-shadow: 0 0 0 .25cqw rgba(0,0,0,.18); display: inline-block; vertical-align: middle; }
+  .id-mrz { font-family: 'Space Mono', monospace; font-size: 3.1cqw; letter-spacing: .12em; color: #6b7a77; padding: 1.2cqw 4.5cqw 2.2cqw; white-space: nowrap; overflow: hidden; position: relative; z-index: 1; }
+  .idcard.back { background: linear-gradient(135deg, #154d33, #1f8f55 60%, #2ec46e); color: #fff; cursor: pointer; align-items: center; justify-content: center; }
+  .idcard.back::after { background: repeating-linear-gradient(45deg, rgba(255,255,255,.06) 0 2cqw, transparent 2cqw 4cqw); }
+  .back-in { text-align: center; position: relative; z-index: 1; }
+  .back-in .bk-ic { font-size: 20cqw; line-height: 1; }
+  .back-in .bk-l { font-family: 'Bebas Neue', sans-serif; font-size: 9cqw; letter-spacing: .05em; margin-top: 2cqw; }
+  .back-in .bk-s { font-size: 4cqw; opacity: .8; }
+  @keyframes deal { 0% { transform: translateY(-14px) rotate(-2deg) scale(.96); opacity: 0; } 100% { transform: none; opacity: 1; } }
+  .deal { animation: deal .35s ease; }
+
+  /* ── Mystery Guest a casa ── */
+  .picker { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .picker button { border: 1px solid var(--border); background: var(--card); color: var(--muted); font-family: inherit; font-size: 13px; font-weight: 700; padding: 6px 9px; border-radius: 9px; cursor: pointer; }
+  .picker button:hover { color: var(--text); }
+  .picker button[aria-pressed="true"] { background: var(--accent2); color: #1d1300; border-color: transparent; }
+  .guest-wrap { max-width: 440px; margin: 0 auto 12px; }
+  .heard { background: var(--card); padding: 10px 12px; border-radius: 10px; font-style: italic; margin: 10px 0 8px; font-size: 14px; }
+  .checklist { list-style: none; padding: 0 !important; }
+  .checklist li { font-size: 14px; }
+  .model-text { background: var(--card); border-left: 3px solid var(--correct); border-radius: 0 12px 12px 0; padding: 12px 14px; margin-top: 10px; font-size: 15px; line-height: 1.7; }
+  .model-text b { color: var(--accent2); }
+  .model-text .ex { color: var(--muted); }
+  .guest-type { display: flex; gap: 8px; margin-top: 8px; }
+
+  .quiz { background: var(--card); border-radius: 14px; padding: 12px 14px; margin-top: 14px; }
+  .quiz .qs { font-size: 17px; font-weight: 700; margin: 6px 0 10px; }
+  .quiz .qs .blank { display: inline-block; min-width: 54px; border-bottom: 3px solid var(--accent2); text-align: center; color: var(--accent2); }
+  .quiz .qb { display: flex; gap: 6px; flex-wrap: wrap; }
+  .quiz .qb button { min-width: 64px; }
+  .quiz .qb button.right { background: var(--correct); color: #032; border-color: transparent; }
+  .quiz .qb button.wrong { background: var(--wrong); color: #fff; border-color: transparent; }
+
+  /* ── ORAL TEST: palco LIM ── */
+  .oral-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; margin-bottom: 14px; }
+  .big-btn { border: none; cursor: pointer; font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1.5px; padding: 10px 22px 8px; border-radius: 14px; color: #fff; transition: transform .15s; }
+  .big-btn:hover { transform: translateY(-2px); }
+  .big-btn.part1 { background: linear-gradient(135deg, #1f8f55, #2ec46e); }
+  .big-btn.draw { background: linear-gradient(135deg, #ffb547, #ffd166); color: #1d1300; box-shadow: 0 8px 24px rgba(255,209,102,0.25); }
+  .big-btn[aria-pressed="true"] { outline: 3px solid #fff; outline-offset: 2px; }
+  .timer-row { display: inline-flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 4px 6px 4px 10px; }
+  .timer { font-family: 'Bebas Neue', sans-serif; font-size: 34px; letter-spacing: 2px; line-height: 1; min-width: 80px; font-variant-numeric: tabular-nums; }
+  .timer.run { color: var(--correct); } .timer.warn { color: var(--gold); } .timer.over { color: var(--wrong); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .45; } }
+
+  .stage { position: relative; aspect-ratio: 16 / 10; border-radius: 22px; overflow: hidden; border: 1px solid var(--border); box-shadow: 0 20px 60px rgba(0,0,0,0.45); container-type: inline-size; background: radial-gradient(circle at 20% 15%, #1f4d3c 0%, #0f2620 55%, #0a1714 100%); }
+  .stage::before { content: ''; position: absolute; inset: 0; background-image: radial-gradient(rgba(255,255,255,.07) 1.5px, transparent 1.6px); background-size: 3cqw 3cqw; pointer-events: none; }
+  .lim1 { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 3.2cqw 3.6cqw; gap: 1.6cqw; }
+  .l-title { font-family: 'Bebas Neue', sans-serif; font-size: 6.4cqw; letter-spacing: .1cqw; line-height: 1; text-align: center; }
+  .l-pair { text-align: center; font-size: 2.3cqw; font-weight: 700; color: var(--accent2); min-height: 2.8cqw; }
+  .l-steps { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 2cqw; min-height: 0; }
+  .l-step { background: rgba(255,255,255,.07); border: .25cqw solid rgba(255,255,255,.1); border-top: 1cqw solid var(--sc); border-radius: 2cqw; padding: 2cqw; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.2cqw; text-align: center; }
+  .l-step.s1 { --sc: #2ec46e; } .l-step.s2 { --sc: #3ec6ff; } .l-step.s3 { --sc: #ffd166; }
+  .l-step .h { font-family: 'Bebas Neue', sans-serif; font-size: 3.4cqw; letter-spacing: .1cqw; color: var(--sc); line-height: 1; }
+  .l-step .i { font-size: 7cqw; line-height: 1; }
+  .l-step .w { font-size: 2.3cqw; font-weight: 700; line-height: 1.3; }
+  .l-step .w.big { font-size: 3cqw; color: var(--sc); }
+  .l-step .cues { display: flex; flex-direction: column; gap: .8cqw; }
+  .l-step .cues span { font-size: 2.5cqw; font-weight: 700; background: rgba(255,255,255,.08); border-radius: 1cqw; padding: .6cqw 1.4cqw; }
+  .lim2 { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 3cqw; padding: 4cqw 3.6cqw; align-items: center; }
+  .slot { display: flex; flex-direction: column; gap: 1.2cqw; }
+  .slot-l { font-family: 'Bebas Neue', sans-serif; font-size: 3.4cqw; letter-spacing: .1cqw; color: var(--accent2); text-align: center; }
+  .slot .idcard { cursor: pointer; }
+
+  .toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%); background: var(--correct); color: #032; font-weight: 800; padding: 10px 18px; border-radius: 12px; z-index: 200; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+
+  @media (max-width: 900px) { .steps { grid-template-columns: 1fr; } }
+  @media (max-width: 760px) {
+    .grid2 { grid-template-columns: 1fr; }
+    .header { margin-top: 56px; }
+    #mode-switch button { padding: 6px 8px; font-size: 12px; }
+    .bub { max-width: 94%; }
+    .stage { aspect-ratio: auto; container-type: normal; background: none; border: none; box-shadow: none; overflow: visible; }
+    .stage::before { display: none; }
+    .lim1, .lim2 { position: relative; inset: auto; padding: 0; }
+    .lim2 { grid-template-columns: 1fr; gap: 18px; }
+    .l-title { font-size: 34px; } .l-pair { font-size: 15px; }
+    .l-steps { grid-template-columns: 1fr; gap: 10px; }
+    .l-step { padding: 12px; border-top-width: 6px; border-radius: 14px; gap: 6px; }
+    .l-step .h { font-size: 22px; } .l-step .i { font-size: 34px; } .l-step .w { font-size: 15px; } .l-step .w.big { font-size: 18px; }
+    .l-step .cues span { font-size: 15px; padding: 4px 10px; border-radius: 8px; }
+    .slot-l { font-size: 22px; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+</style>
+<script src="font-zoom.js" defer></script>
+<script src="teacher-lock.js"></script>
+<script src="myclass-live-link.js"></script>
+</head>
+<body class="mode-home">
+
+<a class="home-link" href="index.html">← Home</a>
+<div id="mode-switch" role="group" aria-label="Modalità">
+  <button type="button" data-mode="home" onclick="setMode('home')">🏠 At home</button>
+  <button type="button" data-mode="class" class="teacher-only" onclick="setMode('class')">📺 Oral test</button>
+  <button type="button" id="lock-btn" onclick="toggleLock()" title="Area docente">🔒</button>
+</div>
+
+<div class="container">
+  <div class="header">
+    <div class="eyebrow">greetings · personal info · he / she · his / her · 1ª</div>
+    <h1>Meet My Friend!</h1>
+    <div class="subtitle">Saluta, conosci il compagno con il ping-pong delle domande e presenta il tuo Mystery Guest</div>
+  </div>
+
+  <!-- ═══════════ AT HOME ═══════════ -->
+  <div class="panel home-only">
+    <h3>🧭 Lo schema passo passo</h3>
+    <p style="margin-bottom:12px">L'ordine delle domande è importante: <b>non chiediamo il colore preferito a uno sconosciuto</b>, prima ci presentiamo. E non stiamo recitando una poesia: è una <b>vera conversazione</b>. Tocca una frase per ascoltarla 🔊.</p>
+    <div class="steps">
+      <div class="step s1">
+        <div class="sh">🟢 Step 1 · Greetings</div>
+        <div class="so">Saluti e cortesia · rompere il ghiaccio</div>
+        <div class="lbl">🅰️ Il saluto (scegli uno)</div>
+        <button type="button" class="say">Hello!</button><button type="button" class="say">Hi!</button><button type="button" class="say">Hey!</button><button type="button" class="say" data-say="What's up?">What's up? <small>(slang)</small></button>
+        <div class="lbl">🅱️ La presentazione (scegli uno)</div>
+        <button type="button" class="say" data-say="I'm Andrea. Nice to meet you."><span class="who">A:</span> I'm [Name]. <b>Nice to meet you.</b> 🤝</button>
+        <button type="button" class="say"><span class="who">B:</span> Nice to meet you <b>too</b>.</button>
+        <div class="note" style="margin:4px 0 2px">oppure</div>
+        <button type="button" class="say" data-say="I'm Andrea. Great to meet you."><span class="who">A:</span> I'm [Name]. <b>Great to meet you.</b> 🌟</button>
+        <button type="button" class="say" data-say="Great to meet you too."><span class="who">B:</span> Great to meet you <b>too</b>. <small>(o: And you!)</small></button>
+      </div>
+      <div class="step s2">
+        <div class="sh">🔵 Step 2 · The Chat</div>
+        <div class="so">Conoscersi · età, provenienza, gusti</div>
+        <div class="rule-box">⚠️ <b>REGOLA:</b> usate sempre <b>And you?</b> per rilanciare la domanda al compagno… e poi rifatela per far vedere che la conoscete!</div>
+        <div class="lbl">1️⃣ Age</div>
+        <button type="button" class="say"><span class="who">A:</span> How old are you?</button>
+        <button type="button" class="say" data-say="I'm eleven. And you? How old are you?"><span class="who">B:</span> I'm eleven. <b>And you?</b> How old are you?</button>
+        <button type="button" class="say"><span class="who">A:</span> I'm twelve.</button>
+        <div class="lbl">2️⃣ Origin</div>
+        <button type="button" class="say"><span class="who">A:</span> Where are you from?</button>
+        <button type="button" class="say" data-say="I'm from Italy. And you? Where are you from?"><span class="who">B:</span> I'm from Italy. <b>And you?</b> Where are you from?</button>
+        <button type="button" class="say"><span class="who">A:</span> I'm from Italy too.</button>
+        <div class="lbl">3️⃣ Favourites · colour, pet, sport, subject…</div>
+        <button type="button" class="say"><span class="who">A:</span> What is your favourite colour?</button>
+        <button type="button" class="say" data-say="My favourite colour is blue. And you?"><span class="who">B:</span> My favourite colour is blue. <b>And you?</b></button>
+        <button type="button" class="say"><span class="who">A:</span> My favourite colour is green.</button>
+      </div>
+      <div class="step s3">
+        <div class="sh">🟡 Step 3 · The Mystery Guest</div>
+        <div class="so">Presenta la carta d'identità segreta che ti dà il prof</div>
+        <div class="lbl">Schema fisso</div>
+        <ul class="schema">
+          <li><span class="k">Intro</span> <button type="button" class="say" data-say="Meet Mark!">Meet [Name]!</button> / <button type="button" class="say" data-say="This is Mark.">This is [Name].</button></li>
+          <li><span class="k">Friend</span> <button type="button" class="say" data-say="He is my friend.">He is my friend.</button> <button type="button" class="say" data-say="She is my friend.">She is my friend.</button></li>
+          <li><span class="k">From</span> <button type="button" class="say" data-say="He is from London.">He / She is from…</button></li>
+          <li><span class="k">Age</span> <button type="button" class="say" data-say="He is eleven years old.">He / She is … years old.</button></li>
+          <li><span class="k">Gusti</span> <button type="button" class="say" data-say="His favourite colour is blue. Her favourite colour is pink.">His / Her favourite … is …</button></li>
+          <li><span class="k">⭐ Extra</span> <button type="button" class="say" data-say="He has got a dog called Rex.">He / She has got a dog…</button></li>
+        </ul>
+        <div class="rule-box" style="background:rgba(255,209,102,.1);border-color:rgba(255,209,102,.4)">👦 maschio → <b>He</b> · <b>His</b><br>👧 femmina → <b>She</b> · <b>Her</b><br>Occhio alla carta d'identità!</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid2 home-only">
+    <div class="panel">
+      <h3>📝 Esempio di dialogo</h3>
+      <p>Leggilo bene e ascoltalo: è la stessa conversazione che farai in verifica.</p>
+      <div class="dialog" id="dialog"></div>
+      <div class="bar" style="justify-content:flex-start"><button type="button" class="btn" onclick="playDialog()">▶ Ascolta tutto il dialogo</button><button type="button" class="btn" onclick="speechSynthesis && speechSynthesis.cancel()">⏹ Stop</button></div>
+    </div>
+    <div class="panel">
+      <h3>💡 Tips for a top score</h3>
+      <ul>
+        <li>✅ <b>Non correre</b>: parla chiaro e respira.</li>
+        <li>✅ <b>Ping-pong</b>: non lasciare al compagno tutte le domande. Rispondi e fanne subito una anche tu!</li>
+        <li>✅ <b>He vs She</b>: occhio alla carta d'identità! Maschio → He / His, femmina → She / Her.</li>
+      </ul>
+      <h3 style="margin-top:14px">⚠️ Errori da evitare</h3>
+      <ul class="errs">
+        <li><s>I have eleven years.</s> → <b>I'm eleven.</b> <small class="note">(l'età si dice con il verbo BE)</small></li>
+        <li><s>How many years have you?</s> → <b>How old are you?</b></li>
+        <li><s>I'm of Cagliari.</s> → <b>I'm from Cagliari.</b></li>
+        <li><s>What is you favourite…?</s> → <b>What is your favourite…?</b></li>
+        <li><s>He favourite colour is…</s> → <b>His favourite colour is…</b></li>
+        <li><s>She is my friend.</s> (per Mark 👦) → <b>He is my friend.</b></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="grid2 home-only">
+    <div class="panel" id="chat-panel">
+      <h3>🤖 Steps 1–2 · Chat with a robot</h3>
+      <p>Il robot fa la parte del compagno. Tu inizi: premi 🎤 e parla. Ti dico se la frase va bene e poi lui ti risponde.</p>
+      <div class="bar" style="justify-content:flex-start">
+        <div class="seg" role="group" aria-label="Aiuti">
+          <button type="button" data-help="on" onclick="setHelp(true)">💡 Con aiuti</button>
+          <button type="button" data-help="off" onclick="setHelp(false)">🙈 Senza aiuti (come in verifica)</button>
+        </div>
+      </div>
+      <div class="chat-log" id="chat-log" aria-live="polite"></div>
+      <div id="chat-turn"></div>
+      <p class="note" id="chat-note"></p>
+    </div>
+
+    <div class="panel" id="guest">
+      <h3>🪪 Step 3 · Your Mystery Guest</h3>
+      <p>Scegli una carta (o pescala a caso) e presentala ad alta voce. Ti dico cosa hai detto bene e cosa manca.</p>
+      <div class="picker" id="picker"></div>
+      <div class="guest-wrap" id="guest-card"></div>
+      <div class="bar" style="justify-content:flex-start">
+        <button type="button" class="btn mic" id="btn-guest-mic" onclick="toggleGuestMic()">🎤 Presenta</button>
+        <button type="button" class="btn" id="btn-guest-model" onclick="toggleGuestModel()">👁 Esempio</button>
+        <button type="button" class="btn" onclick="speak(guestModel(state.card).join(' '))">🔊 Ascolta</button>
+      </div>
+      <div class="guest-type" id="guest-type" hidden><input id="guest-input" placeholder="Il microfono non c'è: scrivi qui la presentazione" autocomplete="off"><button type="button" class="btn primary" onclick="checkGuestTyped()">Controlla</button></div>
+      <p class="note" id="guest-note"></p>
+      <div id="guest-out"></div>
+      <div class="model-text" id="guest-model" hidden></div>
+
+      <div class="quiz" id="quiz"></div>
+    </div>
+  </div>
+
+  <div class="panel home-only" style="margin-top:16px">
+    <h3>🏠 La verifica è orale: ti alleni parlando, non scrivendo</h3>
+    <ul>
+      <li>In verifica sei <b>in coppia</b> con un compagno: <b>Step 1 e 2</b> insieme (saluti e chat), poi ognuno presenta il suo <b>Mystery Guest</b> con una carta pescata a sorte.</li>
+      <li>Allenati con il robot finché arrivi alla fine <b>senza aiuti</b>, poi prova con un compagno o un familiare che fa la parte di B.</li>
+      <li>Prova a presentare <b>tutte e 10 le carte</b>: maschi e femmine, così He / She e His / Her diventano automatici.</li>
+      <li><b>Registrati</b> con il telefono (memo vocale) e riascoltati: si sentono subito pause ed errori.</li>
+      <li>In verifica il prof <b>non interviene</b>: siete voi due a portare avanti la conversazione. Allenatevi a <b>fare domande</b>, non solo a rispondere, e ad ascoltare il compagno invece di recitare.</li>
+    </ul>
+  </div>
+
+  <!-- ═══════════ ORAL TEST ═══════════ -->
+  <div class="oral-bar class-only">
+    <button type="button" class="big-btn part1" id="btn-part1" onclick="goPart(1)">👋 Parte 1 · Greetings &amp; Chat</button>
+    <button type="button" class="big-btn draw" id="btn-draw" onclick="drawPair()">🎴 Parte 2 · Mystery Guest</button>
+    <span class="timer-row"><span class="timer" id="tm-main">2:00</span><button type="button" class="btn" id="tm-btn" onclick="timerToggle()">⏱ Avvia</button><button type="button" class="btn" onclick="timerReset()" title="Azzera il timer">↺</button></span>
+    <button type="button" class="btn pink" onclick="openTeacherWin()">🖥️ Finestra docente</button>
+  </div>
+  <div class="stage class-only" id="stage"></div>
+
+  <div class="panel class-only" style="margin-top:16px">
+    <h3>📺 Come fare l'interrogazione (a coppie)</h3>
+    <ol>
+      <li>Collega la LIM in modalità <b>Estendi</b> (Windows: <b>⊞ + P</b> → <i>Estendi</i>), apri questa pagina sulla LIM e premi <b>🖥️ Finestra docente</b>: trascina la finestra sul <b>tuo</b> schermo e scrivi i nomi di A e B.</li>
+      <li><b>Parte 1 · Greetings &amp; Chat</b> (circa 2 minuti): i due studenti si salutano e si conoscono con il ping-pong delle domande. Alla LIM vedono solo la traccia dei 3 step, senza frasi.</li>
+      <li><b>🎴 Parte 2 · Mystery Guest</b>: escono due carte a sorte, coperte. Tocca la carta di chi parla per girarla e, quando ha finito, coprila.</li>
+      <li>Tu non intervieni: lasci dialogare i due studenti. Nella finestra docente hai la traccia, le soluzioni delle carte e la griglia /15 (Interazione · Accuratezza · Pronuncia e fluenza) per <b>A e per B</b>. <b>💾 Salva la coppia</b> registra i voti di entrambi.</li>
+    </ol>
+    <p class="note">Le carte già uscite non si ripetono finché non sono uscite tutte e 10. Se uno studente è da solo, fai tu la parte di B e lascia vuoto il nome di B.</p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+//  DATI: le 10 carte d'identità (dal file della verifica)
+// ══════════════════════════════════════════════════════════════════
+const CARDS = [
+  { n: 1, name: 'Mark', g: 'm', age: 11, city: 'London', ctry: 'UK', country: 'the UK', flag: 'gb', colour: 'blue', fk: 'sport', fav: 'football', favE: '⚽', pet: 'a dog', petName: 'Rex', petE: '🐕', nameRe: /\b(mark|marc|marco|marks)\b/ },
+  { n: 2, name: 'Sophie', g: 'f', age: 12, city: 'Paris', ctry: 'France', country: 'France', flag: 'fr', colour: 'pink', fk: 'subject', fav: 'Art', favE: '🎨', pet: 'a cat', petName: 'Minou', petE: '🐈', nameRe: /\b(sophie|sofie|sophia|sofia|sophy|sophies)\b/ },
+  { n: 3, name: 'Carlos', g: 'm', age: 13, city: 'Madrid', ctry: 'Spain', country: 'Spain', flag: 'es', colour: 'red', fk: 'sport', fav: 'tennis', favE: '🎾', pet: 'a hamster', petE: '🐹', nameRe: /\b(carlos|carlo|carl|karlos)\b/ },
+  { n: 4, name: 'Sakura', g: 'f', age: 11, city: 'Tokyo', ctry: 'Japan', country: 'Japan', flag: 'jp', colour: 'yellow', fk: 'subject', fav: 'Music', favE: '🎵', pet: 'a rabbit', petE: '🐇', nameRe: /\b(sakura|sakora|sacura|sakuras)\b/ },
+  { n: 5, name: 'Hans', g: 'm', age: 12, city: 'Berlin', ctry: 'Germany', country: 'Germany', flag: 'de', colour: 'green', fk: 'sport', fav: 'swimming', favE: '🏊', pet: 'a goldfish', petE: '🐠', nameRe: /\b(hans|hands|hanz|hunts|hans's|haas)\b/ },
+  { n: 6, name: 'Emily', g: 'f', age: 10, city: 'New York', ctry: 'USA', country: 'the USA', flag: 'us', colour: 'purple', fk: 'subject', fav: 'English', favE: '📚', pet: 'a parrot', petE: '🦜', nameRe: /\b(emily|emilie|emmy|emily's|emilia)\b/ },
+  { n: 7, name: 'Lucas', g: 'm', age: 14, city: 'Rio', ctry: 'Brazil', country: 'Brazil', flag: 'br', colour: 'orange', fk: 'sport', fav: 'basketball', favE: '🏀', pet: 'a turtle', petE: '🐢', nameRe: /\b(lucas|lukas|luca|lucas's|lucky)\b/ },
+  { n: 8, name: 'Chen', g: 'm', age: 11, city: 'Beijing', ctry: 'China', country: 'China', flag: 'cn', colour: 'black', fk: 'subject', fav: 'Maths', favE: '➗', pet: null, nameRe: /\b(chen|chan|shen|chain|chen's|cheng)\b/ },
+  { n: 9, name: 'Fatima', g: 'f', age: 12, city: 'Rabat', ctry: 'Morocco', country: 'Morocco', flag: 'ma', colour: 'white', fk: 'sport', fav: 'volleyball', favE: '🏐', pet: 'a horse', petE: '🐎', nameRe: /\b(fatima|fatimah|fatma|fatimas)\b/ },
+  { n: 10, name: 'John', g: 'm', age: 11, city: 'Sydney', ctry: 'Australia', country: 'Australia', flag: 'au', colour: 'green', fk: 'subject', fav: 'P.E.', favNote: '(Gym)', favE: '🤸', pet: 'a dog', petName: 'Spot', petE: '🐕', nameRe: /\b(john|jon|joan|jhon|johns)\b/ },
+];
+const PLACE_RE = { gb: /\b(london|uk|u k|england|britain|united kingdom)\b/, fr: /\b(paris|france)\b/, es: /\b(madrid|spain)\b/, jp: /\b(tokyo|japan)\b/, de: /\b(berlin|germany)\b/, us: /\b(new york|usa|u s a|us|america|united states)\b/, br: /\b(rio|brazil|brasil)\b/, cn: /\b(beijing|china|peking)\b/, ma: /\b(rabat|morocco)\b/, au: /\b(sydney|australia)\b/ };
+const FAV_RE = { football: /\b(football|soccer)\b/, art: /\b(art|arts)\b/, tennis: /\btennis\b/, music: /\bmusic\b/, swimming: /\b(swimming|swim)\b/, english: /\benglish\b/, basketball: /\bbasketball\b/, maths: /\b(maths?|mathematics)\b/, volleyball: /\bvolleyball\b/, 'p.e.': /\b(p e|pe|p\.e\.|gym|physical education)\b/ };
+const COL = { blue: '#3b82f6', pink: '#f472b6', red: '#ef4444', yellow: '#facc15', green: '#22c55e', purple: '#a855f7', orange: '#fb923c', black: '#2a2d33', white: '#ffffff' };
+const NUM_W = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+const NUM_ANY = `(\\d{1,2}|${NUM_W.join('|')})`;
+const numRe = n => new RegExp(`\\b(${n}|${NUM_W[n]})\\b`);
+
+// ══════════════════════════════════════════════════════════════════
+//  UTILITÀ
+// ══════════════════════════════════════════════════════════════════
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const rnd = n => Math.floor(Math.random() * n);
+const pick = a => a[rnd(a.length)];
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+const cap1 = s => s.charAt(0).toUpperCase() + s.slice(1);
+const norm = s => ' ' + s.toLowerCase().replace(/[’`]/g, "'").replace(/[.,!?;:"“”]/g, ' ').replace(/\s+/g, ' ') + ' ';
+let toastT;
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 1800); }
+const pr = c => c.g === 'm' ? { S: 'He', s: 'he', P: 'His', p: 'his', who: 'un maschio 👦' } : { S: 'She', s: 'she', P: 'Her', p: 'her', who: 'una femmina 👧' };
+
+// ── bandiere in SVG (le emoji delle bandiere su Windows non si vedono) ──
+function star(cx, cy, r, fill) { let d = ''; for (let i = 0; i < 10; i++) { const a = Math.PI / 5 * i - Math.PI / 2, rr = i % 2 ? r * 0.4 : r; d += (i ? 'L' : 'M') + (cx + rr * Math.cos(a)).toFixed(2) + ',' + (cy + rr * Math.sin(a)).toFixed(2); } return `<path d="${d}Z" fill="${fill}"/>`; }
+function pentagram(cx, cy, r) { const p = [0, 1, 2, 3, 4].map(i => { const a = -Math.PI / 2 + i * 2 * Math.PI / 5; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; }); return 'M' + [0, 2, 4, 1, 3].map(i => p[i].map(v => v.toFixed(2)).join(',')).join('L') + 'Z'; }
+const UNION = '<rect width="60" height="40" fill="#012169"/><path d="M0,0L60,40M60,0L0,40" stroke="#fff" stroke-width="8"/><path d="M0,0L60,40M60,0L0,40" stroke="#C8102E" stroke-width="3"/><path d="M30,0V40M0,20H60" stroke="#fff" stroke-width="12"/><path d="M30,0V40M0,20H60" stroke="#C8102E" stroke-width="7"/>';
+const FLAGS = {
+  gb: UNION,
+  fr: '<rect width="20" height="40" fill="#0055A4"/><rect x="20" width="20" height="40" fill="#fff"/><rect x="40" width="20" height="40" fill="#EF4135"/>',
+  es: '<rect width="60" height="40" fill="#AA151B"/><rect y="10" width="60" height="20" fill="#F1BF00"/>',
+  jp: '<rect width="60" height="40" fill="#fff"/><circle cx="30" cy="20" r="12" fill="#BC002D"/>',
+  de: '<rect width="60" height="14" fill="#000"/><rect y="13.3" width="60" height="14" fill="#DD0000"/><rect y="26.6" width="60" height="13.4" fill="#FFCE00"/>',
+  us: (() => { let s = '<rect width="60" height="40" fill="#fff"/>'; for (let i = 0; i < 7; i++) s += `<rect y="${(i * 80 / 13).toFixed(2)}" width="60" height="${(40 / 13).toFixed(2)}" fill="#B22234"/>`; s += '<rect width="26" height="21.6" fill="#3C3B6E"/>'; for (let r = 0; r < 4; r++) for (let c = 0; c < 5; c++) s += `<circle cx="${3 + c * 5}" cy="${3 + r * 5}" r="1" fill="#fff"/>`; return s; })(),
+  br: '<rect width="60" height="40" fill="#009C3B"/><path d="M30,4L56,20L30,36L4,20Z" fill="#FFDF00"/><circle cx="30" cy="20" r="8.5" fill="#002776"/><path d="M21.7,18.3Q30,16 38.4,21.6" stroke="#fff" stroke-width="1.6" fill="none"/>',
+  cn: '<rect width="60" height="40" fill="#EE1C25"/>' + star(10, 10, 6, '#FFDE00') + star(20, 4, 2, '#FFDE00') + star(24, 8, 2, '#FFDE00') + star(24, 13, 2, '#FFDE00') + star(20, 17, 2, '#FFDE00'),
+  ma: `<rect width="60" height="40" fill="#C1272D"/><path d="${pentagram(30, 21, 9)}" fill="none" stroke="#006233" stroke-width="1.8" stroke-linejoin="round"/>`,
+  au: '<rect width="60" height="40" fill="#012169"/><svg width="30" height="20" viewBox="0 0 60 40">' + UNION + '</svg>' + star(15, 30, 4.5, '#fff') + star(45, 33, 3, '#fff') + star(39, 19, 3, '#fff') + star(45, 7, 3, '#fff') + star(51, 16, 3, '#fff') + star(48, 23, 1.5, '#fff'),
+};
+const flagSVG = code => `<svg class="flag" viewBox="0 0 60 40" aria-hidden="true">${FLAGS[code]}</svg>`;
+
+// ── la carta d'identità ──
+function idCardHTML(c, extra = '') {
+  const favLbl = c.fk === 'sport' ? 'Fav. Sport' : 'Fav. Subject';
+  const pet = c.pet ? `${cap1(c.pet)}${c.petName ? ` named “${c.petName}”` : ''} ${c.petE}` : 'No pets ❌';
+  const mrz = (`IDCARD<<${c.name.toUpperCase()}<<${c.ctry.toUpperCase()}<<${c.age}<<`).padEnd(40, '<');
+  return `<div class="idcard ${c.g === 'm' ? 'gm' : 'gf'} ${extra}" style="--fav:${COL[c.colour]}">
+    <div class="id-top"><span>🪪 IDENTITY CARD</span><span class="id-n">CARD ${c.n}</span></div>
+    <div class="id-body">
+      <div class="id-photo"><span>${c.g === 'm' ? '👦' : '👧'}</span></div>
+      <div class="id-data">
+        <div class="r"><span class="k">Name</span><span class="v big">${esc(c.name)}</span></div>
+        <div class="r"><span class="k">Age</span><span class="v">${c.age}</span></div>
+        <div class="r"><span class="k">From</span><span class="v nw">${flagSVG(c.flag)} ${esc(c.city)} (${esc(c.ctry)})</span></div>
+        <div class="r"><span class="k">Fav. Colour</span><span class="v"><i class="sw"></i>${cap1(c.colour)}</span></div>
+        <div class="r"><span class="k">${favLbl}</span><span class="v">${esc(cap1(c.fav))}${c.favNote ? ' ' + c.favNote : ''} ${c.favE}</span></div>
+        <div class="r"><span class="k">Pet</span><span class="v">${esc(pet)}</span></div>
+      </div>
+    </div>
+    <div class="id-mrz">${esc(mrz)}</div>
+  </div>`;
+}
+const idBackHTML = (label, extra = '') => `<div class="idcard back ${extra}"><div class="back-in"><div class="bk-ic">🪪</div><div class="bk-l">${esc(label)}</div><div class="bk-s">Tocca per girare</div></div></div>`;
+
+// ── la presentazione modello (Step 3) ──
+function guestModel(c) {
+  const x = pr(c);
+  return [
+    `Meet ${c.name}!`,
+    `${x.S} is my friend.`,
+    `${x.S} is from ${c.city}, in ${c.country}.`,
+    `${x.S} is ${NUM_W[c.age]} years old.`,
+    `${x.P} favourite colour is ${c.colour} and ${x.p} favourite ${c.fk} is ${c.fav === 'P.E.' ? 'P.E.' : c.fav}.`,
+    c.pet ? `${x.S} has got ${c.pet}${c.petName ? ` called ${c.petName}` : ''}.` : `${x.S} hasn't got any pets.`,
+  ];
+}
+function guestModelHTML(c) {
+  const x = pr(c);
+  const lines = guestModel(c).map(esc).map(l => l.replace(new RegExp(`^(Meet|${x.S}|${x.P})\\b`), '<b>$1</b>').replace(new RegExp(`\\b(and) (${x.p})\\b`), '$1 <b>$2</b>'));
+  lines[5] = `<span class="ex">⭐ ${lines[5]}</span>`;
+  return lines.join(' ');
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  STATO
+// ══════════════════════════════════════════════════════════════════
+const state = { mode: 'home', card: CARDS[0], guestModel: false, part: 1, deck: [], pair: { A: null, B: null }, shown: { A: false, B: false }, names: { A: '', B: '' } };
+
+// ══════════════════════════════════════════════════════════════════
+//  VOCE: sintesi e riconoscimento
+// ══════════════════════════════════════════════════════════════════
+function voiceEN() { const vs = speechSynthesis.getVoices(); return vs.find(v => /en[-_]GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)); }
+function speak(text, opts = {}) {
+  if (!window.speechSynthesis) { toast('Il browser non può leggere ad alta voce'); return; }
+  if (!opts.queue) speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text); u.lang = 'en-GB'; u.rate = opts.rate || 0.9; u.pitch = opts.pitch || 1;
+  const v = voiceEN(); if (v) u.voice = v;
+  speechSynthesis.speak(u);
+}
+
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const MIC_FATAL = { 'not-allowed': "⚠️ Permetti l'uso del microfono al browser.", 'service-not-allowed': "⚠️ Permetti l'uso del microfono al browser.", 'audio-capture': '⚠️ Non trovo il microfono: controlla che sia collegato.', 'network': '⚠️ Il riconoscimento vocale ha bisogno di internet: controlla la connessione.', 'language-not-supported': "⚠️ Il browser non riconosce l'inglese: prova con Chrome o Edge." };
+// Il browser chiude da solo l'ascolto alle pause (su telefono già alla prima):
+// finché serve lo riaccendiamo e accumuliamo il testo. Con o.silence l'ascolto
+// si chiude da solo dopo quei millisecondi di silenzio (le battute della chat);
+// senza, resta aperto finché l'alunno preme ⏹ (la presentazione), fino a o.max s.
+let rec = null, recBusy = false, recWanted = false, recStopT = null, recSilT = null;
+function listen(o) {
+  if (!SpeechRec || recBusy) return false;
+  if (window.speechSynthesis) speechSynthesis.cancel();   // il robot non deve finire nel microfono
+  let text = '', fails = 0, fatal = false, heardAny = false;
+  recWanted = true;
+  const note = t => { const n = document.getElementById(o.noteId); if (n) n.textContent = t; };
+  const armSilence = () => { if (!o.silence) return; clearTimeout(recSilT); recSilT = setTimeout(stopListen, heardAny ? o.silence : 9000); };
+  const finish = () => {
+    recBusy = false; recWanted = false; clearTimeout(recStopT); clearTimeout(recSilT);
+    o.onEnd && o.onEnd();
+    if (text.trim()) o.onText(text.trim());
+    else if (!fatal) note('⚠️ Non ho sentito niente: riprova, parlando vicino al microfono.');
+  };
+  const start = () => {
+    const r = new SpeechRec(); r.lang = 'en-GB'; r.interimResults = true; r.continuous = true; r.maxAlternatives = 1;
+    const t0 = Date.now(); let heard = false;
+    r.onresult = e => { for (let i = e.resultIndex; i < e.results.length; i++) { if (e.results[i].isFinal) text += ' ' + e.results[i][0].transcript; heard = true; heardAny = true; } armSilence(); };
+    r.onerror = e => { if (MIC_FATAL[e.error]) { fatal = true; recWanted = false; note(MIC_FATAL[e.error]); } };
+    r.onend = () => {
+      if (rec !== r) return;
+      fails = !heard && Date.now() - t0 < 1000 ? fails + 1 : 0;   // ripartenze a vuoto: il microfono non va
+      if (recWanted && fails < 5) { try { start(); return; } catch (err) {} }
+      rec = null; finish();
+    };
+    r.start(); rec = r;
+  };
+  try { start(); } catch (e) { rec = null; recWanted = false; return false; }
+  recBusy = true; armSilence();
+  recStopT = setTimeout(() => { if (recBusy) { stopListen(); toast('⏱ Tempo finito: ascolto chiuso'); } }, (o.max || 180) * 1000);
+  return true;
+}
+function stopListen() { recWanted = false; clearTimeout(recStopT); clearTimeout(recSilT); if (rec) { try { rec.stop(); } catch (e) {} } }
+
+// ══════════════════════════════════════════════════════════════════
+//  AT HOME · esempio di dialogo
+// ══════════════════════════════════════════════════════════════════
+const DIALOG = [
+  ['A', 'Andrea', "Hey! I'm Andrea."],
+  ['B', 'Arianna', "Hi, I'm Arianna. Great to meet you!"],
+  ['A', 'Andrea', 'Great to meet you too. How old are you?'],
+  ['B', 'Arianna', "I'm eleven. And you?"],
+  ['A', 'Andrea', "I'm eleven too. Where are you from?"],
+  ['B', 'Arianna', "I'm from Cagliari. And you?"],
+  ['A', 'Andrea', "I'm from Quartu. What is your favourite sport?"],
+  ['B', 'Arianna', 'My favourite sport is dance.'],
+  ['gap', '', '…dopo qualche altra domanda… (Andrea guarda la carta d\'identità segreta)'],
+  ['A', 'Andrea', 'Arianna, meet John! He is my friend.'],
+  ['B', 'Arianna', 'Hello John!'],
+  ['A', 'Andrea', 'He is from London. He is 12 years old.'],
+];
+function renderDialog() {
+  document.getElementById('dialog').innerHTML = DIALOG.map(([r, who, t]) => r === 'gap' ? `<div class="gap">${esc(t)}</div>` : `<button type="button" class="say ${r.toLowerCase()}" data-say="${esc(t)}" data-pitch="${r === 'A' ? 0.85 : 1.25}"><span><span class="who">${who}:</span> ${esc(t)}</span></button>`).join('');
+}
+function playDialog() {
+  if (!window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  DIALOG.filter(d => d[0] !== 'gap').forEach(([r, , t]) => speak(t, { queue: true, pitch: r === 'A' ? 0.85 : 1.25 }));
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  AT HOME · Steps 1–2: chat con il robot
+// ══════════════════════════════════════════════════════════════════
+const BOTS = [{ name: 'Alex', age: 12, from: 'Cagliari' }, { name: 'Sam', age: 11, from: 'Quartu' }, { name: 'Charlie', age: 12, from: 'Rome' }, { name: 'Robin', age: 11, from: 'Sassari' }];
+const BOT_FAV = { colour: 'green', sport: 'basketball', subject: 'Art', food: 'pizza', animal: 'the dolphin', pet: 'the cat', day: 'Saturday', number: 'seven', film: 'Frozen', game: 'Minecraft', season: 'summer', drink: 'orange juice', fruit: 'watermelon', book: 'Harry Potter', team: 'Cagliari', cartoon: 'Peppa Pig', place: 'the beach', toy: 'my bike' };
+const CATS = 'colou?r|sport|subject|food|animal|pet|day|number|film|movie|game|season|drink|fruit|book|team|cartoon|place|toy|singer|song|band';
+const canonCat = c => c.startsWith('colo') ? 'colour' : c === 'movie' ? 'film' : c;
+const catRe = c => c === 'colour' ? 'colou?r' : c === 'film' ? '(film|movie)' : c;
+const botFav = c => BOT_FAV[c] || 'a secret';
+const HELP_KEY = 'idc_help';
+let help = true;
+const chat = {};
+
+const OK = (m) => ({ s: 'ok', m }), HALF = (m) => ({ s: 'half', m }), KO = (m) => ({ s: 'ko', m });
+const ICON = { ok: '✅', half: '🟡', ko: '❌', star: '⭐' };
+const answerFav = (t, cat) => {
+  if (new RegExp(`\\bmy favou?rite ${catRe(cat)} (is|are)\\b`).test(t)) return OK(`My favourite ${cat} is…`);
+  const other = t.match(new RegExp(`\\bmy favou?rite (${CATS}) (is|are)\\b`));
+  if (other) return HALF(`Ti ho chiesto il preferito: <b>${cat}</b> (hai detto ${canonCat(other[1])}).`);
+  if (/\bmy favou?rite is\b/.test(t)) return HALF(`Manca la parola: My favourite <b>${cat}</b> is…`);
+  if (/\bi (like|love)\b/.test(t)) return HALF(`Va bene, ma in verifica usa la frase intera: My favourite ${cat} is…`);
+  return KO(`Rispondi con la frase intera: My favourite ${cat} is…`);
+};
+const andYou = t => /\band you\b/.test(t) ? OK('And you? 🏓') : KO('Rilancia la domanda: <b>And you?</b>');
+
+const TURNS = [
+  { it: () => 'Inizia tu: saluta e presentati.', hint: () => "Hello! I'm Andrea.",
+    check: t => {
+      const r = [];
+      r.push(/\b(hello|hi|hey|hiya|what's up|whats up|wassup|good morning|good afternoon)\b/.test(t) ? OK('Saluto') : KO('Manca il saluto: Hello! / Hi! / Hey!'));
+      const m = t.match(/\b(?:i'm|i am|im|my name is|my name's)\s+([a-z]+)/);
+      if (m && !['from', 'fine', 'a', 'the', 'eleven', 'twelve', 'ten', 'thirteen'].includes(m[1])) { chat.name = cap1(m[1]); r.push(OK(`I'm ${chat.name}`)); }
+      else r.push(KO("Presentati: I'm + il tuo nome"));
+      return r;
+    },
+    reply: () => `Hi${chat.name ? ' ' + chat.name : ''}! I'm ${chat.bot.name}. ${chat.meet} to meet you!` },
+  { it: () => `Rispondi al saluto e fai tu la prima domanda: l'età.`, hint: () => `${chat.meet} to meet you too. How old are you?`,
+    check: t => {
+      const r = [];
+      if (/\b(nice|great|pleased|glad|lovely) to meet you too\b/.test(t)) r.push(OK(`${chat.meet} to meet you too`));
+      else if (/\band you\b/.test(t) && !/\bhow old\b.*\band you\b/.test(t)) r.push(OK('And you! (va bene anche così)'));
+      else if (/\b(nice|great|pleased|glad|lovely) to meet you\b/.test(t)) r.push(HALF(`Aggiungi <b>too</b>: ${chat.meet} to meet you too.`));
+      else r.push(KO(`Rispondi al saluto: ${chat.meet} to meet you too.`));
+      if (/\bhow old are you\b/.test(t)) r.push(OK('How old are you?'));
+      else if (/\bhow many years\b/.test(t)) r.push(KO('<s>How many years…?</s> → How old are you?'));
+      else if (/\bhow old (you are|is you|you)\b/.test(t)) r.push(KO("Ordine delle parole: How old <b>are you</b>?"));
+      else r.push(KO('Ora fai tu la domanda: How old are you?'));
+      return r;
+    },
+    reply: () => `I'm ${NUM_W[chat.bot.age]}. And you? How old are you?` },
+  { it: () => 'Rispondi: quanti anni hai?', hint: () => "I'm eleven.",
+    check: t => {
+      const r = [];
+      if (new RegExp(`\\bi (have|'ve got|have got|got) ${NUM_ANY}( years)?\\b`).test(t)) r.push(KO("<s>I have eleven years</s> → I'm eleven: l'età si dice con il verbo <b>BE</b>!"));
+      else if (new RegExp(`\\b(i'm|i am|im) ${NUM_ANY}\\b`).test(t)) r.push(OK("I'm + età"));
+      else if (new RegExp(`\\b${NUM_ANY}\\b`).test(t)) r.push(HALF("Rispondi con la frase intera: I'm eleven."));
+      else r.push(KO("Di' la tua età: I'm eleven / I'm twelve."));
+      if (/\byears old\b/.test(t)) r.push({ s: 'star', m: 'years old: perfetto!' });
+      if (/\b(too)\b/.test(t) && new RegExp(`\\b(${chat.bot.age}|${NUM_W[chat.bot.age]}) too\\b`).test(t)) r.push({ s: 'star', m: 'too: hai notato che avete la stessa età!' });
+      return r;
+    },
+    reply: () => 'Where are you from?' },
+  { it: () => 'Rispondi e rilancia la domanda.', hint: () => "I'm from Cagliari. And you?",
+    check: t => {
+      const r = [];
+      if (/\b(i'm|i am|im) of\b|\bi from\b/.test(t)) r.push(KO("<s>I'm of… / I from…</s> → I'm <b>from</b> Cagliari."));
+      else if (/\b(i'm|i am|im|i come|i live) (from|in)\b/.test(t)) r.push(OK("I'm from…"));
+      else r.push(KO("Di' da dove vieni: I'm from + città o paese."));
+      r.push(/\band you\b|\bwhere are you from\b/.test(t) ? OK('And you? 🏓') : KO('Rilancia la domanda: <b>And you?</b>'));
+      return r;
+    },
+    reply: () => `I'm from ${chat.bot.from}${chat.lastT && chat.lastT.includes(' ' + chat.bot.from.toLowerCase() + ' ') ? ' too' : ''}.`, after: () => 'Ora tocca a te: chiedi i preferiti!' },
+  { it: () => 'Chiedi il suo preferito: colore, sport, materia, cibo, animale…', hint: () => "What's your favourite colour?",
+    check: t => {
+      const r = [];
+      let m = t.match(new RegExp(`\\b(what's|what is|whats|what) your favou?rite (${CATS})\\b`));
+      if (m) { chat.cat = canonCat(m[2]); r.push(OK(`What's your favourite ${chat.cat}?`)); return r; }
+      m = t.match(new RegExp(`\\bwhich is your favou?rite (${CATS})\\b`));
+      if (m) { chat.cat = canonCat(m[1]); r.push(HALF(`Meglio: <b>What's</b> your favourite ${chat.cat}?`)); return r; }
+      m = t.match(new RegExp(`\\bwhat('s| is)? (you|you're) favou?rite (${CATS})\\b`));
+      if (m) { chat.cat = canonCat(m[3]); r.push(HALF(`Attento a <b>your</b>: What's your favourite ${chat.cat}? (se l'hai detto giusto, ignora)`)); return r; }
+      if (/\bfavou?rite\b/.test(t)) r.push(KO("Fai una domanda completa: What's your favourite colour / sport…?"));
+      else r.push(KO("Chiedi: What's your favourite + colour / sport / subject…?"));
+      return r;
+    },
+    reply: () => `My favourite ${chat.cat} is ${botFav(chat.cat)}. And you? What's your favourite ${chat.cat}?` },
+  { it: () => 'Rispondi con la frase intera.', hint: () => `My favourite ${chat.cat} is …`,
+    check: t => [answerFav(t, chat.cat)],
+    reply: () => { chat.cat2 = pick(['sport', 'subject', 'colour', 'food', 'animal'].filter(c => c !== chat.cat)); return `Cool! What's your favourite ${chat.cat2}?`; } },
+  { it: () => 'Rispondi e rilancia la domanda.', hint: () => `My favourite ${chat.cat2} is … And you?`,
+    check: t => [answerFav(t, chat.cat2), andYou(t)],
+    reply: () => `My favourite ${chat.cat2} is ${botFav(chat.cat2)}${chat.lastT.includes(' ' + botFav(chat.cat2).toLowerCase() + ' ') ? ' too' : ''}. Thank you${chat.name ? ', ' + chat.name : ''}! See you!` },
+];
+
+function newChat() {
+  if (recBusy) stopListen();
+  Object.keys(chat).forEach(k => delete chat[k]);
+  Object.assign(chat, { bot: pick(BOTS), meet: pick(['Nice', 'Great']), step: 0, log: [], fb: null, tries: 0, first: 0, passed: false });
+  chat.log.push({ who: 'sys', text: `Il tuo compagno oggi è ${chat.bot.name} 🤖. Inizi tu!` });
+  renderChat();
+}
+function renderChat() {
+  const log = document.getElementById('chat-log');
+  log.innerHTML = chat.log.map(l => `<div class="bub ${l.who}">${l.who === 'sys' ? l.text : esc(l.text)}${l.fb ? `<span class="fbl">${l.fb}</span>` : ''}</div>`).join('');
+  log.scrollTop = log.scrollHeight;
+  const box = document.getElementById('chat-turn');
+  if (chat.step >= TURNS.length) {
+    box.innerHTML = `<div class="turn end-box"><div class="big">🎉 Conversazione finita!</div><p>Battute giuste al primo colpo: <b>${chat.first} / ${TURNS.length}</b>${chat.first === TURNS.length ? ' · perfetto! 🏆' : ''}</p>
+      <div class="tacts" style="justify-content:center"><button type="button" class="btn" onclick="newChat()">🔁 Nuovo compagno</button><button type="button" class="btn orange" onclick="document.getElementById('guest').scrollIntoView({behavior:'smooth'})">➡️ Step 3 · Mystery Guest</button></div></div>`;
+    return;
+  }
+  const T = TURNS[chat.step];
+  const fb = chat.fb ? `<ul class="fb">${chat.fb.map(x => `<li class="${x.s === 'star' ? 'half' : x.s}">${ICON[x.s]} ${x.m}</li>`).join('')}</ul>` : '';
+  const failed = chat.fb && !chat.passed;
+  box.innerHTML = `<div class="turn"><div class="ti">${chat.step + 1}/${TURNS.length} · ${esc(T.it())}</div>${help ? `<div class="th">${esc(T.hint())}</div>` : ''}
+    <div class="tacts">${SpeechRec ? `<button type="button" class="btn mic ${recBusy ? 'on' : ''}" id="chat-mic" onclick="chatMic()">${recBusy ? '⏹ Stop' : '🎤 Parla'}</button>` : `<input id="chat-input" placeholder="Scrivi la tua battuta" autocomplete="off" onkeydown="if(event.key==='Enter')chatTyped()"><button type="button" class="btn primary" onclick="chatTyped()">Invia</button>`}
+    ${chat.step > 0 || chat.log.length > 1 ? `<button type="button" class="btn" title="Riascolta il robot" onclick="sayLastBot()">🔊</button>` : ''}
+    ${failed ? `<button type="button" class="btn" onclick="chatSkip()">➡️ Vai avanti comunque</button>` : ''}
+    <button type="button" class="btn" title="Ricomincia" onclick="newChat()">↺</button></div>${fb}</div>`;
+}
+function sayLastBot() { const l = [...chat.log].reverse().find(x => x.who === 'bot'); if (l) speak(l.text, { pitch: 1.15 }); }
+function chatMic() {
+  if (recBusy) { stopListen(); return; }
+  if (!listen({ noteId: 'chat-note', silence: 3500, max: 40, onText: chatAnswer, onEnd: () => renderChat() })) return;
+  document.getElementById('chat-note').textContent = 'Parla adesso… mi fermo da solo quando smetti.';
+  renderChat();
+}
+function chatTyped() { const i = document.getElementById('chat-input'); if (i && i.value.trim()) { chatAnswer(i.value.trim()); } }
+function chatAnswer(raw) {
+  if (chat.step >= TURNS.length) return;
+  document.getElementById('chat-note').textContent = '';
+  const T = TURNS[chat.step];
+  chat.lastT = norm(raw);
+  const res = T.check(chat.lastT);
+  chat.tries++;
+  chat.passed = !res.some(x => x.s === 'ko');
+  chat.fb = res;
+  const last = chat.log[chat.log.length - 1];
+  if (last && last.who === 'me' && last.pending) chat.log.pop();
+  chat.log.push({ who: 'me', text: raw, pending: !chat.passed });
+  if (chat.passed) {
+    if (chat.tries === 1) chat.first++;
+    renderChat();
+    setTimeout(() => advanceChat(), 1100);
+  } else renderChat();
+}
+function chatSkip() { const last = chat.log[chat.log.length - 1]; if (last) last.pending = false; advanceChat(); }
+function advanceChat() {
+  const T = TURNS[chat.step];
+  const last = chat.log[chat.log.length - 1];
+  if (last && last.who === 'me') { last.pending = false; last.fb = chat.fb.map(x => ICON[x.s]).join(''); }
+  const reply = T.reply();
+  chat.log.push({ who: 'bot', text: reply });
+  if (T.after) chat.log.push({ who: 'sys', text: T.after() });
+  chat.step++; chat.fb = null; chat.tries = 0; chat.passed = false;
+  renderChat();
+  speak(reply, { pitch: 1.15 });
+}
+function setHelp(on) {
+  help = on;
+  document.querySelectorAll('[data-help]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.help === 'on') === on));
+  try { localStorage.setItem(HELP_KEY, on ? '1' : '0'); } catch (e) {}
+  renderChat();
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  AT HOME · Step 3: Mystery Guest
+// ══════════════════════════════════════════════════════════════════
+function renderPicker() {
+  document.getElementById('picker').innerHTML = CARDS.map(c => `<button type="button" aria-pressed="${state.card === c}" onclick="selectCard(${c.n})">${c.n}. ${esc(c.name)} ${c.g === 'm' ? '👦' : '👧'}</button>`).join('') + `<button type="button" onclick="selectCard(0)">🎲 A caso</button>`;
+}
+function selectCard(n) {
+  if (!n) { const others = CARDS.filter(c => c !== state.card); state.card = pick(others); }
+  else state.card = CARDS.find(c => c.n === n);
+  document.getElementById('guest-out').innerHTML = '';
+  document.getElementById('guest-note').textContent = '';
+  renderPicker();
+  document.getElementById('guest-card').innerHTML = idCardHTML(state.card, 'deal');
+  renderGuestModel();
+}
+function renderGuestModel() {
+  const m = document.getElementById('guest-model');
+  m.hidden = !state.guestModel; m.innerHTML = guestModelHTML(state.card);
+  document.getElementById('btn-guest-model').textContent = state.guestModel ? '🙈 Nascondi' : '👁 Esempio';
+}
+function toggleGuestModel() { state.guestModel = !state.guestModel; renderGuestModel(); }
+function toggleGuestMic() {
+  if (recBusy) { stopListen(); return; }
+  const btn = document.getElementById('btn-guest-mic');
+  if (!listen({ noteId: 'guest-note', max: 120, onText: raw => checkGuest(raw), onEnd: () => { btn.textContent = '🎤 Presenta'; btn.classList.remove('on'); } })) return;
+  btn.textContent = '⏹ Ho finito'; btn.classList.add('on');
+  document.getElementById('guest-note').textContent = `Presenta ${state.card.name} adesso… puoi fare pause: ti ascolto finché non premi ⏹.`;
+}
+function checkGuestTyped() { const v = document.getElementById('guest-input').value.trim(); if (v) checkGuest(v); }
+
+function guestChecks(raw, c) {
+  const t = norm(raw), x = pr(c), S = x.s, rows = [];
+  const BE = `${S}('s| is)`;
+  // 1 · Intro
+  const intro = /\b(meet|this is)\b/.test(t);
+  rows.push(intro ? OK(`Intro: Meet ${c.name}! / This is ${c.name}.`) : KO(`Inizia con: <b>Meet ${c.name}!</b> (oppure This is ${c.name}.)`));
+  // 2 · Friend
+  if (new RegExp(`\\b${BE} my (best |good )?friend\\b`).test(t)) rows.push(OK(`${x.S} is my friend.`));
+  else if (/\bmy (best |good )?friend\b/.test(t)) rows.push(HALF(`Hai detto “my friend”: la frase è <b>${x.S} is my friend.</b>`));
+  else rows.push(KO(`Manca: <b>${x.S} is my friend.</b>`));
+  // 3 · From
+  const fromS = new RegExp(`\\b(${BE}|${S} comes|${S} lives) (from|in)\\b`).test(t), place = PLACE_RE[c.flag].test(t);
+  if (fromS && place) rows.push(OK(`${x.S} is from ${c.city}.`));
+  else if (place || fromS) rows.push(HALF(place ? `Ho sentito ${c.city}: la frase è <b>${x.S} is from ${c.city}.</b>` : `Controlla la città sulla carta: ${c.city} (${c.ctry}).`));
+  else rows.push(KO(`Manca: <b>${x.S} is from ${c.city}.</b>`));
+  // 4 · Age
+  const ageN = numRe(c.age).test(t);
+  if (new RegExp(`\\b(has|have|got) ${NUM_ANY} years?\\b`).test(t)) rows.push(KO(`<s>${x.s} has ${c.age} years</s> → <b>${x.S} is ${c.age} years old</b> (verbo BE!)`));
+  else if (new RegExp(`\\b${BE} (${c.age}|${NUM_W[c.age]})\\b`).test(t)) rows.push(OK(`${x.S} is ${c.age} years old.`));
+  else if (ageN) rows.push(HALF(`Ho sentito ${c.age}: la frase è <b>${x.S} is ${c.age} years old.</b>`));
+  else if (new RegExp(`\\b${BE} ${NUM_ANY}\\b`).test(t)) rows.push(HALF(`Controlla l'età sulla carta: <b>${c.age}</b>.`));
+  else rows.push(KO(`Manca l'età: <b>${x.S} is ${c.age} years old.</b>`));
+  // 5 · Favourites
+  const colOk = /\bfavou?rite colou?r\b/.test(t) && new RegExp(`\\b${c.colour}\\b`).test(t);
+  const favKey = c.fav.toLowerCase();
+  const xOk = new RegExp(`\\bfavou?rite (${c.fk})\\b`).test(t) && FAV_RE[favKey].test(t);
+  const wrongKind = new RegExp(`\\bfavou?rite (${c.fk === 'sport' ? 'subject' : 'sport'})\\b`).test(t);
+  if (colOk && xOk) rows.push(OK(`Colore e ${c.fk} preferiti ⭐`));
+  else if (colOk || xOk) rows.push(OK(`${colOk ? 'Colore' : cap1(c.fk)} preferito · aggiungi anche ${colOk ? `${x.p} favourite ${c.fk}` : `${x.p} favourite colour`}`));
+  else rows.push(KO(`Manca: <b>${x.P} favourite colour is ${c.colour}.</b>`));
+  if (wrongKind) rows.push(HALF(`Sulla carta c'è ${c.fk === 'sport' ? 'lo <b>sport</b>' : 'la <b>materia</b> (subject)'} preferito: ${c.fav}.`));
+  // 6 · He / She
+  const wrongPron = (c.g === 'm' ? /\b(she|she's|her|hers|herself)\b/ : /\b(he|he's|his|him|himself)\b/).exec(t);
+  const rightPron = new RegExp(`\\b(${S}|${S}'s)\\b`).test(t);
+  if (wrongPron) rows.push(KO(`${c.name} è ${x.who}: usa <b>${x.S} / ${x.P}</b>, non “${wrongPron[1]}”.`));
+  else if (rightPron) rows.push(OK(`${x.S} sempre giusto per ${c.name}`));
+  else rows.push(KO(`Non ho sentito <b>${x.S}</b>: ${c.name} è ${x.who}.`));
+  // 7 · His / Her
+  if (new RegExp(`\\b${S} favou?rite\\b`).test(t)) rows.push(KO(`<s>${x.S} favourite</s> → <b>${x.P} favourite</b>`));
+  else if (c.g === 'm' && /\bhe's favou?rite\b/.test(t)) rows.push(HALF(`Ho sentito “he's favourite”: si dice <b>His favourite</b> (se l'hai detto giusto, ignora).`));
+  else if (new RegExp(`\\b${x.p} favou?rite\\b`).test(t)) rows.push(OK(`${x.P} favourite…`));
+  else rows.push(HALF(`Non ho sentito <b>${x.P} favourite…</b>`));
+  // extra
+  const extras = [];
+  if (c.pet && (new RegExp(`\\b(${S} has got|${S}'s got)\\b`).test(t) || /\b(dog|cat|hamster|rabbit|goldfish|parrot|turtle|horse)\b/.test(t))) extras.push(`${x.S} has got ${c.pet}`);
+  if (!c.pet && /\b(hasn't got|has not got|doesn't have|does not have|no pets?)\b/.test(t)) extras.push(`${x.S} hasn't got any pets`);
+  if (/\byears old\b/.test(t)) extras.push('years old');
+  if (!c.nameRe.test(t)) rows.push(HALF(`Non ho sentito il nome <b>${c.name}</b>: dillo chiaramente (a volte il microfono non capisce i nomi).`));
+  return { rows, extras, score: rows.slice(0, 7).filter(r => r.s === 'ok').length };
+}
+function checkGuest(raw) {
+  const r = guestChecks(raw, state.card);
+  document.getElementById('guest-note').textContent = '';
+  document.getElementById('guest-out').innerHTML = `<div class="heard">“${esc(raw)}”</div>
+    <ul class="checklist">${r.rows.map(x => `<li class="${x.s}">${ICON[x.s]} ${x.m}</li>`).join('')}${r.extras.map(e => `<li class="half">⭐ Extra: ${esc(e)}</li>`).join('')}</ul>
+    <p class="score" style="margin-top:6px">${r.score} / 7 ${r.score === 7 ? '🏆' : ''}</p>`;
+}
+
+// ── mini gioco He / She · His / Her ──
+const quiz = { score: 0, tot: 0, cur: null, done: false };
+function newQuizItem() {
+  const c = pick(CARDS), x = pr(c);
+  const items = [
+    { s: `___ is from ${c.city}.`, a: x.S },
+    { s: `___ favourite colour is ${c.colour}.`, a: x.P },
+    { s: `___ is ${c.age} years old.`, a: x.S },
+    { s: `___ is my friend.`, a: x.S },
+    { s: `___ favourite ${c.fk} is ${c.fav}.`, a: x.P },
+  ];
+  quiz.cur = { c, ...pick(items), picked: null };
+  renderQuiz();
+}
+function renderQuiz() {
+  const q = quiz.cur, c = q.c;
+  const btn = w => `<button type="button" class="btn ${q.picked ? (w === q.a ? 'right' : w === q.picked ? 'wrong' : '') : ''}" onclick="answerQuiz('${w}')" ${q.picked ? 'disabled' : ''}>${w}</button>`;
+  document.getElementById('quiz').innerHTML = `<h3 style="font-size:20px;margin-bottom:2px">🎯 He or She? His or Her?</h3>
+    <div class="note" style="margin-top:0">${c.g === 'm' ? '👦' : '👧'} <b style="color:var(--text)">${esc(c.name)}</b> · carta ${c.n}</div>
+    <div class="qs">${esc(q.s).replace('___', '<span class="blank">' + (q.picked ? q.a : '?') + '</span>')}</div>
+    <div class="qb">${['He', 'She', 'His', 'Her'].map(btn).join('')}${q.picked ? `<button type="button" class="btn primary" onclick="newQuizItem()">Avanti →</button>` : ''}<span class="score" style="margin-left:auto">${quiz.score} / ${quiz.tot}</span></div>`;
+}
+function answerQuiz(w) {
+  const q = quiz.cur; if (q.picked) return;
+  q.picked = w; quiz.tot++; if (w === q.a) quiz.score++;
+  renderQuiz();
+  if (w === q.a) speak(q.s.replace('___', q.a));
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  ORAL TEST: palco, parti, carte, timer
+// ══════════════════════════════════════════════════════════════════
+function renderStage(deal) {
+  const st = document.getElementById('stage');
+  const nA = state.names.A || 'Studente A', nB = state.names.B || 'Studente B';
+  if (state.part === 1) {
+    st.innerHTML = `<div class="lim1 ${deal ? 'deal' : ''}">
+      <div class="l-title">🗣️ Meet &amp; Greet</div>
+      <div class="l-pair">${state.names.A || state.names.B ? `A · ${esc(nA)} &nbsp;🤝&nbsp; B · ${esc(nB)}` : ''}</div>
+      <div class="l-steps">
+        <div class="l-step s1"><div class="h">1 · Greetings</div><div class="i">👋</div><div class="w">Hello! · Hi! · Hey!</div><div class="w">🤝 Nice to meet you!</div></div>
+        <div class="l-step s2"><div class="h">2 · The Chat</div><div class="cues"><span>🎂 age</span><span>🌍 from</span><span>❤️ favourite…</span></div><div class="w big">↩️ And you?</div></div>
+        <div class="l-step s3"><div class="h">3 · Mystery Guest</div><div class="i">🪪</div><div class="w">Meet… / This is…</div><div class="w">He / She · His / Her</div></div>
+      </div></div>`;
+    return;
+  }
+  const slot = s => {
+    const c = state.pair[s], label = s === 'A' ? `A · ${nA}` : `B · ${nB}`;
+    return `<div class="slot"><div class="slot-l">${esc(label)}</div><div onclick="flip('${s}')">${state.shown[s] ? idCardHTML(c, deal === s || deal === true ? 'deal' : '') : idBackHTML(label, deal === true ? 'deal' : '')}</div></div>`;
+  };
+  st.innerHTML = `<div class="lim2">${slot('A')}${slot('B')}</div>`;
+}
+function flip(s, force) { state.shown[s] = force === undefined ? !state.shown[s] : force; renderStage(state.shown[s] ? s : false); updateTeacherWin(); }
+function hideAll() { state.shown.A = state.shown.B = false; renderStage(); updateTeacherWin(); }
+
+const partTimes = {};
+function goPart(p) {
+  const wasRunning = !!tmr.startAt;
+  savePartTime();
+  state.part = p; timerSet(120); markParts(); renderStage(true); updateTeacherWin();
+  if (wasRunning && p === 2) timerToggle();
+}
+function drawFromDeck(exclude) {
+  if (!state.deck.filter(n => n !== exclude).length) state.deck = shuffle(CARDS.map(c => c.n));
+  const n = state.deck.splice(state.deck.findIndex(x => x !== exclude), 1)[0];
+  return CARDS.find(c => c.n === n);
+}
+function drawPair() {
+  state.pair.A = drawFromDeck(null);
+  state.pair.B = drawFromDeck(state.pair.A.n);
+  state.shown = { A: false, B: false };
+  goPart(2);
+}
+function setPairCard(s, n) {
+  const c = CARDS.find(x => x.n === n);
+  state.pair[s] = c; state.deck = state.deck.filter(x => x !== n);
+  if (state.part !== 2) { if (!state.pair[s === 'A' ? 'B' : 'A']) state.pair[s === 'A' ? 'B' : 'A'] = drawFromDeck(n); goPart(2); }
+  else { renderStage(state.shown[s] ? s : false); updateTeacherWin(); }
+}
+function savePartTime() { const e = timerElapsed(); if (e > 0) partTimes[state.part] = (partTimes[state.part] || 0) + e; }
+function markParts() { document.getElementById('btn-part1').setAttribute('aria-pressed', state.part === 1); document.getElementById('btn-draw').setAttribute('aria-pressed', state.part === 2); }
+
+const tmr = { dur: 120, startAt: null, acc: 0, iv: null };
+const timerElapsed = () => tmr.acc + (tmr.startAt ? (Date.now() - tmr.startAt) / 1000 : 0);
+const fmtTime = sec => { sec = Math.floor(sec); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); };
+function timerToggle() {
+  if (tmr.startAt) { tmr.acc = timerElapsed(); tmr.startAt = null; clearInterval(tmr.iv); tmr.iv = null; }
+  else { tmr.startAt = Date.now(); tmr.iv = setInterval(renderTimer, 250); }
+  renderTimer();
+}
+function timerSet(sec) { clearInterval(tmr.iv); tmr.iv = null; tmr.startAt = null; tmr.acc = 0; tmr.dur = sec; renderTimer(); }
+function timerReset() { timerSet(tmr.dur); }
+function renderTimer() {
+  const el = timerElapsed(), left = tmr.dur - el, running = !!tmr.startAt;
+  const txt = left >= 0 ? fmtTime(Math.ceil(left - 1e-9)) : '+' + fmtTime(-left);
+  const cls = left < 0 ? 'over' : !running ? '' : left <= 30 ? 'warn' : 'run';
+  const btn = running ? '⏸ Pausa' : el > 0 ? '▶ Riprendi' : '⏱ Avvia';
+  const m = document.getElementById('tm-main');
+  m.textContent = txt; m.className = 'timer ' + cls; document.getElementById('tm-btn').textContent = btn;
+  if (twOpen()) { tw('t-timer').textContent = txt; tw('t-timer').className = 'tv ' + cls; tw('t-tbtn').textContent = btn; tw('t-tlbl').textContent = (state.part === 1 ? 'Parte 1 · Greetings & Chat · circa 2 minuti' : 'Parte 2 · Mystery Guest · circa 1 minuto a testa') + (left < 0 ? ` · ⏰ tempo scaduto (${fmtTime(el)})` : ''); }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  GRIGLIA (la stessa di attivita/griglia_myclass_identity_cards.json) · 15 punti
+// ══════════════════════════════════════════════════════════════════
+const GRID = {"id":"g_1794787200000_0","nome":"Oral test · Meet My Friend! — greetings, personal info, he/she, his/her (1ª)","aree":[{"nome":"Interazione — So fare una conversazione","max":5,"descrittori":[{"pt":5,"testo":"Conversazione completa e nell'ordine giusto (saluto → presentazione → età → provenienza → preferiti → amico). Fa il ping-pong alla pari: risponde e fa subito una domanda, rilancia sempre con And you?; reagisce al compagno (Nice to meet you too, Hello John!). Presenta l'amico con lo schema (Meet… / He is my friend). È una vera conversazione, non una poesia recitata."},{"pt":4,"testo":"Ordine rispettato e ping-pong quasi sempre presente; una volta dimentica And you? o una reazione al compagno, oppure un piccolo inciampo nello schema del Mystery Guest. La conversazione resta naturale."},{"pt":3,"testo":"Ordine nel complesso rispettato, ma salta o inverte un passaggio (es. chiede il colore preferito prima di presentarsi); fa poche domande e usa And you? raramente, lasciando guidare il compagno; oppure recita a memoria senza ascoltare il compagno."},{"pt":2,"testo":"Risponde ma quasi non fa domande; salta più passaggi; presenta l'amico senza schema o in modo molto incompleto; va avanti solo con l'aiuto del compagno."},{"pt":1,"testo":"Frasi isolate, la conversazione non decolla; si blocca e non porta a termine lo scambio."},{"pt":0,"testo":"Non interagisce."}]},{"nome":"Accuratezza — Dico le cose giuste nel modo giusto","max":5,"descrittori":[{"pt":5,"testo":"Verbo be sempre corretto (I'm eleven, I'm from…, He/She is…); he/she e his/her sempre giusti rispetto alla carta; domande ben formate (How old are you? Where are you from? What's your favourite…?); lessico sicuro (numeri, città e paesi, colori, sport, materie, animali); riporta tutte le informazioni della carta."},{"pt":4,"testo":"Un errore isolato (manca is, he/she o his/her scambiato una volta, una parola della carta incerta) che non cambia il significato o che corregge da solo; riporta tutte o quasi tutte le informazioni della carta."},{"pt":3,"testo":"Due o tre errori (I have eleven years, He favourite…, What is you favourite…?) oppure manca qualche informazione della carta; il messaggio resta chiaro."},{"pt":2,"testo":"Errori in quasi tutte le frasi (verbo be mancante, he/she confusi in modo sistematico, domande mal formate); riporta solo parte delle informazioni della carta; a volte ricorre all'italiano."},{"pt":1,"testo":"Struttura quasi sempre errata e poche parole pertinenti; il messaggio passa a fatica."},{"pt":0,"testo":"Nessuna frase con una struttura o un lessico riconoscibile."}]},{"nome":"Pronuncia e fluenza — Mi faccio capire","max":5,"descrittori":[{"pt":5,"testo":"Parla chiaro, senza correre e senza pause lunghe, con un ritmo naturale. Pronuncia bene numeri (thirteen / thirty), favourite, nomi e paesi della carta."},{"pt":4,"testo":"Chiaro e scorrevole; qualche imprecisione di pronuncia (favourite, un nome o un paese) o una pausa più lunga, senza ostacolare la comprensione."},{"pt":3,"testo":"Comprensibile, ma con esitazioni frequenti o parti dette troppo in fretta; più errori di pronuncia (thirteen / thirty, th, finali delle parole)."},{"pt":2,"testo":"Molte pause e ripartenze, oppure corre come se recitasse; alcune parole si capiscono a fatica."},{"pt":1,"testo":"Pronuncia spesso incomprensibile; si blocca più volte."},{"pt":0,"testo":"Si blocca o risulta incomprensibile."}]}],"conversione_voto":{"3":4,"4":4.5,"5":5,"6":5.5,"7":6,"8":6.5,"9":7,"10":7.5,"11":8,"12":8.5,"13":9,"14":9.5,"15":10}};
+const SHORT = ['Interazione', 'Accuratezza', 'Pronuncia'];
+const rub = { A: {}, B: {} }, notes = { A: '', B: '' };
+let cur = 'A';
+const rubDone = s => GRID.aree.every((a, i) => rub[s][i] !== undefined);
+const rubAny = s => GRID.aree.some((a, i) => rub[s][i] !== undefined);
+const rubTot = s => GRID.aree.reduce((acc, a, i) => acc + (rub[s][i] || 0), 0);
+const voto = t => String(t < 3 ? 4 : GRID.conversione_voto[t]).replace('.', ',');
+const GKEY = 'idc_voti';
+function loadGrades() { try { return JSON.parse(localStorage.getItem(GKEY)) || []; } catch (e) { return []; } }
+function storeGrades(g) { try { localStorage.setItem(GKEY, JSON.stringify(g)); } catch (e) {} }
+
+// ══════════════════════════════════════════════════════════════════
+//  FINESTRA DOCENTE (secondo schermo)
+// ══════════════════════════════════════════════════════════════════
+let teacherWin = null;
+const TEACHER_HTML = `<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>Finestra docente – Meet My Friend!</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}
+body{margin:0;font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',sans-serif;background:#0d1615;color:#eef4f2;padding:18px 20px 40px;font-size:14px}
+h1{font-size:15px;margin:0 0 4px;color:#2ec46e;letter-spacing:.04em;text-transform:uppercase}
+h2{font-size:12px;color:#94a8a3;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:20px 0 8px}
+.sub{color:#94a8a3;font-size:12.5px;margin-bottom:12px}
+.bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+button{font-family:inherit;font-size:13px;font-weight:700;border:1px solid rgba(255,255,255,.12);background:#182624;color:#eef4f2;padding:7px 11px;border-radius:9px;cursor:pointer}
+button:hover{border-color:#2ec46e}button.pri{background:#2ec46e;color:#04140b;border-color:transparent}button.or{background:#ffd166;color:#1d1300;border-color:transparent}button.pink{background:#ff5d8f;color:#fff;border-color:transparent}
+button.on{outline:2px solid #ffd166}button.used{opacity:.45}
+.tmr{display:flex;align-items:center;gap:10px;margin:4px 0 12px;padding:10px 12px;border-radius:12px;background:#142120;border:1px solid rgba(255,255,255,.1);flex-wrap:wrap}
+.tv{font-size:44px;font-weight:900;line-height:1;min-width:120px;font-variant-numeric:tabular-nums}.tv.run{color:#06d6a0}.tv.warn{color:#ffd166}.tv.over{color:#ff4d6d}.tl{color:#94a8a3;font-size:12.5px}
+.cur{font-size:16px;font-weight:800;color:#ffd166;margin:10px 0 4px}
+.lbl{font-size:12px;color:#94a8a3;font-weight:700;min-width:22px}
+.cards2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.gc{background:#142120;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:10px 12px}
+.gc .nm{font-weight:800;font-size:15px}.gc .nm small{color:#94a8a3;font-weight:600}
+.gc .md{font-size:13px;line-height:1.5;margin:6px 0;color:#d7e3df}.gc .md b{color:#ffd166}
+.gc .pp{display:inline-block;font-size:12px;font-weight:800;padding:2px 7px;border-radius:6px;background:rgba(46,196,110,.18);color:#7ff0ad;margin-bottom:4px}
+.gc.f .pp{background:rgba(255,126,176,.18);color:#ffb3d0}
+.gc ul{margin:4px 0 0;padding-left:18px}.gc li{font-size:12.5px;margin:2px 0}.gc li i{color:#94a8a3}
+.tip{background:rgba(255,209,102,.1);border:1px solid rgba(255,209,102,.35);border-radius:10px;padding:9px 11px;font-size:13px;margin-top:8px}
+.tip.b{background:rgba(62,198,255,.08);border-color:rgba(62,198,255,.3)}
+ul{margin:6px 0;padding-left:20px}li{margin:3px 0;line-height:1.45}
+.fields{display:grid;grid-template-columns:1fr 1fr 110px;gap:8px}
+input{width:100%;background:#182624;border:1px solid rgba(255,255,255,.12);color:#eef4f2;font-family:inherit;font-size:14px;padding:8px 10px;border-radius:9px}input:focus{outline:none;border-color:#2ec46e}
+.tabs{display:flex;gap:6px;margin:10px 0 2px}.tabs button{flex:1;padding:9px 10px;text-align:left}.tabs button.on{background:#2ec46e;color:#04140b;outline:none}.tabs b{float:right}
+.r{padding:9px 0;border-bottom:1px dashed rgba(255,255,255,.1)}.rh{display:flex;align-items:center;gap:8px}.rn{flex:1;font-weight:700}.rn small{color:#94a8a3;font-weight:500}
+.pts{display:flex;gap:4px}.pts button{width:32px;height:32px;padding:0;border-radius:8px}.pts button.on{background:#ffd166;color:#1a1300;border-color:transparent;outline:none}
+.rd{font-size:12.5px;color:#c9d6d2;margin-top:5px;line-height:1.45}
+.tot{display:flex;align-items:baseline;gap:12px;margin:12px 0 8px}.tot .v{font-size:40px;font-weight:900;color:#ffd166;line-height:1}.tot .p{color:#94a8a3}
+.msg{min-height:18px;font-weight:700;color:#06d6a0;margin-top:6px}
+.link{min-height:16px;font-size:12.5px;color:#94a8a3;margin:2px 0 4px}.link.ok{color:#06d6a0}.link.err{color:#ffb547}
+table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}table.sv td,table.sv th{text-align:left;padding:5px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}table.sv th{color:#94a8a3;font-size:11px;text-transform:uppercase}td.v{font-weight:800;color:#ffd166}
+.x{background:none;border:none;color:#94a8a3;padding:0 4px}.empty{color:#94a8a3;font-style:italic}
+@media (max-width:560px){.cards2{grid-template-columns:1fr}.fields{grid-template-columns:1fr 1fr}}
+</style></head><body>
+<h1>🖥️ Finestra docente · Meet My Friend!</h1>
+<div class="sub">Tienila sul tuo schermo: alla LIM si vedono solo la traccia dei 3 step e le carte.</div>
+<div class="fields"><input id="t-nameA" placeholder="Studente A" autocomplete="off"><input id="t-nameB" placeholder="Studente B (vuoto se è da solo)" autocomplete="off"><input id="t-class" placeholder="Classe (1C)" autocomplete="off"></div>
+<div class="tmr" style="margin-top:10px"><span class="tv" id="t-timer">2:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia</button><button data-act="treset" title="Azzera">↺</button><span class="tl" id="t-tlbl"></span></div>
+<div class="bar"><button class="pri" data-act="p1">👋 Parte 1 · Chat</button><button class="or" data-act="draw">🎴 Parte 2 · Pesca 2 carte</button></div>
+<div id="t-part"></div>
+<h2>Valutazione · /15</h2>
+<div class="tabs"><button data-act="tab" data-s="A" id="tab-A"></button><button data-act="tab" data-s="B" id="tab-B"></button></div>
+<div id="t-rub"></div>
+<div class="link" id="t-link">🔗 I punteggi vanno anche nella LIVE di MyClass, se è aperta su questo computer.</div>
+<div class="tot"><span class="v" id="t-voto">–</span><span class="p" id="t-pts">Scegli un punteggio per ogni area</span></div>
+<input id="t-note" placeholder="Nota (facoltativa)" autocomplete="off">
+<div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva la coppia e prossima</button><button data-act="reset">↺ Azzera</button></div>
+<div class="msg" id="t-msg"></div>
+<h2>Voti salvati</h2>
+<div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-act="clear">🗑 Svuota</button></div>
+<div id="t-saved"></div>
+</body></html>`;
+
+function openTeacherWin() {
+  if (teacherWin && !teacherWin.closed) { teacherWin.focus(); updateTeacherWin(); return; }
+  teacherWin = window.open('', 'idc_teacher', 'popup,width=680,height=900');
+  if (!teacherWin) { alert('Il browser ha bloccato la finestra. Consenti i pop-up per questa pagina e riprova.'); return; }
+  const d = teacherWin.document; d.open(); d.write(TEACHER_HTML); d.close();
+  if (window.DrillZoom) DrillZoom.attach(d);   // A− / A+ anche nella finestra docente
+  d.addEventListener('click', onTeacherClick);
+  d.addEventListener('input', e => {
+    if (e.target.id === 't-nameA' || e.target.id === 't-nameB') { state.names.A = tw('t-nameA').value.trim(); state.names.B = tw('t-nameB').value.trim(); renderStage(); renderTabs(); updateTeacherWin(); }
+    else if (e.target.id === 't-note') notes[cur] = e.target.value;
+  });
+  d.addEventListener('change', e => { if (/^t-(nameA|nameB|class)$/.test(e.target.id)) pushLive(); });
+  tw('t-nameA').value = state.names.A; tw('t-nameB').value = state.names.B;
+  updateTeacherWin(); renderTeacherRubric(); renderTeacherSaved(); renderTimer();
+  moveTeacherWinToOtherScreen();
+}
+async function moveTeacherWinToOtherScreen() {
+  try {
+    if (!('getScreenDetails' in window)) return;
+    const sd = await window.getScreenDetails(); const other = sd.screens.find(x => x !== sd.currentScreen);
+    if (!other || !teacherWin || teacherWin.closed) return;
+    teacherWin.moveTo(other.availLeft + 30, other.availTop + 30); teacherWin.resizeTo(Math.min(720, other.availWidth - 60), other.availHeight - 60);
+  } catch (e) {}
+}
+const twOpen = () => teacherWin && !teacherWin.closed && teacherWin.document.getElementById('t-part');
+const tw = id => teacherWin.document.getElementById(id);
+const nameOf = s => state.names[s] || (s === 'A' ? 'Studente A' : 'Studente B');
+
+function updateTeacherWin() {
+  if (!twOpen()) return;
+  if (state.part === 1) {
+    tw('t-part').innerHTML = `<h2>Parte 1 · Greetings &amp; Chat (insieme, circa 2 minuti)</h2>
+      <ul><li><b>Ordine:</b> saluto → presentazione (I'm… Nice/Great to meet you · … too) → età → provenienza → preferiti.</li>
+      <li><b>Ping-pong:</b> entrambi fanno domande, rilanciano con <b>And you?</b> e poi rifanno la domanda.</li>
+      <li><b>Da ascoltare:</b> <i>I'm eleven</i> (non <i>I have eleven years</i>) · <i>I'm from</i> · <i>What's your favourite…?</i> · <i>too</i>.</li></ul>
+      <div class="tip">🤫 Non intervenire: lascia dialogare i due studenti e segna i punteggi mentre parlano.</div>`;
+    return;
+  }
+  const used = CARDS.filter(c => !state.deck.includes(c.n) && state.deck.length).map(c => c.n);
+  const sel = s => `<div class="bar" style="margin-top:6px"><span class="lbl">${s}</span>${CARDS.map(c => `<button data-act="card" data-s="${s}" data-n="${c.n}" class="${state.pair[s] === c ? 'on' : ''} ${used.includes(c.n) && state.pair[s] !== c ? 'used' : ''}" title="${esc(c.name)}">${c.n}</button>`).join('')}</div>`;
+  const box = s => {
+    const c = state.pair[s]; if (!c) return '';
+    const x = pr(c);
+    return `<div class="gc ${c.g}"><div class="nm">${s} · ${esc(nameOf(s))} <small>presenta</small></div>
+      <div class="cur" style="margin:4px 0">${c.n}. ${esc(c.name)} ${c.g === 'm' ? '👦' : '👧'}</div>
+      <span class="pp">${x.S} · ${x.P}</span>
+      <div class="md">${guestModelHTML(c)}</div>
+      <div class="bar"><button data-act="flip" data-s="${s}" class="${state.shown[s] ? 'on' : ''}">${state.shown[s] ? '🙈 Copri' : '👁 Gira alla LIM'}</button></div>
+      </div>`;
+  };
+  tw('t-part').innerHTML = `<h2>Parte 2 · Mystery Guest (circa 1 minuto a testa)</h2>
+    ${sel('A')}${sel('B')}
+    <div class="bar" style="margin:8px 0"><button data-act="hideall">🙈 Copri tutte e due</button></div>
+    <div class="cards2">${box('A')}${box('B')}</div>
+    <div class="tip b">Schema atteso: <b>Meet… / This is…</b> → <b>He/She is my friend</b> → from → age → <b>His/Her favourite…</b> (⭐ animale: <i>He has got a dog</i>). Il compagno reagisce: <i>Hello John!</i></div>`;
+}
+function renderTabs() {
+  if (!twOpen()) return;
+  ['A', 'B'].forEach(s => {
+    const b = tw('tab-' + s);
+    b.className = cur === s ? 'on' : '';
+    b.innerHTML = `${s} · ${esc(nameOf(s))} <b>${rubDone(s) ? voto(rubTot(s)) : rubAny(s) ? '…' : '–'}</b>`;
+  });
+}
+function renderTeacherRubric() {
+  if (!twOpen()) return;
+  renderTabs();
+  const R = rub[cur];
+  tw('t-rub').innerHTML = GRID.aree.map((a, i) => `<div class="r"><div class="rh"><div class="rn">${esc(a.nome)} <small>/ ${a.max}</small></div><div class="pts">${a.descrittori.map(d => `<button class="${R[i] === d.pt ? 'on' : ''}" data-act="pt" data-r="${i}" data-v="${d.pt}" title="${esc(d.testo)}">${d.pt}</button>`).join('')}</div></div>${R[i] !== undefined ? `<div class="rd">${esc(a.descrittori.find(d => d.pt === R[i]).testo)}</div>` : ''}</div>`).join('');
+  tw('t-voto').textContent = rubDone(cur) ? voto(rubTot(cur)) : '–';
+  tw('t-pts').textContent = rubDone(cur) ? `${nameOf(cur)}: ${rubTot(cur)} / 15 punti` : `${nameOf(cur)}: scegli un punteggio per ogni area`;
+  tw('t-note').value = notes[cur]; tw('t-note').placeholder = `Nota per ${nameOf(cur)} (facoltativa)`;
+}
+function renderTeacherSaved() {
+  if (!twOpen()) return;
+  const g = loadGrades();
+  tw('t-saved').innerHTML = g.length ? `<table class="sv"><tr><th>Data</th><th>Cl.</th><th>Studente</th><th>Voto</th><th>I-A-P</th><th>Carta</th><th>Tempo</th><th></th></tr>${g.map((x, i) => `<tr><td>${esc(x.date)}</td><td>${esc(x.cls)}</td><td>${esc(x.name)}${x.partner ? `<br><small>con ${esc(x.partner)}</small>` : ''}${x.note ? `<br><small>${esc(x.note)}</small>` : ''}</td><td class="v">${esc(x.voto)}</td><td>${esc(x.det)}</td><td>${esc(x.card)}</td><td>${esc(x.tempo)}</td><td><button class="x" data-act="del" data-i="${i}" title="Elimina">✕</button></td></tr>`).reverse().join('')}</table>` : '<div class="empty">Nessun voto salvato.</div>';
+}
+function twMsg(t) { if (!twOpen()) return; tw('t-msg').textContent = t; clearTimeout(twMsg.t); twMsg.t = setTimeout(() => { if (twOpen()) tw('t-msg').textContent = ''; }, 2800); }
+function onTeacherClick(e) {
+  const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+  const act = b.dataset.act;
+  if (act === 'timer') timerToggle();
+  else if (act === 'treset') timerReset();
+  else if (act === 'p1') goPart(1);
+  else if (act === 'draw') drawPair();
+  else if (act === 'card') setPairCard(b.dataset.s, +b.dataset.n);
+  else if (act === 'flip') flip(b.dataset.s);
+  else if (act === 'hideall') hideAll();
+  else if (act === 'tab') { cur = b.dataset.s; renderTeacherRubric(); pushLive(); }
+  else if (act === 'pt') { rub[cur][+b.dataset.r] = +b.dataset.v; renderTeacherRubric(); pushLive(); }
+  else if (act === 'reset') resetRubric();
+  else if (act === 'save') saveGrades();
+  else if (act === 'copy') copyGrades();
+  else if (act === 'clear') { if (teacherWin.confirm('Cancellare tutti i voti salvati su questo computer?')) { storeGrades([]); renderTeacherSaved(); } }
+  else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
+}
+function resetRubric() {
+  ['A', 'B'].forEach(s => { rub[s] = {}; notes[s] = ''; });
+  cur = 'A'; state.names.A = state.names.B = '';
+  if (twOpen()) { tw('t-nameA').value = ''; tw('t-nameB').value = ''; }
+  renderTeacherRubric(); renderStage();
+}
+function saveGrades() {
+  state.names.A = tw('t-nameA').value.trim(); state.names.B = tw('t-nameB').value.trim();
+  if (!state.names.A) { twMsg('✏️ Scrivi il nome dello studente A'); tw('t-nameA').focus(); return; }
+  const who = ['A', 'B'].filter(s => state.names[s]);
+  for (const s of who) if (!rubDone(s)) { cur = s; renderTeacherRubric(); twMsg(`✏️ Completa la griglia di ${state.names[s]}`); return; }
+  if (!state.names.B && rubAny('B')) { cur = 'B'; renderTeacherRubric(); twMsg('✏️ Hai dato punti a B: scrivi il suo nome (o azzera)'); return; }
+  savePartTime();
+  const t1 = partTimes[1] ? fmtTime(partTimes[1]) : '–', t2 = partTimes[2] ? fmtTime(partTimes[2]) : '–';
+  const g = loadGrades(), date = new Date().toLocaleDateString('it-IT'), cls = tw('t-class').value.trim();
+  who.forEach(s => {
+    const c = state.pair[s], other = s === 'A' ? 'B' : 'A';
+    g.push({ name: state.names[s], partner: state.names[other] || '', cls, voto: voto(rubTot(s)), punti: rubTot(s), det: GRID.aree.map((a, i) => rub[s][i]).join('-'), card: c ? `${c.n}. ${c.name}` : '–', tempo: `${t1} + ${t2}`, note: notes[s].trim(), date });
+  });
+  storeGrades(g);
+  // promemoria anche nella LIVE di MyClass: prima A, poi B
+  const saved = who.map(s => `${state.names[s]} → ${voto(rubTot(s))}`).join(' · ');
+  const snapshot = who.map(s => ({ s, name: state.names[s], scores: GRID.aree.map((a, i) => rub[s][i]) }));
+  sendSaved(snapshot, cls);
+  twMsg(`✅ Salvato: ${saved}`);
+  Object.keys(partTimes).forEach(k => delete partTimes[k]);
+  resetRubric(); renderTeacherSaved(); goPart(1);
+}
+// ── Punteggi anche nella griglia della LIVE di MyClass (myclass-live-link.js) ──
+const liveGrid = () => ({ id: GRID.id, nome: GRID.nome, aree: GRID.aree.map(a => ({ nome: a.nome, max: a.max })), conversione_voto: GRID.conversione_voto });
+function pushLive(save, s = cur, done) {
+  if (!window.MyClassLive || !twOpen()) return;
+  const scores = GRID.aree.map((a, i) => rub[s][i] === undefined ? null : rub[s][i]);
+  if (scores.every(v => v === null)) return;
+  MyClassLive.send({ grid: liveGrid(), scores, student: state.names[s] || '', cls: tw('t-class').value.trim(), save: !!save }, r => { showLive(r); done && done(); });
+}
+// al salvataggio la griglia si azzera subito: mandiamo una copia dei punteggi, uno studente dopo l'altro
+function sendSaved(list, cls) {
+  if (!window.MyClassLive || !list.length) return;
+  const [first, ...rest] = list;
+  MyClassLive.send({ grid: liveGrid(), scores: first.scores, student: first.name, cls, save: true }, r => { showLive(r); sendSaved(rest, cls); });
+}
+function showLive(r) {
+  if (!twOpen()) return;
+  const el = tw('t-link');
+  if (!r) { el.className = 'link'; el.textContent = '⚪ LIVE di MyClass non aperta: i punteggi restano solo qui.'; return; }
+  el.className = 'link ' + (r.ok ? 'ok' : 'err');
+  el.textContent = r.ok ? (r.saved ? `💾 Salvato in MyClass (${r.classe}): ${r.student} — promemoria ${String(r.voto10).replace('.', ',')}/10` : `🔗 Nella LIVE di MyClass (${r.classe}): ${r.student}`) : '⚠️ MyClass: ' + r.msg;
+}
+function copyGrades() {
+  const g = loadGrades();
+  if (!g.length) { twMsg('Nessun voto da copiare'); return; }
+  const head = 'Data\tClasse\tStudente\tCompagno\tVoto\tPunti /15\t' + SHORT.join('\t') + '\tCarta\tTempo (P1 + P2)\tNota';
+  const txt = [head, ...g.map(x => [x.date, x.cls, x.name, x.partner, x.voto, x.punti, ...String(x.det).split('-'), x.card, x.tempo, x.note].join('\t'))].join('\n');
+  const w = teacherWin, done = () => twMsg('📋 Elenco copiato: incollalo nel registro o in Excel');
+  const fb = () => { const d = w.document, ta = d.createElement('textarea'); ta.value = txt; d.body.appendChild(ta); ta.select(); try { d.execCommand('copy'); done(); } catch (e) {} ta.remove(); };
+  if (w.navigator.clipboard) w.navigator.clipboard.writeText(txt).then(done, fb); else fb();
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  MODALITÀ E AVVIO
+// ══════════════════════════════════════════════════════════════════
+const MODE_KEY = 'idc_mode';
+// Oral test solo per l'insegnante: serve il PIN (vedi teacher-lock.js)
+function refreshLock() {
+  const ok = TeacherLock.isUnlocked();
+  document.body.classList.toggle('teacher', ok);
+  const b = document.getElementById('lock-btn');
+  b.textContent = ok ? '🔓' : '🔒';
+  b.title = ok ? "Richiudi l'Oral test: su questo computer si vedrà solo At home" : "Area docente: sblocca l'Oral test";
+}
+function toggleLock() {
+  if (TeacherLock.isUnlocked()) { TeacherLock.lock(); refreshLock(); if (state.mode === 'class') setMode('home'); toast('🔒 Oral test richiuso'); }
+  else TeacherLock.ask(() => { refreshLock(); setMode('class'); });
+}
+function setMode(m) {
+  if (m === 'class' && !TeacherLock.isUnlocked()) { TeacherLock.ask(() => { refreshLock(); setMode('class'); }); return; }
+  if (recBusy) stopListen();
+  state.mode = m;
+  document.body.classList.toggle('mode-home', m === 'home');
+  document.body.classList.toggle('mode-class', m === 'class');
+  document.querySelectorAll('#mode-switch [data-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
+  try { localStorage.setItem(MODE_KEY, m); } catch (e) {}
+  if (m === 'class') goPart(1);
+}
+window.addEventListener('beforeunload', () => { try { if (teacherWin && !teacherWin.closed) teacherWin.close(); } catch (e) {} });
+
+// tocca una frase per ascoltarla
+document.addEventListener('click', e => {
+  const b = e.target.closest('.say'); if (!b) return;
+  speak(b.dataset.say || b.textContent.replace(/^[AB]:\s*/, '').replace(/\(.*?\)/g, '').trim(), { pitch: +b.dataset.pitch || 1 });
+});
+
+(function init() {
+  renderDialog();
+  try { help = localStorage.getItem(HELP_KEY) !== '0'; } catch (e) {}
+  document.querySelectorAll('[data-help]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.help === 'on') === help));
+  newChat();
+  selectCard(1);
+  newQuizItem();
+  if (!SpeechRec) {
+    document.getElementById('chat-note').textContent = 'Il microfono funziona con Chrome o Edge: intanto puoi scrivere le battute.';
+    document.getElementById('btn-guest-mic').disabled = true;
+    document.getElementById('guest-type').hidden = false;
+    document.getElementById('guest-note').textContent = 'Il microfono funziona con Chrome o Edge: intanto puoi scrivere la presentazione e usare 👁 e 🔊.';
+  }
+  const url = new URLSearchParams(location.search).get('mode');
+  let m = /^(oral|test|class|classe)$/.test(url || '') ? 'class' : /^(home|casa)$/.test(url || '') ? 'home' : null;
+  if (!m) { try { m = localStorage.getItem(MODE_KEY); } catch (e) {} }
+  refreshLock();
+  // senza PIN si parte sempre da At home; dal link ?mode=oral compare la richiesta del PIN
+  setMode(m === 'class' && TeacherLock.isUnlocked() ? 'class' : 'home');
+  if (m === 'class' && url && !TeacherLock.isUnlocked()) setMode('class');
+  renderTimer();
+})();
+</script>
+</body>
+</html>
