@@ -2593,9 +2593,10 @@ function _actIdxEntry(a) {
   qs.forEach(q => {
     const p = _qPts(q);
     totalPts += p;
-    if (!q.tag) return;
-    const t = tagPts.find(x => x.t === q.tag);
-    if (t) t.p += p; else tagPts.push({ t: q.tag, p });
+    const qt = _qTag(q);
+    if (!qt) return;
+    const t = tagPts.find(x => x.t === qt);
+    if (t) t.p += p; else tagPts.push({ t: qt, p });
   });
   const e = {
     title: a.title || '', createdAt: a.createdAt || 0,
@@ -3664,8 +3665,8 @@ function typeTags(questions) {
   const icons = { 'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️','speaking':'🎤' };
   const typePills = types.map(t => `<span class="tag">${icons[t]||'❓'} ${typeLabel(t)}</span>`).join('');
   // Content tags
-  const contentTags = [...new Set(questions.map(q => q.tag).filter(Boolean))];
-  const tagColors = { 'GRAMMAR':'#dbeafe:#1e3a8a', 'VOCABULARY':'#d1fae5:#065f46', 'FUNCTIONS':'#fef3c7:#92400e', 'LISTENING':'#ede9ff:#4c1d95', 'READING':'#fce7f3:#9d174d', 'WRITING':'#e0f2fe:#075985' };
+  const contentTags = [...new Set(questions.map(_qTag).filter(Boolean))];
+  const tagColors = { 'GRAMMAR':'#dbeafe:#1e3a8a', 'VOCABULARY':'#d1fae5:#065f46', 'FUNCTIONS':'#fef3c7:#92400e', 'LISTENING':'#ede9ff:#4c1d95', 'READING':'#fce7f3:#9d174d', 'WRITING':'#e0f2fe:#075985', 'SPEAKING':'#ffedd5:#9a3412' };
   const contentPills = contentTags.map(t => {
     const [bg, color] = (tagColors[t] || '#f1f0ff:#555').split(':');
     return `<span style="display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px;background:${bg};color:${color};">${t}</span>`;
@@ -3689,12 +3690,14 @@ function _actTagPills(questions, tagPts) {
     'LISTENING':  { label: '🎧 Listening',  bg: '#ede9ff', color: '#4c1d95' },
     'READING':    { label: '📖 Reading',    bg: '#fce7f3', color: '#9d174d' },
     'WRITING':    { label: '✍️ Writing',    bg: '#e0f2fe', color: '#075985' },
+    'SPEAKING':   { label: '🎤 Speaking',   bg: '#ffedd5', color: '#9a3412' },
   };
   const totals = {};
   questions.forEach(q => {
-    if (!q.tag) return;
-    if (!totals[q.tag]) totals[q.tag] = 0;
-    totals[q.tag] += _qPts(q);
+    const qt = _qTag(q);
+    if (!qt) return;
+    if (!totals[qt]) totals[qt] = 0;
+    totals[qt] += _qPts(q);
   });
   const tags = Object.keys(totals);
   if (!tags.length) return '';
@@ -5061,13 +5064,14 @@ function renderQList() {
     return;
   }
   const icons = { 'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️','speaking':'🎤' };
-  const tagColors = { 'GRAMMAR':'#dbeafe:#1e3a8a', 'VOCABULARY':'#d1fae5:#065f46', 'FUNCTIONS':'#fef3c7:#92400e', 'LISTENING':'#ede9ff:#4c1d95', 'READING':'#fce7f3:#9d174d', 'WRITING':'#e0f2fe:#075985' };
+  const tagColors = { 'GRAMMAR':'#dbeafe:#1e3a8a', 'VOCABULARY':'#d1fae5:#065f46', 'FUNCTIONS':'#fef3c7:#92400e', 'LISTENING':'#ede9ff:#4c1d95', 'READING':'#fce7f3:#9d174d', 'WRITING':'#e0f2fe:#075985', 'SPEAKING':'#ffedd5:#9a3412' };
   c.innerHTML = pasteBar + S.questions.map((q, i) => {
     const isEditing = S.editingQIndex === i;
     const pts = q.points || 10;
     // Tag badge
-    const tagParts = q.tag ? (tagColors[q.tag] || '#f1f0ff:#555').split(':') : null;
-    const tagBadge = tagParts ? `<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px;background:${tagParts[0]};color:${tagParts[1]};">${q.tag}</span>` : '';
+    const qTagE = _qTag(q);
+    const tagParts = qTagE ? (tagColors[qTagE] || '#f1f0ff:#555').split(':') : null;
+    const tagBadge = tagParts ? `<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px;background:${tagParts[0]};color:${tagParts[1]};">${qTagE}</span>` : '';
     // Listening audio status badge
     const audioBadge = q.type === 'listening' && !isEditing
       ? (!q.audioData
@@ -5086,6 +5090,7 @@ function renderQList() {
           <option value="LISTENING"  ${q.tag==='LISTENING' ?'selected':''}>🎧 Listening</option>
           <option value="READING"    ${q.tag==='READING'   ?'selected':''}>📖 Reading</option>
           <option value="WRITING"    ${q.tag==='WRITING'   ?'selected':''}>✍️ Writing</option>
+          <option value="SPEAKING"   ${_qTag(q)==='SPEAKING'?'selected':''}>🎤 Speaking</option>
         </select>
         <label style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap;margin-left:6px;">⭐ Punti:</label>
         <input type="number" min="0.5" max="99" step="0.5" value="${pts}"
@@ -6127,9 +6132,9 @@ function changeEditQType() {
 }
 
 function _tagSelector(currentTag, idPrefix) {
-  const tags = ['','GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
-  const labels = { '':'(nessun tag)', 'GRAMMAR':'📐 Grammar', 'VOCABULARY':'📚 Vocabulary', 'FUNCTIONS':'💬 Functions', 'LISTENING':'🎧 Listening', 'READING':'📖 Reading', 'WRITING':'✍️ Writing' };
-  const colors = { '':'var(--border)', 'GRAMMAR':'#3b82f6', 'VOCABULARY':'#10b981', 'FUNCTIONS':'#f59e0b', 'LISTENING':'#8b5cf6', 'READING':'#ec4899', 'WRITING':'#0ea5e9' };
+  const tags = ['','GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'];
+  const labels = { '':'(nessun tag)', 'GRAMMAR':'📐 Grammar', 'VOCABULARY':'📚 Vocabulary', 'FUNCTIONS':'💬 Functions', 'LISTENING':'🎧 Listening', 'READING':'📖 Reading', 'WRITING':'✍️ Writing', 'SPEAKING':'🎤 Speaking' };
+  const colors = { '':'var(--border)', 'GRAMMAR':'#3b82f6', 'VOCABULARY':'#10b981', 'FUNCTIONS':'#f59e0b', 'LISTENING':'#8b5cf6', 'READING':'#ec4899', 'WRITING':'#0ea5e9', 'SPEAKING':'#f97316' };
   const id = idPrefix || 'qf-edit-tag';
   return '<div class="form-group" style="margin-bottom:10px;"><label style="font-size:12px;">🏷 Tag esercizio</label>' +
     '<select id="'+id+'" style="font-size:13px;">' +
@@ -11570,7 +11575,7 @@ async function _llRecomputeSummaryAt(base, studentName) {
     }
     const n = rem.length;
     const avgPct = Math.round(rem.reduce((s,e)=>s+(e.pct||0),0)/n);
-    const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
+    const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'];
     const tagAvg = {};
     TAG_LIST.forEach(tag => {
       const vals = rem.map(e=>e.tagBreakdown?.[tag]).filter(v=>v!=null);
@@ -12673,14 +12678,15 @@ async function _loadLobbyStats(code, classId) {
 
   if (!summary || summary.sessionCount < 1) return; // nessun dato ancora
 
-  const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
+  const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'];
   const TAG_META = {
     GRAMMAR:    { label:'Grammar',    color:'#6c47ff', bg:'#ede9ff' },
     VOCABULARY: { label:'Vocabulary', color:'#0e7490', bg:'#e0f2fe' },
     FUNCTIONS:  { label:'Functions',  color:'#047857', bg:'#d1fae5' },
     LISTENING:  { label:'Listening',  color:'#b45309', bg:'#fef3c7' },
     READING:    { label:'Reading',    color:'#9d174d', bg:'#fce7f3' },
-    WRITING:    { label:'Writing',    color:'#075985', bg:'#e0f2fe' }
+    WRITING:    { label:'Writing',    color:'#075985', bg:'#e0f2fe' },
+    SPEAKING:   { label:'Speaking',   color:'#9a3412', bg:'#ffedd5' }
   };
 
   const entries = Object.values(sessions).sort((a,b)=>(a.ts||0)-(b.ts||0));
@@ -13782,6 +13788,8 @@ function _mcNormalizeActivity(act) {
 function _qIsPoll(q) { return !!(q && q.type === 'multiple-choice' && q.poll); }
 // Punti massimi di una domanda: 0 per i sondaggi, altrimenti points (1 se manca)
 function _qPts(q) { return _qIsPoll(q) ? 0 : ((q && q.points) || 1); }
+// Tag effettivo: un esercizio al microfono (speaking) è sempre SPEAKING, qualunque tag abbia salvato
+function _qTag(q) { return q && q.type === 'speaking' ? 'SPEAKING' : ((q && q.tag) || ''); }
 // Risultati dei sondaggi nella sessione live. Un sondaggio = stesso testo e stesse
 // opzioni: le versioni (DSA, PEI, Fila B…) che lo ripetono si sommano.
 function _pollKey(q) { return String(q.text || '') + '|' + _mcOpts(q).join('|'); }
@@ -14588,10 +14596,10 @@ function _buildHistoryEntry(o) {
   };
 
   const tagBreakdown = {};
-  ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'].forEach(tag => {
+  ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'].forEach(tag => {
     let earned = 0, total = 0, trovate = 0;
     questions.forEach((q, i) => {
-      if (q.tag !== tag) return;
+      if (_qTag(q) !== tag) return;
       if (maxDi(q, i) <= 0) return; // esercizio escluso dalla valutazione
       trovate++;
       total  += maxDi(q, i);
@@ -14894,11 +14902,12 @@ function buildTagBreakdown(questions, answers, aiScores, manualScores, styleMode
     'LISTENING':  { label: '🎧 Listening',  bg: '#ede9ff', color: '#4c1d95', bar: '#8b5cf6' },
     'READING':    { label: '📖 Reading',    bg: '#fce7f3', color: '#9d174d', bar: '#ec4899' },
     'WRITING':    { label: '✍️ Writing',    bg: '#e0f2fe', color: '#075985', bar: '#0ea5e9' },
+    'SPEAKING':   { label: '🎤 Speaking',   bg: '#ffedd5', color: '#9a3412', bar: '#f97316' },
   };
   // Accumula earned/total per ogni tag
   const tagData = {};
   questions.forEach((q, i) => {
-    const tag = q.tag;
+    const tag = _qTag(q);
     if (!tag || _qIsPoll(q)) return;
     if (excluded && excluded[i]) return;
     if (q.type === 'speaking' && _spkIsNoMic(answers && answers[i])) return;   // senza microfono: fuori punteggio
@@ -14969,6 +14978,7 @@ function buildTagBreakdown(questions, answers, aiScores, manualScores, styleMode
 
 // Auto-assegna tag alle domande generate da AI basandosi su tipo e testo
 function _autoTagQuestion(q) {
+  if (q.type === 'speaking') { q.tag = 'SPEAKING'; return; }   // microfono: sempre Speaking
   if (q.tag) return; // già ha un tag, non sovrascrivere
   const text = ((q.text || '') + ' ' + (q.question?.text || '') + ' ' + (q.hint || '')).toLowerCase();
   // Listening: tipo esplicito
@@ -15444,9 +15454,9 @@ function insertRichFmt(before, after, targetId) {
 function buildQuestionHTML(q, i) {
   const pts = q.points || 10;
   const isSkipped = S.skipped.includes(i);
-  const tagColors = { 'GRAMMAR':'#dbeafe:#1e3a8a', 'VOCABULARY':'#d1fae5:#065f46', 'FUNCTIONS':'#fef3c7:#92400e', 'LISTENING':'#ede9ff:#4c1d95', 'READING':'#fce7f3:#9d174d', 'WRITING':'#e0f2fe:#075985' };
-  const tagHtml = q.tag && tagColors[q.tag]
-    ? (() => { const [bg,col] = tagColors[q.tag].split(':'); return `<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px;background:${bg};color:${col};">${q.tag}</span>`; })()
+  const tagColors = { 'GRAMMAR':'#dbeafe:#1e3a8a', 'VOCABULARY':'#d1fae5:#065f46', 'FUNCTIONS':'#fef3c7:#92400e', 'LISTENING':'#ede9ff:#4c1d95', 'READING':'#fce7f3:#9d174d', 'WRITING':'#e0f2fe:#075985', 'SPEAKING':'#ffedd5:#9a3412' };
+  const tagHtml = _qTag(q) && tagColors[_qTag(q)]
+    ? (() => { const [bg,col] = tagColors[_qTag(q)].split(':'); return `<span style="font-size:10px;font-weight:800;padding:2px 8px;border-radius:20px;background:${bg};color:${col};">${q.tag}</span>`; })()
     : '';
   const qLabel = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
     <div class="q-label">Domanda ${i+1}</div>
@@ -19982,14 +19992,15 @@ async function openClassStats(classId) {
     } catch(e) {}
   }
 
-  const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
+  const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'];
   const TAG_META = {
     GRAMMAR:    { label:'Grammar',    color:'#6c47ff', bg:'#ede9ff' },
     VOCABULARY: { label:'Vocabulary', color:'#0e7490', bg:'#e0f2fe' },
     FUNCTIONS:  { label:'Functions',  color:'#047857', bg:'#d1fae5' },
     LISTENING:  { label:'Listening',  color:'#b45309', bg:'#fef3c7' },
     READING:    { label:'Reading',    color:'#9d174d', bg:'#fce7f3' },
-    WRITING:    { label:'Writing',    color:'#075985', bg:'#e0f2fe' }
+    WRITING:    { label:'Writing',    color:'#075985', bg:'#e0f2fe' },
+    SPEAKING:   { label:'Speaking',   color:'#9a3412', bg:'#ffedd5' }
   };
 
   // Costruisce lista alunni con summary + dati MyClass
@@ -20145,14 +20156,15 @@ async function openStudentStats(classId, studentSafe, studentName) {
     } catch(e) {}
   }
 
-  const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
+  const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'];
   const TAG_META = {
     GRAMMAR:    { label:'Grammar',    color:'#6c47ff', bg:'#ede9ff' },
     VOCABULARY: { label:'Vocabulary', color:'#0e7490', bg:'#e0f2fe' },
     FUNCTIONS:  { label:'Functions',  color:'#047857', bg:'#d1fae5' },
     LISTENING:  { label:'Listening',  color:'#b45309', bg:'#fef3c7' },
     READING:    { label:'Reading',    color:'#9d174d', bg:'#fce7f3' },
-    WRITING:    { label:'Writing',    color:'#075985', bg:'#e0f2fe' }
+    WRITING:    { label:'Writing',    color:'#075985', bg:'#e0f2fe' },
+    SPEAKING:   { label:'Speaking',   color:'#9a3412', bg:'#ffedd5' }
   };
 
   const entries = Object.values(sessions).sort((a,b) => (a.ts||0)-(b.ts||0));
@@ -21398,7 +21410,7 @@ function renderVersionPreview(qs, tab) {
       if (q.dsaLargeText) h += ' <span style="background:#dbeafe;color:#1e3a8a;font-size:9px;font-weight:800;padding:1px 6px;border-radius:10px;">FONT+</span>';
 
       // ── Tag select inline ──────────────────────────────────────────────
-      var _tgColors = {'GRAMMAR':['#dbeafe','#1e3a8a'],'VOCABULARY':['#d1fae5','#065f46'],'FUNCTIONS':['#fef3c7','#92400e'],'LISTENING':['#f3e8ff','#6b21a8'],'READING':['#fce7f3','#9d174d'],'WRITING':['#e0f2fe','#075985']};
+      var _tgColors = {'GRAMMAR':['#dbeafe','#1e3a8a'],'VOCABULARY':['#d1fae5','#065f46'],'FUNCTIONS':['#fef3c7','#92400e'],'LISTENING':['#f3e8ff','#6b21a8'],'READING':['#fce7f3','#9d174d'],'WRITING':['#e0f2fe','#075985'],'SPEAKING':['#ffedd5','#9a3412']};
       var _tgBg  = (q.tag && _tgColors[q.tag]) ? _tgColors[q.tag][0] : '#f3f4f6';
       var _tgFg  = (q.tag && _tgColors[q.tag]) ? _tgColors[q.tag][1] : '#6b7280';
       h += '<select onchange="setVersionQField(' + i + ',\'tag\',this.value)" '
@@ -21411,6 +21423,7 @@ function renderVersionPreview(qs, tab) {
         + '<option value="LISTENING"'  + (q.tag==='LISTENING'  ? ' selected' : '') + '>🎧 LISTENING</option>'
         + '<option value="READING"'    + (q.tag==='READING'    ? ' selected' : '') + '>📖 READING</option>'
         + '<option value="WRITING"'    + (q.tag==='WRITING'    ? ' selected' : '') + '>✍️ WRITING</option>'
+        + '<option value="SPEAKING"'   + (q.tag==='SPEAKING'   ? ' selected' : '') + '>🎤 SPEAKING</option>'
         + '</select>';
 
       // ── Points input inline ────────────────────────────────────────────
@@ -21611,6 +21624,7 @@ function renderVersionEditForm(q, i, tab) {
     '<option value="LISTENING"' + (q.tag==='LISTENING'?' selected':'') + '>🎧 Listening</option>' +
     '<option value="READING"' + (q.tag==='READING'?' selected':'') + '>📖 Reading</option>' +
     '<option value="WRITING"' + (q.tag==='WRITING'?' selected':'') + '>✍️ Writing</option>' +
+    '<option value="SPEAKING"' + (q.tag==='SPEAKING'?' selected':'') + '>🎤 Speaking</option>' +
     '</select></div>';
 
   // DSA large text toggle
@@ -25962,7 +25976,7 @@ async function deleteStudentFromSession(sessionCode, studentKey) {
         } else {
           const n = rem.length;
           const avgPct = Math.round(rem.reduce((s,e) => s + (e.pct||0), 0) / n);
-          const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
+          const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'];
           const tagAvg = {};
           TAG_LIST.forEach(tag => {
             const vals = rem.map(e => e.tagBreakdown?.[tag]).filter(v => v != null);
@@ -26008,7 +26022,7 @@ async function deleteStudentHistorySession(evt, classId, studentSafe, studentNam
     } else {
       const n = rem.length;
       const avgPct = Math.round(rem.reduce((s,e) => s + (e.pct||0), 0) / n);
-      const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
+      const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'];
       const tagAvg = {};
       TAG_LIST.forEach(tag => {
         const vals = rem.map(e => e.tagBreakdown?.[tag]).filter(v => v != null);
@@ -26133,8 +26147,8 @@ function qeRender() {
     '</select></label>';
   tb += '<label>⭐ <input type="number" id="qe-points" min="0.5" max="100" step="0.5" value="'+(q.points||10)+'" oninput="QE.dirty=true"></label>';
   tb += '<label>🏷 <select id="qe-tag" onchange="QE.dirty=true">' +
-    ['','GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'].map(function(t){
-      var lbl = {'':'— tag —','GRAMMAR':'📐 Grammar','VOCABULARY':'📚 Vocab','FUNCTIONS':'💬 Functions','LISTENING':'🎧 Listening','READING':'📖 Reading','WRITING':'✍️ Writing'}[t];
+    ['','GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'].map(function(t){
+      var lbl = {'':'— tag —','GRAMMAR':'📐 Grammar','VOCABULARY':'📚 Vocab','FUNCTIONS':'💬 Functions','LISTENING':'🎧 Listening','READING':'📖 Reading','WRITING':'✍️ Writing','SPEAKING':'🎤 Speaking'}[t];
       return '<option value="'+t+'"'+((q.tag||'')===t?' selected':'')+'>'+lbl+'</option>';
     }).join('') + '</select></label>';
   tb += '<label style="cursor:pointer;"><input type="checkbox" id="qe-dsa" '+(q.dsaLargeText?'checked':'')+' onchange="QE.dirty=true"> Font+ (DSA/PEI)</label>';

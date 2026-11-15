@@ -20136,7 +20136,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
     async function mcSmistaInbox(silenzioso) {
       if (_mcSmistaInCorso) return { spostati: 0, senzaCodice: [] };
       _mcSmistaInCorso = true;
-      const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
+      const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'];
       const esito = { spostati: 0, senzaCodice: [], sessioni: 0 };
       try {
         const db = firebase.database();
@@ -28263,10 +28263,10 @@ ${sectionInstr}`;
     // nel proprio tag, il listening senza tag rientra in LISTENING.
     function _agentTagsDaPunti(sQs, perQ, maxDi) {
         const out = {};
-        ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'].forEach(tag => {
+        ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'].forEach(tag => {
             let earned = 0, total = 0, has = false;
             sQs.forEach((q, i) => {
-                const qTag = q && (q.tag || (q.type === 'listening' ? 'LISTENING' : null));
+                const qTag = q && (q.type === 'speaking' ? 'SPEAKING' : (q.tag || (q.type === 'listening' ? 'LISTENING' : null)));
                 if (qTag !== tag) return;
                 const em = maxDi(q, i);
                 if (em <= 0) return;
@@ -28528,7 +28528,7 @@ ${sectionInstr}`;
             ? ` | RECUPERO_FAST:${attemptsLabel} | VOTO_CAP:6 (recupero superato ${bestRec}%→max6)`
             : ` | RECUPERO_FAST:${attemptsLabel} | recupero_insuff`;
         console.log(`[Agente] ${nome}: recupero fast ${attemptsLabel} — ${bestRec >= 60 ? 'voto cappato a 6' : 'recupero insufficiente'}`);
-        const TAGS = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
+        const TAGS = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'];
         out.recoveryDetailLines = hist.map((h, hi) => {
             const qs = agentFbArr(h.questions);
             if (!qs.length) return '';
@@ -28538,7 +28538,7 @@ ${sectionInstr}`;
             const ans = agentFbArr(resp.answers);
             const tagAgg = {};
             qs.forEach((q, qi) => {
-                const tag = q.tag || (q.type === 'listening' ? 'LISTENING' : null);
+                const tag = q.type === 'speaking' ? 'SPEAKING' : (q.tag || (q.type === 'listening' ? 'LISTENING' : null));
                 if (!TAGS.includes(tag)) return;
                 const max = q.points || 1;
                 let got = resp.manualScores[qi] != null ? Number(resp.manualScores[qi])
@@ -29679,7 +29679,7 @@ ${sectionInstr}`;
         const { students, unit, sessionDate, classe } = task;
         const questions = task.questions || [];
         const maxPts = questions.reduce((s, q) => s + (q.points || 1), 0);
-        const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING'];
+        const TAG_LIST = ['GRAMMAR','VOCABULARY','FUNCTIONS','LISTENING','READING','WRITING','SPEAKING'];
 
         // ── Helper: restituisce le domande della versione assegnata allo studente ──
         // Se lo studente ha avuto fila_b/c/recupero/etc., usa quelle domande;
@@ -29842,7 +29842,7 @@ ${sectionInstr}`;
                 TAG_LIST.forEach(tag => {
                     let earned = 0, total = 0, has = false;
                     sQs.forEach((q, i) => {
-                        const qTag = q.tag || (q.type === 'listening' ? 'LISTENING' : null);
+                        const qTag = q.type === 'speaking' ? 'SPEAKING' : (q.tag || (q.type === 'listening' ? 'LISTENING' : null));
                         if (qTag !== tag) return;
                         const em = maxDi(q, i);
                         if (em <= 0) return;
@@ -33758,6 +33758,8 @@ ${blocchiPerAlunno}`;
         try { return JSON.parse(localStorage.getItem('pp_draft_scritto') || '[]'); }
         catch { return []; }
     })();   // [{id, studentSafe, studentName, code, prefix, activity, unit, voto, classeNome, createdAt}]
+    // Bozze create prima del tag Speaking: gli esercizi al microfono diventano SPEAKING
+    _ppDraftScritto.forEach(d => (d?.activity?.questions || []).forEach(q => { if (q && q.type === 'speaking') q.tag = 'SPEAKING'; }));
     // Attività scritte attive — ORA persistente: sopravvive al reload e abilita il controllo anti-duplicati
     let _ppActiveScritto = (() => {
         try { return JSON.parse(localStorage.getItem('pp_active_scritto') || '{}'); }
@@ -35276,11 +35278,11 @@ REGOLE
 - Gli obiettivi devono accettare tutte le frasi corrette ragionevoli ma NON la forma sbagliata che si vuole correggere. "label" = come l'alunno vede l'obiettivo (breve, es. "have to / must", "past simple: went").
 - "avoid": 0-2 errori tipici da intercettare (es. "must to", "he have", "did went") con "tip" = consiglio breve in italiano.
 - "model": una frase d'esempio corretta e naturale che contiene TUTTI gli obiettivi e nessun "avoid" (l'alunno la può vedere e ascoltare dopo il primo tentativo).
-- "points": 2 per i guidati${nFree ? ', 4 per il parlato libero' : ''}. "tag": "GRAMMAR", "VOCABULARY" o "FUNCTIONS".
+- "points": 2 per i guidati${nFree ? ', 4 per il parlato libero' : ''}. "tag": sempre "SPEAKING".
 
 FORMATO: solo un array JSON, nessun testo fuori.
-[{"type":"speaking","text":"Di' a un amico che ogni giorno devi portare a spasso il cane.\\n🇬🇧 Tell a friend about your daily job with the dog: it's an obligation.","model":"I have to walk the dog every day.","targets":[{"label":"have to / must","say":"have to|must"},{"label":"walk the dog","say":"walk the dog"}],"avoid":[{"say":"must to","tip":"Dopo must non si mette to"}],"points":2,"tag":"GRAMMAR"}${nFree ? `,
- {"type":"speaking","free":true,"minWords":${minW},"text":"Racconta che cosa devi e non devi fare a casa durante la settimana.\\n🇬🇧 Talk about your duties at home during the week, and about the jobs that are not necessary for you.","model":"I have to make my bed every morning and I must tidy my room on Saturday. I don't have to cook dinner because my dad cooks.","targets":[{"label":"I have to / I must","say":"i have to|i must","min":2},{"label":"I don't have to","say":"i do not have to"}],"points":4,"tag":"FUNCTIONS"}` : ''}]`;
+[{"type":"speaking","text":"Di' a un amico che ogni giorno devi portare a spasso il cane.\\n🇬🇧 Tell a friend about your daily job with the dog: it's an obligation.","model":"I have to walk the dog every day.","targets":[{"label":"have to / must","say":"have to|must"},{"label":"walk the dog","say":"walk the dog"}],"avoid":[{"say":"must to","tip":"Dopo must non si mette to"}],"points":2,"tag":"SPEAKING"}${nFree ? `,
+ {"type":"speaking","free":true,"minWords":${minW},"text":"Racconta che cosa devi e non devi fare a casa durante la settimana.\\n🇬🇧 Talk about your duties at home during the week, and about the jobs that are not necessary for you.","model":"I have to make my bed every morning and I must tidy my room on Saturday. I don't have to cook dinner because my dad cooks.","targets":[{"label":"I have to / I must","say":"i have to|i must","min":2},{"label":"I don't have to","say":"i do not have to"}],"points":4,"tag":"SPEAKING"}` : ''}]`;
     }
     const _PP_SPK_SYS = 'Sei un docente di inglese per scuola media italiana. Rispondi SEMPRE e SOLO con un array JSON valido, senza testo aggiuntivo, senza backtick, senza spiegazioni.';
     // Domande di speaking pronte (normalizzate e controllate), [] se non riesce
@@ -35324,6 +35326,7 @@ FORMATO: solo un array JSON, nessun testo fuori.
             out.question = inner;
         }
         if (!out.points) out.points = 1;
+        if (out.type === 'speaking') out.tag = 'SPEAKING';   // esercizio al microfono: sempre Speaking
         return out;
     }
 
@@ -35596,7 +35599,10 @@ Rispondi SOLO con l'oggetto JSON, senza testo prima o dopo, senza backtick markd
     function _ppChallengeCacheGet(key) {
         try {
             const e = JSON.parse(localStorage.getItem('pp_challenge_cache') || '{}')[key];
-            return e && e.v === _PP_CHALLENGE_VER && (Date.now() - e.at < 30 * 864e5) ? JSON.parse(JSON.stringify(e.block)) : null;
+            if (!(e && e.v === _PP_CHALLENGE_VER && (Date.now() - e.at < 30 * 864e5))) return null;
+            const b = JSON.parse(JSON.stringify(e.block));
+            (b.questions || []).forEach(q => { if (q && q.type === 'speaking') q.tag = 'SPEAKING'; });   // blocchi salvati prima del tag Speaking
+            return b;
         } catch { return null; }
     }
     function _ppChallengeCacheSet(key, block) {
@@ -35667,7 +35673,7 @@ c) MONOLOGO di 60-90 secondi in un contesto nuovo e concreto (descrivere una sce
 Per ogni esercizio: "targets" con "label" (breve) e "say" (tutte le forme corrette separate da |; le contratte valgono come le intere; * = qualsiasi parola, es. "is *ing"; niente punteggiatura né numeri in cifre); "avoid" 0-2 errori tipici con "tip" in italiano; "model" = risposta modello naturale, lunga almeno quanto "minWords", che contiene TUTTI gli obiettivi (rispettando "min") e nessun "avoid"; "tag": "FUNCTIONS".
 
 FORMATO: solo un array JSON di 3 oggetti, nessun testo fuori.
-[{"type":"speaking","sfida":true,"free":true,"minWords":${L.w[0]},"text":"🏆 **Sfida** — Ascolta e rispondi in inglese con 2-3 frasi complete.\\n🇬🇧 Listen and answer in English with 2-3 complete sentences.","ttsText":"...","model":"...","targets":[{"label":"...","say":"...|..."}],"avoid":[{"say":"...","tip":"..."}],"points":4,"tag":"FUNCTIONS"}, ...]`;
+[{"type":"speaking","sfida":true,"free":true,"minWords":${L.w[0]},"text":"🏆 **Sfida** — Ascolta e rispondi in inglese con 2-3 frasi complete.\\n🇬🇧 Listen and answer in English with 2-3 complete sentences.","ttsText":"...","model":"...","targets":[{"label":"...","say":"...|..."}],"avoid":[{"say":"...","tip":"..."}],"points":4,"tag":"SPEAKING"}, ...]`;
     }
     async function _pianoGetOralChallengeBlock(classeNome, unit) {
         const key = _ppOralChallengeKey(classeNome, unit);
@@ -41142,7 +41148,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
                 <button onclick="obvAbbinaVer('${_obvEsc(e.act)}','${_obvEsc(ver)}')" style="${_OBV_BTN_PIENO}margin-left:8px;">✨ Abbina</button></div>`
             : `<table style="border-collapse:collapse;width:100%;">${qs.map((q, i) => {
                 const id = mv[i] && ob.some(o => o.id === mv[i]) ? mv[i] : '';
-                const area = q?.tag || (q?.type === 'listening' ? 'LISTENING' : '');
+                const area = q?.type === 'speaking' ? 'SPEAKING' : (q?.tag || (q?.type === 'listening' ? 'LISTENING' : ''));
                 return `<tr style="border-top:1px solid #f0f0f5;">
                     <td style="padding:6px 6px 6px 0;vertical-align:top;font-weight:700;color:#999;font-size:12px;">${i + 1}.</td>
                     <td style="padding:6px;vertical-align:top;font-size:13px;">
