@@ -16433,9 +16433,9 @@ Rispondi SOLO con JSON valido:
             const rifinisci = _PD_AI_CAMPI.some(k => scritto[k]);
             if (btn) { btn.textContent = rifinisci ? '⏳ Rifinisco il tuo piano...' : '⏳ Generazione...'; btn.disabled = true; }
             try {
-                // Fonte ESCLUSIVA: la descrizione della lezione scritta in
-                // "Lezioni svolte" / "Prossime lezioni". Niente programmazione,
-                // storico o altre lezioni: il piano non deve inventare contenuti.
+                // Fonte ESCLUSIVA delle attività: la descrizione della lezione scritta in
+                // "Lezioni svolte" / "Prossime lezioni". Niente programmazione né storico:
+                // le lezioni precedenti servono solo a sapere quali strutture usare.
                 const descr = String(lz.descrizione||'').trim();
                 if (!rifinisci && !descr && !String(lz.titolo||'').trim()) {
                     alert('La lezione non ha una descrizione.\nScrivila prima in "Lezioni svolte" o "Prossime lezioni": il piano viene generato solo da lì.');
@@ -16445,6 +16445,8 @@ Rispondi SOLO con JSON valido:
 
                 const blocco = bloccoOrePrompt(classe, lz);
                 const durataModal = parseInt(document.getElementById('pd_durata')?.value || '') || 0;
+                // Lezioni precedenti: SOLO per sapere quali strutture e lessico la classe sta studiando
+                const _ps = _pdProgrammaSvolto(classe, lz);
 
                 const prompt = rifinisci ? _aiPromptRifinisci(classe, lz, scritto, blocco, durataModal || blocco.minuti || 50) : `Sei un docente esperto di inglese per scuola secondaria di primo grado italiana.
 Crea un piano dettagliato per questa lezione. Tutto in ITALIANO tranne i termini tecnici in inglese.
@@ -16454,16 +16456,17 @@ FONTE UNICA: la DESCRIZIONE DELLA LEZIONE qui sotto, scritta dal docente. Il pia
 - NON aggiungere argomenti, lessico, strutture grammaticali, pagine, esercizi, video, giochi o materiali che non siano nella descrizione (o nel titolo, pagine e compiti di questa stessa lezione).
 - Saluto/appello, breve ripresa e assegnazione dei compiti sono ammessi come cornice, ma senza contenuti nuovi.
 - Se la descrizione è breve, approfondisci le stesse attività (modalità di lavoro, consegne, correzione) invece di inventarne di nuove.
+- Le lezioni precedenti (PROGRAMMA SVOLTO, se presente) NON sono attività da aggiungere: servono solo a sapere quali strutture grammaticali e quale lessico usare quando la descrizione non li specifica.
 
 LEZIONE:
 - Descrizione: ${descr||'—'}
 - Titolo: ${lz.titolo||'—'}
-- Unità: ${lz.unit||'—'}
+- Unità: ${_ps.unitEff||'—'}
 - Tipo: ${lz.tipo||'normal'}
 - Pagine: ${lz.pagine||'—'}
 - Compiti previsti: ${lz.compiti||'—'}
 - Classe: ${classe.nome}
-${blocco.contesto}
+${_ps.testo}${blocco.contesto}
 ${blocco.durata}
 
 FORMATO DEI CAMPI: usa testo semplice con questa struttura:
@@ -23621,6 +23624,32 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
             </div>`;
     }
 
+    // ── Programma svolto: le lezioni prima di questa (stessa classe) ──
+    // È la fonte più affidabile su che cosa si sta facendo davvero (es. una
+    // "simulazione interrogazione" senza altri dati ripassa le strutture delle
+    // lezioni precedenti, non quelle che la programmazione del libro associa all'unit).
+    // Usato da agentTaskPiano (agente e "Piano dalla descrizione") e da "🤖 Genera con AI".
+    function _pdProgrammaSvolto(classe, lz) {
+        const _oraN = x => parseInt(x?.ora) || 1;
+        const _prima = p => p !== lz && p.data && (p.data < lz.data || (p.data === lz.data && _oraN(p) < _oraN(lz)));
+        const lezPrec = (classe.pianificazione?.piano || [])
+            .filter(p => _prima(p) && !_isLezioneVuota(p) && (String(p.titolo||'').trim() || String(p.descrizione||'').trim()))
+            .sort((a, b) => b.data.localeCompare(a.data) || _oraN(b) - _oraN(a));
+        const unitEff = String(lz.unit || '').trim() || (lezPrec.find(p => String(p.unit||'').trim())?.unit || '');
+        const _stessaUnit = p => unitEff && _matchUnit(p.unit || '', unitEff);
+        // Le ultime 8: prima quelle della stessa unit, poi le più recenti delle altre
+        const lezCtx = [...lezPrec.filter(_stessaUnit).slice(0, 8), ...lezPrec.filter(p => !_stessaUnit(p)).slice(0, unitEff ? 3 : 8)]
+            .slice(0, 8).sort((a, b) => a.data.localeCompare(b.data) || _oraN(a) - _oraN(b));
+        const _ob = p => String(p.pianoDettagliato?.obiettivi || '').replace(/\s*\n\s*-?\s*/g, '; ').replace(/^-\s*/, '').slice(0, 160);
+        const programmaSvolto = lezCtx.length ? `
+PROGRAMMA SVOLTO — lezioni precedenti di ${classe.nome} prima di questa, dalla più vecchia:
+${lezCtx.map(p => `- ${p.data}${p.ora ? ' ' + p.ora + 'ª ora' : ''} [${p.stato === 'svolta' ? 'svolta' : 'pianificata'}]${p.unit ? ' (' + p.unit + ')' : ''}: ${p.titolo || '—'} — ${String(p.descrizione || '').replace(/\s+/g, ' ').slice(0, 220)}${_ob(p) ? ' | Obiettivi: ' + _ob(p) : ''}`).join('\n')}
+
+REGOLA SUL PROGRAMMA (vincolante): grammatica, tempi verbali e lessico di questa lezione sono quelli che la classe sta davvero studiando, cioè quelli della descrizione e delle lezioni precedenti qui sopra. Se la programmazione dell'unità (riga "Unità") indica strutture diverse da quelle delle lezioni, valgono le lezioni. NON introdurre tempi verbali o strutture che non compaiono né nella descrizione né nelle lezioni precedenti (es. se le lezioni lavorano sul present continuous, niente past continuous o past simple). Una verifica, un'interrogazione o una simulazione ripassa ciò che è stato fatto nelle lezioni precedenti della stessa unità.
+` : '';
+        return { unitEff, testo: programmaSvolto };
+    }
+
     async function agentTaskPiano(task) {
         task.status = 'processing'; agentRenderPanel();
 
@@ -23637,7 +23666,8 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
         if (!lz) { task.status='error'; task.error='Lezione non trovata nel piano.'; return; }
 
         const prog    = classe.pianificazione?.programmazione;
-        const unit    = prog?.unita?.find(u => _matchUnit(u.nome||u.id, lz.unit||''));
+        const { unitEff, testo: programmaSvolto } = _pdProgrammaSvolto(classe, lz);
+        const unit    = prog?.unita?.find(u => _matchUnit(u.nome||u.id, unitEff));
         const unitInfo = unit ? [
             unit.lessico?.length    ? `Lessico: ${unit.lessico.join(', ')}`       : '',
             unit.grammatica?.length ? `Grammatica: ${unit.grammatica.join(', ')}` : '',
@@ -23717,12 +23747,12 @@ Crea un piano dettagliato per questa lezione. Tutto in ITALIANO tranne i termini
 LEZIONE:
 - Titolo: ${lz.titolo||'—'}
 - Descrizione: ${lz.descrizione||'—'}${task.fromDesc && _descStu ? `\n- Descrizione dettagliata: ${_descStu}` : ''}
-- Unità: ${lz.unit||'—'} ${unitInfo ? '| '+unitInfo : ''}
+- Unità: ${unitEff||'—'} ${unitInfo ? '| programmazione: '+unitInfo : ''}
 - Tipo: ${lz.tipo||'normal'}
 - Pagine: ${lz.pagine||'—'}
 - Compiti previsti: ${lz.compiti||'—'}
 - Classe: ${classe.nome}
-${fedele}${contestoClasse}${blocco.contesto}
+${programmaSvolto}${fedele}${contestoClasse}${blocco.contesto}
 ${blocco.durata}
 Ogni attività su una riga con "- ", sotto-dettagli con "  > ", durata con (X min).
 
