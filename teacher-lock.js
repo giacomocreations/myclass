@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
 //  Lucchetto docente — nasconde agli alunni la modalità "Oral test"
-//  (What Are They Wearing?, Rules & Obligations).
+//  (What Are They Wearing?, Rules & Obligations, Meet My Friend!).
 //
 //  • Gli alunni vedono solo "At home"; il pulsante 🔒 chiede il PIN.
 //  • Una volta sbloccato, il computer se lo ricorda (se lasci la spunta)
