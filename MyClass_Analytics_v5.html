@@ -26532,6 +26532,9 @@ ${sectionInstr}`;
                 && task.status !== 'approved' && task.status !== 'processing') {
                 try { _agentEnsureGrigliaOrale(task); } catch(e) { console.warn('[Agente] ricerca griglia:', e.message); }
             }
+            if ((task.type === 'valorale' || task.type === 'valdialogo') && task.status !== 'approved' && task.status !== 'processing' && task.status !== 'dismissed') {
+                try { _agentPrelimEnsure(task); } catch(e) { console.warn('[Agente] ricerca promemoria LIVE:', e.message); }
+            }
             const sl = (task.status === 'awaiting_transcript' && task.transcriptToReview)
                 ? '🔎 Trascrizione da approvare'
                 : (statusLabels[task.status] || task.status);
@@ -26652,45 +26655,7 @@ ${sectionInstr}`;
                             </div>
                         </details>`;
                     };
-                    // Helper: render pannello valutazione preliminare LIVE
-                    const mkPrelimPanel = () => {
-                        const p = task.prelimLiveData;
-                        if (!p) return '';
-                        const righe = (() => {
-                            const punti = p.punteggi || {};
-                            if (Array.isArray(punti)) {
-                                return punti.map(r =>
-                                    `<span style="font-size:11px;background:#e8eaf6;border-radius:5px;padding:2px 8px;margin-right:4px;margin-bottom:3px;display:inline-block;">${r.nome}: <strong>${r.voto}/${r.max}</strong></span>`
-                                ).join('');
-                            }
-                            return Object.entries(punti).map(([nome, valore]) => {
-                                const area = (task.griglia?.aree||[]).find(a => a.nome === nome);
-                                const maxLabel = area ? '/'+area.max : '';
-                                return `<span style="font-size:11px;background:#e8eaf6;border-radius:5px;padding:2px 8px;margin-right:4px;margin-bottom:3px;display:inline-block;">${nome}: <strong>${valore}${maxLabel}</strong></span>`;
-                            }).join('');
-                        })();
-                        const votoColor = p.voto10 >= 6 ? '#1b5e20' : p.voto10 >= 5 ? '#e65100' : '#b71c1c';
-                        return `<div style="background:#e8eaf6;border:1.5px solid #9fa8da;border-radius:10px;padding:10px 12px;margin-bottom:10px;">
-                            <div style="font-size:12px;font-weight:700;color:#3949ab;margin-bottom:5px;">📊 Valutazione preliminare LIVE — ${(p.grigliaNome||'Griglia').replace(/</g,'&lt;')}</div>
-                            <div style="font-size:12px;color:#444;margin-bottom:5px;">
-                                ${p.data} &nbsp;·&nbsp;
-                                <strong style="color:${votoColor};">${p.voto10}/10</strong>
-                                <span style="color:#888;"> (${p.tot}/${p.totMax} pt)</span>
-                            </div>
-                            <div style="margin-bottom:8px;">${righe}</div>
-                            <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:5px 10px;border-radius:6px;
-                                background:${task.usePrelim ? '#e8f5e9' : '#f5f5f5'};
-                                border:1.5px solid ${task.usePrelim ? '#66bb6a' : '#bdbdbd'};
-                                color:${task.usePrelim ? '#1b5e20' : '#555'};
-                                font-weight:${task.usePrelim ? '700' : '400'};"
-                                title="Se attivo, l'AI terrà conto di questa valutazione nella calibrazione del voto finale, senza menzionarla nel testo">
-                                <input type="checkbox" style="margin:0;" ${task.usePrelim ? 'checked' : ''} onchange="agentTogglePrelim('${task.id}',this.checked)">
-                                🎯 Tieni conto della valutazione preliminare
-                            </label>
-                        </div>`;
-                    };
                     body = `
-                        ${mkPrelimPanel()}
                         ${!task.griglia && task.status !== 'approved' ? _agentGrigliaPickerHtml(task, { note: 'Hai scelto la griglia dopo la valutazione: premi 🔄 Rigenera per rifare voto e feedback con questa griglia.' }) : ''}
                         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
                           ${task.votoValue != null ? `<span style="font-size:15px;font-weight:700;color:#2e7d32;">🏆 Voto:</span>
@@ -26968,39 +26933,6 @@ ${sectionInstr}`;
                     </div>`;
             } else if (task.status === 'awaiting_transcript') {
                 const existing = (task.trascrizione||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-                // Pannello valutazione preliminare LIVE (se presente)
-                const prelimAT = (() => {
-                    const p = task.prelimLiveData;
-                    if (!p) return '';
-                    const righeAT = (() => {
-                        const punti = p.punteggi || {};
-                        if (Array.isArray(punti)) {
-                            return punti.map(r =>
-                                `<span style="font-size:11px;background:#e8eaf6;border-radius:5px;padding:2px 8px;margin-right:4px;margin-bottom:3px;display:inline-block;">${r.nome}: <strong>${r.voto}/${r.max}</strong></span>`
-                            ).join('');
-                        }
-                        return Object.entries(punti).map(([nome, valore]) => {
-                            const area = (task.griglia?.aree||[]).find(a => a.nome === nome);
-                            const maxLabel = area ? '/'+area.max : '';
-                            return `<span style="font-size:11px;background:#e8eaf6;border-radius:5px;padding:2px 8px;margin-right:4px;margin-bottom:3px;display:inline-block;">${nome}: <strong>${valore}${maxLabel}</strong></span>`;
-                        }).join('');
-                    })();
-                    const vc = p.voto10 >= 6 ? '#1b5e20' : p.voto10 >= 5 ? '#e65100' : '#b71c1c';
-                    return `<div style="background:#e8eaf6;border:1.5px solid #9fa8da;border-radius:10px;padding:10px 12px;margin-bottom:10px;">
-                        <div style="font-size:12px;font-weight:700;color:#3949ab;margin-bottom:5px;">📊 Valutazione preliminare LIVE — ${(p.grigliaNome||'Griglia').replace(/</g,'&lt;')}</div>
-                        <div style="font-size:12px;color:#444;margin-bottom:5px;">${p.data} &nbsp;·&nbsp; <strong style="color:${vc};">${p.voto10}/10</strong> <span style="color:#888;">(${p.tot}/${p.totMax} pt)</span></div>
-                        <div style="margin-bottom:8px;">${righeAT}</div>
-                        <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:5px 10px;border-radius:6px;
-                            background:${task.usePrelim ? '#e8f5e9' : '#f5f5f5'};
-                            border:1.5px solid ${task.usePrelim ? '#66bb6a' : '#bdbdbd'};
-                            color:${task.usePrelim ? '#1b5e20' : '#555'};
-                            font-weight:${task.usePrelim ? '700' : '400'};"
-                            title="Se attivo, l'AI terrà conto di questa valutazione nella calibrazione del voto finale, senza menzionarla nel testo">
-                            <input type="checkbox" style="margin:0;" ${task.usePrelim ? 'checked' : ''} onchange="agentTogglePrelim('${task.id}',this.checked)">
-                            🎯 Tieni conto della valutazione preliminare
-                        </label>
-                    </div>`;
-                })();
                 const toReview = !!task.transcriptToReview;
                 const atHead = toReview
                     ? `🔎 <strong>Trascrizione da approvare</strong><br>
@@ -27008,7 +26940,7 @@ ${sectionInstr}`;
                     : `✍️ <strong>Trascrizione manuale richiesta</strong><br>
                     <small style="color:#555;">${(task.error||'Inserisci o incolla la trascrizione del colloquio, poi premi Genera valutazione.').replace(/</g,'&lt;')}</small>`;
                 const atAudio = task.audioFileName ? _agentPlayerHtml(task) : '';
-                body = `${prelimAT}<div style="color:#6a1e8a;font-size:13px;padding:8px 0 4px;">
+                body = `<div style="color:#6a1e8a;font-size:13px;padding:8px 0 4px;">
                     ${atHead}
                 </div>
                 ${atAudio}
@@ -27201,6 +27133,7 @@ ${sectionInstr}`;
                 <div class="agent-task-body">
                     ${meta ? `<div class="agent-task-meta" style="margin-bottom:8px;">${meta}</div>` : ''}
                     ${_agentAiPickerHtml(task)}
+                    ${_agentPrelimPanelHtml(task)}
                     ${task.type === 'analisididattica' && task.status === 'approved' ? `<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;"><button class="agent-btn-edit" onclick="apriEditorAnalisi({taskId:'${task.id}'})">✏️ Modifica e reinvia</button><button class="agent-btn-edit" onclick="agentReinviaAnalisi('${task.id}')" title="Rimanda a StudentApp l'analisi salvata in MyClass">📤 Invia di nuovo a StudentApp</button></div>` : ''}
                     ${body}
                 </div>
@@ -30941,17 +30874,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                 else
                     console.log(`[Agente] ${sessionDate} ${classe.nome}: nessuna griglia né in LIVE né nel piano — verrà chiesta manualmente.`);
 
-                // Cerca valutazione preliminare LIVE abbinabile a questa data
-                const _prelimLiveData = (() => {
-                    const vp = studente.votiPromemoria || [];
-                    if (!vp.length) return null;
-                    const sessionMs = new Date(sessionDate).getTime();
-                    const sorted = vp
-                        .map(p => ({ ...p, _diff: Math.abs(new Date(p.data).getTime() - sessionMs) }))
-                        .sort((a, b) => a._diff - b._diff);
-                    const best = sorted[0];
-                    return (best && best._diff <= 2 * 86400000) ? best : null;
-                })();
+                // Valutazione preliminare LIVE (con le annotazioni in diretta) abbinabile a questa data
+                const _prelimLiveData = _agentPrelimTrova(classe, studente, sessionDate, griglia?.id);
 
                 agentTasks.push({
                     id: tid, type: 'valorale',
@@ -31318,21 +31242,8 @@ Lunghezza ${aree.length ? '170-260' : '120-200'} parole in tutto. A parte ${aree
 ${pauseRule}
 - Errori di pronuncia segnalati [pron: ...]: se più sotto c'è la sezione PRONUNCE SEGNALATE, seguila (vanno riportati tutti); in ogni caso nel voto contano solo se ostacolano la comprensione.`;
 
-            // 4. Contesto valutazione preliminare LIVE (riservato — non menzionare nel testo)
-            const prelimContext = (() => {
-                if (!task.usePrelim || !task.prelimLiveData) return '';
-                const p = task.prelimLiveData;
-                let areeStr = '';
-                if (Array.isArray(p.punteggi)) {
-                    areeStr = p.punteggi.map(r => `  - ${r.nome}: ${r.voto}/${r.max}`).join('\n');
-                } else if (p.punteggi && typeof p.punteggi === 'object') {
-                    areeStr = Object.entries(p.punteggi).map(([nome, valore]) => {
-                        const area = (task.griglia?.aree||[]).find(a => a.nome === nome);
-                        return `  - ${nome}: ${valore}${area ? '/'+area.max : ''}`;
-                    }).join('\n');
-                }
-                return `\n\n[CONTESTO RISERVATO — NON citare né menzionare in nessuno degli output]\nIl docente ha già osservato questo studente in classe e ha assegnato una valutazione preliminare:\n  Griglia: ${p.grigliaNome||'—'} | Data: ${p.data} | Punteggio: ${p.tot}/${p.totMax} → ${p.voto10}/10\n${areeStr}\nUsa questi dati per calibrare il voto finale e la valutazione scritta. Non nominarli esplicitamente in nessun blocco di output.\n[FINE CONTESTO RISERVATO]`;
-            })();
+            // 4. Valutazione preliminare LIVE + annotazioni in diretta (riservato, solo se confermato)
+            const prelimContext = _agentPrelimContesto(task);
 
             // 5. Genera tre sezioni (stesso formato del scritto)
             const nomeBreve = task.studentNome || task.studentName.split(' ')[0];
@@ -31725,6 +31636,101 @@ ${base}`, task, true);
         task.hasSlides = checked;
         agentSaveTasks(agentTasks);
         agentRenderPanel(); // re-render per aggiornare il colore del badge
+    }
+
+    // ── Valutazione preliminare LIVE + annotazioni in diretta (finestre docente) ──
+    // Il promemoria salvato nella LIVE (votiPromemoria) porta punteggi e nota: spunte,
+    // pronunce e errori annotati durante la prova nelle finestre docente delle attività.
+    // L'agente lo trova per data (±2 giorni), lo mostra nella scheda della verifica e lo
+    // usa nel prompt solo se il docente spunta "🎯 Tieni conto…". La nota si può
+    // correggere prima (task.prelimNote).
+    function _agentPrelimTrova(classeOrNome, studente, sessionDate, gid) {
+        const classe = typeof classeOrNome === 'string' ? (data.classi||[]).find(c => c.nome === classeOrNome) : classeOrNome;
+        if (!classe || !sessionDate) return null;
+        const _n = x => String(x||'').toLowerCase().trim();
+        const stObj = (classe.studenti||[]).find(x =>
+            (studente.cognome && studente.nome && _n(x.cognome) === _n(studente.cognome) && _n(x.nome) === _n(studente.nome)) ||
+            (studente.studentName && _n(`${x.cognome} ${x.nome}`) === _n(studente.studentName)));
+        const vp = (stObj || studente).votiPromemoria || [];
+        const t0 = new Date(String(sessionDate).slice(0, 10)).getTime();
+        const cand = vp.map(p => ({ p, d: Math.abs(new Date(String(p.data).slice(0, 10)).getTime() - t0) }))
+            .filter(x => !isNaN(x.d) && x.d <= 2 * 86400000)
+            .sort((a, b) => (a.d - b.d) || ((gid && b.p.grigliaId === gid) - (gid && a.p.grigliaId === gid)) || ((b.p.ts||0) - (a.p.ts||0)));
+        return cand.length ? cand[0].p : null;
+    }
+    // Aggiorna il promemoria del task con quello più recente (es. salvato dopo la creazione del task)
+    function _agentPrelimEnsure(task) {
+        const pick = (cur, st) => {
+            const f = _agentPrelimTrova(task.classe, st, task.sessionDate, task.griglia?.id);
+            if (!f) return cur || null;
+            if (!cur || ((f.ts||0) > (cur.ts||0) && f.data === cur.data) || (f.data !== cur.data && cur._auto)) return { ...f, _auto: true };
+            return cur;
+        };
+        if (task.type === 'valorale') task.prelimLiveData = pick(task.prelimLiveData, { studentName: task.studentName });
+        else if (task.type === 'valdialogo') {
+            if (!task.prelimLive) task.prelimLive = {};
+            (task.studenti||[]).forEach(s => { const v = pick(task.prelimLive[s.studentSafe], s); if (v) task.prelimLive[s.studentSafe] = v; });
+        }
+    }
+    const _agentPrelimVoci = task => task.type === 'valdialogo'
+        ? (task.studenti||[]).map(s => ({ safe: s.studentSafe, nome: s.studentName, p: task.prelimLive?.[s.studentSafe] })).filter(x => x.p)
+        : (task.prelimLiveData ? [{ safe: '_', nome: task.studentName, p: task.prelimLiveData }] : []);
+    const _agentPrelimNotaDi = (task, safe, p) => (task.prelimNote && task.prelimNote[safe] !== undefined) ? task.prelimNote[safe] : (p?.nota || '');
+    function _agentPrelimPanelHtml(task) {
+        if ((task.type !== 'valorale' && task.type !== 'valdialogo') || task.status === 'approved' || task.status === 'dismissed') return '';
+        const voci = _agentPrelimVoci(task);
+        if (!voci.length) return '';
+        const e = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        const chips = p => (Array.isArray(p.punteggi) ? p.punteggi.map(r => [r.nome, r.voto, r.max]) : Object.entries(p.punteggi || {}).map(([n, v]) => [n, v, (task.griglia?.aree||[]).find(a => a.nome === n)?.max]))
+            .map(([n, v, m]) => `<span style="font-size:11px;background:#fff;border-radius:5px;padding:2px 8px;margin:0 4px 3px 0;display:inline-block;">${e(n)}: <strong>${e(v)}${m ? '/' + e(m) : ''}</strong></span>`).join('');
+        const righe = voci.map(({ safe, nome, p }) => {
+            const vc = p.voto10 >= 6 ? '#1b5e20' : p.voto10 >= 5 ? '#e65100' : '#b71c1c';
+            const nota = _agentPrelimNotaDi(task, safe, p);
+            return `<div style="margin-top:6px;">
+                <div style="font-size:12px;color:#444;margin-bottom:4px;">${task.type === 'valdialogo' ? `<strong>${e(nome)}</strong> · ` : ''}${e(p.data)} · <strong style="color:${vc};">${e(p.voto10)}/10</strong> <span style="color:#888;">(${e(p.tot)}/${e(p.totMax)} pt · ${e(p.grigliaNome || 'griglia')})</span></div>
+                <div>${chips(p)}</div>
+                <div style="font-size:11.5px;font-weight:700;color:#3949ab;margin:5px 0 3px;">📝 Annotazioni in diretta${nota ? ' <span style="font-weight:400;color:#666;">(puoi correggerle prima di confermare)</span>' : ''}</div>
+                <textarea rows="${nota ? 3 : 1}" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid #c5cae9;border-radius:6px;font-family:inherit;resize:vertical;"
+                    placeholder="Nessuna annotazione: puoi scriverne qui (es. pronunce o errori sentiti)"
+                    oninput="agentPrelimNota('${task.id}','${safe}',this.value)">${e(nota)}</textarea>
+            </div>`;
+        }).join('');
+        const fatto = !!(task.votoValue !== undefined || (task.results||[]).length);
+        return `<div style="background:#e8eaf6;border:1.5px solid #9fa8da;border-radius:10px;padding:10px 12px;margin-bottom:10px;">
+            <div style="font-size:12px;font-weight:700;color:#3949ab;">📊 Valutazione preliminare LIVE e annotazioni prese in diretta</div>
+            ${righe}
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:5px 10px;border-radius:6px;margin-top:8px;
+                background:${task.usePrelim ? '#e8f5e9' : '#f5f5f5'};border:1.5px solid ${task.usePrelim ? '#66bb6a' : '#bdbdbd'};color:${task.usePrelim ? '#1b5e20' : '#555'};font-weight:${task.usePrelim ? '700' : '400'};"
+                title="Se attivo, l'AI usa punteggi e annotazioni per la valutazione, senza dire da dove vengono">
+                <input type="checkbox" style="margin:0;" ${task.usePrelim ? 'checked' : ''} onchange="agentTogglePrelim('${task.id}',this.checked)">
+                🎯 Confermo: tieni conto della valutazione preliminare e delle annotazioni
+            </label>
+            ${fatto ? `<div style="font-size:11px;color:#666;margin-top:5px;">Se la cambi dopo la valutazione, premi 🔄 Rigenera.</div>` : ''}
+        </div>`;
+    }
+    function agentPrelimNota(taskId, safe, val) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        if (!task.prelimNote) task.prelimNote = {};
+        task.prelimNote[safe] = val;
+        clearTimeout(agentPrelimNota._t);
+        agentPrelimNota._t = setTimeout(() => agentSaveTasks(agentTasks), 600);
+    }
+    window.agentPrelimNota = agentPrelimNota;
+    // Testo per il prompt (riservato): punteggi + annotazioni di ciascun alunno
+    function _agentPrelimContesto(task, soloSafe) {
+        if (!task.usePrelim) return '';
+        _agentPrelimEnsure(task);
+        const voci = _agentPrelimVoci(task).filter(v => !soloSafe || v.safe === soloSafe);
+        if (!voci.length) return '';
+        const blocchi = voci.map(({ safe, nome, p }) => {
+            const aree = Array.isArray(p.punteggi) ? p.punteggi.map(r => `  - ${r.nome}: ${r.voto}/${r.max}`).join('\n')
+                : Object.entries(p.punteggi || {}).map(([n, v]) => { const a = (task.griglia?.aree||[]).find(x => x.nome === n); return `  - ${n}: ${v}${a ? '/' + a.max : ''}`; }).join('\n');
+            const nota = String(_agentPrelimNotaDi(task, safe, p) || '').trim();
+            return `${task.type === 'valdialogo' ? `${nome}:\n` : ''}  Griglia: ${p.grigliaNome||'—'} | Data: ${p.data} | Punteggio: ${p.tot}/${p.totMax} → ${p.voto10}/10\n${aree}`
+                + (nota ? `\n  Annotazioni prese in diretta durante la prova: ${nota}` : '');
+        }).join('\n\n');
+        return `\n\n[CONTESTO RISERVATO — NON citare né menzionare in nessuno degli output]\nIl docente ha osservato la prova in classe: ha dato una valutazione preliminare con la griglia e ha preso annotazioni in diretta (spunte su cosa ha detto l'alunno, pronunce sbagliate ed errori sentiti, esitazioni).\n${blocchi}\nUsa questi dati per calibrare il voto finale e la valutazione. Le annotazioni sono osservazioni dirette e affidabili del docente: gli errori e le pronunce annotati valgono anche se la trascrizione non li riporta, e puoi indicarli nella valutazione docente e nel feedback all'alunno come normali osservazioni sulla prova. Non dire mai che vengono da una valutazione preliminare o da annotazioni.\n[FINE CONTESTO RISERVATO]`;
     }
 
     // Attiva/disattiva l'uso della valutazione preliminare LIVE nel prompt agente
@@ -32791,7 +32797,7 @@ ${pauseRule}`;
             }).join('\n\n');
 
             const prompt = `Sei il prof. Giacomo Cossu, docente di inglese scuola media italiana.
-Verifica orale in forma di DIALOGO (${studenti.length} studenti) della classe ${task.classe}${task.unit?', '+task.unit:''}.${task.hasSlides?'\nMODALITÀ con slide.':''}${grigliaInfo}
+Verifica orale in forma di DIALOGO (${studenti.length} studenti) della classe ${task.classe}${task.unit?', '+task.unit:''}.${task.hasSlides?'\nMODALITÀ con slide.':''}${grigliaInfo}${_agentPrelimContesto(task, opts.solo || null)}
 CORRISPONDENZA PARLANTI:
 ${mapLines || '(non specificata: deduci dai turni)'}
 TRASCRIZIONE DEL DIALOGO:
