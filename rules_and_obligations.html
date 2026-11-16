@@ -803,6 +803,192 @@ function loadGrades() { try { return JSON.parse(localStorage.getItem(GKEY)) || [
 function storeGrades(g) { try { localStorage.setItem(GKEY, JSON.stringify(g)); } catch (e) {} }
 
 // ══════════════════════════════════════════════════════════════════
+//  CHECKLIST DAL VIVO (finestra docente): cosa dice l'alunno
+//  Parte 1: faccende (clic = detta) con il verbo do / make… e il modale,
+//           che si cambiano a ogni clic finché non c'è quello che ha detto.
+//  Parte 2: per ogni frase della scheda il modale usato (a ogni clic il
+//           successivo) e il because.
+// ══════════════════════════════════════════════════════════════════
+const MODS = ['have to', 'must', "mustn't", "don't have to"];
+const modType = m => m === "mustn't" ? 'no' : m === "don't have to" ? 'nn' : 'ob';
+// [chiave, complemento, verbi giusti]: il primo verbo è quello proposto, gli altri si accettano
+const CK_CHORES = [
+  ['bed', 'my bed', ['make']], ['washup', 'the washing-up', ['do']], ['dishes', 'the dishes', ['wash', 'do']],
+  ['washing', 'the washing', ['do']], ['ironing', 'the ironing', ['do']], ['vacuum', 'the vacuuming', ['do']],
+  ['lay', 'the table', ['lay', 'set']], ['clear', 'the table', ['clear']], ['cook', 'dinner / lunch', ['cook', 'make']],
+  ['rubbish', 'the rubbish out', ['take']], ['tidy', 'my room', ['tidy', 'clean']], ['shop', 'the shopping', ['do']],
+  ['cat', 'the cat', ['feed']], ['dog', 'the dog', ['walk']], ['bath', 'the bathroom', ['clean']],
+  ['plants', 'the plants', ['water']], ['dishw', 'the dishwasher', ['load', 'empty']], ['floor', 'the floor', ['sweep', 'clean', 'mop']],
+];
+const verbOpts = ok => ok.concat(['do', 'make'].filter(v => !ok.includes(v)));
+// regole di casa per mustn't / don't have to: [chiave, frase, modale proposto]
+const CK_RULES = [
+  ['games', 'play video games after 10 p.m.', "mustn't"], ['late', 'come home late', "mustn't"], ['mess', 'leave my room in a mess', "mustn't"],
+  ['phone', 'use my phone at dinner', "mustn't"], ['eat', 'eat in my bedroom', "mustn't"], ['friends', 'invite friends without asking', "mustn't"],
+  ['bedtime', 'go to bed late', "mustn't"], ['early', 'get up early on Sunday', "don't have to"],
+];
+// Note veloci: pronuncia ed errori tipici di questa prova
+const NOTE_PR = ["mustn't (t pronunciata)", 'have to /ˈhæftə/', 'has to /ˈhæstə/', 'because', 'washing-up', 'ironing /ˈaɪənɪŋ/', 'vacuuming', 'rubbish', 'dishwasher', '-ing finale', 'th (the, three)', 'pronuncia all\'italiana'];
+const NOTE_ER = ['must to', "don't must", 'he have to', "he don't have to", "doesn't has to", "mustn't ↔ don't have to", 'do / make scambiati', 'manca il verbo dopo il modale', 'risposta in italiano', 'frasi senza because'];
+const SWAP_NOTE = "mustn't ↔ don't have to";
+const ckNew = () => ({ p1: {}, p1x: [], p1n: { bec: 0, guide: 0 }, p2: {}, ex: {}, notes: { pr: [], er: [] } });
+let ck = ckNew();
+// p1[chiave] = { v: indice verbo, m: modale } · p1x = [{ t: testo, m }] voci aggiunte
+// p2[id scheda] = { rows: { i: indice modale }, bec: { i: true }, guide: n }
+// ex[chiave] = 1 ✓ / 2 con aiuto / 3 ✗ (domande a sorpresa ed extra)
+const EX_LBL = ['—', '✓', '~ aiuto', '✗'], EX_CLS = ['n', 'ok', 'bad', 'no'];
+const p2Order = t => t === 'ob' ? ['must', 'have to', "mustn't", "don't have to"] : t === 'no' ? ["mustn't", "don't have to", 'must', 'have to'] : ["don't have to", "mustn't", 'must', 'have to'];
+const p2Of = id => ck.p2[id] || (ck.p2[id] = { rows: {}, bec: {}, guide: 0 });
+function p2Status(it, m) { const t = modType(m); return t === it.t ? 'ok' : (t === 'no' && it.t === 'nn') || (t === 'nn' && it.t === 'no') ? 'sw' : 'no'; }
+const cyBtn = (act, attrs, cls, txt, title) => `<button class="cy ${cls}" data-act="${act}" ${attrs}${title ? ` title="${esc(title)}"` : ''}>${txt}</button>`;
+const exBtn = k => { const v = ck.ex[k] || 0; return cyBtn('ex', `data-k="${k}"`, EX_CLS[v], EX_LBL[v], 'Clic: ✓ → con aiuto → ✗ → nessuna'); };
+const cntBox = (k, lbl, v) => `<span class="cnt">${lbl} <b>${v}</b><button data-act="cnt" data-k="${k}" data-d="-1" title="Togli">−</button><button data-act="cnt" data-k="${k}" data-d="1" title="Aggiungi">+</button></span>`;
+
+function renderCkP1() {
+  const row = ([k, obj, ok]) => {
+    const x = ck.p1[k];
+    if (!x) return `<div class="cr"><button class="lb" data-act="c1" data-k="${k}">☐ <b>${esc(ok[0])}</b> ${esc(obj)}</button></div>`;
+    const vo = verbOpts(ok), v = vo[x.v];
+    return `<div class="cr on"><button class="lb" data-act="c1" data-k="${k}" title="Togli">✔ ${esc(obj)}</button>${cyBtn('cv', `data-k="${k}"`, ok.includes(v) ? 'ok' : 'bad', esc(v), 'Verbo: clic per cambiarlo')}${cyBtn('cm', `data-k="${k}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}</div>`;
+  };
+  const rule = ([k, txt, def]) => {
+    const x = ck.p1[k];
+    if (!x) return `<div class="cr"><button class="lb" data-act="c1" data-k="${k}" data-m="${esc(def)}">☐ ${esc(txt)}</button></div>`;
+    return `<div class="cr on"><button class="lb" data-act="c1" data-k="${k}" title="Togli">✔ ${esc(txt)}</button>${cyBtn('cm', `data-k="${k}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}</div>`;
+  };
+  const extra = ck.p1x.map((x, i) => `<div class="cr on"><button class="lb" data-act="cxdel" data-i="${i}" title="Togli">✔ ${esc(x.t)}</button>${cyBtn('cxm', `data-i="${i}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}</div>`).join('');
+  return `<div class="ckh">✅ Faccende dette <small>· clic sulla faccenda quando la dice, poi clic su verbo e modale finché non c'è quello che ha detto (arancione = verbo sbagliato)</small></div>
+    <div class="ck">${CK_CHORES.map(row).join('')}</div>
+    <div class="ckh">🚫 Regole di casa (mustn't / don't have to)</div>
+    <div class="ck">${CK_RULES.map(rule).join('')}${extra}</div>
+    <div class="addr"><input id="t-add" placeholder="＋ Altra faccenda o regola detta (es. clean the windows) + Invio" autocomplete="off"><button data-act="cxadd">＋</button></div>
+    <div class="cnts">${cntBox('bec', 'because', ck.p1n.bec)}${cntBox('guide', 'domande guida', ck.p1n.guide)}</div>`;
+}
+
+function p1Stats() {
+  const chores = CK_CHORES.filter(([k]) => ck.p1[k]);
+  const wrong = chores.filter(([k, , ok]) => !ok.includes(verbOpts(ok)[ck.p1[k].v]));
+  const mods = Object.values(ck.p1).map(x => x.m).concat(ck.p1x.map(x => x.m));
+  const per = { ob: 0, no: 0, nn: 0 }; mods.forEach(m => per[modType(m)]++);
+  const cnt = {}; mods.forEach(m => cnt[m] = (cnt[m] || 0) + 1);
+  const exs = SURPRISE.map((q, i) => ck.ex['s' + i] || 0).filter(Boolean);
+  return { chores, wrong, mods, per, cnt, extra: ck.p1x.length, exs };
+}
+function p2Stats(c) {
+  const st = ck.p2[c.id]; if (!st) return null;
+  const said = c.items.map((it, i) => st.rows[i] === undefined ? null : p2Status(it, p2Order(it.t)[st.rows[i]]));
+  const n = said.filter(Boolean).length;
+  return { n, ok: said.filter(x => x === 'ok').length, sw: said.filter(x => x === 'sw').length, no: said.filter(x => x === 'no').length, bec: Object.values(st.bec).filter(Boolean).length, guide: st.guide };
+}
+const exSum = arr => { if (!arr.length) return ''; const c = v => arr.filter(x => x === v).length; return [c(1) && `✓${c(1)}`, c(2) && `~${c(2)}`, c(3) && `✗${c(3)}`].filter(Boolean).join(' '); };
+// suggerimento per Vocabolario (Parte 1) dai descrittori della griglia
+function vocabHint(s) {
+  const n = s.chores.length, e = s.wrong.length;
+  if (!n) return '';
+  return n >= 5 && !e ? 5 : (n >= 5 && e === 1) || (n === 4 && e <= 1) ? 4 : n >= 3 ? 3 : 2;
+}
+function p1Line(html) {
+  const s = p1Stats();
+  if (!s.mods.length && !s.exs.length && !ck.p1n.bec && !ck.p1n.guide) return '';
+  const b = t => html ? `<b>${t}</b>` : t;
+  const parts = [`${b(s.chores.length)} faccende${s.extra ? ` (+${s.extra} altre voci)` : ''}` + (s.wrong.length ? ` · verbo sbagliato ${s.wrong.length}: ${s.wrong.map(([k, obj, ok]) => verbOpts(ok)[ck.p1[k].v] + ' ' + obj).join(', ')}` : '')];
+  if (s.mods.length) parts.push(MODS.filter(m => s.cnt[m]).map(m => `${m} ${s.cnt[m]}`).join(', '));
+  if (ck.p1n.bec) parts.push(`because ×${ck.p1n.bec}`);
+  if (ck.p1n.guide) parts.push(`domande guida ×${ck.p1n.guide}`);
+  if (s.exs.length) parts.push(`domande a sorpresa ${exSum(s.exs)}`);
+  return 'P1: ' + parts.join(' · ');
+}
+function p2Line(html) {
+  const lines = CARDS.filter(x => ck.p2[x.id] && (p2Stats(x).n || p2Stats(x).guide || Object.keys(ck.p2[x.id].bec).length)).map(x => {
+    const s = p2Stats(x), b = t => html ? `<b>${t}</b>` : t;
+    return `P2 (${x.n}. ${x.short}): ${b(s.ok + '/6')} giuste` + (s.sw ? ` · scambio mustn't/don't have to ×${s.sw}` : '') + (s.no ? ` · altro modale sbagliato ×${s.no}` : '') + (s.n < 6 ? ` · non dette ${6 - s.n}` : '') + ` · because ${s.bec}/6` + (s.guide ? ` · domande guida ×${s.guide}` : '');
+  });
+  const exs = EXTRA_Q.map((q, i) => ck.ex['e' + i] || 0).filter(Boolean);
+  if (exs.length) lines.push(`domande extra ${exSum(exs)}`);
+  return lines.join(' · ');
+}
+const noteList = g => ck.notes[g].map(x => x.t + (x.n > 1 ? ' ×' + x.n : '')).join(', ');
+// tutto quello che finisce nella nota del voto e nel promemoria di MyClass
+function composeNote() {
+  const free = twOpen() ? tw('t-note').value.trim() : '';
+  return [p1Line(false), p2Line(false), ck.notes.pr.length && 'Pronuncia: ' + noteList('pr'), ck.notes.er.length && 'Errori: ' + noteList('er'), swapCap && !ck.notes.er.some(x => x.t === SWAP_NOTE) && "scambio mustn't/don't have to", free].filter(Boolean).join(' | ');
+}
+function renderSummary() {
+  if (!twOpen()) return;
+  const s = p1Stats(), l1 = p1Line(true), l2 = p2Line(true);
+  const hints = [];
+  const vh = vocabHint(s);
+  if (vh) hints.push(`Vocabolario (Parte 1): <span class="sg">${vh}</span>`);
+  if (s.mods.length) {
+    const miss = [['ob', 'have to / must'], ['no', "mustn't"], ['nn', "don't have to"]].filter(([t]) => s.per[t] < 2).map(([t, l]) => `${l} (${s.per[t]})`);
+    hints.push(miss.length ? `Comunicazione: meno di 2 frasi per <span class="sg">${miss.join(', ')}</span>` : 'Comunicazione: <span class="sg">✔ almeno 2 frasi per ogni tipo</span>');
+  }
+  const anySw = CARDS.some(x => ck.p2[x.id] && p2Stats(x).sw);
+  if (anySw) hints.push(`Grammatica: <span class="sg">scambio mustn't / don't have to → al massimo 3</span>`);
+  tw('t-sum').innerHTML = (l1 || l2) ? `<div class="sum">${l1 ? `<div>${l1}</div>` : ''}${l2 ? `<div>${l2}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
+}
+function renderNotes() {
+  if (!twOpen()) return;
+  const chip = (g, t) => { const x = ck.notes[g].find(y => y.t === t); return `<button data-act="nt" data-g="${g}" data-t="${esc(t)}" class="${x ? 'on' : ''}">${esc(t)}${x && x.n > 1 ? ' ×' + x.n : ''}</button>`; };
+  tw('t-npr').innerHTML = NOTE_PR.map(t => chip('pr', t)).join('');
+  tw('t-ner').innerHTML = NOTE_ER.map(t => chip('er', t)).join('');
+  const all = ['pr', 'er'].flatMap(g => ck.notes[g].map((x, i) => `<span class="${g}">${g === 'pr' ? '🔊' : '✏️'} ${esc(x.t)}${x.n > 1 ? ' ×' + x.n : ''}<button data-act="ntx" data-g="${g}" data-i="${i}" title="Togli uno">✕</button></span>`));
+  tw('t-nl').innerHTML = all.length ? all.join('') : '';
+}
+function addNote(g, t) {
+  t = String(t || '').trim(); if (!t) return;
+  const x = ck.notes[g].find(y => y.t.toLowerCase() === t.toLowerCase());
+  if (x) x.n++; else ck.notes[g].push({ t, n: 1 });
+  if (g === 'er' && t === SWAP_NOTE && !swapCap) { swapCap = true; if (rub[0] > 3) rub[0] = 3; renderTeacherRubric(); }
+  ckChanged();
+}
+// dopo ogni spunta: ridisegna e manda la nota aggiornata alla LIVE (se ci sono già punteggi)
+function ckChanged() {
+  updateTeacherWin(); renderNotes(); renderSummary();
+  clearTimeout(ckChanged.t); ckChanged.t = setTimeout(() => pushLive(), 700);
+}
+function onCkClick(act, b) {
+  const k = b.dataset.k, i = +b.dataset.i;
+  if (act === 'c1') {
+    if (ck.p1[k]) delete ck.p1[k];
+    else ck.p1[k] = { v: 0, m: b.dataset.m || 'have to' };
+  } else if (act === 'cv') { const ok = CK_CHORES.find(x => x[0] === k)[2]; ck.p1[k].v = (ck.p1[k].v + 1) % verbOpts(ok).length; }
+  else if (act === 'cm') ck.p1[k].m = MODS[(MODS.indexOf(ck.p1[k].m) + 1) % MODS.length];
+  else if (act === 'cxm') ck.p1x[i].m = MODS[(MODS.indexOf(ck.p1x[i].m) + 1) % MODS.length];
+  else if (act === 'cxdel') ck.p1x.splice(i, 1);
+  else if (act === 'cxadd') { addCustom(); return true; }
+  else if (act === 'cnt') {
+    const d = +b.dataset.d;
+    if (k === 'g2') { const st = p2Of(state.card.id); st.guide = Math.max(0, st.guide + d); }
+    else ck.p1n[k] = Math.max(0, ck.p1n[k] + d);
+  } else if (act === 'r2') {
+    const st = p2Of(state.card.id), cur = st.rows[i];
+    st.rows[i] = cur === undefined ? 0 : cur + 1;
+    if (st.rows[i] > 3) delete st.rows[i];
+    const it = state.card.items[i];
+    if (st.rows[i] !== undefined && p2Status(it, p2Order(it.t)[st.rows[i]]) === 'sw' && !swapCap) { swapCap = true; if (rub[0] > 3) rub[0] = 3; renderTeacherRubric(); twMsg("Scambio mustn't / don't have to: Grammatica al massimo 3"); }
+  } else if (act === 'b2') { const st = p2Of(state.card.id); st.bec[i] = !st.bec[i]; }
+  else if (act === 'ex') ck.ex[k] = ((ck.ex[k] || 0) + 1) % 4;
+  else if (act === 'nt') { const g = b.dataset.g, t = b.dataset.t; addNote(g, t); return true; }
+  else if (act === 'ntx') { const x = ck.notes[b.dataset.g][i]; if (x && --x.n <= 0) ck.notes[b.dataset.g].splice(i, 1); }
+  else return false;
+  ckChanged();
+  return true;
+}
+function addCustom() {
+  const el = tw('t-add'), t = el.value.trim(); if (!t) { el.focus(); return; }
+  ck.p1x.push({ t, m: /\b(late|after|without|mess)\b/i.test(t) ? "mustn't" : 'have to' });
+  ckChanged();
+  if (twOpen()) tw('t-add').focus();
+}
+function onTeacherKey(e) {
+  if (e.key !== 'Enter') return;
+  const id = e.target.id;
+  if (id === 't-add') { e.preventDefault(); addCustom(); }
+  else if (id === 't-inpr' || id === 't-iner') { e.preventDefault(); addNote(id === 't-inpr' ? 'pr' : 'er', e.target.value); e.target.value = ''; }
+}
+
+// ══════════════════════════════════════════════════════════════════
 //  FINESTRA DOCENTE (secondo schermo)
 // ══════════════════════════════════════════════════════════════════
 let teacherWin = null;
@@ -840,6 +1026,27 @@ label.cap{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:#ff
 .link{min-height:16px;font-size:12.5px;color:#97a3bd;margin:2px 0 4px}.link.ok{color:#06d6a0}.link.err{color:#ffb547}
 table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}table.sv td,table.sv th{text-align:left;padding:5px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}table.sv th{color:#97a3bd;font-size:11px;text-transform:uppercase}td.v{font-weight:800;color:#ffd166}
 .x{background:none;border:none;color:#97a3bd;padding:0 4px}.empty{color:#97a3bd;font-style:italic}
+.ckh{font-size:12px;color:#97a3bd;font-weight:700;margin:12px 0 5px}.ckh small{font-weight:500}
+.ck{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:5px}
+.cr{display:flex;gap:4px;align-items:center;background:#161e2e;border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:3px}
+.cr.on{border-color:rgba(91,227,154,.6);background:rgba(47,191,113,.1)}
+.cr .lb{flex:1;text-align:left;background:none;border:none;padding:5px 6px;font-weight:600;color:#b9c3d6;font-size:13px}
+.cr.on .lb{color:#fff}.cr .lb b{color:#8db6ff}
+.cy{padding:4px 7px;font-size:12px;border-radius:7px;white-space:nowrap}
+.cy.ok{background:rgba(47,191,113,.28);color:#7cf0b0;border-color:transparent}.cy.bad{background:rgba(255,181,71,.25);color:#ffcf8a;border-color:transparent}
+.cy.sw{background:rgba(255,77,109,.4);color:#fff;border-color:transparent}.cy.no{background:rgba(239,68,68,.22);color:#ff9a9a;border-color:transparent}.cy.n{opacity:.6}
+.addr{display:flex;gap:6px;margin-top:6px}.addr input{flex:1;font-size:13px;padding:6px 9px}
+.cnts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.cnt{display:inline-flex;align-items:center;gap:5px;background:#161e2e;border:1px solid rgba(255,255,255,.1);border-radius:9px;padding:3px 4px 3px 9px;font-size:12.5px}
+.cnt b{min-width:16px;text-align:center;color:#ffd166}.cnt button{padding:2px 8px;font-size:13px}
+.r2{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+.exq{display:flex;gap:8px;align-items:flex-start;margin:4px 0}.exq .cy{flex:none}
+.sum{background:#161e2e;border:1px solid rgba(255,209,102,.35);border-radius:10px;padding:8px 11px;font-size:13px;line-height:1.55}
+.sum .sg{color:#ffd166;font-weight:700}.sum .hd{color:#97a3bd;font-weight:700;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}.chips button{font-size:12px;padding:4px 8px;font-weight:600}
+.nl{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}.nl span{background:#26324a;border-radius:7px;padding:3px 4px 3px 8px;font-size:12.5px}.nl span.er{background:#3a2632}
+.nl span button{background:none;border:none;color:#97a3bd;padding:0 4px;font-size:12px}
+.nin{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}.nin input{font-size:13px;padding:6px 9px}
 </style></head><body>
 <h1>🖥️ Finestra docente · Rules &amp; Obligations</h1>
 <div class="sub">Tienila sul tuo schermo: alla LIM si vedono solo la scena e il cartello senza indizi.</div>
@@ -847,12 +1054,19 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
 <div class="bar"><button class="or" data-act="p1">🏠 Parte 1 · Chores</button><button class="pri" data-act="draw">🎴 Pesca a caso</button></div>
 <div class="bar" id="t-cards" style="margin-top:6px"></div>
 <h2 id="t-h">Soluzioni</h2><div id="t-sol"></div>
+<h2>📋 Riepilogo di quello che hai spuntato</h2><div id="t-sum"></div>
 <h2>Valutazione · /15</h2>
 <div class="fields"><input id="t-name" placeholder="Nome dello studente" autocomplete="off"><input id="t-class" placeholder="Classe (es. 3C)" autocomplete="off"></div>
 <div id="t-rub"></div>
+<h2>🗒️ Note veloci · pronuncia ed errori</h2>
+<div class="ckh">🔊 Pronuncia <small>(un clic = annotato, di nuovo = ×2)</small></div><div class="chips" id="t-npr"></div>
+<div class="ckh">✏️ Errori</div><div class="chips" id="t-ner"></div>
+<div class="nin"><input id="t-inpr" placeholder="🔊 Altra parola pronunciata male + Invio" autocomplete="off"><input id="t-iner" placeholder="✏️ Altro errore sentito + Invio" autocomplete="off"></div>
+<div class="nl" id="t-nl"></div>
 <div class="link" id="t-link">🔗 I punteggi vanno anche nella LIVE di MyClass, se è aperta su questo computer.</div>
 <div class="tot"><span class="v" id="t-voto">–</span><span class="p" id="t-pts">Scegli un punteggio per ogni area</span></div>
-<input id="t-note" placeholder="Nota (facoltativa)" autocomplete="off">
+<input id="t-note" placeholder="Altra nota (facoltativa)" autocomplete="off">
+<div class="sub" style="margin:5px 0 0">Riepilogo, pronuncia, errori e nota vanno insieme nella nota del voto e nel promemoria della LIVE di MyClass.</div>
 <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva e prossimo</button><button data-act="reset">↺ Azzera</button></div>
 <div class="msg" id="t-msg"></div>
 <h2>Voti salvati</h2>
@@ -867,11 +1081,12 @@ function openTeacherWin() {
   const d = teacherWin.document; d.open(); d.write(TEACHER_HTML); d.close();
   if (window.DrillZoom) DrillZoom.attach(d);   // A− / A+ anche nella finestra docente
   d.addEventListener('click', onTeacherClick);
+  d.addEventListener('keydown', onTeacherKey);
   d.addEventListener('change', e => {
-    if (e.target.id === 't-cap') { swapCap = e.target.checked; if (swapCap && rub[0] > 3) rub[0] = 3; renderTeacherRubric(); pushLive(); }
-    else if (e.target.id === 't-name' || e.target.id === 't-class') pushLive();   // nome scritto dopo i punteggi
+    if (e.target.id === 't-cap') { swapCap = e.target.checked; if (swapCap && rub[0] > 3) rub[0] = 3; renderTeacherRubric(); renderSummary(); pushLive(); }
+    else if (e.target.id === 't-name' || e.target.id === 't-class' || e.target.id === 't-note') pushLive();   // nome scritto dopo i punteggi
   });
-  updateTeacherWin(); renderTeacherRubric(); renderTeacherSaved(); renderTimer();
+  updateTeacherWin(); renderTeacherRubric(); renderTeacherSaved(); renderTimer(); renderNotes(); renderSummary();
   moveTeacherWinToOtherScreen();
 }
 async function moveTeacherWinToOtherScreen() {
@@ -895,14 +1110,25 @@ function updateTeacherWin() {
       <ul><li><b>Atteso:</b> almeno 2 frasi per tipo su di sé (<i>I have to / I mustn't / I don't have to</i>) + <b>because</b>, senza domande guida.</li>
       <li><b>Mustn't a casa</b> = regole dei genitori (orari, videogiochi, camera in disordine): è la parte più difficile, se manca chiedila tu.</li>
       <li><b>Lessico da ascoltare:</b> collocazioni do / make corrette e varietà di faccende (almeno 5–6 diverse per il 5 in Vocabolario).</li></ul>
-      <div class="tip"><b>Anti-recita · 1–2 domande a sorpresa:</b><ul>${SURPRISE.map(q => `<li>${esc(q)}</li>`).join('')}</ul></div>`;
+      <div class="tip"><b>Anti-recita · 1–2 domande a sorpresa</b> <span style="color:#97a3bd">(clic: ✓ → con aiuto → ✗)</span>${SURPRISE.map((q, i) => `<div class="exq">${exBtn('s' + i)}<span>${esc(q)}</span></div>`).join('')}</div>
+      ${renderCkP1()}`;
+    renderSummary();
     return;
   }
   const c = state.card;
   tw('t-h').textContent = 'Parte 2 · Soluzioni della scheda';
-  tw('t-sol').innerHTML = `<div class="cur">${c.n}. ${esc(c.title)}</div><table class="sol">${c.items.map(it => `<tr class="${it.t}"><td>${promptHTML(it)}${it.it ? `<div class="md">(${esc(it.it)})</div>` : ''}</td><td><span class="k">${TYPE[it.t].sym} ${TYPE[it.t].mod.toUpperCase()}</span><div class="md">${esc(model(it, { both: true }))}</div></td></tr>`).join('')}</table>
-    <div class="tip">Per ✔ accetta sia <b>must</b> che <b>have to</b>. L'errore da sanzionare davvero è lo scambio <b>mustn't / don't have to</b>.</div>
-    <div class="tip" style="background:rgba(62,198,255,.08);border-color:rgba(62,198,255,.3)"><b>Domande extra (per distinguere 8–10):</b><ul>${EXTRA_Q.map(x => `<li>${esc(x.q)} → <i>${esc(x.a)}</i> <span style="color:#97a3bd">(${esc(x.why)})</span></li>`).join('')}</ul></div>`;
+  const st = p2Of(c.id);
+  const rowCk = (it, i) => {
+    const v = st.rows[i];
+    const m = v === undefined ? null : p2Order(it.t)[v];
+    const cls = m ? { ok: 'ok', sw: 'sw', no: 'bad' }[p2Status(it, m)] : 'n';
+    return `<div class="r2">${cyBtn('r2', `data-i="${i}"`, cls, m ? (cls === 'ok' ? '✔ ' : cls === 'sw' ? '⇄ ' : '✖ ') + esc(m) : '— modale detto?', 'Clic finché non c\'è il modale che ha detto · ancora = non detta')}${cyBtn('b2', `data-i="${i}"`, st.bec[i] ? 'ok' : 'n', st.bec[i] ? '✔ because' : 'because?', 'Ha spiegato il perché')}</div>`;
+  };
+  tw('t-sol').innerHTML = `<div class="cur">${c.n}. ${esc(c.title)}</div><table class="sol">${c.items.map((it, i) => `<tr class="${it.t}"><td>${promptHTML(it)}${it.it ? `<div class="md">(${esc(it.it)})</div>` : ''}</td><td><span class="k">${TYPE[it.t].sym} ${TYPE[it.t].mod.toUpperCase()}</span><div class="md">${esc(model(it, { both: true }))}</div>${rowCk(it, i)}</td></tr>`).join('')}</table>
+    <div class="cnts">${cntBox('g2', 'domande guida', st.guide)}</div>
+    <div class="tip">Per ✔ accetta sia <b>must</b> che <b>have to</b>. L'errore da sanzionare davvero è lo scambio <b>mustn't / don't have to</b> (⇄ in rosso: spunta da sola il limite a 3 in Grammatica).</div>
+    <div class="tip" style="background:rgba(62,198,255,.08);border-color:rgba(62,198,255,.3)"><b>Domande extra (per distinguere 8–10)</b> <span style="color:#97a3bd">(clic: ✓ → con aiuto → ✗)</span>${EXTRA_Q.map((x, i) => `<div class="exq">${exBtn('e' + i)}<span>${esc(x.q)} → <i>${esc(x.a)}</i> <span style="color:#97a3bd">(${esc(x.why)})</span></span></div>`).join('')}</div>`;
+  renderSummary();
 }
 function renderTeacherRubric() {
   if (!twOpen()) return;
@@ -919,6 +1145,7 @@ function twMsg(t) { if (!twOpen()) return; tw('t-msg').textContent = t; clearTim
 function onTeacherClick(e) {
   const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
   const act = b.dataset.act;
+  if (onCkClick(act, b)) return;
   if (act === 'timer') timerToggle();
   else if (act === 'treset') timerReset();
   else if (act === 'p1') goPart1();
@@ -931,7 +1158,7 @@ function onTeacherClick(e) {
   else if (act === 'clear') { if (teacherWin.confirm('Cancellare tutti i voti salvati su questo computer?')) { storeGrades([]); renderTeacherSaved(); } }
   else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
 }
-function resetRubric() { Object.keys(rub).forEach(k => delete rub[k]); swapCap = false; if (twOpen()) { tw('t-name').value = ''; tw('t-note').value = ''; } renderTeacherRubric(); }
+function resetRubric() { Object.keys(rub).forEach(k => delete rub[k]); swapCap = false; ck = ckNew(); if (twOpen()) { tw('t-name').value = ''; tw('t-note').value = ''; } renderTeacherRubric(); updateTeacherWin(); renderNotes(); renderSummary(); }
 function saveGrade() {
   const name = tw('t-name').value.trim();
   if (!name) { twMsg('✏️ Scrivi il nome dello studente'); tw('t-name').focus(); return; }
@@ -940,7 +1167,7 @@ function saveGrade() {
   const t1 = partTimes[1] ? fmtTime(partTimes[1]) : '–', t2 = partTimes[2] ? fmtTime(partTimes[2]) : '–';
   const tot = rubTot();
   const g = loadGrades();
-  g.push({ name, cls: tw('t-class').value.trim(), voto: voto(tot), punti: tot, det: GRID.aree.map((a, i) => rub[i]).join('-'), card: isChores() ? '–' : `${state.card.n}. ${state.card.title}`, tempo: `${t1} + ${t2}`, note: tw('t-note').value.trim() + (swapCap ? (tw('t-note').value.trim() ? ' · ' : '') + "scambio mustn't/don't have to" : ''), date: new Date().toLocaleDateString('it-IT') });
+  g.push({ name, cls: tw('t-class').value.trim(), voto: voto(tot), punti: tot, det: GRID.aree.map((a, i) => rub[i]).join('-'), card: isChores() ? '–' : `${state.card.n}. ${state.card.title}`, tempo: `${t1} + ${t2}`, note: composeNote(), date: new Date().toLocaleDateString('it-IT') });
   storeGrades(g);
   pushLive(true);   // salva il promemoria anche nella LIVE di MyClass
   twMsg(`✅ Salvato: ${name} → ${voto(tot)}`);
@@ -953,7 +1180,7 @@ function pushLive(save) {
   const scores = GRID.aree.map((a, i) => rub[i] === undefined ? null : rub[i]);
   if (scores.every(v => v === null)) return;
   MyClassLive.send({ grid: { id: GRID.id, nome: GRID.nome, aree: GRID.aree.map(a => ({ nome: a.nome, max: a.max })), conversione_voto: GRID.conversione_voto },
-    scores, student: tw('t-name').value.trim(), cls: tw('t-class').value.trim(), save: !!save }, showLive);
+    scores, student: tw('t-name').value.trim(), cls: tw('t-class').value.trim(), save: !!save, note: composeNote() }, showLive);
 }
 function showLive(r) {
   if (!twOpen()) return;
