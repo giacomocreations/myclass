@@ -1635,7 +1635,7 @@ const WS_LBL = ['— is wearing?', '✓ is wearing', '✗ manca is (she wearing)
 const WQ_LBL = ['— risposta?', '✓ giusta', '~ con aiuto', '✗ sbagliata'], WQ_CLS = ['n', 'ok', 'bad', 'no'];
 const NOTE_PR = ['clothes /kləʊðz/', 'wearing /ˈweərɪŋ/', '-ing finale', 'jeans', 'shoes', 'trousers', 'jacket', 'T-shirt', 'trainers', 'socks (-s finale)', 'purple', 'orange', 'pronuncia all\'italiana'];
 const NOTE_ER = ['she wearing (manca is)', 'he wear / wears', 'they is', '-ing mancante', 'present simple al posto del continuous', 'colore dopo il nome (a T-shirt red)', 'a + plurale (a jeans)', 'colore al plurale (reds)', 'he / she scambiati', 'parola in italiano'];
-const wkNew = () => ({ cur: {}, q: 0, done: [], qDone: [], guide: 0, notes: { pr: [], er: [] } });
+const wkNew = () => ({ cur: {}, q: 0, done: [], qDone: [], guide: 0, pause: 0, block: 0, notes: { pr: [], er: [] } });
 let wk = wkNew();
 // cur[i] = { it: { slot: 0-3 }, a: 0-3, s: 0-4 } per il personaggio i della scena attuale
 const wkChar = i => wk.cur[i] || (wk.cur[i] = { it: {}, a: 0, s: 0 });
@@ -1644,7 +1644,7 @@ function wkFold() {
   Object.keys(wk.cur).forEach(i => {
     const c = state.chars[i], x = wk.cur[i]; if (!c) return;
     const items = worn(c).filter(w => x.it[w.slot]).map(w => ({ type: w.type, v: x.it[w.slot] }));
-    if (items.length || x.a || x.s) wk.done.push({ items, a: x.a, s: x.s });
+    if (items.length || x.a || x.s) wk.done.push({ items, a: x.a, s: x.s, tot: worn(c).length });
   });
   if (wk.q) wk.qDone.push(wk.q);
   wk.cur = {}; wk.q = 0;
@@ -1653,7 +1653,7 @@ function wkStats() {
   const all = wk.done.slice();
   Object.keys(wk.cur).forEach(i => {
     const c = state.chars[i], x = wk.cur[i]; if (!c) return;
-    all.push({ items: worn(c).filter(w => x.it[w.slot]).map(w => ({ type: w.type, v: x.it[w.slot] })), a: x.a, s: x.s });
+    all.push({ items: worn(c).filter(w => x.it[w.slot]).map(w => ({ type: w.type, v: x.it[w.slot] })), a: x.a, s: x.s, tot: worn(c).length });
   });
   const items = all.flatMap(x => x.items);
   const okTypes = new Set(items.filter(x => x.v === 1).map(x => FEET.has(x.type) ? 'feet' : x.type));
@@ -1663,7 +1663,8 @@ function wkStats() {
   return { said: items.length, okN: cnt(items.map(x => x.v), 1), okTypes: okTypes.size, col: cnt(items.map(x => x.v), 2), word: cnt(items.map(x => x.v), 3),
     aOk: cnt(acts, 1), aForm: cnt(acts, 2), aLex: cnt(acts, 3), sOk: cnt(strs, 1), sErr: strs.filter(v => v > 1).length,
     sDet: [2, 3, 4].filter(v => cnt(strs, v)).map(v => WS_LBL[v].replace('✗ ', '') + (cnt(strs, v) > 1 ? ' ×' + cnt(strs, v) : '')),
-    q, chars: all.length };
+    q, chars: all.length, tot: all.reduce((t, x) => t + (x.tot || 0), 0), aSaid: all.filter(x => x.a).length,
+    pr: wk.notes.pr.reduce((t, x) => t + x.n, 0) };
 }
 function wkLine(html) {
   const s = wkStats(), b = t => html ? `<b>${t}</b>` : t;
@@ -1673,6 +1674,8 @@ function wkLine(html) {
   if (s.sOk + s.sErr) parts.push('is wearing' + (s.sOk ? ` ✓${s.sOk}` : '') + (s.sErr ? ` ✗ ${s.sDet.join(', ')}` : ''));
   if (s.q.length) { const c = v => s.q.filter(x => x === v).length; parts.push('domande ' + [c(1) && `✓${c(1)}`, c(2) && `~${c(2)}`, c(3) && `✗${c(3)}`].filter(Boolean).join(' ')); }
   if (wk.guide) parts.push(`domande guida ×${wk.guide}`);
+  if (wk.pause) parts.push(`esitazioni ×${wk.pause}`);
+  if (wk.block) parts.push(`blocchi ×${wk.block}`);
   return parts.join(' · ');
 }
 const noteList = g => wk.notes[g].map(x => x.t + (x.n > 1 ? ' ×' + x.n : '')).join(', ');
@@ -1683,10 +1686,29 @@ function composeNote() {
 function renderSummary() {
   if (!twOpen()) return;
   const s = wkStats(), line = wkLine(true), hints = [];
-  if (s.said) { const n = s.okTypes; hints.push(`Lessico: <span class="sg">${n >= 5 && s.aOk ? 4 : n >= 4 ? 3 : n >= 2 ? 2 : 1}</span> <span style="color:#a49cbd">(${n} capi diversi con il colore${s.aOk ? ' + azione' : ''})</span>`); }
+  const why = t => ` <span style="color:#a49cbd">(${t})</span>`, sg = v => `<span class="sg">${v}</span>`;
+  const qc = v => s.q.filter(x => x === v).length, qOk = qc(1), qHelp = qc(2), qBad = qc(3);
+  const qTxt = s.q.length ? `domande ✓${qOk}${qHelp ? ' ~' + qHelp : ''}${qBad ? ' ✗' + qBad : ''}` : 'nessuna domanda extra segnata';
+  // Comunicazione /4: autonomia (domande guida), completezza (capi + azione), domande extra
+  if (s.chars || s.q.length || wk.guide || wk.block) {
+    const cover = s.tot ? s.said / s.tot : 0;
+    const complete = s.chars > 0 && cover >= 0.6 && s.aSaid >= s.chars;
+    let v = 4;
+    if (!complete || wk.guide >= 1 || qHelp) v = 3;
+    if (wk.guide >= 2 || (s.chars && cover < 0.4) || (qBad && qBad >= qOk)) v = 2;
+    if (wk.guide >= 4 || wk.block >= 2 || (s.chars && s.said <= 1 && !s.aSaid)) v = 1;
+    hints.push(`Comunicazione: ${sg(v)}` + why(`${wk.guide} domande guida · ${s.chars ? `capi detti ${s.said}/${s.tot}, azione ${s.aSaid}/${s.chars}` : 'descrizione non spuntata'} · ${qTxt}`));
+  }
+  if (s.said) { const n = s.okTypes; hints.push(`Lessico: ${sg(n >= 5 && s.aOk ? 4 : n >= 4 ? 3 : n >= 2 ? 2 : 1)}` + why(`${n} capi diversi con il colore${s.aOk ? ' + azione' : ''}`)); }
   const pcE = s.sErr + s.aForm, pcN = pcE + s.sOk + s.aOk;
-  if (pcN) hints.push(`Present continuous: <span class="sg">${!pcE ? 4 : pcE <= 2 && pcE < pcN / 2 ? 3 : pcE <= pcN / 2 ? 2 : 1}</span> <span style="color:#a49cbd">(errori: ${pcE} su ${pcN} frasi spuntate)</span>`);
-  tw('t-sum').innerHTML = line ? `<div class="sum"><div>${line}</div>${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
+  if (pcN) hints.push(`Present continuous: ${sg(!pcE ? 4 : pcE <= 2 && pcE < pcN / 2 ? 3 : pcE <= pcN / 2 ? 2 : 1)}` + why(`errori: ${pcE} su ${pcN} frasi spuntate`));
+  // Pronuncia e fluenza /3: note di pronuncia + esitazioni + blocchi
+  if (line || s.pr) {
+    const P = s.pr, H = wk.pause, B = wk.block;
+    const v = B >= 3 ? 0 : B >= 1 || H >= 6 || P >= 5 ? 1 : P >= 2 || H >= 2 ? 2 : 3;
+    hints.push(`Pronuncia e fluenza: ${sg(v)}` + why(`${P} ${P === 1 ? 'errore' : 'errori'} di pronuncia annotati · ${H} ${H === 1 ? 'esitazione' : 'esitazioni'} · ${B} ${B === 1 ? 'blocco' : 'blocchi'}${!P && !H && !B ? ' — se ne senti, segnali con i contatori e le note qui sotto' : ''}`));
+  }
+  tw('t-sum').innerHTML = (line || s.pr) ? `<div class="sum">${line ? `<div>${line}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
 }
 function renderNotes() {
   if (!twOpen()) return;
@@ -1694,7 +1716,8 @@ function renderNotes() {
   tw('t-npr').innerHTML = NOTE_PR.map(t => chip('pr', t)).join('');
   tw('t-ner').innerHTML = NOTE_ER.map(t => chip('er', t)).join('');
   tw('t-nl').innerHTML = ['pr', 'er'].flatMap(g => wk.notes[g].map((x, i) => `<span class="${g}">${g === 'pr' ? '🔊' : '✏️'} ${esc(x.t)}${x.n > 1 ? ' ×' + x.n : ''}<button data-act="ntx" data-g="${g}" data-i="${i}" title="Togli uno">✕</button></span>`)).join('');
-  tw('t-cnts').innerHTML = `<span class="cnt">domande guida <b>${wk.guide}</b><button data-act="gd" data-d="-1" title="Togli">−</button><button data-act="gd" data-d="1" title="Aggiungi">+</button></span>`;
+  const cnt = (k, lbl, title) => `<span class="cnt" title="${title}">${lbl} <b>${wk[k]}</b><button data-act="gd" data-k="${k}" data-d="-1" title="Togli">−</button><button data-act="gd" data-k="${k}" data-d="1" title="Aggiungi">+</button></span>`;
+  tw('t-cnts').innerHTML = cnt('guide', 'domande guida', 'Ogni volta che devi aiutarlo con una domanda') + cnt('pause', 'esitazioni / pause', 'Pause lunghe, ripartenze, ehm…') + cnt('block', 'si blocca', 'Si ferma e non riparte da solo');
 }
 function addNote(g, t) {
   t = String(t || '').trim(); if (!t) return;
@@ -1712,7 +1735,7 @@ function onCkClick(act, b) {
   else if (act === 'wa') { const x = wkChar(i); x.a = (x.a + 1) % WA_LBL.length; }
   else if (act === 'ws') { const x = wkChar(i); x.s = (x.s + 1) % WS_LBL.length; }
   else if (act === 'wq') wk.q = (wk.q + 1) % WQ_LBL.length;
-  else if (act === 'gd') wk.guide = Math.max(0, wk.guide + +b.dataset.d);
+  else if (act === 'gd') { const k = b.dataset.k || 'guide'; wk[k] = Math.max(0, wk[k] + +b.dataset.d); }
   else if (act === 'nt') { addNote(b.dataset.g, b.dataset.t); return true; }
   else if (act === 'ntx') { const x = wk.notes[b.dataset.g][i]; if (x && --x.n <= 0) wk.notes[b.dataset.g].splice(i, 1); }
   else return false;
