@@ -395,7 +395,7 @@ const TYPE = {
   nn: { sym: '○', it: 'NON NECESSARIO', mod: "don't have to" },
 };
 
-const CHORE_IDEAS = ['<b>make</b> my bed', '<b>do</b> the washing-up', '<b>do</b> the washing', '<b>do</b> the ironing', '<b>do</b> the vacuuming', '<b>lay</b> the table', '<b>clear</b> the table', '<b>cook</b> dinner', '<b>take</b> the rubbish out', '<b>tidy</b> my room', '<b>feed</b> the cat', '<b>walk</b> the dog', '<b>do</b> the shopping'];
+const CHORE_IDEAS = ['<b>make</b> my bed', '<b>do</b> the washing-up', '<b>do</b> the washing', '<b>do</b> the ironing', '<b>do</b> the vacuuming', '<b>lay</b> the table', '<b>clear</b> the table', '<b>cook</b> dinner', '<b>take</b> the rubbish out', '<b>tidy</b> my room', '<b>feed</b> the dog / cat / fish', '<b>walk</b> the dog', '<b>do</b> the shopping'];
 const NO_IDEAS = ['play video games after 10 p.m.', 'come home late', 'leave my room in a mess', 'use my phone at dinner', 'eat in my bedroom', 'invite friends without asking'];
 const NN_IDEAS = ['do the ironing (my mum does it)', 'cook dinner', 'do the shopping', 'clean the bathroom', 'get up early on Sunday'];
 const SURPRISE = ['Who does the washing-up in your family?', 'Does your brother / sister have to … ?', 'What did you have to do last weekend?', 'Is it fair? Why?'];
@@ -812,14 +812,24 @@ function storeGrades(g) { try { localStorage.setItem(GKEY, JSON.stringify(g)); }
 const MODS = ['have to', 'must', "mustn't", "don't have to"];
 const modType = m => m === "mustn't" ? 'no' : m === "don't have to" ? 'nn' : 'ob';
 // [chiave, complemento, verbi giusti]: il primo verbo è quello proposto, gli altri si accettano
-const CK_CHORES = [
-  ['bed', 'my bed', ['make']], ['washup', 'the washing-up', ['do']], ['dishes', 'the dishes', ['wash', 'do']],
-  ['washing', 'the washing', ['do']], ['ironing', 'the ironing', ['do']], ['vacuum', 'the vacuuming', ['do']],
-  ['lay', 'the table', ['lay', 'set']], ['clear', 'the table', ['clear']], ['cook', 'dinner / lunch', ['cook', 'make']],
-  ['rubbish', 'the rubbish out', ['take']], ['tidy', 'my room', ['tidy', 'clean']], ['shop', 'the shopping', ['do']],
-  ['cat', 'the cat', ['feed']], ['dog', 'the dog', ['walk']], ['bath', 'the bathroom', ['clean']],
+// Quelle fatte in classe (box del libro), nello stesso ordine
+const CK_BOOK = [
+  ['clear', 'the table', ['clear']], ['cook', 'dinner', ['cook', 'make']], ['ironing', 'the ironing', ['do']],
+  ['vacuum', 'the vacuuming', ['do']], ['washing', 'the washing', ['do']], ['washup', 'the washing-up', ['do']],
+  ['feed', 'the dog / cat / fish', ['feed']], ['lay', 'the table', ['lay', 'set']], ['bed', 'my bed', ['make']],
+  ['rubbish', 'the rubbish out', ['take']], ['tidy', 'my room', ['tidy', 'clean']], ['dog', 'the dog', ['walk']],
+];
+// Altre che gli alunni possono dire
+const CK_MORE = [
+  ['dishes', 'the dishes', ['wash', 'do']], ['shop', 'the shopping', ['do']], ['bath', 'the bathroom', ['clean']],
   ['plants', 'the plants', ['water']], ['dishw', 'the dishwasher', ['load', 'empty']], ['floor', 'the floor', ['sweep', 'clean', 'mop']],
 ];
+// Aggiunte dal docente scrivendole: restano in elenco su questo computer
+const MINE_KEY = 'roo_chores_mine';
+let CK_MINE = (() => { try { return (JSON.parse(localStorage.getItem(MINE_KEY)) || []).filter(x => Array.isArray(x) && x.length === 3); } catch (e) { return []; } })();
+const saveMine = () => { try { localStorage.setItem(MINE_KEY, JSON.stringify(CK_MINE)); } catch (e) {} };
+const allChores = () => CK_BOOK.concat(CK_MORE, CK_MINE);
+const isBook = k => CK_BOOK.some(x => x[0] === k);
 const verbOpts = ok => ok.concat(['do', 'make'].filter(v => !ok.includes(v)));
 // regole di casa per mustn't / don't have to: [chiave, frase, modale proposto]
 const CK_RULES = [
@@ -856,23 +866,27 @@ function renderCkP1() {
     if (!x) return `<div class="cr"><button class="lb" data-act="c1" data-k="${k}" data-m="${esc(def)}">☐ ${esc(txt)}</button></div>`;
     return `<div class="cr on"><button class="lb" data-act="c1" data-k="${k}" title="Togli">✔ ${esc(txt)}</button>${cyBtn('cm', `data-k="${k}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}</div>`;
   };
+  const mine = ([k, obj, ok]) => row([k, obj, ok]).replace(/<\/div>$/, `<button class="x" data-act="cmdel" data-k="${k}" title="Togli dall'elenco">✕</button></div>`);
   const extra = ck.p1x.map((x, i) => `<div class="cr on"><button class="lb" data-act="cxdel" data-i="${i}" title="Togli">✔ ${esc(x.t)}</button>${cyBtn('cxm', `data-i="${i}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}</div>`).join('');
-  return `<div class="ckh">✅ Faccende dette <small>· clic sulla faccenda quando la dice, poi clic su verbo e modale finché non c'è quello che ha detto (arancione = verbo sbagliato)</small></div>
-    <div class="ck">${CK_CHORES.map(row).join('')}</div>
+  return `<div class="ckh">✅ 📖 Faccende fatte in classe <small>· clic sulla faccenda quando la dice, poi clic su verbo e modale finché non c'è quello che ha detto (arancione = verbo sbagliato)</small></div>
+    <div class="ck">${CK_BOOK.map(row).join('')}</div>
+    <div class="ckh">➕ Altre faccende</div>
+    <div class="ck">${CK_MORE.map(row).join('')}${CK_MINE.map(mine).join('')}</div>
+    <div class="addr"><input id="t-addc" placeholder="＋ Faccenda non in elenco (es. clean the windows) + Invio: resta in elenco" autocomplete="off"><button data-act="cmadd">＋</button></div>
     <div class="ckh">🚫 Regole di casa (mustn't / don't have to)</div>
     <div class="ck">${CK_RULES.map(rule).join('')}${extra}</div>
-    <div class="addr"><input id="t-add" placeholder="＋ Altra faccenda o regola detta (es. clean the windows) + Invio" autocomplete="off"><button data-act="cxadd">＋</button></div>
+    <div class="addr"><input id="t-add" placeholder="＋ Altra regola detta (es. watch TV after dinner) + Invio" autocomplete="off"><button data-act="cxadd">＋</button></div>
     <div class="cnts">${cntBox('bec', 'because', ck.p1n.bec)}${cntBox('guide', 'domande guida', ck.p1n.guide)}</div>`;
 }
 
 function p1Stats() {
-  const chores = CK_CHORES.filter(([k]) => ck.p1[k]);
+  const chores = allChores().filter(([k]) => ck.p1[k]);
   const wrong = chores.filter(([k, , ok]) => !ok.includes(verbOpts(ok)[ck.p1[k].v]));
   const mods = Object.values(ck.p1).map(x => x.m).concat(ck.p1x.map(x => x.m));
   const per = { ob: 0, no: 0, nn: 0 }; mods.forEach(m => per[modType(m)]++);
   const cnt = {}; mods.forEach(m => cnt[m] = (cnt[m] || 0) + 1);
   const exs = SURPRISE.map((q, i) => ck.ex['s' + i] || 0).filter(Boolean);
-  return { chores, wrong, mods, per, cnt, extra: ck.p1x.length, exs };
+  return { chores, wrong, mods, per, cnt, extra: ck.p1x.length, exs, book: chores.filter(([k]) => isBook(k)).length };
 }
 function p2Stats(c) {
   const st = ck.p2[c.id]; if (!st) return null;
@@ -891,7 +905,7 @@ function p1Line(html) {
   const s = p1Stats();
   if (!s.mods.length && !s.exs.length && !ck.p1n.bec && !ck.p1n.guide) return '';
   const b = t => html ? `<b>${t}</b>` : t;
-  const parts = [`${b(s.chores.length)} faccende${s.extra ? ` (+${s.extra} altre voci)` : ''}` + (s.wrong.length ? ` · verbo sbagliato ${s.wrong.length}: ${s.wrong.map(([k, obj, ok]) => verbOpts(ok)[ck.p1[k].v] + ' ' + obj).join(', ')}` : '')];
+  const parts = [`${b(s.chores.length)} faccende (${s.book} del libro)${s.extra ? ` · ${s.extra} ${s.extra === 1 ? 'regola aggiunta' : 'regole aggiunte'}` : ''}` + (s.wrong.length ? ` · verbo sbagliato ${s.wrong.length}: ${s.wrong.map(([k, obj, ok]) => verbOpts(ok)[ck.p1[k].v] + ' ' + obj).join(', ')}` : '')];
   if (s.mods.length) parts.push(MODS.filter(m => s.cnt[m]).map(m => `${m} ${s.cnt[m]}`).join(', '));
   if (ck.p1n.bec) parts.push(`because ×${ck.p1n.bec}`);
   if (ck.p1n.guide) parts.push(`domande guida ×${ck.p1n.guide}`);
@@ -952,11 +966,13 @@ function onCkClick(act, b) {
   if (act === 'c1') {
     if (ck.p1[k]) delete ck.p1[k];
     else ck.p1[k] = { v: 0, m: b.dataset.m || 'have to' };
-  } else if (act === 'cv') { const ok = CK_CHORES.find(x => x[0] === k)[2]; ck.p1[k].v = (ck.p1[k].v + 1) % verbOpts(ok).length; }
+  } else if (act === 'cv') { const ok = allChores().find(x => x[0] === k)[2]; ck.p1[k].v = (ck.p1[k].v + 1) % verbOpts(ok).length; }
   else if (act === 'cm') ck.p1[k].m = MODS[(MODS.indexOf(ck.p1[k].m) + 1) % MODS.length];
   else if (act === 'cxm') ck.p1x[i].m = MODS[(MODS.indexOf(ck.p1x[i].m) + 1) % MODS.length];
   else if (act === 'cxdel') ck.p1x.splice(i, 1);
   else if (act === 'cxadd') { addCustom(); return true; }
+  else if (act === 'cmadd') { addMine(); return true; }
+  else if (act === 'cmdel') { CK_MINE = CK_MINE.filter(x => x[0] !== k); saveMine(); delete ck.p1[k]; }
   else if (act === 'cnt') {
     const d = +b.dataset.d;
     if (k === 'g2') { const st = p2Of(state.card.id); st.guide = Math.max(0, st.guide + d); }
@@ -977,14 +993,25 @@ function onCkClick(act, b) {
 }
 function addCustom() {
   const el = tw('t-add'), t = el.value.trim(); if (!t) { el.focus(); return; }
-  ck.p1x.push({ t, m: /\b(late|after|without|mess)\b/i.test(t) ? "mustn't" : 'have to' });
+  ck.p1x.push({ t, m: "mustn't" });
   ckChanged();
   if (twOpen()) tw('t-add').focus();
+}
+// faccenda scritta dal docente: la prima parola è il verbo (clean the windows → clean)
+function addMine() {
+  const el = tw('t-addc'), t = el.value.trim().replace(/\s+/g, ' ').replace(/^(i |to )/i, ''); if (!t) { el.focus(); return; }
+  const sp = t.indexOf(' '), verb = (sp > 0 ? t.slice(0, sp) : t).toLowerCase(), obj = sp > 0 ? t.slice(sp + 1) : '';
+  let x = allChores().find(c => c[2].includes(verb) && c[1].toLowerCase() === obj.toLowerCase());
+  if (!x) { x = ['u' + Date.now().toString(36), obj, [verb]]; CK_MINE.push(x); saveMine(); }
+  if (!ck.p1[x[0]]) ck.p1[x[0]] = { v: 0, m: 'have to' };
+  ckChanged();
+  if (twOpen()) tw('t-addc').focus();
 }
 function onTeacherKey(e) {
   if (e.key !== 'Enter') return;
   const id = e.target.id;
   if (id === 't-add') { e.preventDefault(); addCustom(); }
+  else if (id === 't-addc') { e.preventDefault(); addMine(); }
   else if (id === 't-inpr' || id === 't-iner') { e.preventDefault(); addNote(id === 't-inpr' ? 'pr' : 'er', e.target.value); e.target.value = ''; }
 }
 
