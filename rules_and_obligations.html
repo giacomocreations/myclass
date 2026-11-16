@@ -1001,12 +1001,32 @@ function renderSummary() {
 function renderNotes() {
   if (!twOpen()) return;
   const chip = (g, t) => { const x = ck.notes[g].find(y => y.t === t); return `<button data-act="nt" data-g="${g}" data-t="${esc(t)}" class="${x ? 'on' : ''}">${esc(t)}${x && x.n > 1 ? ' ×' + x.n : ''}</button>`; };
-  tw('t-npr').innerHTML = NOTE_PR.map(t => chip('pr', t)).join('');
-  tw('t-ner').innerHTML = NOTE_ER.map(t => chip('er', t)).join('');
+  tw('t-npr').innerHTML = noteChips('pr', NOTE_PR, chip);
+  tw('t-ner').innerHTML = noteChips('er', NOTE_ER, chip);
   const all = ['pr', 'er'].flatMap(g => ck.notes[g].map((x, i) => `<span class="${g}">${g === 'pr' ? '🔊' : '✏️'} ${esc(x.t)}${x.n > 1 ? ' ×' + x.n : ''}<button data-act="ntx" data-g="${g}" data-i="${i}" title="Togli uno">✕</button></span>`));
   tw('t-nl').innerHTML = all.length ? all.join('') : '';
   tw('t-flu').innerHTML = cntBox('pause', 'esitazioni / pause', ck.flu.pause) + cntBox('block', 'si blocca', ck.flu.block);
 }
+// Note aggiunte scrivendole (anche più di una, separate da virgola): diventano pulsanti
+// come quelli proposti e restano su questo computer per i prossimi alunni
+const MINE_NOTE_KEY = 'roo_note_mie';
+let NOTE_MIE = (() => { try { const x = JSON.parse(localStorage.getItem(MINE_NOTE_KEY)) || {}; return { pr: x.pr || [], er: x.er || [] }; } catch (e) { return { pr: [], er: [] }; } })();
+const saveNoteMie = () => { try { localStorage.setItem(MINE_NOTE_KEY, JSON.stringify(NOTE_MIE)); } catch (e) {} };
+const noteChips = (g, base, chip) => base.map(t => chip(g, t)).join('') + NOTE_MIE[g].filter(t => !base.includes(t))
+  .map(t => `<span style="display:inline-flex;align-items:center">${chip(g, t)}<button class="x" data-act="ntdel" data-g="${g}" data-t="${esc(t)}" title="Togli dall'elenco">✕</button></span>`).join('');
+function addTyped(g) {
+  if (!twOpen()) return;
+  const id = g === 'pr' ? 't-inpr' : 't-iner', el = tw(id);
+  const parts = el.value.split(/[,;\n]+/).map(t => t.trim()).filter(Boolean);
+  el.value = '';
+  if (!parts.length) { el.focus(); return; }
+  const base = g === 'pr' ? NOTE_PR : NOTE_ER;
+  parts.forEach(t => { if (!base.some(x => x.toLowerCase() === t.toLowerCase()) && !NOTE_MIE[g].some(x => x.toLowerCase() === t.toLowerCase())) NOTE_MIE[g].push(t); });
+  saveNoteMie();
+  parts.forEach(t => addNote(g, base.find(x => x.toLowerCase() === t.toLowerCase()) || NOTE_MIE[g].find(x => x.toLowerCase() === t.toLowerCase()) || t));
+  if (twOpen()) tw(id).focus();
+}
+function delMine(g, t) { NOTE_MIE[g] = NOTE_MIE[g].filter(x => x !== t); saveNoteMie(); renderNotes(); }
 function addNote(g, t) {
   t = String(t || '').trim(); if (!t) return;
   const x = ck.notes[g].find(y => y.t.toLowerCase() === t.toLowerCase());
@@ -1045,6 +1065,8 @@ function onCkClick(act, b) {
     if (st.rows[i] !== undefined && p2Status(it, p2Order(it.t)[st.rows[i]]) === 'sw' && !swapCap) { swapCap = true; if (rub[0] > 3) rub[0] = 3; renderTeacherRubric(); twMsg("Scambio mustn't / don't have to: Grammatica al massimo 3"); }
   } else if (act === 'b2') { const st = p2Of(state.card.id); st.bec[i] = !st.bec[i]; }
   else if (act === 'ex') ck.ex[k] = ((ck.ex[k] || 0) + 1) % 4;
+  else if (act === 'nadd') { addTyped(b.dataset.g); return true; }
+  else if (act === 'ntdel') { delMine(b.dataset.g, b.dataset.t); return true; }
   else if (act === 'nt') { const g = b.dataset.g, t = b.dataset.t; addNote(g, t); return true; }
   else if (act === 'ntx') { const x = ck.notes[b.dataset.g][i]; if (x && --x.n <= 0) ck.notes[b.dataset.g].splice(i, 1); }
   else return false;
@@ -1072,7 +1094,7 @@ function onTeacherKey(e) {
   const id = e.target.id;
   if (id === 't-add') { e.preventDefault(); addCustom(); }
   else if (id === 't-addc') { e.preventDefault(); addMine(); }
-  else if (id === 't-inpr' || id === 't-iner') { e.preventDefault(); addNote(id === 't-inpr' ? 'pr' : 'er', e.target.value); e.target.value = ''; }
+  else if (id === 't-inpr' || id === 't-iner') { e.preventDefault(); addTyped(id === 't-inpr' ? 'pr' : 'er'); }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1134,7 +1156,7 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
 .chips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}.chips button{font-size:12px;padding:4px 8px;font-weight:600}
 .nl{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}.nl span{background:#26324a;border-radius:7px;padding:3px 4px 3px 8px;font-size:12.5px}.nl span.er{background:#3a2632}
 .nl span button{background:none;border:none;color:#97a3bd;padding:0 4px;font-size:12px}
-.nin{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}.nin input{font-size:13px;padding:6px 9px}
+.nin{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}.nin input{font-size:13px;padding:6px 9px}.nadd{display:flex;gap:4px}.nadd input{flex:1;min-width:0}.nadd button{padding:4px 11px;font-size:16px;line-height:1}@media (max-width:560px){.nin{grid-template-columns:1fr}}
 </style></head><body>
 <h1>🖥️ Finestra docente · Rules &amp; Obligations</h1>
 <div class="sub">Tienila sul tuo schermo: alla LIM si vedono solo la scena e il cartello senza indizi.</div>
@@ -1150,7 +1172,8 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
 <div class="cnts" id="t-flu" style="margin:0 0 4px"></div>
 <div class="ckh">🔊 Pronuncia <small>(un clic = annotato, di nuovo = ×2)</small></div><div class="chips" id="t-npr"></div>
 <div class="ckh">✏️ Errori</div><div class="chips" id="t-ner"></div>
-<div class="nin"><input id="t-inpr" placeholder="🔊 Altra parola pronunciata male + Invio" autocomplete="off"><input id="t-iner" placeholder="✏️ Altro errore sentito + Invio" autocomplete="off"></div>
+<div class="nin"><div class="nadd"><input id="t-inpr" placeholder="🔊 Altre parole pronunciate male (separate da virgola)" autocomplete="off"><button data-act="nadd" data-g="pr" title="Aggiungi (anche più di una, separate da virgola)">＋</button></div><div class="nadd"><input id="t-iner" placeholder="✏️ Altri errori sentiti (separati da virgola)" autocomplete="off"><button data-act="nadd" data-g="er" title="Aggiungi (anche più di uno, separati da virgola)">＋</button></div></div>
+<div class="sub" style="margin:0 0 4px">Quelle che aggiungi diventano pulsanti come gli altri e restano per i prossimi alunni (✕ per toglierle dall'elenco).</div>
 <div class="nl" id="t-nl"></div>
 <div class="link" id="t-link">🔗 I punteggi vanno anche nella LIVE di MyClass, se è aperta su questo computer.</div>
 <div class="tot"><span class="v" id="t-voto">–</span><span class="p" id="t-pts">Scegli un punteggio per ogni area</span></div>
