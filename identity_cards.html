@@ -928,6 +928,162 @@ function storeGrades(g) { try { localStorage.setItem(GKEY, JSON.stringify(g)); }
 // ══════════════════════════════════════════════════════════════════
 //  FINESTRA DOCENTE (secondo schermo)
 // ══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+//  CHECKLIST DAL VIVO (finestra docente), per lo studente A e per il B
+//  Parte 1: i passaggi della chat (✓ / ~ con aiuto o impreciso / ✗ errore)
+//  Parte 2: le informazioni della carta, he/she, his/her, la reazione
+//  I suggerimenti vanno in griglia; se scegli tu un punteggio, resta il tuo.
+// ══════════════════════════════════════════════════════════════════
+const P1_ITEMS = [
+  ['greet', '👋 Saluta (Hello! / Hi!)'], ['intro', "🙋 Si presenta: I'm …"], ['nice', '🤝 Nice / Great to meet you (too)'],
+  ['ageQ', '❓ How old are you?'], ['ageA', "🎂 I'm eleven (non I have…)"], ['fromQ', '❓ Where are you from?'],
+  ['fromA', "🌍 I'm from …"], ['favQ', "❓ What's your favourite …?"], ['favA', '❤️ My favourite … is …'],
+];
+const P1_Q = ['ageQ', 'fromQ', 'favQ'];
+function p2Items(s) {
+  const c = state.pair[s]; if (!c) return [];
+  const x = pr(c), o = state.pair[s === 'A' ? 'B' : 'A'];
+  const favW = c.fk === 'sport' ? 'sport' : 'subject';
+  return [
+    ['meet', `👋 Meet… / This is ${c.name}`, 'sch'], ['friend', `🤝 ${x.S} is my friend`, 'sch'],
+    ['from', `🌍 ${x.S} is from ${c.city}`, 'info'], ['age', `🎂 ${x.S} is ${NUM_W[c.age] || c.age}`, 'info'],
+    ['col', `🎨 ${x.P} favourite colour is ${c.colour}`, 'info'], ['fav', `❤️ ${x.P} favourite ${favW} is ${c.fav}`, 'info'], ...(c.pet ? [['pet', `⭐ ${x.S} has got ${c.pet}`, 'info']] : []),
+    ['hs', `he / she giusto (${x.s})`, 'gr'], ['hh', `his / her giusto (${x.p})`, 'gr'],
+    ...(o ? [['react', `👂 Reagisce all'amico del compagno: Hello ${o.name}!`, 'sch']] : []),
+  ];
+}
+const CY_LBL = ['', '✓ ', '~ ', '✗ '], CY_CLS = ['n', 'ok', 'bad', 'no'];
+const NOTE_PR = ['thirteen / thirty', 'favourite /ˈfeɪvərɪt/', 'th (three, thirteen)', 'eleven / twelve', 'nomi e paesi della carta', 'finali delle parole', 'meet / my friend', 'troppo veloce (recita)', 'pronuncia all\'italiana'];
+const NOTE_ER = ['I have eleven years', 'manca is (He from…)', 'he / she scambiati', 'his / her scambiati', 'He favourite… (manca his)', 'What is you favourite…?', 'domanda mal formata', 'parola in italiano', 'informazione sbagliata'];
+const ckNew = () => ({ p1: {}, p2: {}, p2card: null, n: { andYou: 0, skip: 0, guide: 0, pause: 0, block: 0 }, notes: { pr: [], er: [] } });
+let ck = { A: ckNew(), B: ckNew() };
+const rubManual = { A: {}, B: {} }, rubAuto = { A: {}, B: {} };
+let lastHints = { A: {}, B: {} };
+const ckOf = s => { const k = ck[s], c = state.pair[s]; if (c && k.p2card !== c.n) { k.p2 = {}; k.p2card = c.n; } return k; };
+const cyBtn = (act, k, v, txt, title) => `<button class="cy ${CY_CLS[v]}" data-act="${act}" data-k="${k}" title="${title || 'Clic: ✓ giusto → ~ con aiuto / impreciso → ✗ errore → di nuovo vuoto'}">${CY_LBL[v]}${esc(txt)}</button>`;
+const cntBox = (k, lbl, v, title = '') => `<span class="cnt" title="${title}">${lbl} <b>${v}</b><button data-act="ckn" data-k="${k}" data-d="-1" title="Togli">−</button><button data-act="ckn" data-k="${k}" data-d="1" title="Aggiungi">+</button></span>`;
+const nN = (k, list) => k.notes.er.concat([]).filter(x => !list || list.includes(x.t)).reduce((t, x) => t + x.n, 0);
+const prN = k => k.notes.pr.reduce((t, x) => t + x.n, 0);
+
+function renderCk() {
+  if (!twOpen()) return;
+  const s = cur, k = ckOf(s), c = state.pair[s];
+  const p1 = `<div class="ckh">👋 Parte 1 · Chat <small>· clic su ogni passaggio quando ${esc(nameOf(s))} lo fa</small></div>
+    <div class="ck">${P1_ITEMS.map(([id, t]) => cyBtn('c1', id, k.p1[id] || 0, t)).join('')}</div>
+    <div class="cnts">${cntBox('andYou', '↩️ And you?', k.n.andYou, 'Ogni volta che rilancia con And you?')}${cntBox('skip', 'salta / inverte un passaggio', k.n.skip)}${cntBox('guide', 'aiuto (prof o compagno)', k.n.guide)}</div>`;
+  const p2 = c ? `<div class="ckh">🪪 Parte 2 · Mystery Guest: ${esc(c.name)} ${c.g === 'm' ? '👦' : '👧'} <small>· cosa dice della carta</small></div>
+    <div class="ck">${p2Items(s).map(([id, t, kind]) => cyBtn('c2', id, k.p2[id] || 0, t, kind === 'gr' ? 'Clic: ✓ sempre giusto → ~ una volta sbagliato → ✗ scambiato' : '')).join('')}</div>`
+    : `<div class="ckh">🪪 Parte 2 · Mystery Guest <small>· pesca le carte per vedere le spunte</small></div>`;
+  tw('t-ck').innerHTML = state.part === 2 ? p2 + p1 : p1 + p2;
+}
+function stats(s) {
+  const k = ckOf(s), items = p2Items(s);
+  const p1v = P1_ITEMS.map(([id]) => k.p1[id] || 0), p1m = p1v.filter(Boolean).length;
+  const asked = P1_Q.filter(id => k.p1[id] === 1 || k.p1[id] === 2).length;
+  const p2v = items.map(([id, , kind]) => ({ id, kind, v: k.p2[id] || 0 })), p2m = p2v.filter(x => x.v).length;
+  const info = p2v.filter(x => x.kind === 'info');
+  return { k, p1m, asked, p1ok: p1v.filter(v => v === 1).length, p1x: p1v.filter(v => v === 3).length, p1t: p1v.filter(v => v === 2).length,
+    p2m, infoN: info.length, infoSaid: info.filter(x => x.v === 1 || x.v === 2).length, infoMiss: p2m ? info.filter(x => !x.v || x.v === 3).length : 0,
+    p2x: p2v.filter(x => x.v === 3).length, p2t: p2v.filter(x => x.v === 2).length,
+    sch: p2v.filter(x => x.kind === 'sch' && x.id !== 'react'), react: p2v.find(x => x.id === 'react'), card: state.pair[s] };
+}
+function ckLine(s) {
+  const st = stats(s), k = st.k, parts = [];
+  if (st.p1m || k.n.andYou || k.n.skip) parts.push(`P1: ${st.p1ok}/${P1_ITEMS.length} passaggi ✓${st.p1t ? ` · ~${st.p1t}` : ''}${st.p1x ? ` · ✗${st.p1x}` : ''} · domande fatte ${st.asked}/3 · And you? ×${k.n.andYou}${k.n.skip ? ` · passaggi saltati/invertiti ×${k.n.skip}` : ''}`);
+  if (st.p2m) parts.push(`P2 (${st.card.name}): informazioni ${st.infoSaid}/${st.infoN}${st.p2x ? ` · ✗${st.p2x}` : ''}${st.p2t ? ` · ~${st.p2t}` : ''}` + ['hs', 'hh'].map(id => k.p2[id] === 3 ? ` · ${id === 'hs' ? 'he/she' : 'his/her'} scambiati` : k.p2[id] === 2 ? ` · ${id === 'hs' ? 'he/she' : 'his/her'} sbagliato una volta` : '').join(''));
+  if (k.n.guide) parts.push(`aiuti ×${k.n.guide}`);
+  if (k.n.pause) parts.push(`esitazioni ×${k.n.pause}`);
+  if (k.n.block) parts.push(`blocchi ×${k.n.block}`);
+  return parts.join(' · ');
+}
+const noteList = (k, g) => k.notes[g].map(x => x.t + (x.n > 1 ? ' ×' + x.n : '')).join(', ');
+function composeNote(s) {
+  const k = ck[s];
+  return [ckLine(s), k.notes.pr.length && 'Pronuncia: ' + noteList(k, 'pr'), k.notes.er.length && 'Errori: ' + noteList(k, 'er'), notes[s].trim()].filter(Boolean).join(' | ');
+}
+// Suggerimenti per le tre voci: { indice: { v, why } }
+function computeHints(s) {
+  const st = stats(s), k = st.k, H = {}, n = k.n;
+  const anything = st.p1m || st.p2m || n.andYou || n.skip || n.guide || n.pause || n.block || prN(k) || nN(k);
+  if (!anything) return H;
+  // Interazione /5: ordine, ping-pong (domande + And you?), reazioni, schema del Mystery Guest
+  if (st.p1m || st.p2m || n.andYou || n.skip || n.guide) {
+    const p1 = st.p1m > 0;
+    const reactMiss = (p1 && k.p1.nice !== 1 ? 1 : 0) + (st.react && st.p2m && st.react.v !== 1 ? 1 : 0);
+    const schBad = st.sch.filter(x => st.p2m && x.v !== 1).length, schNone = st.p2m && st.sch.every(x => !x.v || x.v === 3);
+    let v = 5;
+    if ((p1 && !n.andYou) || reactMiss >= 1 || schBad >= 1) v = 4;
+    if (n.skip >= 1 || (p1 && st.asked <= 1) || n.guide >= 1 || (p1 && n.andYou === 0 && st.asked <= 2 && reactMiss)) v = 3;
+    if ((p1 && st.asked === 0) || n.skip >= 2 || n.guide >= 2 || schNone) v = 2;
+    if (n.block >= 2 || (p1 && st.p1ok + st.p1t <= 2)) v = 1;
+    H[0] = { v, why: `${p1 ? `domande fatte ${st.asked}/3 · And you? ×${n.andYou} · ` : ''}${n.skip ? `passaggi saltati ×${n.skip} · ` : ''}aiuti ×${n.guide}${st.p2m ? ` · schema Mystery Guest ${st.sch.length - schBad}/${st.sch.length}` : ''}${reactMiss ? ` · reazioni mancanti ${reactMiss}` : ''}` };
+  }
+  // Accuratezza /5: errori (✗ nelle spunte + note di errore), imprecisioni, informazioni della carta
+  const errNotes = nN(k), E = st.p1x + st.p2x + errNotes + Math.floor((st.p1t + st.p2t) / 2);
+  if (st.p1m || st.p2m || errNotes) {
+    let v = E === 0 ? 5 : E === 1 ? 4 : E <= 3 ? 3 : E <= 6 ? 2 : 1;
+    if (E === 0 && st.p1t + st.p2t) v = 4;
+    if (st.infoMiss === 1) v = Math.min(v, 4);
+    if (st.infoMiss >= 2) v = Math.min(v, 3);
+    if (st.infoN && st.p2m && st.infoMiss > st.infoN / 2) v = Math.min(v, 2);
+    H[1] = { v, why: `errori ${E} (spunte ✗ ${st.p1x + st.p2x}, note ${errNotes}${st.p1t + st.p2t ? `, imprecisioni ${st.p1t + st.p2t}` : ''})${st.p2m ? ` · informazioni della carta ${st.infoSaid}/${st.infoN}` : ''}` };
+  }
+  // Pronuncia e fluenza /5: note di pronuncia, esitazioni, blocchi
+  const P = prN(k), Hs = n.pause, B = n.block;
+  const v = B >= 3 ? 0 : B >= 2 ? 1 : Hs >= 5 || P >= 5 || B === 1 ? 2 : Hs >= 3 || P >= 3 ? 3 : Hs >= 1 || P >= 1 ? 4 : 5;
+  H[2] = { v, why: `${P} ${P === 1 ? 'errore' : 'errori'} di pronuncia · ${Hs} ${Hs === 1 ? 'esitazione' : 'esitazioni'} · ${B} ${B === 1 ? 'blocco' : 'blocchi'}${!P && !Hs && !B ? ' — se ne senti, segnali qui sotto' : ''}` };
+  return H;
+}
+function applyHints() {
+  ['A', 'B'].forEach(s => {
+    lastHints[s] = computeHints(s);
+    GRID.aree.forEach((a, i) => {
+      if (rubManual[s][i]) return;
+      const h = lastHints[s][i];
+      if (h) { rub[s][i] = h.v; rubAuto[s][i] = true; }
+      else if (rubAuto[s][i]) { delete rub[s][i]; rubAuto[s][i] = false; }
+    });
+  });
+}
+function renderSummary() {
+  if (!twOpen()) return;
+  const s = cur, line = ckLine(s), H = lastHints[s], grey = t => ` <span class="gr">(${t})</span>`;
+  const hints = GRID.aree.map((a, i) => H[i] ? `${SHORT[i]}: <span class="sg">${H[i].v}</span>${rubManual[s][i] && rub[s][i] !== H[i].v ? grey('in griglia hai messo ' + rub[s][i]) : ''}${grey(esc(H[i].why))}` : '').filter(Boolean);
+  tw('t-sumh').textContent = `📋 Riepilogo · ${nameOf(s)}`;
+  tw('t-sum').innerHTML = (line || hints.length) ? `<div class="sum">${line ? `<div>${esc(line)}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori · già messi in griglia</span><br>${hints.join('<br>')}</div>` : ''}</div>` : `<div class="empty">Spunta mentre ${esc(nameOf(s))} parla: qui compare il riepilogo, che va anche nella nota.</div>`;
+}
+function renderNotes() {
+  if (!twOpen()) return;
+  const k = ck[cur];
+  const chip = (g, t) => { const x = k.notes[g].find(y => y.t === t); return `<button data-act="nt" data-g="${g}" data-t="${esc(t)}" class="${x ? 'on' : ''}">${esc(t)}${x && x.n > 1 ? ' ×' + x.n : ''}</button>`; };
+  tw('t-nh').textContent = `🗒️ Note veloci · ${nameOf(cur)}`;
+  tw('t-flu').innerHTML = cntBox('pause', 'esitazioni / pause', k.n.pause, 'Pause lunghe, ripartenze, ehm…') + cntBox('block', 'si blocca', k.n.block, 'Si ferma e non riparte da solo');
+  tw('t-npr').innerHTML = NOTE_PR.map(t => chip('pr', t)).join('');
+  tw('t-ner').innerHTML = NOTE_ER.map(t => chip('er', t)).join('');
+  tw('t-nl').innerHTML = ['pr', 'er'].flatMap(g => k.notes[g].map((x, i) => `<span class="${g}">${g === 'pr' ? '🔊' : '✏️'} ${esc(x.t)}${x.n > 1 ? ' ×' + x.n : ''}<button data-act="ntx" data-g="${g}" data-i="${i}" title="Togli uno">✕</button></span>`)).join('');
+}
+// dopo ogni spunta: suggerimenti in griglia, ridisegna, nota aggiornata alla LIVE
+function ckRefresh() { applyHints(); renderCk(); renderSummary(); renderNotes(); renderTeacherRubric(true); }
+function ckChanged() { ckRefresh(); clearTimeout(ckChanged.t); ckChanged.t = setTimeout(() => pushLive(), 700); }
+function addNote(g, t) {
+  t = String(t || '').trim(); if (!t) return;
+  const k = ck[cur], x = k.notes[g].find(y => y.t.toLowerCase() === t.toLowerCase());
+  if (x) x.n++; else k.notes[g].push({ t, n: 1 });
+  ckChanged();
+}
+function onCkClick(act, b) {
+  const k = ckOf(cur), id = b.dataset.k;
+  if (act === 'c1') k.p1[id] = ((k.p1[id] || 0) + 1) % 4;
+  else if (act === 'c2') k.p2[id] = ((k.p2[id] || 0) + 1) % 4;
+  else if (act === 'ckn') k.n[id] = Math.max(0, k.n[id] + +b.dataset.d);
+  else if (act === 'nt') { addNote(b.dataset.g, b.dataset.t); return true; }
+  else if (act === 'ntx') { const x = k.notes[b.dataset.g][+b.dataset.i]; if (x && --x.n <= 0) k.notes[b.dataset.g].splice(+b.dataset.i, 1); }
+  else if (act === 'auto') { const r = +b.dataset.r; rubManual[cur][r] = false; rubAuto[cur][r] = false; }
+  else return false;
+  ckChanged();
+  return true;
+}
+
 let teacherWin = null;
 const TEACHER_HTML = `<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>Finestra docente – Meet My Friend!</title>
 <style>
@@ -966,6 +1122,21 @@ input{width:100%;background:#182624;border:1px solid rgba(255,255,255,.12);color
 table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}table.sv td,table.sv th{text-align:left;padding:5px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}table.sv th{color:#94a8a3;font-size:11px;text-transform:uppercase}td.v{font-weight:800;color:#ffd166}
 .x{background:none;border:none;color:#94a8a3;padding:0 4px}.empty{color:#94a8a3;font-style:italic}
 @media (max-width:560px){.cards2{grid-template-columns:1fr}.fields{grid-template-columns:1fr 1fr}}
+.ckh{font-size:12px;color:#94a8a3;font-weight:700;margin:12px 0 5px}.ckh small{font-weight:500}
+.ck{display:flex;flex-wrap:wrap;gap:5px}
+.cy{padding:5px 9px;font-size:12.5px;border-radius:8px;font-weight:700;text-align:left}
+.cy.ok{background:rgba(46,196,110,.25);color:#8ff3b8;border-color:transparent}.cy.bad{background:rgba(255,181,71,.25);color:#ffcf8a;border-color:transparent}
+.cy.no{background:rgba(255,77,109,.3);color:#ffb0c0;border-color:transparent}.cy.n{opacity:.7}
+.cnts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.cnt{display:inline-flex;align-items:center;gap:5px;background:#142120;border:1px solid rgba(255,255,255,.1);border-radius:9px;padding:3px 4px 3px 9px;font-size:12.5px}
+.cnt b{min-width:16px;text-align:center;color:#ffd166}.cnt button{padding:2px 8px;font-size:13px}
+.sum{background:#142120;border:1px solid rgba(255,209,102,.35);border-radius:10px;padding:8px 11px;font-size:13px;line-height:1.55}
+.sum .sg{color:#ffd166;font-weight:700}.sum .hd{color:#94a8a3;font-weight:700;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}.sum .gr{color:#94a8a3}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}.chips button{font-size:12px;padding:4px 8px;font-weight:600}
+.nl{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}.nl span{background:#23343a;border-radius:7px;padding:3px 4px 3px 8px;font-size:12.5px}.nl span.er{background:#3a2632}
+.nl span button{background:none;border:none;color:#94a8a3;padding:0 4px;font-size:12px}
+.nin{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}.nin input{font-size:13px;padding:6px 9px}
+.auto{font-size:11px;font-weight:700;color:#ffd166;background:rgba(255,209,102,.12);border:1px solid rgba(255,209,102,.35);border-radius:6px;padding:1px 6px;margin-left:4px}button.auto{cursor:pointer}
 </style></head><body>
 <h1>🖥️ Finestra docente · Meet My Friend!</h1>
 <div class="sub">Tienila sul tuo schermo: alla LIM si vedono solo la traccia dei 3 step e le carte.</div>
@@ -973,12 +1144,22 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
 <div class="tmr" style="margin-top:10px"><span class="tv" id="t-timer">2:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia</button><button data-act="treset" title="Azzera">↺</button><span class="tl" id="t-tlbl"></span></div>
 <div class="bar"><button class="pri" data-act="p1">👋 Parte 1 · Chat</button><button class="or" data-act="draw">🎴 Parte 2 · Pesca 2 carte</button></div>
 <div id="t-part"></div>
-<h2>Valutazione · /15</h2>
+<h2>✅ Spunte e valutazione · scegli lo studente</h2>
 <div class="tabs"><button data-act="tab" data-s="A" id="tab-A"></button><button data-act="tab" data-s="B" id="tab-B"></button></div>
+<div id="t-ck"></div>
+<h2 id="t-sumh">📋 Riepilogo</h2><div id="t-sum"></div>
+<h2 id="t-vh">Valutazione · /15</h2>
 <div id="t-rub"></div>
+<h2 id="t-nh">🗒️ Note veloci · pronuncia ed errori</h2>
+<div class="cnts" id="t-flu" style="margin:0 0 4px"></div>
+<div class="ckh">🔊 Pronuncia <small>(un clic = annotato, di nuovo = ×2)</small></div><div class="chips" id="t-npr"></div>
+<div class="ckh">✏️ Errori</div><div class="chips" id="t-ner"></div>
+<div class="nin"><input id="t-inpr" placeholder="🔊 Altra parola pronunciata male + Invio" autocomplete="off"><input id="t-iner" placeholder="✏️ Altro errore sentito + Invio" autocomplete="off"></div>
+<div class="nl" id="t-nl"></div>
 <div class="link" id="t-link">🔗 I punteggi vanno anche nella LIVE di MyClass, se è aperta su questo computer.</div>
 <div class="tot"><span class="v" id="t-voto">–</span><span class="p" id="t-pts">Scegli un punteggio per ogni area</span></div>
 <input id="t-note" placeholder="Nota (facoltativa)" autocomplete="off">
+<div class="sub" style="margin:5px 0 0">Riepilogo, pronuncia, errori e nota vanno nella nota del voto e nel promemoria della LIVE di MyClass, per ciascuno dei due.</div>
 <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva la coppia e prossima</button><button data-act="reset">↺ Azzera</button></div>
 <div class="msg" id="t-msg"></div>
 <h2>Voti salvati</h2>
@@ -997,9 +1178,13 @@ function openTeacherWin() {
     if (e.target.id === 't-nameA' || e.target.id === 't-nameB') { state.names.A = tw('t-nameA').value.trim(); state.names.B = tw('t-nameB').value.trim(); renderStage(); renderTabs(); updateTeacherWin(); }
     else if (e.target.id === 't-note') notes[cur] = e.target.value;
   });
-  d.addEventListener('change', e => { if (/^t-(nameA|nameB|class)$/.test(e.target.id)) pushLive(); });
+  d.addEventListener('change', e => { if (/^t-(nameA|nameB|class|note)$/.test(e.target.id)) pushLive(); });
+  d.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || (e.target.id !== 't-inpr' && e.target.id !== 't-iner')) return;
+    e.preventDefault(); addNote(e.target.id === 't-inpr' ? 'pr' : 'er', e.target.value); e.target.value = '';
+  });
   tw('t-nameA').value = state.names.A; tw('t-nameB').value = state.names.B;
-  updateTeacherWin(); renderTeacherRubric(); renderTeacherSaved(); renderTimer();
+  updateTeacherWin(); renderTeacherRubric(); renderTeacherSaved(); renderTimer(); ckRefresh();
   if (liveFollow) liveFollow.start();
   moveTeacherWinToOtherScreen();
 }
@@ -1019,6 +1204,7 @@ const nameOf = s => state.names[s] || (s === 'A' ? 'Studente A' : 'Studente B');
 
 function updateTeacherWin() {
   if (!twOpen()) return;
+  ckRefresh();
   if (state.part === 1) {
     tw('t-part').innerHTML = `<h2>Parte 1 · Greetings &amp; Chat (insieme, circa 2 minuti)</h2>
       <ul><li><b>Ordine:</b> saluto → presentazione (I'm… Nice/Great to meet you · … too) → età → provenienza → preferiti.</li>
@@ -1053,11 +1239,14 @@ function renderTabs() {
     b.innerHTML = `${s} · ${esc(nameOf(s))} <b>${rubDone(s) ? voto(rubTot(s)) : rubAny(s) ? '…' : '–'}</b>`;
   });
 }
-function renderTeacherRubric() {
+function renderTeacherRubric(fromCk) {
   if (!twOpen()) return;
+  if (!fromCk) { applyHints(); renderCk(); renderSummary(); renderNotes(); }
   renderTabs();
-  const R = rub[cur];
-  tw('t-rub').innerHTML = GRID.aree.map((a, i) => `<div class="r"><div class="rh"><div class="rn">${esc(a.nome)} <small>/ ${a.max}</small></div><div class="pts">${a.descrittori.map(d => `<button class="${R[i] === d.pt ? 'on' : ''}" data-act="pt" data-r="${i}" data-v="${d.pt}" title="${esc(d.testo)}">${d.pt}</button>`).join('')}</div></div>${R[i] !== undefined ? `<div class="rd">${esc(a.descrittori.find(d => d.pt === R[i]).testo)}</div>` : ''}</div>`).join('');
+  const R = rub[cur], H = lastHints[cur];
+  const tag = i => rubAuto[cur][i] && !rubManual[cur][i] && R[i] !== undefined ? ' <span class="auto">✨ suggerito</span>' : rubManual[cur][i] && H[i] && H[i].v !== R[i] ? ` <button class="auto" data-act="auto" data-r="${i}" title="Rimetti il punteggio suggerito dalle spunte">↺ suggerito ${H[i].v}</button>` : '';
+  tw('t-vh').textContent = `Valutazione di ${nameOf(cur)} · /15`;
+  tw('t-rub').innerHTML = GRID.aree.map((a, i) => `<div class="r"><div class="rh"><div class="rn">${esc(a.nome)} <small>/ ${a.max}</small>${tag(i)}</div><div class="pts">${a.descrittori.map(d => `<button class="${R[i] === d.pt ? 'on' : ''}" data-act="pt" data-r="${i}" data-v="${d.pt}" title="${esc(d.testo)}">${d.pt}</button>`).join('')}</div></div>${R[i] !== undefined ? `<div class="rd">${esc(a.descrittori.find(d => d.pt === R[i]).testo)}</div>` : ''}</div>`).join('');
   tw('t-voto').textContent = rubDone(cur) ? voto(rubTot(cur)) : '–';
   tw('t-pts').textContent = rubDone(cur) ? `${nameOf(cur)}: ${rubTot(cur)} / 15 punti` : `${nameOf(cur)}: scegli un punteggio per ogni area`;
   tw('t-note').value = notes[cur]; tw('t-note').placeholder = `Nota per ${nameOf(cur)} (facoltativa)`;
@@ -1071,6 +1260,7 @@ function twMsg(t) { if (!twOpen()) return; tw('t-msg').textContent = t; clearTim
 function onTeacherClick(e) {
   const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
   const act = b.dataset.act;
+  if (onCkClick(act, b)) return;
   if (act === 'timer') timerToggle();
   else if (act === 'treset') timerReset();
   else if (act === 'p1') goPart(1);
@@ -1079,7 +1269,7 @@ function onTeacherClick(e) {
   else if (act === 'flip') flip(b.dataset.s);
   else if (act === 'hideall') hideAll();
   else if (act === 'tab') { cur = b.dataset.s; renderTeacherRubric(); pushLive(); }
-  else if (act === 'pt') { rub[cur][+b.dataset.r] = +b.dataset.v; renderTeacherRubric(); pushLive(); }
+  else if (act === 'pt') { const r = +b.dataset.r; rub[cur][r] = +b.dataset.v; rubManual[cur][r] = true; rubAuto[cur][r] = false; renderTeacherRubric(); pushLive(); }
   else if (act === 'reset') resetRubric();
   else if (act === 'save') saveGrades();
   else if (act === 'copy') copyGrades();
@@ -1087,7 +1277,8 @@ function onTeacherClick(e) {
   else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
 }
 function resetRubric() {
-  ['A', 'B'].forEach(s => { rub[s] = {}; notes[s] = ''; });
+  ['A', 'B'].forEach(s => { rub[s] = {}; notes[s] = ''; rubManual[s] = {}; rubAuto[s] = {}; });
+  ck = { A: ckNew(), B: ckNew() };
   cur = 'A'; state.names.A = state.names.B = '';
   if (twOpen()) { tw('t-nameA').value = ''; tw('t-nameB').value = ''; }
   renderTeacherRubric(); renderStage();
@@ -1103,12 +1294,12 @@ function saveGrades() {
   const g = loadGrades(), date = new Date().toLocaleDateString('it-IT'), cls = tw('t-class').value.trim();
   who.forEach(s => {
     const c = state.pair[s], other = s === 'A' ? 'B' : 'A';
-    g.push({ name: state.names[s], partner: state.names[other] || '', cls, voto: voto(rubTot(s)), punti: rubTot(s), det: GRID.aree.map((a, i) => rub[s][i]).join('-'), card: c ? `${c.n}. ${c.name}` : '–', tempo: `${t1} + ${t2}`, note: notes[s].trim(), date });
+    g.push({ name: state.names[s], partner: state.names[other] || '', cls, voto: voto(rubTot(s)), punti: rubTot(s), det: GRID.aree.map((a, i) => rub[s][i]).join('-'), card: c ? `${c.n}. ${c.name}` : '–', tempo: `${t1} + ${t2}`, note: composeNote(s), date });
   });
   storeGrades(g);
   // promemoria anche nella LIVE di MyClass: prima A, poi B
   const saved = who.map(s => `${state.names[s]} → ${voto(rubTot(s))}`).join(' · ');
-  const snapshot = who.map(s => ({ s, name: state.names[s], scores: GRID.aree.map((a, i) => rub[s][i]) }));
+  const snapshot = who.map(s => ({ s, name: state.names[s], scores: GRID.aree.map((a, i) => rub[s][i]), note: composeNote(s) }));
   sendSaved(snapshot, cls);
   twMsg(`✅ Salvato: ${saved}`);
   Object.keys(partTimes).forEach(k => delete partTimes[k]);
@@ -1120,13 +1311,13 @@ function pushLive(save, s = cur, done) {
   if (!window.MyClassLive || !twOpen()) return;
   const scores = GRID.aree.map((a, i) => rub[s][i] === undefined ? null : rub[s][i]);
   if (scores.every(v => v === null)) return;
-  MyClassLive.send({ grid: liveGrid(), scores, student: state.names[s] || '', cls: tw('t-class').value.trim(), save: !!save }, r => { showLive(r); done && done(); });
+  MyClassLive.send({ grid: liveGrid(), scores, student: state.names[s] || '', cls: tw('t-class').value.trim(), save: !!save, note: composeNote(s) }, r => { showLive(r); done && done(); });
 }
 // al salvataggio la griglia si azzera subito: mandiamo una copia dei punteggi, uno studente dopo l'altro
 function sendSaved(list, cls) {
   if (!window.MyClassLive || !list.length) return;
   const [first, ...rest] = list;
-  MyClassLive.send({ grid: liveGrid(), scores: first.scores, student: first.name, cls, save: true }, r => { showLive(r); sendSaved(rest, cls); });
+  MyClassLive.send({ grid: liveGrid(), scores: first.scores, student: first.name, cls, save: true, note: first.note }, r => { showLive(r); sendSaved(rest, cls); });
 }
 function showLive(r) {
   if (!twOpen()) return;
