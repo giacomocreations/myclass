@@ -2519,6 +2519,14 @@ function renderCompiti(){
   const filtered = filter==='all'?sessions:sessions.filter(s=>modoFiltro(s)===filter||s.status===filter);
   const pending = S.lessons.filter(l=>l.compiti && extractHwDate(l.compiti) && daysUntil(extractHwDate(l.compiti))>=0);
   const assegnati = _assignedTodo();
+  // Attività assegnate ancora aperte, per codice: dai COMPLETATI si possono
+  // rifare quelle ripetibili. Le consegnate che MyClass non ha ancora smistato
+  // nella cronologia stanno tra i completati come "risultato in arrivo",
+  // così dopo la consegna non spariscono dal tab Test.
+  const _assegnMap = {}; _assignedAll().forEach(a=>{ _assegnMap[a.code]=a; });
+  const consegnate = (filter==='all'||filter==='assigned')
+    ? Object.values(_assegnMap).filter(a=>a.done && !S.sessions[a.code]) : [];
+  const _rifaiHtml = a => `<a href="${esc(a.url).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="pdf-btn" style="background:#fff;color:var(--purple);border:1.5px solid var(--purple);text-decoration:none">🔁 Rifai</a>`;
 
   let html = `<div class="toggle-row">
     <button class="toggle-opt ${filter==='all'?'active':''}" onclick="setHwFilter('all')">Tutti</button>
@@ -2564,7 +2572,19 @@ function renderCompiti(){
   }
 
   html += `<div class="sec-lbl" style="margin-top:4px">COMPLETATI</div>`;
-  if(!filtered.length){
+  consegnate.forEach(a=>{
+    html += `<div class="card" style="margin-bottom:8px">
+      <div style="font-size:14px;font-weight:600;color:var(--text)">${esc(a.title||'Attività assegnata')}</div>
+      <div style="display:flex;gap:5px;margin-top:4px;flex-wrap:wrap">
+        <span class="pill pill-indigo">Assegnato</span>
+        <span class="pill pill-teal">✅ Consegnato</span>
+        <span class="pill pill-gray">Codice ${esc(a.code)}</span>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px">Il risultato comparirà qui appena il docente lo registra.</div>
+      ${a.repeatable?`<div class="pdf-row">${_rifaiHtml(a)}</div>`:''}
+    </div>`;
+  });
+  if(!filtered.length && !consegnate.length){
     html += `<div style="text-align:center;padding:20px;font-size:13px;color:var(--muted)">Nessuna sessione completata.</div>`;
   } else {
     filtered.forEach(sess=>{
@@ -2604,6 +2624,7 @@ function renderCompiti(){
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             ${sess._piano?'Vedi risultati':'Vedi PDF risultati'}
           </button>
+          ${!sess._piano&&_assegnMap[sess.sessionCode]?.repeatable?_rifaiHtml(_assegnMap[sess.sessionCode]):''}
         </div>
       </div>`;
     });
