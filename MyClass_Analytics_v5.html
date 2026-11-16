@@ -25350,7 +25350,7 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
     async function agentRegenerate(taskId) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
-        if (task.aiScelta === 'claude' && (task.type === 'valorale' || task.type === 'valdialogo') && (task.trascrizione||'').trim()) { await agentClaudePrepara(taskId); return; }
+        if (task.aiScelta === 'claude' && (task.type === 'valorale' || task.type === 'valdialogo') && ((task.trascrizione||'').trim() || _agentSenzaTrascr(task))) { await agentClaudePrepara(taskId); return; }
         task.status = 'pending';
         agentRenderPanel();
         // Per i task valscritta: ricarica sempre le responses fresche da Firebase
@@ -25366,7 +25366,7 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
         if (task.type === 'valorale')          await agentTaskValOrale(task);
         if (task.type === 'valdialogo') {
             // Rigenera = ri-valuta dalla trascrizione+mappatura esistenti; se mancano, ritrascrivi
-            if ((task.trascrizione||'').trim() && Object.keys(task.speakerMap||{}).length)
+            if (_agentSenzaTrascr(task) || ((task.trascrizione||'').trim() && Object.keys(task.speakerMap||{}).length))
                 await agentEvaluateDialogo(task);
             else
                 await agentTranscribeDialogo(task);
@@ -31140,7 +31140,8 @@ Lunghezza ${aree.length ? '170-260' : '120-200'} parole in tutto. A parte ${aree
     // opts.raw        → usa questa risposta (incollata da Claude) al posto della chiamata AI
     async function agentTaskValOrale(task, opts = {}) {
         const _prima = { provider: task.aiProvider, at: task.generatedAt };   // per le versioni precedenti
-        const skipTranscription = !!(task.trascrizione && task.trascrizione.trim());
+        // Trascrizione esclusa dal docente: si valuta solo da valutazione preliminare e annotazioni
+        const skipTranscription = _agentSenzaTrascr(task) || !!(task.trascrizione && task.trascrizione.trim());
         if (opts.onlyPrompt && !skipTranscription) return '';
         if (!opts.onlyPrompt) { task.status = 'processing'; agentRenderPanel(); }
 
@@ -31251,8 +31252,7 @@ ${pauseRule}
             const trascrizioneSlice = (task.trascrizione||'').slice(0, 8000);
             const prompt = `Sei il prof. Giacomo Cossu, docente di inglese scuola media italiana.
 Verifica orale di ${task.studentName}, classe ${task.classe}${task.unit?', '+task.unit:''}.${slidesHeader}${grigliaInfo}${prelimContext}
-TRASCRIZIONE:
-${trascrizioneSlice}
+${_agentSenzaTrascr(task) ? _AGENT_NO_TRASCR : 'TRASCRIZIONE:\n' + trascrizioneSlice}
 ${REGOLE}
 Genera SOLO due blocchi (niente ARGO) con esattamente questi marcatori:\n=== VALUTAZIONE DOCENTE ===\n${task.griglia ? ('Intestazione: ' + task.studentName + ', ' + task.classe + (task.unit ? ', ' + task.unit : '') + ', data ' + task.sessionDate + '.\n\n' + (task.griglia.aree||[]).map(a => a.nome + ' (X/' + a.max + ')\n' + '[analisi della prestazione in quest\'area basata sulla trascrizione]').join('\n\n') + '\n\nTotale: X/' + (task.griglia.aree||[]).reduce((s,a)=>s+(a.max||0),0) + ' — Voto: Y/10\nDove X è la somma dei punteggi per area e Y il voto dalla tabella di conversione.') : ('Intestazione: nome, classe, data (' + task.sessionDate + '), unit, voto. Analisi per area' + (task.hasSlides ? ' (NON commentare le pause [slide])' : ' (includi fluency se rilevante: pause significative, ritmo)') + '. Analisi complessiva.')}\n=== CLASSROOM ===\n${_agentFeedbackAlunnoIstr(nomeBreve, false, task.griglia)}`;
 
@@ -31672,10 +31672,12 @@ ${base}`, task, true);
             (task.studenti||[]).forEach(s => { const v = pick(task.prelimLive[s.studentSafe], s); if (v) task.prelimLive[s.studentSafe] = v; });
         }
     }
-    const _agentPrelimVoci = task => task.type === 'valdialogo'
-        ? (task.studenti||[]).map(s => ({ safe: s.studentSafe, nome: s.studentName, p: task.prelimLive?.[s.studentSafe] })).filter(x => x.p)
-        : (task.prelimLiveData ? [{ safe: '_', nome: task.studentName, p: task.prelimLiveData }] : []);
-    const _agentPrelimNotaDi = (task, safe, p) => (task.prelimNote && task.prelimNote[safe] !== undefined) ? task.prelimNote[safe] : (p?.nota || '');
+    function _agentPrelimVoci(task) {
+        return task.type === 'valdialogo'
+            ? (task.studenti||[]).map(s => ({ safe: s.studentSafe, nome: s.studentName, p: task.prelimLive?.[s.studentSafe] })).filter(x => x.p)
+            : (task.prelimLiveData ? [{ safe: '_', nome: task.studentName, p: task.prelimLiveData }] : []);
+    }
+    function _agentPrelimNotaDi(task, safe, p) { return (task.prelimNote && task.prelimNote[safe] !== undefined) ? task.prelimNote[safe] : (p?.nota || ''); }
     function _agentPrelimPanelHtml(task) {
         if ((task.type !== 'valorale' && task.type !== 'valdialogo') || task.status === 'approved' || task.status === 'dismissed') return '';
         const voci = _agentPrelimVoci(task);
@@ -31705,9 +31707,32 @@ ${base}`, task, true);
                 <input type="checkbox" style="margin:0;" ${task.usePrelim ? 'checked' : ''} onchange="agentTogglePrelim('${task.id}',this.checked)">
                 🎯 Confermo: tieni conto della valutazione preliminare e delle annotazioni
             </label>
-            ${fatto ? `<div style="font-size:11px;color:#666;margin-top:5px;">Se la cambi dopo la valutazione, premi 🔄 Rigenera.</div>` : ''}
+            <br>
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:5px 10px;border-radius:6px;margin-top:6px;
+                background:${task.noTrascrizione ? '#fff3e0' : '#f5f5f5'};border:1.5px solid ${task.noTrascrizione ? '#fb8c00' : '#bdbdbd'};color:${task.noTrascrizione ? '#8a4b00' : '#555'};font-weight:${task.noTrascrizione ? '700' : '400'};"
+                title="L'AI valuta solo da punteggi e annotazioni: la trascrizione (o l'audio) non si usa e non serve">
+                <input type="checkbox" style="margin:0;" ${task.noTrascrizione ? 'checked' : ''} onchange="agentToggleNoTrascr('${task.id}',this.checked)">
+                📵 Escludi la trascrizione: valuta solo da punteggi e annotazioni
+            </label>
+            ${task.noTrascrizione && task.status !== 'processing' ? `<div style="margin-top:8px;"><button class="agent-btn-approve" onclick="agentRegenerate('${task.id}')">▶ ${fatto ? 'Rivaluta' : 'Valuta'} senza trascrizione</button>
+                <span style="font-size:11px;color:#666;margin-left:6px;">${task.aiScelta === 'claude' ? 'prepara il testo per Claude' : 'usa il generatore scelto qui sopra'}</span></div>` : ''}
+            ${fatto && !task.noTrascrizione ? `<div style="font-size:11px;color:#666;margin-top:5px;">Se cambi queste scelte dopo la valutazione, premi 🔄 Rigenera.</div>` : ''}
         </div>`;
     }
+    // Trascrizione esclusa: vale solo se c'è almeno un promemoria LIVE da usare
+    function _agentSenzaTrascr(task) { return !!task.noTrascrizione && _agentPrelimVoci(task).length > 0; }
+    const _AGENT_NO_TRASCR = `TRASCRIZIONE: non usata, per scelta del docente.
+Valuta SOLO in base alla valutazione preliminare con la griglia e alle annotazioni prese dal docente in diretta durante la prova (contesto riservato qui sopra): sono il resoconto affidabile di quello che ha detto l'alunno. Non inventare frasi, parole o dettagli che non risultano dalle annotazioni; per le aree poco documentate resta vicino al punteggio preliminare. Nel testo non citare la trascrizione né la sua assenza.`;
+    function agentToggleNoTrascr(taskId, checked) {
+        const task = agentTasks.find(t => t.id === taskId);
+        if (!task) return;
+        _agentKeepTranscriptDraft(task);
+        task.noTrascrizione = checked;
+        if (checked) task.usePrelim = true;   // senza trascrizione servono per forza punteggi e annotazioni
+        agentSaveTasks(agentTasks);
+        agentRenderPanel();
+    }
+    window.agentToggleNoTrascr = agentToggleNoTrascr;
     function agentPrelimNota(taskId, safe, val) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
@@ -31719,7 +31744,7 @@ ${base}`, task, true);
     window.agentPrelimNota = agentPrelimNota;
     // Testo per il prompt (riservato): punteggi + annotazioni di ciascun alunno
     function _agentPrelimContesto(task, soloSafe) {
-        if (!task.usePrelim) return '';
+        if (!task.usePrelim && !_agentSenzaTrascr(task)) return '';
         _agentPrelimEnsure(task);
         const voci = _agentPrelimVoci(task).filter(v => !soloSafe || v.safe === soloSafe);
         if (!voci.length) return '';
@@ -31739,6 +31764,7 @@ ${base}`, task, true);
         if (!task) return;
         _agentKeepTranscriptDraft(task);
         task.usePrelim = checked;
+        if (!checked) task.noTrascrizione = false;   // senza conferma non si può valutare senza trascrizione
         agentSaveTasks(agentTasks);
         agentRenderPanel();
     }
@@ -32164,7 +32190,7 @@ ${base}`, task, true);
                 : '\nNessuna attività collegata alla lezione.')
             : 'Nessuna lezione del piano trovata vicino alla data della verifica.';
         // Pronunce segnalate: vanno scritte nella valutazione e segnalate all'alunno nel feedback
-        const pron = _agentPronunceSegnalate(task);
+        const pron = _agentSenzaTrascr(task) ? [] : _agentPronunceSegnalate(task);
         let pronTxt = '';
         if (pron.length) {
             const perNome = {};
@@ -32220,7 +32246,7 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
         // Valutazione già pronta: la scheda resta sui risultati (il riquadro per Claude si
         // apre lì sotto) e la valutazione attuale finisce tra le versioni precedenti solo
         // quando si usa la risposta di Claude: si possono confrontare.
-        if (!(task.trascrizione||'').trim()) { alert('Inserisci la trascrizione prima di preparare il testo per Claude.'); return; }
+        if (!(task.trascrizione||'').trim() && !_agentSenzaTrascr(task)) { alert('Inserisci la trascrizione prima di preparare il testo per Claude.'); return; }
         let testo = '';
         try { testo = await _agentClaudeTesto(task); }
         catch(e) { alert('Errore nella preparazione del testo per Claude: ' + e.message); return; }
@@ -32268,8 +32294,8 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
         if (!/VALUTAZIONE\s+DOCENTE/i.test(raw)) {
             if (!confirm('Nella risposta non trovo il blocco "VALUTAZIONE DOCENTE". Usarla comunque?')) return;
         }
-        if (!(task.trascrizione||'').trim()) { alert('Manca la trascrizione.'); return; }
-        task.trascrizione = task.trascrizione.trim();
+        if (!(task.trascrizione||'').trim() && !_agentSenzaTrascr(task)) { alert('Manca la trascrizione.'); return; }
+        task.trascrizione = (task.trascrizione||'').trim();
         task.error = '';
         if (task.type === 'valdialogo') {
             await agentEvaluateDialogo(task, { raw, solo: task.claudeSolo || null });
@@ -32748,7 +32774,8 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
         if (!opts.onlyPrompt) { task.status = 'processing'; agentRenderPanel(); }
         try {
             const trascr = (task.trascrizione||'').trim();
-            if (!trascr) { if (opts.onlyPrompt) return ''; task.status='awaiting_speakers'; task.error='Trascrizione vuota.'; agentRenderPanel(); return; }
+            const senzaTr = _agentSenzaTrascr(task);
+            if (!trascr && !senzaTr) { if (opts.onlyPrompt) return ''; task.status='awaiting_speakers'; task.error='Trascrizione vuota.'; agentRenderPanel(); return; }
             const studenti = (task.studenti||[]).slice(0,3);
             if (studenti.length < 2) { if (opts.onlyPrompt) return ''; task.status='awaiting_speakers'; task.error='Servono almeno 2 studenti.'; agentRenderPanel(); return; }
             // opts.solo: valuta un solo alunno (gli altri restano contesto e conservano la valutazione già fatta)
@@ -32798,10 +32825,10 @@ ${pauseRule}`;
 
             const prompt = `Sei il prof. Giacomo Cossu, docente di inglese scuola media italiana.
 Verifica orale in forma di DIALOGO (${studenti.length} studenti) della classe ${task.classe}${task.unit?', '+task.unit:''}.${task.hasSlides?'\nMODALITÀ con slide.':''}${grigliaInfo}${_agentPrelimContesto(task, opts.solo || null)}
-CORRISPONDENZA PARLANTI:
+${senzaTr ? _AGENT_NO_TRASCR : `CORRISPONDENZA PARLANTI:
 ${mapLines || '(non specificata: deduci dai turni)'}
 TRASCRIZIONE DEL DIALOGO:
-${trascr.slice(0, 12000)}
+${trascr.slice(0, 12000)}`}
 ${REGOLE}${parziale ? `
 VALUTA SOLO: ${target.map(s => s.studentName).join(', ')}. Gli altri parlanti (${studenti.filter(s => !target.includes(s)).map(s => s.studentName).join(', ')}) servono solo come contesto dell'interazione: NON scrivere blocchi per loro.` : ''}
 Genera la valutazione SEPARATA per ${parziale ? "l'alunno indicato" : 'OGNI alunno'}, usando ESATTAMENTE questi marcatori e questo ordine, un blocco per alunno:
