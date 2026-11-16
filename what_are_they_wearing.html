@@ -376,7 +376,7 @@ const ACTIONS = {
   texting:    { ing: 'sending a message',       arms: 'frontLow',legs: 'stand', mouth: 'smile',scenes: ['park','street','rain'] },
   selfie:     { ing: 'taking a selfie',         arms: 'selfie',  legs: 'stand', mouth: 'big',  scenes: ['park','beach','street','snow'] },
   photo:      { ing: 'taking a photo',          arms: 'camera',  legs: 'wide',  mouth: 'smile',scenes: ['park','beach','street','snow'] },
-  book:       { ing: 'reading a book',          arms: 'front',   legs: 'stand', mouth: 'smile',scenes: ['park','beach'] },
+  book:       { ing: 'reading a book',          arms: 'read',    legs: 'stand', mouth: 'smile',scenes: ['park','beach'] },
   music:      { ing: 'listening to music',      arms: 'ear',     legs: 'stand', mouth: 'smile',scenes: ['park','beach','street','rain','snow'] },
   guitar:     { ing: 'playing the guitar',      arms: 'guitar',  legs: 'wide',  mouth: 'open', scenes: ['park','beach','street'] },
   sing:       { ing: 'singing',                 arms: 'mic',     legs: 'wide',  mouth: 'open', scenes: ['park','beach','street'] },
@@ -500,6 +500,7 @@ const ARMS = {
   mic:      { L: [SL, [62, 146], [52, 104]],  R: [SR, [150, 148], [126, 110]] },
   ear:      { L: [SL, [68, 156], [64, 200]],  R: [SR, [150, 132], [131, 72]] },
   front:    { L: [SL, [66, 152], [88, 150]],  R: [SR, [134, 152], [112, 150]] },
+  read:     { L: [SL, [60, 162], [71, 153]],  R: [SR, [140, 162], [129, 153]] },   // libro retto ai bordi esterni
   frontLow: { L: [SL, [70, 156], [93, 170]],  R: [SR, [130, 156], [107, 170]] },
   camera:   { L: [SL, [62, 146], [86, 118]],  R: [SR, [138, 146], [114, 118]] },
   guitar:   { L: [SL, [56, 150], [52, 122]],  R: [SR, [144, 146], [118, 174]] },
@@ -575,6 +576,7 @@ function drawFoot(type, c, x, y, s, skin) {
 
 // Mani: rest (rilassata), fist (tiene qualcosa), open (saluta / braccia in alto)
 function drawHand(el, p, sk, kind) {
+  if (kind === 'none') return '';
   const th = Math.atan2(p[1] - el[1], p[0] - el[0]) - Math.PI / 2;
   const ang = th * 180 / Math.PI;
   // pollice verso il centro del corpo
@@ -595,6 +597,7 @@ function drawHand(el, p, sk, kind) {
 }
 const OPEN_HANDS = { wave: 'R', up: 'LR', dance: 'LR', balance: 'LR', throw: 'L', snowman: 'R', mic: 'L' };
 function handKind(armsKey, side) {
+  if (armsKey === 'read') return 'none';   // le mani le disegna il libro (dita dietro, pollici sulle pagine)
   if ((OPEN_HANDS[armsKey] || '').includes(side)) return 'open';
   const restP = ARMS.rest[side][2], p = ARMS[armsKey][side][2];
   return p[0] === restP[0] && p[1] === restP[1] ? 'rest' : 'fist';
@@ -843,9 +846,18 @@ function drawProps(key, A, c) {
       held.push(`<rect x="80" y="102" width="40" height="28" rx="5" fill="#3a3a44" stroke="#18181d" stroke-width="1.6"/><rect x="86" y="97" width="12" height="7" rx="2" fill="#3a3a44"/>` + circ(100, 116, 10, '#7fa6c9', 'stroke="#18181d" stroke-width="2.5"') + circ(97, 113, 3, '#ffffff', 'opacity="0.7"') + circ(113, 108, 2.4, '#ffd166'));
       fx.push(`<path d="M128,86 l4,-12 l4,12 l12,4 l-12,4 l-4,12 l-4,-12 l-12,-4 Z" fill="#fff27a" stroke="#e3b500" stroke-width="1.2"/>`);
       break;
-    case 'book':
-      held.push(`<path d="M74,128 L100,136 L126,128 L126,160 L100,168 L74,160 Z" fill="${COLORS.blue}" stroke="#1d4794" stroke-width="2" stroke-linejoin="round"/><path d="M77,129 L100,135 L100,164 L77,157 Z M123,129 L100,135 L100,164 L123,157 Z" fill="#fffdf4" stroke="#cfc6a8" stroke-width="1.2"/><path d="M82,138 L96,142 M82,144 L96,148 M82,150 L96,154 M104,142 L118,138 M104,148 L118,144 M104,154 L118,150" stroke="#b9b4a0" stroke-width="1.2"/>`);
+    case 'book': {
+      // mani che reggono il libro: dita dietro la copertina, pollici sul bordo delle pagine
+      const sk = c.skin, sd = dark(sk, 0.32);
+      const fingers = (x, sgn) => `<g transform="translate(${x},152) rotate(${sgn * -8})"><ellipse cx="0" cy="0" rx="8" ry="10.5" fill="${sk}" stroke="${sd}" stroke-width="2"/>`
+        + `<path d="M${sgn * -6},-5 l${sgn * -2.5},0 M${sgn * -6.8},0 l${sgn * -2.5},0 M${sgn * -6},5 l${sgn * -2.5},0" stroke="${sd}" stroke-width="1.2" stroke-linecap="round"/></g>`;
+      const thumb = (x, sgn) => `<ellipse cx="${x}" cy="146" rx="3.6" ry="7" transform="rotate(${sgn * 22} ${x} 146)" fill="${sk}" stroke="${sd}" stroke-width="1.6"/>`;
+      held.push(fingers(70, 1) + fingers(130, -1));
+      const blue = [c.outer, c.top].some(x => x && x.color === 'blue');   // copertina diversa dai vestiti
+      held.push(`<path d="M74,128 L100,136 L126,128 L126,160 L100,168 L74,160 Z" fill="${blue ? COLORS.red : COLORS.blue}" stroke="${blue ? '#9e1d29' : '#1d4794'}" stroke-width="2" stroke-linejoin="round"/><path d="M77,129 L100,135 L100,164 L77,157 Z M123,129 L100,135 L100,164 L123,157 Z" fill="#fffdf4" stroke="#cfc6a8" stroke-width="1.2"/><path d="M82,138 L96,142 M82,144 L96,148 M82,150 L96,154 M104,142 L118,138 M104,148 L118,144 M104,154 L118,150" stroke="#b9b4a0" stroke-width="1.2"/>`);
+      held.push(thumb(80.5, 1) + thumb(119.5, -1));
       break;
+    }
     case 'music':
       fx.push(`<path d="M68,58 C64,12 136,12 132,58" fill="none" stroke="#2b2b33" stroke-width="6" stroke-linecap="round"/><rect x="60" y="48" width="14" height="24" rx="6" fill="${COLORS.red}" stroke="#2b2b33" stroke-width="2"/><rect x="126" y="48" width="14" height="24" rx="6" fill="${COLORS.red}" stroke="#2b2b33" stroke-width="2"/>`);
       fx.push(note(42, 24, 0.9) + note(152, 14, 1.1) + note(170, 52, 0.8));
@@ -1683,10 +1695,9 @@ function composeNote() {
   const free = twOpen() ? tw('t-note').value.trim() : '';
   return [wkLine(false), wk.notes.pr.length && 'Pronuncia: ' + noteList('pr'), wk.notes.er.length && 'Errori: ' + noteList('er'), help.class && '💡 con esempi', free].filter(Boolean).join(' | ');
 }
-function renderSummary() {
-  if (!twOpen()) return;
-  const s = wkStats(), line = wkLine(true), hints = [];
-  const why = t => ` <span style="color:#a49cbd">(${t})</span>`, sg = v => `<span class="sg">${v}</span>`;
+// Suggerimenti per le quattro voci della griglia: { id voce: { v, why } }
+function computeHints() {
+  const s = wkStats(), line = wkLine(false), H = {};
   const qc = v => s.q.filter(x => x === v).length, qOk = qc(1), qHelp = qc(2), qBad = qc(3);
   const qTxt = s.q.length ? `domande ✓${qOk}${qHelp ? ' ~' + qHelp : ''}${qBad ? ' ✗' + qBad : ''}` : 'nessuna domanda extra segnata';
   // Comunicazione /4: autonomia (domande guida), completezza (capi + azione), domande extra
@@ -1697,18 +1708,38 @@ function renderSummary() {
     if (!complete || wk.guide >= 1 || qHelp) v = 3;
     if (wk.guide >= 2 || (s.chars && cover < 0.4) || (qBad && qBad >= qOk)) v = 2;
     if (wk.guide >= 4 || wk.block >= 2 || (s.chars && s.said <= 1 && !s.aSaid)) v = 1;
-    hints.push(`Comunicazione: ${sg(v)}` + why(`${wk.guide} domande guida · ${s.chars ? `capi detti ${s.said}/${s.tot}, azione ${s.aSaid}/${s.chars}` : 'descrizione non spuntata'} · ${qTxt}`));
+    H.com = { v, why: `${wk.guide} domande guida · ${s.chars ? `capi detti ${s.said}/${s.tot}, azione ${s.aSaid}/${s.chars}` : 'descrizione non spuntata'} · ${qTxt}` };
   }
-  if (s.said) { const n = s.okTypes; hints.push(`Lessico: ${sg(n >= 5 && s.aOk ? 4 : n >= 4 ? 3 : n >= 2 ? 2 : 1)}` + why(`${n} capi diversi con il colore${s.aOk ? ' + azione' : ''}`)); }
+  if (s.said) { const n = s.okTypes; H.lex = { v: n >= 5 && s.aOk ? 4 : n >= 4 ? 3 : n >= 2 ? 2 : 1, why: `${n} capi diversi con il colore${s.aOk ? ' + azione' : ''}` }; }
   const pcE = s.sErr + s.aForm, pcN = pcE + s.sOk + s.aOk;
-  if (pcN) hints.push(`Present continuous: ${sg(!pcE ? 4 : pcE <= 2 && pcE < pcN / 2 ? 3 : pcE <= pcN / 2 ? 2 : 1)}` + why(`errori: ${pcE} su ${pcN} frasi spuntate`));
+  if (pcN) H.pc = { v: !pcE ? 4 : pcE <= 2 && pcE < pcN / 2 ? 3 : pcE <= pcN / 2 ? 2 : 1, why: `errori: ${pcE} su ${pcN} frasi spuntate` };
   // Pronuncia e fluenza /3: note di pronuncia + esitazioni + blocchi
   if (line || s.pr) {
-    const P = s.pr, H = wk.pause, B = wk.block;
-    const v = B >= 3 ? 0 : B >= 1 || H >= 6 || P >= 5 ? 1 : P >= 2 || H >= 2 ? 2 : 3;
-    hints.push(`Pronuncia e fluenza: ${sg(v)}` + why(`${P} ${P === 1 ? 'errore' : 'errori'} di pronuncia annotati · ${H} ${H === 1 ? 'esitazione' : 'esitazioni'} · ${B} ${B === 1 ? 'blocco' : 'blocchi'}${!P && !H && !B ? ' — se ne senti, segnali con i contatori e le note qui sotto' : ''}`));
+    const P = s.pr, Hs = wk.pause, B = wk.block;
+    H.pro = { v: B >= 3 ? 0 : B >= 1 || Hs >= 6 || P >= 5 ? 1 : P >= 2 || Hs >= 2 ? 2 : 3,
+      why: `${P} ${P === 1 ? 'errore' : 'errori'} di pronuncia annotati · ${Hs} ${Hs === 1 ? 'esitazione' : 'esitazioni'} · ${B} ${B === 1 ? 'blocco' : 'blocchi'}${!P && !Hs && !B ? ' — se ne senti, segnali con i contatori e le note' : ''}` };
   }
-  tw('t-sum').innerHTML = (line || s.pr) ? `<div class="sum">${line ? `<div>${line}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
+  return H;
+}
+// I suggerimenti vanno in griglia, tranne nelle voci dove hai scelto tu il punteggio
+const rubManual = {}, rubAuto = {};
+let lastHints = {};
+function applyHints() {
+  lastHints = computeHints();
+  RUBRIC.forEach(r => {
+    if (rubManual[r.id]) return;
+    const h = lastHints[r.id];
+    if (h) { rub[r.id] = h.v; rubAuto[r.id] = true; }
+    else if (rubAuto[r.id]) { delete rub[r.id]; rubAuto[r.id] = false; }
+  });
+  renderTeacherRubric();
+}
+function renderSummary() {
+  if (!twOpen()) return;
+  applyHints();
+  const line = wkLine(true), grey = t => ` <span style="color:#a49cbd">(${t})</span>`;
+  const hints = RUBRIC.map(r => { const h = lastHints[r.id]; return h ? `${r.name.replace(/ \(.*\)$/, '')}: <span class="sg">${h.v}</span>${rubManual[r.id] && rub[r.id] !== h.v ? grey('in griglia hai messo ' + rub[r.id]) : ''}${grey(esc(h.why))}` : ''; }).filter(Boolean);
+  tw('t-sum').innerHTML = (line || hints.length) ? `<div class="sum">${line ? `<div>${line}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori · già messi in griglia</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
 }
 function renderNotes() {
   if (!twOpen()) return;
@@ -1789,6 +1820,7 @@ input:focus{outline:none;border-color:#3ec6ff}
 .pts button{width:34px;height:32px;padding:0;border-radius:8px}
 .pts button.on{background:#ffd166;color:#1a1300;border-color:transparent}
 .rd{font-size:12.5px;color:#cfc8de;margin-top:5px;line-height:1.45}
+.auto{font-size:11px;font-weight:700;color:#ffd166;background:rgba(255,209,102,.12);border:1px solid rgba(255,209,102,.35);border-radius:6px;padding:1px 6px;margin-left:4px}button.auto{cursor:pointer;width:auto;height:auto}
 .tot{display:flex;align-items:baseline;gap:12px;margin:12px 0 8px}
 .tot .v{font-size:40px;font-weight:900;color:#ffd166;line-height:1}
 .tot .p{color:#a49cbd}
@@ -1888,7 +1920,8 @@ function updateTeacherWin() {
 }
 function renderTeacherRubric() {
   if (!twOpen()) return;
-  tw('t-rub').innerHTML = RUBRIC.map(r => `<div class="r"><div class="rh"><div class="rn">${r.name} <small>/ ${r.max}</small></div><div class="pts">${Array.from({ length: r.max + 1 }, (_, v) => r.max - v).map(v => `<button class="${rub[r.id] === v ? 'on' : ''}" data-act="pt" data-r="${r.id}" data-v="${v}" title="${esc(r.d[v])}">${v}</button>`).join('')}</div></div>${rub[r.id] !== undefined ? `<div class="rd">${esc(r.d[rub[r.id]])}</div>` : ''}</div>`).join('');
+  const tag = r => rubAuto[r.id] && !rubManual[r.id] && rub[r.id] !== undefined ? ' <span class="auto">✨ suggerito</span>' : rubManual[r.id] && lastHints[r.id] && lastHints[r.id].v !== rub[r.id] ? ` <button class="auto" data-act="auto" data-r="${r.id}" title="Rimetti il punteggio suggerito dalle spunte">↺ suggerito ${lastHints[r.id].v}</button>` : '';
+  tw('t-rub').innerHTML = RUBRIC.map(r => `<div class="r"><div class="rh"><div class="rn">${r.name} <small>/ ${r.max}</small>${tag(r)}</div><div class="pts">${Array.from({ length: r.max + 1 }, (_, v) => r.max - v).map(v => `<button class="${rub[r.id] === v ? 'on' : ''}" data-act="pt" data-r="${r.id}" data-v="${v}" title="${esc(r.d[v])}">${v}</button>`).join('')}</div></div>${rub[r.id] !== undefined ? `<div class="rd">${esc(r.d[rub[r.id]])}</div>` : ''}</div>`).join('');
   tw('t-voto').textContent = rubDone() ? voto(rubTot()) : '–';
   tw('t-pts').textContent = rubDone() ? `${rubTot()} / ${RUB_MAX} punti` : 'Scegli un punteggio per ogni voce';
 }
@@ -1908,7 +1941,8 @@ function onTeacherClick(e) {
   else if (act === 'new') newPicture();
   else if (act === 'q') newQuestion();
   else if (act === 'help') toggleHelp();
-  else if (act === 'pt') { rub[b.dataset.r] = +b.dataset.v; renderTeacherRubric(); pushLive(); }
+  else if (act === 'pt') { const r = b.dataset.r; rub[r] = +b.dataset.v; rubManual[r] = true; rubAuto[r] = false; renderSummary(); pushLive(); }
+  else if (act === 'auto') { const r = b.dataset.r; rubManual[r] = false; rubAuto[r] = false; renderSummary(); pushLive(); }
   else if (act === 'reset') resetRubric();
   else if (act === 'save') saveGrade();
   else if (act === 'copy') copyGrades();
@@ -1916,7 +1950,7 @@ function onTeacherClick(e) {
   else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
 }
 function resetRubric() {
-  RUBRIC.forEach(r => delete rub[r.id]);
+  RUBRIC.forEach(r => { delete rub[r.id]; delete rubManual[r.id]; delete rubAuto[r.id]; });
   wk = wkNew();
   if (twOpen()) { tw('t-name').value = ''; tw('t-note').value = ''; }
   renderTeacherRubric(); updateTeacherWin(); renderNotes(); renderSummary();
