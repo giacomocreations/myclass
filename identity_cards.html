@@ -1199,7 +1199,11 @@ async function moveTeacherWinToOtherScreen() {
 const twOpen = () => teacherWin && !teacherWin.closed && teacherWin.document.getElementById('t-part');
 const tw = id => teacherWin.document.getElementById(id);
 // Segue la LIVE di MyClass: stato del collegamento e alunno selezionato (myclass-live-link.js)
-const liveFollow = window.MyClassLive && MyClassLive.follow && MyClassLive.follow(() => twOpen() ? teacherWin.document : null, { classId: 't-class' });
+const liveFollow = window.MyClassLive && MyClassLive.follow && MyClassLive.follow(() => twOpen() ? teacherWin.document : null, {
+  classId: 't-class', savedToday: () => loadGrades().filter(g => g.date === new Date().toLocaleDateString('it-IT')).map(g => g.name),
+  // clic su un alunno dell'elenco: va in A se è vuoto, poi in B; se sono pieni, nello studente della scheda aperta
+  pickTarget: name => { const A = tw('t-nameA').value.trim(), B = tw('t-nameB').value.trim(); return A === name ? 't-nameA' : B === name ? 't-nameB' : !A ? 't-nameA' : !B ? 't-nameB' : (cur === 'B' ? 't-nameB' : 't-nameA'); }
+});
 const nameOf = s => state.names[s] || (s === 'A' ? 'Studente A' : 'Studente B');
 
 function updateTeacherWin() {
@@ -1304,6 +1308,7 @@ function saveGrades() {
   twMsg(`✅ Salvato: ${saved}`);
   Object.keys(partTimes).forEach(k => delete partTimes[k]);
   resetRubric(); renderTeacherSaved(); goPart(1);
+  if (liveFollow) liveFollow.refresh();
 }
 // ── Punteggi anche nella griglia della LIVE di MyClass (myclass-live-link.js) ──
 const liveGrid = () => ({ id: GRID.id, nome: GRID.nome, aree: GRID.aree.map(a => ({ nome: a.nome, max: a.max })), conversione_voto: GRID.conversione_voto });
