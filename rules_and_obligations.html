@@ -841,14 +841,14 @@ const CK_RULES = [
 const NOTE_PR = ["mustn't (t pronunciata)", 'have to /ˈhæftə/', 'has to /ˈhæstə/', 'because', 'washing-up', 'ironing /ˈaɪənɪŋ/', 'vacuuming', 'rubbish', 'dishwasher', '-ing finale', 'th (the, three)', 'pronuncia all\'italiana'];
 const NOTE_ER = ['must to', "don't must", 'he have to', "he don't have to", "doesn't has to", "mustn't ↔ don't have to", 'do / make scambiati', 'manca il verbo dopo il modale', 'risposta in italiano', 'frasi senza because'];
 const SWAP_NOTE = "mustn't ↔ don't have to";
-const ckNew = () => ({ p1: {}, p1x: [], p1n: { bec: 0, guide: 0 }, p2: {}, ex: {}, notes: { pr: [], er: [] } });
+const ckNew = () => ({ p1: {}, p1x: [], p1n: { bec: 0, guide: 0 }, p2: {}, ex: {}, flu: { pause: 0, block: 0 }, notes: { pr: [], er: [] } });
 let ck = ckNew();
 // p1[chiave] = { v: indice verbo, m: modale } · p1x = [{ t: testo, m }] voci aggiunte
 // p2[id scheda] = { rows: { i: indice modale }, bec: { i: true }, guide: n }
 // ex[chiave] = 1 ✓ / 2 con aiuto / 3 ✗ (domande a sorpresa ed extra)
 const EX_LBL = ['—', '✓', '~ aiuto', '✗'], EX_CLS = ['n', 'ok', 'bad', 'no'];
 const p2Order = t => t === 'ob' ? ['must', 'have to', "mustn't", "don't have to"] : t === 'no' ? ["mustn't", "don't have to", 'must', 'have to'] : ["don't have to", "mustn't", 'must', 'have to'];
-const p2Of = id => ck.p2[id] || (ck.p2[id] = { rows: {}, bec: {}, guide: 0 });
+const p2Of = id => ck.p2[id] || (ck.p2[id] = { rows: {}, bec: {}, guide: 0, mean: 0 });
 function p2Status(it, m) { const t = modType(m); return t === it.t ? 'ok' : (t === 'no' && it.t === 'nn') || (t === 'nn' && it.t === 'no') ? 'sw' : 'no'; }
 const cyBtn = (act, attrs, cls, txt, title) => `<button class="cy ${cls}" data-act="${act}" ${attrs}${title ? ` title="${esc(title)}"` : ''}>${txt}</button>`;
 const exBtn = k => { const v = ck.ex[k] || 0; return cyBtn('ex', `data-k="${k}"`, EX_CLS[v], EX_LBL[v], 'Clic: ✓ → con aiuto → ✗ → nessuna'); };
@@ -892,7 +892,7 @@ function p2Stats(c) {
   const st = ck.p2[c.id]; if (!st) return null;
   const said = c.items.map((it, i) => st.rows[i] === undefined ? null : p2Status(it, p2Order(it.t)[st.rows[i]]));
   const n = said.filter(Boolean).length;
-  return { n, ok: said.filter(x => x === 'ok').length, sw: said.filter(x => x === 'sw').length, no: said.filter(x => x === 'no').length, bec: Object.values(st.bec).filter(Boolean).length, guide: st.guide };
+  return { n, ok: said.filter(x => x === 'ok').length, sw: said.filter(x => x === 'sw').length, no: said.filter(x => x === 'no').length, bec: Object.values(st.bec).filter(Boolean).length, guide: st.guide, mean: st.mean || 0 };
 }
 const exSum = arr => { if (!arr.length) return ''; const c = v => arr.filter(x => x === v).length; return [c(1) && `✓${c(1)}`, c(2) && `~${c(2)}`, c(3) && `✗${c(3)}`].filter(Boolean).join(' '); };
 // suggerimento per Vocabolario (Parte 1) dai descrittori della griglia
@@ -913,12 +913,14 @@ function p1Line(html) {
   return 'P1: ' + parts.join(' · ');
 }
 function p2Line(html) {
-  const lines = CARDS.filter(x => ck.p2[x.id] && (p2Stats(x).n || p2Stats(x).guide || Object.keys(ck.p2[x.id].bec).length)).map(x => {
+  const lines = CARDS.filter(x => ck.p2[x.id] && (p2Stats(x).n || p2Stats(x).guide || p2Stats(x).mean || Object.keys(ck.p2[x.id].bec).length)).map(x => {
     const s = p2Stats(x), b = t => html ? `<b>${t}</b>` : t;
-    return `P2 (${x.n}. ${x.short}): ${b(s.ok + '/6')} giuste` + (s.sw ? ` · scambio mustn't/don't have to ×${s.sw}` : '') + (s.no ? ` · altro modale sbagliato ×${s.no}` : '') + (s.n < 6 ? ` · non dette ${6 - s.n}` : '') + ` · because ${s.bec}/6` + (s.guide ? ` · domande guida ×${s.guide}` : '');
+    return `P2 (${x.n}. ${x.short}): ${b(s.ok + '/6')} giuste` + (s.sw ? ` · scambio mustn't/don't have to ×${s.sw}` : '') + (s.no ? ` · altro modale sbagliato ×${s.no}` : '') + (s.n < 6 ? ` · non dette ${6 - s.n}` : '') + ` · because ${s.bec}/6` + (s.guide ? ` · domande guida ×${s.guide}` : '') + (s.mean ? ` · chiede il significato ×${s.mean}` : '');
   });
   const exs = EXTRA_Q.map((q, i) => ck.ex['e' + i] || 0).filter(Boolean);
   if (exs.length) lines.push(`domande extra ${exSum(exs)}`);
+  if (ck.flu.pause) lines.push(`esitazioni ×${ck.flu.pause}`);
+  if (ck.flu.block) lines.push(`blocchi ×${ck.flu.block}`);
   return lines.join(' · ');
 }
 const noteList = g => ck.notes[g].map(x => x.t + (x.n > 1 ? ' ×' + x.n : '')).join(', ');
@@ -927,19 +929,74 @@ function composeNote() {
   const free = twOpen() ? tw('t-note').value.trim() : '';
   return [p1Line(false), p2Line(false), ck.notes.pr.length && 'Pronuncia: ' + noteList('pr'), ck.notes.er.length && 'Errori: ' + noteList('er'), swapCap && !ck.notes.er.some(x => x.t === SWAP_NOTE) && "scambio mustn't/don't have to", free].filter(Boolean).join(' | ');
 }
+// Suggerimenti per le tre voci della griglia, dalle spunte e dalle note.
+// Ritorna { indice voce: { v, why } } (solo le voci per cui ci sono elementi).
+const FORM_ER = ['must to', "don't must", 'he have to', "he don't have to", "doesn't has to", 'manca il verbo dopo il modale'];
+const noteN = (g, list) => ck.notes[g].filter(x => !list || list.includes(x.t)).reduce((t, x) => t + x.n, 0);
+const pl = (n, a, b) => `${n} ${n === 1 ? a : b}`;
+function computeHints() {
+  const s = p1Stats(), H = {};
+  const p2 = CARDS.filter(x => ck.p2[x.id]).map(p2Stats);
+  const p2n = p2.reduce((t, x) => t + x.n, 0), p2ok = p2.reduce((t, x) => t + x.ok, 0);
+  const sw = p2.reduce((t, x) => t + x.sw, 0) + noteN('er', [SWAP_NOTE]), other = p2.reduce((t, x) => t + x.no, 0);
+  const form = noteN('er', FORM_ER);
+  const ex = k => ck.ex[k] || 0;
+  // Grammatica /5: modale giusto (Parte 2 e frasi della Parte 1), scambi, errori di forma
+  if (p2n || s.mods.length || form || sw) {
+    let v = 5;
+    if (form >= 1 || [ex('e0'), ex('e1')].some(x => x >= 2)) v = 4;
+    if (sw >= 1 || other >= 1 || form >= 2) v = 3;
+    if (sw >= 3 || form >= 4 || (p2n >= 4 && sw + other >= p2n / 2)) v = 2;
+    if (p2n >= 3 && p2ok === 0) v = 1;
+    if (swapCap) v = Math.min(v, 3);
+    H[0] = { v, why: `${p2n ? `Parte 2: ${p2ok}/${p2n} modali giusti · ` : ''}${pl(sw, 'scambio', 'scambi')} mustn't/don't have to · ${other ? pl(other, 'altro modale sbagliato', 'altri modali sbagliati') + ' · ' : ''}${pl(form, 'errore', 'errori')} di forma (must to, he have to…)` };
+  }
+  // Vocabolario /5: faccende della Parte 1 (+ do/make) e prompt capiti nella Parte 2
+  const mean = p2.reduce((t, x) => t + (x.mean || 0), 0);
+  if (s.chores.length || mean) {
+    const wrong = s.wrong.length + noteN('er', ['do / make scambiati']);
+    const n = s.chores.length;
+    let v = !n ? 3 : n >= 5 && !wrong ? 5 : (n >= 5 && wrong === 1) || (n === 4 && wrong <= 1) ? 4 : n >= 3 ? 3 : 2;
+    if (mean >= 1) v = Math.min(v, 3);
+    if (mean >= 3) v = Math.min(v, 2);
+    H[1] = { v, why: `${pl(n, 'faccenda', 'faccende')} · ${pl(wrong, 'verbo sbagliato', 'verbi sbagliati')} (do/make…)${mean ? ` · chiede il significato ×${mean}` : ''}` };
+  }
+  // Comunicazione /5: autonomia, frasi per tipo, because, domande extra, pronuncia e fluenza
+  const guide = ck.p1n.guide + p2.reduce((t, x) => t + x.guide, 0);
+  const bec = ck.p1n.bec + p2.reduce((t, x) => t + x.bec, 0);
+  const exAll = Object.values(ck.ex).filter(Boolean), exHelp = exAll.filter(x => x === 2).length, exBad = exAll.filter(x => x === 3).length;
+  const P = noteN('pr'), PA = ck.flu.pause, B = ck.flu.block;
+  if (s.mods.length || guide || exAll.length || P || PA || B) {
+    const types = ['ob', 'no', 'nn'], less = types.filter(t => s.per[t] < 2).length, none = types.filter(t => !s.per[t]).length;
+    let v = 5;
+    if (guide >= 1 || less >= 1 || exHelp || P >= 1 || PA >= 2 || (s.mods.length && !bec)) v = 4;
+    if (guide >= 2 || none >= 1 || less >= 2 || exBad || B >= 1 || P >= 3 || PA >= 4 || (s.mods.length >= 4 && !bec)) v = 3;
+    if (guide >= 4 || (guide >= 2 && !bec) || B >= 2 || P >= 5 || PA >= 6 || (s.mods.length && s.mods.length <= 2)) v = 2;
+    if (B >= 4 || (s.mods.length <= 1 && guide >= 3)) v = 1;
+    H[2] = { v, why: `Parte 1: ${pl(s.mods.length, 'frase', 'frasi')} (have to/must ${s.per.ob}, mustn't ${s.per.no}, don't have to ${s.per.nn}) · because ×${bec} · domande guida ×${guide}${exAll.length ? ` · domande extra ${exSum(exAll)}` : ''} · pronuncia ×${P} · esitazioni ×${PA} · blocchi ×${B}` };
+  }
+  return H;
+}
+// I suggerimenti vanno in griglia, tranne nelle voci dove hai scelto tu il punteggio
+const rubManual = {}, rubAuto = {};
+let lastHints = {};
+function applyHints() {
+  lastHints = computeHints();
+  GRID.aree.forEach((a, i) => {
+    if (rubManual[i]) return;
+    const h = lastHints[i];
+    if (h) { if (rub[i] !== h.v || !rubAuto[i]) { rub[i] = h.v; rubAuto[i] = true; } }
+    else if (rubAuto[i]) { delete rub[i]; rubAuto[i] = false; }
+  });
+  renderTeacherRubric();
+}
 function renderSummary() {
   if (!twOpen()) return;
-  const s = p1Stats(), l1 = p1Line(true), l2 = p2Line(true);
-  const hints = [];
-  const vh = vocabHint(s);
-  if (vh) hints.push(`Vocabolario (Parte 1): <span class="sg">${vh}</span>`);
-  if (s.mods.length) {
-    const miss = [['ob', 'have to / must'], ['no', "mustn't"], ['nn', "don't have to"]].filter(([t]) => s.per[t] < 2).map(([t, l]) => `${l} (${s.per[t]})`);
-    hints.push(miss.length ? `Comunicazione: meno di 2 frasi per <span class="sg">${miss.join(', ')}</span>` : 'Comunicazione: <span class="sg">✔ almeno 2 frasi per ogni tipo</span>');
-  }
-  const anySw = CARDS.some(x => ck.p2[x.id] && p2Stats(x).sw);
-  if (anySw) hints.push(`Grammatica: <span class="sg">scambio mustn't / don't have to → al massimo 3</span>`);
-  tw('t-sum').innerHTML = (l1 || l2) ? `<div class="sum">${l1 ? `<div>${l1}</div>` : ''}${l2 ? `<div>${l2}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
+  applyHints();
+  const l1 = p1Line(true), l2 = p2Line(true);
+  const hints = GRID.aree.map((a, i) => lastHints[i] ? `${SHORT[i]}: <span class="sg">${lastHints[i].v}</span>${rubManual[i] && rub[i] !== lastHints[i].v ? ' <span style="color:#97a3bd">(in griglia hai messo ' + rub[i] + ')</span>' : ''} <span style="color:#97a3bd">(${esc(lastHints[i].why)})</span>` : '').filter(Boolean);
+  const show = l1 || l2 || hints.length;
+  tw('t-sum').innerHTML = show ? `<div class="sum">${l1 ? `<div>${l1}</div>` : ''}${l2 ? `<div>${l2}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori · già messi in griglia</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
 }
 function renderNotes() {
   if (!twOpen()) return;
@@ -948,6 +1005,7 @@ function renderNotes() {
   tw('t-ner').innerHTML = NOTE_ER.map(t => chip('er', t)).join('');
   const all = ['pr', 'er'].flatMap(g => ck.notes[g].map((x, i) => `<span class="${g}">${g === 'pr' ? '🔊' : '✏️'} ${esc(x.t)}${x.n > 1 ? ' ×' + x.n : ''}<button data-act="ntx" data-g="${g}" data-i="${i}" title="Togli uno">✕</button></span>`));
   tw('t-nl').innerHTML = all.length ? all.join('') : '';
+  tw('t-flu').innerHTML = cntBox('pause', 'esitazioni / pause', ck.flu.pause) + cntBox('block', 'si blocca', ck.flu.block);
 }
 function addNote(g, t) {
   t = String(t || '').trim(); if (!t) return;
@@ -976,6 +1034,8 @@ function onCkClick(act, b) {
   else if (act === 'cnt') {
     const d = +b.dataset.d;
     if (k === 'g2') { const st = p2Of(state.card.id); st.guide = Math.max(0, st.guide + d); }
+    else if (k === 'm2') { const st = p2Of(state.card.id); st.mean = Math.max(0, (st.mean || 0) + d); }
+    else if (k === 'pause' || k === 'block') ck.flu[k] = Math.max(0, ck.flu[k] + d);
     else ck.p1n[k] = Math.max(0, ck.p1n[k] + d);
   } else if (act === 'r2') {
     const st = p2Of(state.card.id), cur = st.rows[i];
@@ -1047,6 +1107,7 @@ input{width:100%;background:#1a2234;border:1px solid rgba(255,255,255,.12);color
 .r{padding:9px 0;border-bottom:1px dashed rgba(255,255,255,.1)}.rh{display:flex;align-items:center;gap:8px}.rn{flex:1;font-weight:700}.rn small{color:#97a3bd;font-weight:500}
 .pts{display:flex;gap:4px}.pts button{width:32px;height:32px;padding:0;border-radius:8px}.pts button.on{background:#ffd166;color:#1a1300;border-color:transparent;outline:none}.pts button:disabled{opacity:.25;cursor:default}
 .rd{font-size:12.5px;color:#c9d2e2;margin-top:5px;line-height:1.45}
+.auto{font-size:11px;font-weight:700;color:#ffd166;background:rgba(255,209,102,.12);border:1px solid rgba(255,209,102,.35);border-radius:6px;padding:1px 6px;margin-left:4px}button.auto{cursor:pointer}
 label.cap{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:#ffcf8a;margin-top:8px;cursor:pointer}
 .tot{display:flex;align-items:baseline;gap:12px;margin:12px 0 8px}.tot .v{font-size:40px;font-weight:900;color:#ffd166;line-height:1}.tot .p{color:#97a3bd}
 .msg{min-height:18px;font-weight:700;color:#06d6a0;margin-top:6px}
@@ -1086,6 +1147,7 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
 <div class="fields"><input id="t-name" placeholder="Nome dello studente" autocomplete="off"><input id="t-class" placeholder="Classe (es. 3C)" autocomplete="off"></div>
 <div id="t-rub"></div>
 <h2>🗒️ Note veloci · pronuncia ed errori</h2>
+<div class="cnts" id="t-flu" style="margin:0 0 4px"></div>
 <div class="ckh">🔊 Pronuncia <small>(un clic = annotato, di nuovo = ×2)</small></div><div class="chips" id="t-npr"></div>
 <div class="ckh">✏️ Errori</div><div class="chips" id="t-ner"></div>
 <div class="nin"><input id="t-inpr" placeholder="🔊 Altra parola pronunciata male + Invio" autocomplete="off"><input id="t-iner" placeholder="✏️ Altro errore sentito + Invio" autocomplete="off"></div>
@@ -1155,14 +1217,15 @@ function updateTeacherWin() {
     return `<div class="r2">${cyBtn('r2', `data-i="${i}"`, cls, m ? (cls === 'ok' ? '✔ ' : cls === 'sw' ? '⇄ ' : '✖ ') + esc(m) : '— modale detto?', 'Clic finché non c\'è il modale che ha detto · ancora = non detta')}${cyBtn('b2', `data-i="${i}"`, st.bec[i] ? 'ok' : 'n', st.bec[i] ? '✔ because' : 'because?', 'Ha spiegato il perché')}</div>`;
   };
   tw('t-sol').innerHTML = `<div class="cur">${c.n}. ${esc(c.title)}</div><table class="sol">${c.items.map((it, i) => `<tr class="${it.t}"><td>${promptHTML(it)}${it.it ? `<div class="md">(${esc(it.it)})</div>` : ''}</td><td><span class="k">${TYPE[it.t].sym} ${TYPE[it.t].mod.toUpperCase()}</span><div class="md">${esc(model(it, { both: true }))}</div>${rowCk(it, i)}</td></tr>`).join('')}</table>
-    <div class="cnts">${cntBox('g2', 'domande guida', st.guide)}</div>
+    <div class="cnts">${cntBox('g2', 'domande guida', st.guide)}${cntBox('m2', 'chiede il significato di una parola', st.mean || 0)}</div>
     <div class="tip">Per ✔ accetta sia <b>must</b> che <b>have to</b>. L'errore da sanzionare davvero è lo scambio <b>mustn't / don't have to</b> (⇄ in rosso: spunta da sola il limite a 3 in Grammatica).</div>
     <div class="tip" style="background:rgba(62,198,255,.08);border-color:rgba(62,198,255,.3)"><b>Domande extra (per distinguere 8–10)</b> <span style="color:#97a3bd">(clic: ✓ → con aiuto → ✗)</span>${EXTRA_Q.map((x, i) => `<div class="exq">${exBtn('e' + i)}<span>${esc(x.q)} → <i>${esc(x.a)}</i> <span style="color:#97a3bd">(${esc(x.why)})</span></span></div>`).join('')}</div>`;
   renderSummary();
 }
 function renderTeacherRubric() {
   if (!twOpen()) return;
-  tw('t-rub').innerHTML = GRID.aree.map((a, i) => `<div class="r"><div class="rh"><div class="rn">${esc(a.nome)} <small>/ ${a.max}</small></div><div class="pts">${a.descrittori.map(d => `<button class="${rub[i] === d.pt ? 'on' : ''}" data-act="pt" data-r="${i}" data-v="${d.pt}" title="${esc(d.testo)}" ${i === 0 && swapCap && d.pt > 3 ? 'disabled' : ''}>${d.pt}</button>`).join('')}</div></div>${rub[i] !== undefined ? `<div class="rd">${esc(a.descrittori.find(d => d.pt === rub[i]).testo)}</div>` : ''}${i === 0 ? `<label class="cap"><input type="checkbox" id="t-cap" ${swapCap ? 'checked' : ''} style="width:auto;margin-top:2px"> Scambio mustn't / don't have to → Grammatica al massimo 3</label>` : ''}</div>`).join('');
+  const tag = i => rubAuto[i] && !rubManual[i] && rub[i] !== undefined ? ' <span class="auto">✨ suggerito</span>' : rubManual[i] && lastHints[i] && lastHints[i].v !== rub[i] ? ` <button class="auto" data-act="auto" data-r="${i}" title="Rimetti il punteggio suggerito dalle spunte">↺ suggerito ${lastHints[i].v}</button>` : '';
+  tw('t-rub').innerHTML = GRID.aree.map((a, i) => `<div class="r"><div class="rh"><div class="rn">${esc(a.nome)} <small>/ ${a.max}</small>${tag(i)}</div><div class="pts">${a.descrittori.map(d => `<button class="${rub[i] === d.pt ? 'on' : ''}" data-act="pt" data-r="${i}" data-v="${d.pt}" title="${esc(d.testo)}" ${i === 0 && swapCap && d.pt > 3 ? 'disabled' : ''}>${d.pt}</button>`).join('')}</div></div>${rub[i] !== undefined ? `<div class="rd">${esc(a.descrittori.find(d => d.pt === rub[i]).testo)}</div>` : ''}${i === 0 ? `<label class="cap"><input type="checkbox" id="t-cap" ${swapCap ? 'checked' : ''} style="width:auto;margin-top:2px"> Scambio mustn't / don't have to → Grammatica al massimo 3</label>` : ''}</div>`).join('');
   tw('t-voto').textContent = rubDone() ? voto(rubTot()) : '–';
   tw('t-pts').textContent = rubDone() ? `${rubTot()} / 15 punti` : 'Scegli un punteggio per ogni area';
 }
@@ -1181,14 +1244,15 @@ function onTeacherClick(e) {
   else if (act === 'p1') goPart1();
   else if (act === 'draw') drawCard();
   else if (act === 'card') drawCard(b.dataset.id);
-  else if (act === 'pt') { rub[+b.dataset.r] = +b.dataset.v; renderTeacherRubric(); pushLive(); }
+  else if (act === 'pt') { const r = +b.dataset.r; rub[r] = +b.dataset.v; rubManual[r] = true; rubAuto[r] = false; renderTeacherRubric(); renderSummary(); pushLive(); }
+  else if (act === 'auto') { const r = +b.dataset.r; rubManual[r] = false; rubAuto[r] = false; renderSummary(); renderTeacherRubric(); pushLive(); }
   else if (act === 'reset') resetRubric();
   else if (act === 'save') saveGrade();
   else if (act === 'copy') copyGrades();
   else if (act === 'clear') { if (teacherWin.confirm('Cancellare tutti i voti salvati su questo computer?')) { storeGrades([]); renderTeacherSaved(); } }
   else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
 }
-function resetRubric() { Object.keys(rub).forEach(k => delete rub[k]); swapCap = false; ck = ckNew(); if (twOpen()) { tw('t-name').value = ''; tw('t-note').value = ''; } renderTeacherRubric(); updateTeacherWin(); renderNotes(); renderSummary(); }
+function resetRubric() { Object.keys(rub).forEach(k => delete rub[k]); [rubManual, rubAuto].forEach(o => Object.keys(o).forEach(k => delete o[k])); swapCap = false; ck = ckNew(); if (twOpen()) { tw('t-name').value = ''; tw('t-note').value = ''; } renderTeacherRubric(); updateTeacherWin(); renderNotes(); renderSummary(); }
 function saveGrade() {
   const name = tw('t-name').value.trim();
   if (!name) { twMsg('✏️ Scrivi il nome dello studente'); tw('t-name').focus(); return; }
