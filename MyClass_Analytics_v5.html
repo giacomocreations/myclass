@@ -19223,6 +19223,21 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 }
                 reply(true, '', { student: `${st.cognome} ${st.nome}`, n });
             }
+            // Alunno scelto dall'elenco nella finestra docente di un'attività: si seleziona anche qui
+            function lvSelezionaDaAttivita(m){
+                const reply = (ok, msg, extra) => { try { LV._bc.postMessage({ type:'ack', reqId:m.reqId, ok, msg, classe:classe.nome, ...(extra||{}) }); } catch(e) {} };
+                if (window._tabBlocked) { reply(false, 'questa LIVE è in una scheda di MyClass in pausa (MyClass è aperta due volte).', { paused:true }); return; }
+                if (LV.coppiaMode) { reply(false, 'la LIVE è in modalità coppia/trio: scegli gli alunni lì.'); return; }
+                const cls = _lvNrm(m.cls).replace(/ /g,'');
+                if (cls && cls !== _lvNrm(classe.nome).replace(/ /g,'')) { reply(false, `la LIVE aperta è della ${classe.nome}, non della ${m.cls}: l'alunno resta scelto solo nell'attività.`); return; }
+                const r = _lvTrovaAlunno(String(m.student||''));
+                if (r.idx < 0) { reply(false, r.n > 1 ? `"${m.student}": più alunni con questo nome.` : `"${m.student}" non è nella ${classe.nome}.`); return; }
+                if (q('lv-pnl-vo')?.style.display === 'none') lvSetMod('vo');
+                const selNow = [...qa('#lv-sl .lv-scard')].findIndex(c => c.classList.contains('sel'));
+                if (selNow !== r.idx || q('lv-sd')?.style.display === 'none') lvSelS(r.idx);
+                const st = studentiDati[r.idx];
+                reply(true, '', { student: `${st.cognome} ${st.nome}` });
+            }
             // Stato della LIVE per le finestre docente (alunno selezionato, griglia)
             function _lvStato(){
                 const i = LV._selIdx, st = (i!=null && !LV.coppiaMode) ? studentiDati[i] : null;
@@ -19234,6 +19249,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 LV._bc.onmessage = e => {
                     const m = e.data || {};
                     if (m.type === 'hello') { try { LV._bc.postMessage({ ..._lvStato(), reqId: m.reqId }); } catch(e2) {} return; }
+                    if (m.type === 'select') { lvSelezionaDaAttivita(m); return; }
                     try { lvRiceviPunteggi(m); }
                     catch(err) {
                         console.warn('[LIVE] punteggi da attività:', err);
