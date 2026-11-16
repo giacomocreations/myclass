@@ -18012,6 +18012,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             // ── Griglia / Orale ──────────────────────────────────────────────
             window.lvCambiaGriglia=function(id){
                 LV.grigliaAttiva = id ? (data.griglie?.find(g=>g.id===id)||null) : null;
+                try{ window._lvAnnuncia?.(); }catch(e){}
                 // Reset punteggi per tutti gli studenti quando si cambia griglia
                 window._lvGrigliaPunteggi={};
                 // Ri-renderizza la scheda studente correntemente aperta
@@ -18309,6 +18310,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 // Promemoria dell'alunno precedente salvato in automatico (se ha punteggi nuovi)
                 if(LV._selIdx!=null&&LV._selIdx!==i&&!LV.coppiaMode){try{lvGrigliaSalva(LV._selIdx,{silent:true});}catch(e){console.warn('[LIVE] salvataggio automatico promemoria:',e);}}
                 LV._selIdx=i;
+                try{ window._lvAnnuncia?.(); }catch(e){}   // finestre docente delle attività: alunno selezionato
                 qa('.lv-scard').forEach((c,j)=>c.classList.toggle('sel',j===i));
                 const s=studentiDati[i],el=q('lv-sd');if(!el)return;
                 el.style.display='block';
@@ -19121,7 +19123,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 try{ if(LV._scrCheck && window.screen && screen.removeEventListener) screen.removeEventListener('change',LV._scrCheck); }catch(e){}
                 if(LV._scrCheck) window.removeEventListener('resize',LV._scrCheck);
                 lvStopRec(true); // salva audio se registrazione in corso
+                try{ if(!window._tabBlocked) LV._bc?.postMessage({type:'live',closed:true,classe:classe.nome}); }catch(e){}
                 try{ LV._bc?.close(); }catch(e){}
+                window._lvAnnuncia=null;
                 localStorage.removeItem(autoSaveKey);
                 ov.remove();
                 const b=document.getElementById('lv-minimized-badge');if(b)b.remove();
@@ -19219,16 +19223,24 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 }
                 reply(true, '', { student: `${st.cognome} ${st.nome}`, n });
             }
+            // Stato della LIVE per le finestre docente (alunno selezionato, griglia)
+            function _lvStato(){
+                const i = LV._selIdx, st = (i!=null && !LV.coppiaMode) ? studentiDati[i] : null;
+                return { type:'live', classe:classe.nome, student: st ? `${st.cognome} ${st.nome}` : '', griglia: LV.grigliaAttiva?.nome || '', coppia: !!LV.coppiaMode, paused: !!window._tabBlocked };
+            }
+            window._lvAnnuncia = () => { if (!LV._bc || window._tabBlocked) return; try { LV._bc.postMessage(_lvStato()); } catch(e) {} };
             try {
                 LV._bc = new BroadcastChannel('myclass-live-griglia');
                 LV._bc.onmessage = e => {
                     const m = e.data || {};
+                    if (m.type === 'hello') { try { LV._bc.postMessage({ ..._lvStato(), reqId: m.reqId }); } catch(e2) {} return; }
                     try { lvRiceviPunteggi(m); }
                     catch(err) {
                         console.warn('[LIVE] punteggi da attività:', err);
                         if (m.type === 'scores') { try { LV._bc.postMessage({ type:'ack', reqId:m.reqId, ok:false, msg:'errore nella LIVE (' + (err && err.message || err) + '). Riprova o riapri la LIVE.', classe:classe.nome }); } catch(e2) {} }
                     }
                 };
+                window._lvAnnuncia();   // finestre docente già aperte: la LIVE c'è
             } catch(e) { LV._bc = null; }
 
             // ── Esponi funzioni su window (necessario per onclick HTML) ────
