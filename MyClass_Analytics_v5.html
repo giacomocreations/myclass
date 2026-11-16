@@ -9515,6 +9515,80 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
         };
 
         window.onload = loadData;
+
+        // ════════════════════════════════════════════════════════════════
+        // LIVE aperta dalle finestre docente delle attività (myclass-live-link.js)
+        // Quando nella finestra docente si sceglie un alunno e la LIVE è chiusa,
+        // MyClass apre la LIVE della lezione di oggi di quella classe, seleziona
+        // l'alunno e (come sempre alla selezione) parte la registrazione.
+        // • MyClass aperta: risponde sul canale anche a LIVE chiusa
+        // • MyClass chiusa: l'attività la apre con ?apriLive=CLASSE&alunno=NOME
+        // ════════════════════════════════════════════════════════════════
+        function _mcSlotOggi(ci) {
+            const cl = data.classi[ci], now = new Date();
+            const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+            const min = now.getHours() * 60 + now.getMinutes();
+            const toMin = t => { const [h, m] = String(t || '').split(':').map(Number); return isNaN(h) ? null : h * 60 + (m || 0); };
+            const slots = (cl.pianificazione?.orario || []).filter(s => s.giornoNum === now.getDay());
+            if (slots.length) {
+                // l'ora in corso (da 15 min prima dell'inizio alla fine), se no la più vicina
+                let best = null, bd = Infinity;
+                slots.forEach(s => {
+                    const a = toMin(s.oraInizio), b = toMin(s.oraFine) ?? (a != null ? a + 60 : null);
+                    const d = a == null ? 1000 : (min >= a - 15 && min <= b) ? 0 : Math.min(Math.abs(min - a), Math.abs(min - b));
+                    if (d < bd) { bd = d; best = s; }
+                });
+                return today + '_' + best.ora;
+            }
+            const lz = (cl.pianificazione?.piano || []).find(p => p.data === today);
+            return lz ? lzId(lz) : today + '_1';
+        }
+        function mcApriLiveDaAttivita(cls, alunno) {
+            const nrm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+            if (document.getElementById('myclass-live-overlay')) return { ok: false, msg: 'c\'è già una LIVE aperta.' };
+            const ci = (data.classi || []).findIndex(c => nrm(c.nome).replace(/ /g, '') === nrm(cls).replace(/ /g, ''));
+            if (ci < 0) return { ok: false, msg: `la classe ${cls} non è in MyClass.` };
+            const w = nrm(alunno).split(' ').filter(x => x.length > 1);
+            const trovati = (data.classi[ci].studenti || []).filter(st => { const n = nrm(st.cognome + ' ' + st.nome).split(' '); return w.length && w.every(x => n.includes(x)); });
+            if (trovati.length !== 1) return { ok: false, msg: trovati.length ? `"${alunno}": più alunni con questo nome.` : `"${alunno}" non è nella ${data.classi[ci].nome}.` };
+            window.currentClass = ci;
+            apriLive(ci, _mcSlotOggi(ci));
+            if (!document.getElementById('myclass-live-overlay')) return { ok: false, msg: 'la LIVE non si è aperta.' };
+            // la LIVE ha il suo canale: le passo la selezione (lì parte anche la registrazione)
+            setTimeout(() => { try { window._mcLiveBootBC?.postMessage({ type: 'select', reqId: 'mc' + Date.now().toString(36), student: alunno, cls: data.classi[ci].nome }); } catch(e) {} }, 500);
+            return { ok: true, classe: data.classi[ci].nome };
+        }
+        window.mcApriLiveDaAttivita = mcApriLiveDaAttivita;
+        function _mcLiveBoot() {
+            if (window._mcLiveBootBC) return;
+            let bc; try { bc = new BroadcastChannel('myclass-live-griglia'); } catch(e) { return; }
+            window._mcLiveBootBC = bc;
+            bc.onmessage = e => {
+                const m = e.data || {};
+                if (!['hello', 'select', 'scores'].includes(m.type) || !m.reqId || String(m.reqId).startsWith('mc')) return;
+                if (document.getElementById('myclass-live-overlay')) return;   // risponde la LIVE
+                if (window._tabBlocked) {
+                    if (m.type === 'hello') bc.postMessage({ type: 'live', reqId: m.reqId, paused: true });
+                    else bc.postMessage({ type: 'ack', reqId: m.reqId, ok: false, paused: true, msg: 'questa scheda di MyClass è in pausa (MyClass è aperta due volte).' });
+                    return;
+                }
+                if (m.type === 'hello') { bc.postMessage({ type: 'live', reqId: m.reqId, closed: true, myclass: true }); return; }
+                if (m.type === 'scores') { bc.postMessage({ type: 'ack', reqId: m.reqId, ok: false, msg: 'la LIVE è chiusa: scegli l\'alunno dall\'elenco della finestra docente e la apro io.' }); return; }
+                const r = mcApriLiveDaAttivita(m.cls, m.student);
+                bc.postMessage({ type: 'ack', reqId: m.reqId, ok: r.ok, msg: r.msg || '', opening: r.ok, student: m.student, classe: r.classe || m.cls });
+            };
+        }
+        function _mcAutoLiveDaUrl() {
+            const u = new URLSearchParams(location.search), cls = u.get('apriLive');
+            if (!cls) return;
+            const al = u.get('alunno') || '';
+            u.delete('apriLive'); u.delete('alunno');
+            try { history.replaceState(null, '', location.pathname + (u.toString() ? '?' + u : '') + location.hash); } catch(e) {}
+            if (window._tabBlocked) return;
+            const r = mcApriLiveDaAttivita(cls, al);
+            if (!r.ok) alert('MyClass: ' + r.msg);
+        }
+        window.addEventListener('load', () => setTimeout(() => { _mcLiveBoot(); _mcAutoLiveDaUrl(); }, 600));
     
         // ============================================================
         // PIANO DIDATTICO - FUNZIONI PRINCIPALI
