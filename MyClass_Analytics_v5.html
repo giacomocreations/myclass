@@ -6108,6 +6108,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                                 <div style="font-size:13px;font-weight:700;color:#3949ab;">📊 ${p.grigliaNome||'Griglia'}</div>
                                 <div style="font-size:12px;color:#666;">${formatDate(p.data)} — ${p.tot}/${p.totMax} pt</div>
                                 <div style="margin-top:4px;">${righe}</div>
+                                ${p.nota ? `<div style="margin-top:5px;font-size:12px;color:#444;background:#f7f7fb;border-radius:6px;padding:5px 8px;white-space:pre-wrap;">📝 ${_escH(p.nota)}</div>` : ''}
                             </div>
                             <button onclick="eliminaPromemoria(${currentClass},${currentStudent},${tsKey})"
                                 style="padding:3px 8px;border-radius:5px;border:1px solid #e57373;background:white;color:#e57373;cursor:pointer;font-size:11px;flex-shrink:0;">🗑️</button>
@@ -18393,6 +18394,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             };
 
             window._lvGrigliaPunteggi={};
+            window._lvNoteAtt={};   // note mandate dalle finestre docente, per alunno
             // Tabella punti→voto: quella della griglia; se la griglia di MyClass non ce l'ha,
             // quella mandata dall'attività (English Drill) che ha inviato i punteggi.
             // Se ci sono entrambe, quella della griglia vale e quella dell'attività completa i
@@ -18473,7 +18475,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                     if(opts.silent){const s0=studentiDati[si];if(s0&&!opts.noToast)_lvToast(`⚠️ ${s0.cognome} ${s0.nome}: griglia incompleta (${date}/${G.aree.length} aree) — promemoria NON salvato`,false);return {ok:false,incompleta:true,msg:`griglia incompleta (${date}/${G.aree.length} aree)`};}
                     if(!confirm(`Mancano ${mancano} aree della griglia: verranno contate 0. Salvare comunque?`))return {ok:false,msg:'annullato'};
                 }
-                const firma=G.id+'|'+JSON.stringify(G.aree.map(a=>punti[a.nome]??null));
+                const firma=G.id+'|'+JSON.stringify(G.aree.map(a=>punti[a.nome]??null))+'|'+(window._lvNoteAtt?.[si]?.testo||'');
                 if(!window._lvSalvati)window._lvSalvati={};
                 if(opts.silent&&window._lvSalvati[si]===firma&&!opts.force){return {ok:true,gia:true};}
                 const tot=G.aree.reduce((s,a)=>s+(punti[a.nome]||0),0);
@@ -18493,7 +18495,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                     stObj.votiPromemoria=stObj.votiPromemoria.filter(p=>!(p.data===isoDate&&p.grigliaId===G.id));
                     // Salva punteggi come array [{nome, voto, max}] per rendering leggibile
                     const punteggiArr = G.aree.map(a => ({nome: a.nome, voto: punti[a.nome]??0, max: a.max}));
-                    stObj.votiPromemoria.push({data:isoDate,grigliaId:G.id,grigliaNome:G.nome,voto10,tot,totMax,punteggi:punteggiArr,ts:Date.now()});
+                    const _na=window._lvNoteAtt?.[si];
+                    const nota=(_na&&_na.gid===G.id&&_na.testo)?_na.testo:'';
+                    stObj.votiPromemoria.push({data:isoDate,grigliaId:G.id,grigliaNome:G.nome,voto10,tot,totMax,punteggi:punteggiArr,...(nota?{nota}:{}),ts:Date.now()});
                     saveData();
                     window._lvSalvati[si]=firma;
                 } else {
@@ -19156,6 +19160,10 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             function lvRiceviPunteggi(m){
                 if (m.type !== 'scores' || !Array.isArray(m.scores)) return;
                 const reply = (ok, msg, extra) => { try { LV._bc.postMessage({ type:'ack', reqId:m.reqId, ok, msg, classe:classe.nome, ...(extra||{}) }); } catch(e) {} };
+                // Scheda di MyClass in pausa (aperta anche in un'altra scheda): qui non si salva
+                // niente. Risponde solo con l'avviso: se la LIVE è aperta anche nella scheda
+                // attiva, l'attività tiene la risposta di quella (myclass-live-link.js).
+                if (window._tabBlocked) { reply(false, 'questa LIVE è in una scheda di MyClass in pausa (MyClass è aperta due volte). Chiudi la scheda in pausa o premi lì "↻ Usa questa scheda" e riapri la LIVE.', { paused:true }); return; }
                 if (LV.coppiaMode) { reply(false, 'la LIVE è in modalità coppia/trio: lì i punteggi vanno inseriti a mano.'); return; }
                 const cls = _lvNrm(m.cls).replace(/ /g,'');
                 if (/^[1-5][a-z]$/.test(cls) && cls !== _lvNrm(classe.nome).replace(/ /g,'')) { reply(false, `la LIVE aperta è della ${classe.nome}, non della ${m.cls}.`); return; }
@@ -19189,7 +19197,10 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 (m.grid?.aree || []).forEach((a, k) => {
                     const v = m.scores[k];
                     if (v === null || v === undefined || isNaN(+v)) return;
-                    const dst = tg.byName ? GA.find(x => _lvNrm(x.nome) === _lvNrm(a.nome)) : GA[k];
+                    // per nome; se in MyClass le voci sono state rinominate, per posizione
+                    // (stessa griglia: stesso numero di voci con gli stessi massimi)
+                    let dst = tg.byName ? GA.find(x => _lvNrm(x.nome) === _lvNrm(a.nome)) : GA[k];
+                    if (!dst && GA.length === m.grid.aree.length && +GA[k]?.max === +a.max) dst = GA[k];
                     if (!dst) return;
                     const cur = window._lvGrigliaPunteggi?.[si]?.[dst.nome];
                     const val = Math.max(0, Math.min(+dst.max, +v));
@@ -19197,6 +19208,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                     n++;
                 });
                 const st = studentiDati[si];
+                if (!n) { reply(false, `la griglia "${LV.grigliaAttiva.nome||''}" della LIVE ha voci diverse da quelle dell'attività: nessun punteggio inserito. Controlla la griglia scelta nella LIVE.`); return; }
+                // Note della finestra docente (pronuncia, errori, checklist): vanno nel promemoria
+                if (typeof m.note === 'string') { if (!window._lvNoteAtt) window._lvNoteAtt = {}; window._lvNoteAtt[si] = { gid: LV.grigliaAttiva.id, testo: m.note.trim().slice(0, 1500) }; }
                 // "💾 Salva e prossimo" nella finestra docente: salva anche il promemoria
                 if (m.save) {
                     const r = lvGrigliaSalva(si, { silent: true, force: true }) || {};
@@ -19207,7 +19221,14 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             }
             try {
                 LV._bc = new BroadcastChannel('myclass-live-griglia');
-                LV._bc.onmessage = e => { try { lvRiceviPunteggi(e.data || {}); } catch(err) { console.warn('[LIVE] punteggi da attività:', err); } };
+                LV._bc.onmessage = e => {
+                    const m = e.data || {};
+                    try { lvRiceviPunteggi(m); }
+                    catch(err) {
+                        console.warn('[LIVE] punteggi da attività:', err);
+                        if (m.type === 'scores') { try { LV._bc.postMessage({ type:'ack', reqId:m.reqId, ok:false, msg:'errore nella LIVE (' + (err && err.message || err) + '). Riprova o riapri la LIVE.', classe:classe.nome }); } catch(e2) {} }
+                    }
+                };
             } catch(e) { LV._bc = null; }
 
             // ── Esponi funzioni su window (necessario per onclick HTML) ────

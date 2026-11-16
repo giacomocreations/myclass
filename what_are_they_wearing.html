@@ -1271,6 +1271,7 @@ function newQuestion() {
     const o = pick(others);
     q = `What are ${c.name} and ${o.name} doing?`; a = `${c.name} is ${ACTIONS[c.action].ing} and ${o.name} is ${ACTIONS[o.action].ing}.`;
   }
+  if (wk.q) { wk.qDone.push(wk.q); wk.q = 0; }
   state.q = { q, a, who: c.name };
   document.getElementById('q-text').textContent = q;
   updateTeacherWin();
@@ -1384,6 +1385,7 @@ function toggleHelp() {
 // ══════════════════════════════════════════════════════════════════
 let lastScene = null;
 function newPicture() {
+  wkFold();   // le spunte della scena che se ne va restano nel conteggio
   if (state.sceneChoice === 'random') {
     const keys = Object.keys(SCENES).filter(k => k !== lastScene);
     state.scene = pick(keys);
@@ -1420,6 +1422,7 @@ function setTarget(t) {
 
 // cambia un pezzo: al personaggio scelto, oppure a tutti insieme (👥 Tutti)
 function cycle(slot, idx) {
+  wkFold();
   if (idx !== undefined) { state.sel = idx; state.allSel = false; }   // clic sull'immagine: solo quel personaggio
   const all = allTarget();
   if (all && slot === 'all') genAll();
@@ -1621,6 +1624,113 @@ function loadGrades() { try { return JSON.parse(localStorage.getItem(GKEY)) || [
 function storeGrades(g) { try { localStorage.setItem(GKEY, JSON.stringify(g)); } catch (e) {} }
 
 // ══════════════════════════════════════════════════════════════════
+//  CHECKLIST DAL VIVO (finestra docente): cosa dice l'alunno
+//  Per ogni personaggio: i capi (✓ / colore sbagliato / parola sbagliata),
+//  l'azione e la struttura "is wearing". Quando la scena o un capo cambiano,
+//  quello che è spuntato resta nel conteggio (wk.done) e si riparte da capo.
+// ══════════════════════════════════════════════════════════════════
+const WI_LBL = ['', '✓ ', '🎨 ', '✗ '], WI_CLS = ['n', 'ok', 'bad', 'no'];
+const WA_LBL = ['— azione?', '✓ azione', '✗ forma (manca is / -ing)', '✗ lessico'], WA_CLS = ['n', 'ok', 'bad', 'no'];
+const WS_LBL = ['— is wearing?', '✓ is wearing', '✗ manca is (she wearing)', '✗ wear / wears', '✗ they is / he are'], WS_CLS = ['n', 'ok', 'bad', 'bad', 'bad'];
+const WQ_LBL = ['— risposta?', '✓ giusta', '~ con aiuto', '✗ sbagliata'], WQ_CLS = ['n', 'ok', 'bad', 'no'];
+const NOTE_PR = ['clothes /kləʊðz/', 'wearing /ˈweərɪŋ/', '-ing finale', 'jeans', 'shoes', 'trousers', 'jacket', 'T-shirt', 'trainers', 'socks (-s finale)', 'purple', 'orange', 'pronuncia all\'italiana'];
+const NOTE_ER = ['she wearing (manca is)', 'he wear / wears', 'they is', '-ing mancante', 'present simple al posto del continuous', 'colore dopo il nome (a T-shirt red)', 'a + plurale (a jeans)', 'colore al plurale (reds)', 'he / she scambiati', 'parola in italiano'];
+const wkNew = () => ({ cur: {}, q: 0, done: [], qDone: [], guide: 0, notes: { pr: [], er: [] } });
+let wk = wkNew();
+// cur[i] = { it: { slot: 0-3 }, a: 0-3, s: 0-4 } per il personaggio i della scena attuale
+const wkChar = i => wk.cur[i] || (wk.cur[i] = { it: {}, a: 0, s: 0 });
+// porta nel conteggio quello che è spuntato sulla scena attuale (prima di cambiarla)
+function wkFold() {
+  Object.keys(wk.cur).forEach(i => {
+    const c = state.chars[i], x = wk.cur[i]; if (!c) return;
+    const items = worn(c).filter(w => x.it[w.slot]).map(w => ({ type: w.type, v: x.it[w.slot] }));
+    if (items.length || x.a || x.s) wk.done.push({ items, a: x.a, s: x.s });
+  });
+  if (wk.q) wk.qDone.push(wk.q);
+  wk.cur = {}; wk.q = 0;
+}
+function wkStats() {
+  const all = wk.done.slice();
+  Object.keys(wk.cur).forEach(i => {
+    const c = state.chars[i], x = wk.cur[i]; if (!c) return;
+    all.push({ items: worn(c).filter(w => x.it[w.slot]).map(w => ({ type: w.type, v: x.it[w.slot] })), a: x.a, s: x.s });
+  });
+  const items = all.flatMap(x => x.items);
+  const okTypes = new Set(items.filter(x => x.v === 1).map(x => FEET.has(x.type) ? 'feet' : x.type));
+  const q = wk.qDone.concat(wk.q ? [wk.q] : []);
+  const cnt = (arr, v) => arr.filter(x => x === v).length;
+  const acts = all.map(x => x.a).filter(Boolean), strs = all.map(x => x.s).filter(Boolean);
+  return { said: items.length, okN: cnt(items.map(x => x.v), 1), okTypes: okTypes.size, col: cnt(items.map(x => x.v), 2), word: cnt(items.map(x => x.v), 3),
+    aOk: cnt(acts, 1), aForm: cnt(acts, 2), aLex: cnt(acts, 3), sOk: cnt(strs, 1), sErr: strs.filter(v => v > 1).length,
+    sDet: [2, 3, 4].filter(v => cnt(strs, v)).map(v => WS_LBL[v].replace('✗ ', '') + (cnt(strs, v) > 1 ? ' ×' + cnt(strs, v) : '')),
+    q, chars: all.length };
+}
+function wkLine(html) {
+  const s = wkStats(), b = t => html ? `<b>${t}</b>` : t;
+  const parts = [];
+  if (s.said) parts.push(`capi con colore giusti ${b(s.okN)} (${s.okTypes} diversi)` + (s.col ? ` · colore sbagliato ×${s.col}` : '') + (s.word ? ` · parola sbagliata ×${s.word}` : ''));
+  if (s.aOk + s.aForm + s.aLex) parts.push(`azioni ✓${s.aOk}` + (s.aForm ? ` · forma ✗${s.aForm}` : '') + (s.aLex ? ` · lessico ✗${s.aLex}` : ''));
+  if (s.sOk + s.sErr) parts.push('is wearing' + (s.sOk ? ` ✓${s.sOk}` : '') + (s.sErr ? ` ✗ ${s.sDet.join(', ')}` : ''));
+  if (s.q.length) { const c = v => s.q.filter(x => x === v).length; parts.push('domande ' + [c(1) && `✓${c(1)}`, c(2) && `~${c(2)}`, c(3) && `✗${c(3)}`].filter(Boolean).join(' ')); }
+  if (wk.guide) parts.push(`domande guida ×${wk.guide}`);
+  return parts.join(' · ');
+}
+const noteList = g => wk.notes[g].map(x => x.t + (x.n > 1 ? ' ×' + x.n : '')).join(', ');
+function composeNote() {
+  const free = twOpen() ? tw('t-note').value.trim() : '';
+  return [wkLine(false), wk.notes.pr.length && 'Pronuncia: ' + noteList('pr'), wk.notes.er.length && 'Errori: ' + noteList('er'), help.class && '💡 con esempi', free].filter(Boolean).join(' | ');
+}
+function renderSummary() {
+  if (!twOpen()) return;
+  const s = wkStats(), line = wkLine(true), hints = [];
+  if (s.said) { const n = s.okTypes; hints.push(`Lessico: <span class="sg">${n >= 5 && s.aOk ? 4 : n >= 4 ? 3 : n >= 2 ? 2 : 1}</span> <span style="color:#a49cbd">(${n} capi diversi con il colore${s.aOk ? ' + azione' : ''})</span>`); }
+  const pcE = s.sErr + s.aForm, pcN = pcE + s.sOk + s.aOk;
+  if (pcN) hints.push(`Present continuous: <span class="sg">${!pcE ? 4 : pcE <= 2 && pcE < pcN / 2 ? 3 : pcE <= pcN / 2 ? 2 : 1}</span> <span style="color:#a49cbd">(errori: ${pcE} su ${pcN} frasi spuntate)</span>`);
+  tw('t-sum').innerHTML = line ? `<div class="sum"><div>${line}</div>${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
+}
+function renderNotes() {
+  if (!twOpen()) return;
+  const chip = (g, t) => { const x = wk.notes[g].find(y => y.t === t); return `<button data-act="nt" data-g="${g}" data-t="${esc(t)}" class="${x ? 'on' : ''}">${esc(t)}${x && x.n > 1 ? ' ×' + x.n : ''}</button>`; };
+  tw('t-npr').innerHTML = NOTE_PR.map(t => chip('pr', t)).join('');
+  tw('t-ner').innerHTML = NOTE_ER.map(t => chip('er', t)).join('');
+  tw('t-nl').innerHTML = ['pr', 'er'].flatMap(g => wk.notes[g].map((x, i) => `<span class="${g}">${g === 'pr' ? '🔊' : '✏️'} ${esc(x.t)}${x.n > 1 ? ' ×' + x.n : ''}<button data-act="ntx" data-g="${g}" data-i="${i}" title="Togli uno">✕</button></span>`)).join('');
+  tw('t-cnts').innerHTML = `<span class="cnt">domande guida <b>${wk.guide}</b><button data-act="gd" data-d="-1" title="Togli">−</button><button data-act="gd" data-d="1" title="Aggiungi">+</button></span>`;
+}
+function addNote(g, t) {
+  t = String(t || '').trim(); if (!t) return;
+  const x = wk.notes[g].find(y => y.t.toLowerCase() === t.toLowerCase());
+  if (x) x.n++; else wk.notes[g].push({ t, n: 1 });
+  ckChanged();
+}
+function ckChanged() {
+  updateTeacherWin(); renderNotes(); renderSummary();
+  clearTimeout(ckChanged.t); ckChanged.t = setTimeout(() => pushLive(), 700);
+}
+function onCkClick(act, b) {
+  const i = +b.dataset.i;
+  if (act === 'wi') { const x = wkChar(i); x.it[b.dataset.s] = ((x.it[b.dataset.s] || 0) + 1) % 4; }
+  else if (act === 'wa') { const x = wkChar(i); x.a = (x.a + 1) % WA_LBL.length; }
+  else if (act === 'ws') { const x = wkChar(i); x.s = (x.s + 1) % WS_LBL.length; }
+  else if (act === 'wq') wk.q = (wk.q + 1) % WQ_LBL.length;
+  else if (act === 'gd') wk.guide = Math.max(0, wk.guide + +b.dataset.d);
+  else if (act === 'nt') { addNote(b.dataset.g, b.dataset.t); return true; }
+  else if (act === 'ntx') { const x = wk.notes[b.dataset.g][i]; if (x && --x.n <= 0) wk.notes[b.dataset.g].splice(i, 1); }
+  else return false;
+  ckChanged();
+  return true;
+}
+function onTeacherKey(e) {
+  if (e.key !== 'Enter' || (e.target.id !== 't-inpr' && e.target.id !== 't-iner')) return;
+  e.preventDefault(); addNote(e.target.id === 't-inpr' ? 'pr' : 'er', e.target.value); e.target.value = '';
+}
+// capi + azione + struttura da spuntare sotto la descrizione di ogni personaggio
+function ckRow(c, i) {
+  const x = wk.cur[i] || { it: {}, a: 0, s: 0 };
+  const its = worn(c).map(w => { const v = x.it[w.slot] || 0; return `<button class="cy ${WI_CLS[v]}" data-act="wi" data-i="${i}" data-s="${w.slot}" title="✓ giusto → 🎨 colore sbagliato → ✗ parola sbagliata">${WI_LBL[v]}${esc(phrase(w.type, w.color).replace(/^an? /, ''))}</button>`; }).join('');
+  return `<div class="ckr">${its}</div><div class="ckr"><button class="cy ${WA_CLS[x.a]}" data-act="wa" data-i="${i}" title="Clic finché non c'è quello che ha detto">${x.a === 1 ? '✓ ' + esc(ACTIONS[c.action].ing) : x.a ? WA_LBL[x.a] : '— ' + esc(ACTIONS[c.action].ing) + '?'}</button><button class="cy ${WS_CLS[x.s]}" data-act="ws" data-i="${i}" title="Clic finché non c'è quello che ha detto">${WS_LBL[x.s]}</button></div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════
 //  FINESTRA DOCENTE (secondo schermo, come nel torneo VocabDuel)
 // ══════════════════════════════════════════════════════════════════
 let teacherWin = null;
@@ -1670,20 +1780,45 @@ td.v{font-weight:800;color:#ffd166}
 .tv{font-size:44px;font-weight:900;line-height:1;min-width:120px;font-variant-numeric:tabular-nums}
 .tv.run{color:#06d6a0}.tv.warn{color:#ffd166}.tv.over{color:#ff4d6d}
 .tl{color:#a49cbd;font-size:12.5px}
+.ckr{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.cy{padding:4px 8px;font-size:12.5px;border-radius:7px;white-space:nowrap;font-weight:700}
+.cy.ok{background:rgba(6,214,160,.25);color:#7cf0c8;border-color:transparent}.cy.bad{background:rgba(255,181,71,.25);color:#ffcf8a;border-color:transparent}
+.cy.no{background:rgba(255,77,109,.3);color:#ffb0c0;border-color:transparent}.cy.n{opacity:.65}
+.ckl{font-size:11.5px;color:#a49cbd;margin-top:6px}
+.sum{background:#1d1830;border:1px solid rgba(255,209,102,.35);border-radius:10px;padding:8px 11px;font-size:13px;line-height:1.55}
+.sum .sg{color:#ffd166;font-weight:700}.sum .hd{color:#a49cbd;font-weight:700;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+.ckh{font-size:12px;color:#a49cbd;font-weight:700;margin:10px 0 4px}.ckh small{font-weight:500}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}.chips button{font-size:12px;padding:4px 8px;font-weight:600}.chips button.on{outline:2px solid #ffd166}
+.nl{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}.nl span{background:#2c2645;border-radius:7px;padding:3px 4px 3px 8px;font-size:12.5px}.nl span.er{background:#3d2433}
+.nl span button{background:none;border:none;color:#a49cbd;padding:0 4px;font-size:12px}
+.nin{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}.nin input{font-size:13px;padding:6px 9px}
+.cnts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.cnt{display:inline-flex;align-items:center;gap:5px;background:#1d1830;border:1px solid rgba(255,255,255,.1);border-radius:9px;padding:3px 4px 3px 9px;font-size:12.5px}
+.cnt b{min-width:16px;text-align:center;color:#ffd166}.cnt button{padding:2px 8px;font-size:13px}
 </style></head><body>
 <h1>🖥️ Finestra docente</h1>
 <div class="sub">Tienila sul tuo schermo: alla LIM si vedono solo i personaggi e la domanda.</div>
 <div class="tmr"><span class="tv" id="t-timer">3:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia 3:00</button><button data-act="treset" title="Azzera il timer">↺</button><span class="tl" id="t-tlbl">Tempo per l'interrogazione</span></div>
 <div class="bar"><button class="pri" data-act="new">🎲 Nuova scena</button><button data-act="q">❓ Nuova domanda</button></div>
 <div class="bar" style="margin-top:8px;align-items:center"><button id="t-help" data-act="help">💡 Mostra gli esempi alla LIM</button><span class="tl" id="t-help-st"></span></div>
-<h2>Descrizione giusta</h2><div id="t-desc"></div>
+<h2>Descrizione giusta · spunta quello che dice</h2>
+<div class="sub" style="margin:0 0 4px">Clic su un capo quando lo dice: ✓ giusto → 🎨 colore sbagliato → ✗ parola sbagliata → di nuovo vuoto. Azione e <i>is wearing</i>: clic finché non c'è quello che ha detto.</div>
+<div id="t-desc"></div>
 <h2>Domanda alla LIM</h2><div id="t-q"></div>
+<div class="cnts" id="t-cnts"></div>
+<h2>📋 Riepilogo di quello che hai spuntato</h2><div id="t-sum"></div>
 <h2>Valutazione · /15</h2>
 <div class="fields"><input id="t-name" placeholder="Nome dello studente" autocomplete="off"><input id="t-class" placeholder="Classe (es. 2B)" autocomplete="off"></div>
 <div id="t-rub"></div>
+<h2>🗒️ Note veloci · pronuncia ed errori</h2>
+<div class="ckh">🔊 Pronuncia <small>(un clic = annotato, di nuovo = ×2)</small></div><div class="chips" id="t-npr"></div>
+<div class="ckh">✏️ Errori</div><div class="chips" id="t-ner"></div>
+<div class="nin"><input id="t-inpr" placeholder="🔊 Altra parola pronunciata male + Invio" autocomplete="off"><input id="t-iner" placeholder="✏️ Altro errore sentito + Invio" autocomplete="off"></div>
+<div class="nl" id="t-nl"></div>
 <div class="link" id="t-link">🔗 I punteggi vanno anche nella LIVE di MyClass, se è aperta su questo computer.</div>
 <div class="tot"><span class="v" id="t-voto">–</span><span class="p" id="t-pts">Scegli un punteggio per ogni voce</span></div>
-<input id="t-note" placeholder="Nota (facoltativa)" autocomplete="off">
+<input id="t-note" placeholder="Altra nota (facoltativa)" autocomplete="off">
+<div class="sub" style="margin:5px 0 0">Riepilogo, pronuncia, errori e nota vanno insieme nella nota del voto e nel promemoria della LIVE di MyClass.</div>
 <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva e prossimo</button><button data-act="reset">↺ Azzera</button></div>
 <div class="msg" id="t-msg"></div>
 <h2>Voti salvati</h2>
@@ -1699,8 +1834,9 @@ function openTeacherWin() {
   d.open(); d.write(TEACHER_HTML); d.close();
   if (window.DrillZoom) DrillZoom.attach(d);   // A− / A+ anche nella finestra docente
   d.addEventListener('click', onTeacherClick);
-  d.addEventListener('change', e => { if (e.target.id === 't-name' || e.target.id === 't-class') pushLive(); });   // nome scritto dopo i punteggi
-  updateTeacherWin(); renderTeacherRubric(); renderTeacherSaved(); renderTimer(); applyHelp();
+  d.addEventListener('keydown', onTeacherKey);
+  d.addEventListener('change', e => { if (e.target.id === 't-name' || e.target.id === 't-class' || e.target.id === 't-note') pushLive(); });   // nome scritto dopo i punteggi
+  updateTeacherWin(); renderTeacherRubric(); renderTeacherSaved(); renderTimer(); applyHelp(); renderNotes(); renderSummary();
   moveTeacherWinToOtherScreen();
 }
 // Chrome/Edge: con il permesso "gestione finestre" la finestra va da sola sull'altro schermo
@@ -1720,8 +1856,9 @@ const FEET_NOTE = '👟 Calzature: va bene anche il termine generico <b>shoes</b
 
 function updateTeacherWin() {
   if (!twOpen()) return;
-  tw('t-desc').innerHTML = state.chars.map((c, i) => `<div class="ch${i === state.sel ? ' sel' : ''}"><div class="nm">${i === state.sel ? '▶ ' : ''}${esc(c.name)}</div><div class="tx">${describe(c, true).replace(/hl-item/g, 'it').replace(/hl-verb/g, 'vb')}</div></div>`).join('') + `<div class="feet">${FEET_NOTE}</div>`;
-  tw('t-q').innerHTML = state.q ? `<div class="q"><div class="qq">${esc(state.q.q)}</div><div class="aa">${esc(state.q.a)}</div></div>` : '<div class="empty">Nessuna domanda: alla LIM c\'è «Describe…». Premi ❓ Nuova domanda.</div>';
+  tw('t-desc').innerHTML = state.chars.map((c, i) => `<div class="ch${i === state.sel ? ' sel' : ''}"><div class="nm">${i === state.sel ? '▶ ' : ''}${esc(c.name)}</div><div class="tx">${describe(c, true).replace(/hl-item/g, 'it').replace(/hl-verb/g, 'vb')}</div>${ckRow(c, i)}</div>`).join('') + `<div class="feet">${FEET_NOTE}</div>`;
+  tw('t-q').innerHTML = state.q ? `<div class="q"><div class="qq">${esc(state.q.q)}</div><div class="aa">${esc(state.q.a)}</div><div class="ckr"><button class="cy ${WQ_CLS[wk.q]}" data-act="wq" title="Clic: giusta → con aiuto → sbagliata">${WQ_LBL[wk.q]}</button></div></div>` : '<div class="empty">Nessuna domanda: alla LIM c\'è «Describe…». Premi ❓ Nuova domanda.</div>';
+  renderSummary();
 }
 function renderTeacherRubric() {
   if (!twOpen()) return;
@@ -1739,6 +1876,7 @@ function twMsg(t) { if (!twOpen()) return; tw('t-msg').textContent = t; clearTim
 function onTeacherClick(e) {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const act = b.dataset.act;
+  if (onCkClick(act, b)) return;
   if (act === 'timer') timerToggle();
   else if (act === 'treset') timerReset();
   else if (act === 'new') newPicture();
@@ -1753,8 +1891,9 @@ function onTeacherClick(e) {
 }
 function resetRubric() {
   RUBRIC.forEach(r => delete rub[r.id]);
+  wk = wkNew();
   if (twOpen()) { tw('t-name').value = ''; tw('t-note').value = ''; }
-  renderTeacherRubric();
+  renderTeacherRubric(); updateTeacherWin(); renderNotes(); renderSummary();
 }
 function saveGrade() {
   const name = tw('t-name').value.trim();
@@ -1762,7 +1901,7 @@ function saveGrade() {
   if (!rubDone()) { twMsg('✏️ Completa tutte le voci della griglia'); return; }
   const tot = rubTot();
   const g = loadGrades();
-  const nota = [tw('t-note').value.trim(), help.class ? '💡 con esempi' : ''].filter(Boolean).join(' · ');
+  const nota = composeNote();
   g.push({ name, cls: tw('t-class').value.trim(), voto: voto(tot), punti: tot, det: RUBRIC.map(r => rub[r.id]).join('-'), note: nota, date: new Date().toLocaleDateString('it-IT'), tempo: timerElapsed() ? fmtTime(timerElapsed()) : '' });
   storeGrades(g);
   pushLive(true);   // salva il promemoria anche nella LIVE di MyClass
@@ -1778,7 +1917,7 @@ function pushLive(save) {
   const scores = RUBRIC.map(r => rub[r.id] === undefined ? null : rub[r.id]);
   if (scores.every(v => v === null)) return;
   MyClassLive.send({ grid: { id: 'g_1793466275951_0', nome: 'Oral test · What Are They Wearing? — present continuous + clothes (2ª)', aree: RUBRIC.map(r => ({ nome: r.name, max: r.max })), conversione_voto: { 0: 4, 1: 4, 2: 4, ...CONV } },
-    scores, student: tw('t-name').value.trim(), cls: tw('t-class').value.trim(), save: !!save }, showLive);
+    scores, student: tw('t-name').value.trim(), cls: tw('t-class').value.trim(), save: !!save, note: composeNote() }, showLive);
 }
 function showLive(r) {
   if (!twOpen()) return;
