@@ -2212,11 +2212,20 @@ function rivOpen() {
     });
     local.filter(({ x }) => !x._used).forEach(({ x, i }) => items.push({ src: 'local', cls: x.cls, student: x.name, data: isoFromIt(x.date), old: String(x.det).split('-').map(Number), v1: !x.ver && (x.max || 15) === 15, stale: !!x.ver && x.ver < RUB_VER, note: x.note || '', li: i, riv: x.riv }));
     items.forEach(it => { it.man = {}; it.note0 = it.note; it.open = false; rivCompute(it); it.sel = it.v1 || (it.stale && it.neu.join('-') !== rivBase(it).join('-')); });
+    // Rivisto qui ma MyClass ha ancora la bozza di prima (era chiusa quando hai salvato): si rimanda
+    const gl = loadGrades();
+    items.forEach(it => {
+      const x = it.src === 'mc' && it.li >= 0 && gl[it.li];
+      if (!x || !x.riv || String(x.det) === it.old.join('-')) return;
+      String(x.det).split('-').map(Number).forEach((v, k) => { it.man[k] = v; });
+      if (x.note) it.note = x.note;
+      rivCompute(it); it.sel = true; it.resend = true;
+    });
     items.sort((x, y) => String(y.data).localeCompare(String(x.data)) || String(x.cls).localeCompare(String(y.cls)) || String(x.student).localeCompare(String(y.student)));
     rivItems = items;
     rivItems.mcMsg = !r ? '⚪ MyClass non risponde (aprila in questo browser per aggiornare anche i promemoria): qui ci sono solo i voti salvati su questa pagina.'
       : !r.ok ? '⚠️ MyClass: ' + esc(r.msg || 'errore') + ' — qui ci sono solo i voti salvati su questa pagina.'
-      : `🔗 MyClass: ${items.filter(x => x.src === 'mc').length} promemoria di questa attività (${items.filter(x => x.src === 'mc' && x.v1).length} con la griglia vecchia /15, ${items.filter(x => x.src === 'mc' && x.stale).length} con una versione precedente della /16).`;
+      : `🔗 MyClass: ${items.filter(x => x.src === 'mc').length} promemoria di questa attività${items.some(x => x.resend) ? ` · ⚠️ ${items.filter(x => x.resend).length} rivisti qui ma non ancora in MyClass (già spuntati)` : ''} (${items.filter(x => x.src === 'mc' && x.v1).length} con la griglia vecchia /15, ${items.filter(x => x.src === 'mc' && x.stale).length} con una versione precedente della /16).`;
     rivRender();
   };
   if (window.MyClassLive && MyClassLive.request) MyClassLive.request('prom-list', { gridId: LIVE_GRID().id }, build); else build(null);
@@ -2237,7 +2246,7 @@ function rivScores(it, k) {
 }
 function rivRow(it, k) {
   const ch = it.neu.join('-') !== rivBase(it).join('-') || it.note !== it.note0;
-  return `<tr><td><input type="checkbox" data-riv="${k}"${it.sel ? ' checked' : ''}></td><td>${esc(itFromIso(it.data))}</td><td>${esc(it.cls)}</td><td>${esc(it.student)}${it.src === 'local' ? '<br><small>solo qui</small>' : ''}${it.riv ? '<br><small>♻️ già rivisto</small>' : ''}</td>`
+  return `<tr><td><input type="checkbox" data-riv="${k}"${it.sel ? ' checked' : ''}></td><td>${esc(itFromIso(it.data))}</td><td>${esc(it.cls)}</td><td>${esc(it.student)}${it.src === 'local' ? '<br><small>solo qui</small>' : ''}${it.resend ? '<br><small style="color:#ffb547">⚠️ rivisto qui, ma in MyClass c\'è ancora la bozza: salva per mandarlo</small>' : it.riv ? '<br><small>♻️ già rivisto</small>' : ''}</td>`
     + `<td>${rivVotoOld(it)} <small>(${rivSum(it.old)}/${it.v1 ? 15 : RUB_MAX})</small></td><td>${it.old.join('-')}</td>`
     + `<td id="riv-nv-${k}" class="${ch ? 'up' : 'eq'}">${voto(rivSum(it.neu))} <small>(${rivSum(it.neu)})</small></td><td id="riv-nd-${k}">${it.neu.join('-')}${it.note !== it.note0 ? '<br><small>nota corretta</small>' : ''}</td>`
     + `<td><button data-act="rivedit" data-k="${k}" title="Rivedi questo alunno: nota e punteggi">${it.open ? '▴' : '✏️'}</button></td></tr>` + (it.open ? rivEditor(it, k) : '');
