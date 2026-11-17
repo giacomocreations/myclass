@@ -3238,6 +3238,8 @@
         // ============================================
         // CONFIGURAZIONE GEMINI
         // ============================================
+        // Valore dentro '…' in un onclick="…": apostrofi (D'Amico, don't) e virgolette non spezzano il comando
+        function _jq(v) { return String(v == null ? '' : v).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
         let GEMINI_API_KEY = '';
         let GEMINI_MODEL = 'gemini-2.5-flash';
         const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/';
@@ -21634,7 +21636,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         const date = f.date ? new Date(f.date+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'}) : '—';
         return `<div style="border:1px solid ${sel?'#6c47ff':'#c4b5fd'};border-radius:10px;padding:10px 12px;margin-bottom:8px;background:${sel?'#f0edff':'#faf5ff'};transition:background 0.15s;">
           <div style="display:flex;align-items:flex-start;gap:8px;">
-            <input type="checkbox" ${sel?'checked':''} onchange="_fbToggleItem(this,'${f._safe}','${f._key}')"
+            <input type="checkbox" ${sel?'checked':''} onchange="_fbToggleItem(this,'${_jq(f._safe)}','${_jq(f._key)}')"
               style="width:15px;height:15px;margin-top:2px;accent-color:#6c47ff;cursor:pointer;flex-shrink:0;">
             <div style="flex:1;min-width:0;">
               <div style="font-size:12px;font-weight:700;color:#6c47ff;">${f.displayName}</div>
@@ -21642,9 +21644,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
               <div style="font-size:11px;color:#888;">${date}</div>
               <div style="font-size:12px;color:#444;margin-top:5px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${f.text||''}</div>
             </div>
-            <button onclick="mcEditFeedback('${f._safe}','${f._key}')"
+            <button onclick="mcEditFeedback('${_jq(f._safe)}','${_jq(f._key)}')"
               style="background:none;border:none;cursor:pointer;color:#6c47ff;font-size:16px;flex-shrink:0;padding:2px 4px;" title="Modifica (l'alunno lo vede aggiornato subito)">✏️</button>
-            <button onclick="mcDeleteFeedback('${f._safe}','${f._key}')"
+            <button onclick="mcDeleteFeedback('${_jq(f._safe)}','${_jq(f._key)}')"
               style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:16px;flex-shrink:0;padding:2px 4px;" title="Elimina">🗑</button>
           </div>
         </div>`;
@@ -21705,7 +21707,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             <textarea id="fe-text" rows="12" style="${inp}line-height:1.5;">${_lessEsc(f.text)}</textarea>${extra}
             <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;">
               <button onclick="_fbEditClose()" style="background:#f3f4f6;color:#444;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;">Annulla</button>
-              <button id="fe-save" onclick="mcSaveFeedback('${safe}','${key}')" style="background:#6c47ff;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;">💾 Salva</button>
+              <button id="fe-save" onclick="mcSaveFeedback('${_jq(safe)}','${_jq(key)}')" style="background:#6c47ff;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;">💾 Salva</button>
             </div>
           </div>
         </div>`;
@@ -23058,7 +23060,7 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
         if (!opts.some(o => o.v === cur)) opts.push({ v: cur, t: cur + ' (non disponibile)' });
         return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:#555;">
             <span style="font-weight:700;">🤖 AI per questa valutazione:</span>
-            <select onchange="agentSetAiScelta('${task.id}',this.value)" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid #c5cae9;background:white;">
+            <select onchange="agentSetAiScelta('${_jq(task.id)}',this.value)" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid #c5cae9;background:white;">
                 ${opts.map(o => `<option value="${o.v}" ${o.v === cur ? 'selected' : ''}>${o.t}</option>`).join('')}
             </select>
             <span style="font-size:11px;color:#888;">vale per Genera / Rigenera di questa scheda</span>
@@ -23848,17 +23850,17 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
                 .map(q => `<span style="font-size:11px;background:${q === 'A' ? '#e8f5e9' : '#fce4ec'};color:${q === 'A' ? '#1b5e20' : '#880e4f'};border-radius:8px;padding:1px 8px;font-weight:700;margin-left:6px;">✔ Piano ${q}</span>`).join('');
             return `<div style="border:1px solid #c5cae9;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f8f9ff;">
                 <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                  ${n > 1 ? `<button onclick="agentParallelaScorri('${task.id}','${op.lato}',-1)" ${idx <= 0 ? 'disabled' : ''} title="Lezione precedente nel tempo" style="border:1.5px solid #3949ab;background:white;color:#3949ab;border-radius:8px;padding:2px 14px;font-size:20px;line-height:1.1;font-weight:800;cursor:${idx <= 0 ? 'default' : 'pointer'};opacity:${idx <= 0 ? '.35' : '1'};">‹</button>` : ''}
+                  ${n > 1 ? `<button onclick="agentParallelaScorri('${_jq(task.id)}','${op.lato}',-1)" ${idx <= 0 ? 'disabled' : ''} title="Lezione precedente nel tempo" style="border:1.5px solid #3949ab;background:white;color:#3949ab;border-radius:8px;padding:2px 14px;font-size:20px;line-height:1.1;font-weight:800;cursor:${idx <= 0 ? 'default' : 'pointer'};opacity:${idx <= 0 ? '.35' : '1'};">‹</button>` : ''}
                   <div style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#3949ab;letter-spacing:.04em;">${op.lato === 'prima' ? '⏪ LEZIONE PRIMA' : '⏩ LEZIONE DOPO'} · ${esc(op.classe)} · ${dLbl(op.data, op.ora)}${op.svolta ? ' · svolta' : ''}${n > 1 ? ` · <span style="font-weight:600;color:#777;">${idx + 1} di ${n}</span>` : ''}${usato}</div>
-                  ${n > 1 ? `<button onclick="agentParallelaScorri('${task.id}','${op.lato}',1)" ${idx >= n - 1 ? 'disabled' : ''} title="Lezione successiva nel tempo" style="border:1.5px solid #3949ab;background:white;color:#3949ab;border-radius:8px;padding:2px 14px;font-size:20px;line-height:1.1;font-weight:800;cursor:${idx >= n - 1 ? 'default' : 'pointer'};opacity:${idx >= n - 1 ? '.35' : '1'};">›</button>` : ''}
+                  ${n > 1 ? `<button onclick="agentParallelaScorri('${_jq(task.id)}','${op.lato}',1)" ${idx >= n - 1 ? 'disabled' : ''} title="Lezione successiva nel tempo" style="border:1.5px solid #3949ab;background:white;color:#3949ab;border-radius:8px;padding:2px 14px;font-size:20px;line-height:1.1;font-weight:800;cursor:${idx >= n - 1 ? 'default' : 'pointer'};opacity:${idx >= n - 1 ? '.35' : '1'};">›</button>` : ''}
                 </div>
                 <div style="font-weight:700;margin:4px 0 2px;">${esc(l.titolo || l.descrizione || 'Lezione')}</div>
                 <div style="font-size:11px;color:#777;">${[l.unit, pd.durata ? pd.durata + ' min' : '', l.pagine ? 'pag. ' + l.pagine : ''].filter(Boolean).map(esc).join(' · ')}</div>
                 ${pd.obiettivi ? `<div style="font-size:12px;color:#444;margin-top:4px;"><strong>Obiettivi:</strong> ${esc(pd.obiettivi)}</div>` : ''}
                 ${fasi ? `<details style="margin-top:6px;font-size:12px;color:#444;"><summary style="cursor:pointer;color:#3949ab;font-weight:600;">Fasi della lezione</summary>${fasi}</details>` : ''}
                 <div class="agent-task-actions" style="margin-top:8px;">
-                    <button class="agent-btn-approve" onclick="agentApplicaParallela('${task.id}','${op.lato}','A')">📋 Usa come Piano A</button>
-                    <button class="agent-btn-edit" onclick="agentApplicaParallela('${task.id}','${op.lato}','B')">⚡ Usa come Piano B</button>
+                    <button class="agent-btn-approve" onclick="agentApplicaParallela('${_jq(task.id)}','${op.lato}','A')">📋 Usa come Piano A</button>
+                    <button class="agent-btn-edit" onclick="agentApplicaParallela('${_jq(task.id)}','${op.lato}','B')">⚡ Usa come Piano B</button>
                 </div>
             </div>`;
         };
@@ -23870,7 +23872,7 @@ Rispondi SOLO con JSON valido (niente testo prima o dopo):
         return `<div style="font-size:12px;color:#555;margin-bottom:8px;">Per ${dLbl(task.data, task.ora)} non c'è ancora il piano. Puoi riusare una lezione della classe parallela: con le frecce ‹ › scorri le altre lezioni con piano, poi scegli quale usare come Piano A e/o come Piano B.</div>
             ${perLato('prima')}${perLato('dopo')}
             <div class="agent-task-actions">
-                <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
             </div>`;
     }
 
@@ -26268,7 +26270,7 @@ ${sectionInstr}`;
                     <div style="font-weight:800;color:#1a237e;"><span style="background:#3949ab;color:#fff;border-radius:6px;padding:1px 7px;font-size:12px;margin-right:6px;">${e(String(t.classe || '').toUpperCase())}</span>${e(nome(t))}</div>
                     <div style="font-size:11px;color:#666;">${t.type === 'valdialogo' ? 'Dialogo · ' : ''}📅 ${e(t.sessionDate || '')} · voto ${e(voto(t))} · ${stato(t)} · rimossa il ${e(t.dismissedAt ? new Date(t.dismissedAt).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '')}</div>
                 </div>
-                <button onclick="agentRipristinaOrale('${t.id}')" style="padding:6px 12px;border-radius:8px;border:1px solid #81c784;background:#e8f5e9;color:#1b5e20;font-weight:700;cursor:pointer;">↩ Ripristina</button>
+                <button onclick="agentRipristinaOrale('${_jq(t.id)}')" style="padding:6px 12px;border-radius:8px;border:1px solid #81c784;background:#e8f5e9;color:#1b5e20;font-weight:700;cursor:pointer;">↩ Ripristina</button>
             </div>`).join('') : '<div style="font-size:13px;color:#999;margin-bottom:8px;">Nessun orale rimosso da recuperare.</div>'}
             <div style="margin-top:14px;padding-top:12px;border-top:1px solid #eee;">
                 <div style="font-size:12px;font-weight:800;color:#555;margin-bottom:4px;">NON È IN ELENCO?</div>
@@ -26817,12 +26819,12 @@ ${sectionInstr}`;
                         const val  = (task.results[idx][fieldKey]||'').replace(/</g,'&lt;');
                         const prev = (task.results[idx][fieldKey]||'').slice(0,200).replace(/</g,'&lt;') + ((task.results[idx][fieldKey]||'').length>200?'…':'');
                         return `<details style="margin-bottom:6px;border:1px solid #e0e4ff;border-radius:8px;overflow:hidden;"
-                                    ontoggle="if(this.open) agentDialogoAutoOpenField('${task.id}',${idx},'${fieldKey}')">
+                                    ontoggle="if(this.open) agentDialogoAutoOpenField('${_jq(task.id)}',${idx},'${fieldKey}')">
                             <summary style="padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700;color:#5c35c9;background:#f5f0ff;user-select:none;">${label}</summary>
                             <div style="padding:8px;">
                                 <div id="agentDlgPrev_${fieldKey}_${idx}_${task.id}" style="font-size:11px;color:#444;white-space:pre-wrap;max-height:80px;overflow:hidden;">${prev}</div>
                                 <textarea id="agentDlg_${fieldKey}_${idx}_${task.id}" style="display:none;width:100%;min-height:${minH}px;padding:8px;font-size:12px;border:1.5px solid #b39ddb;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;">${val}</textarea>
-                                <button class="agent-btn-edit" id="agentDlgSave_${fieldKey}_${idx}_${task.id}" onclick="agentDialogoSaveField('${task.id}',${idx},'${fieldKey}')" style="font-size:11px;padding:3px 10px;margin-top:6px;display:none;">💾 Salva</button>
+                                <button class="agent-btn-edit" id="agentDlgSave_${fieldKey}_${idx}_${task.id}" onclick="agentDialogoSaveField('${_jq(task.id)}',${idx},'${fieldKey}')" style="font-size:11px;padding:3px 10px;margin-top:6px;display:none;">💾 Salva</button>
                             </div>
                         </details>`;
                     };
@@ -26830,30 +26832,30 @@ ${sectionInstr}`;
                         <div style="border:1px solid #d1c4e9;border-radius:10px;padding:10px;margin-bottom:10px;background:#faf8ff;">
                             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
                                 <span style="font-size:14px;font-weight:700;color:#4527a0;">👤 ${r.studentName}</span>
-                                ${task.status !== 'approved' ? `<button class="agent-btn-edit" style="font-size:11px;padding:2px 8px;" onclick="agentClaudePrepara('${task.id}','${r.studentSafe}')" title="Rifai con Claude la valutazione di ${r.studentName} (gli altri restano invariati)">🟣 Valuta con Claude</button>` : ''}
+                                ${task.status !== 'approved' ? `<button class="agent-btn-edit" style="font-size:11px;padding:2px 8px;" onclick="agentClaudePrepara('${_jq(task.id)}','${_jq(r.studentSafe)}')" title="Rifai con Claude la valutazione di ${r.studentName} (gli altri restano invariati)">🟣 Valuta con Claude</button>` : ''}
                                 ${r.votoValue != null ? `<span style="font-size:13px;font-weight:700;color:#2e7d32;">🏆</span>
                                 <input type="number" step="0.5" min="1" max="10" value="${r.votoValue}"
                                     style="width:56px;font-size:13px;font-weight:700;padding:2px 5px;border:1.5px solid #a5d6a7;border-radius:6px;text-align:center;"
-                                    onchange="agentDialogoUpdateVoto('${task.id}',${idx},this.value)">/10`
+                                    onchange="agentDialogoUpdateVoto('${_jq(task.id)}',${idx},this.value)">/10`
                                 : '<span style="font-size:12px;color:#e65100;font-weight:700;">⚠️ Voto non rilevato — compila a mano</span>'}
                             </div>
                             ${_vdBloccoHtml(task, idx)}
                             ${mkDlgSection('📊 JSON storico','jsonOrale',idx,160)}
                             ${_vdBloccoHtml(task, idx, 'classroomText')}
                             ${mkDlgSection('📝 Argo (registro) — solo su richiesta','argoText',idx,70)}
-                            <button class="agent-btn-edit" id="agentArgoBtn_${task.id}_${idx}" onclick="agentGenArgo('${task.id}',${idx})" style="font-size:11px;padding:3px 10px;">${(r.argoText||'').trim() ? '🔄 Rigenera Argo' : '📝 Genera Argo'}</button>
+                            <button class="agent-btn-edit" id="agentArgoBtn_${task.id}_${idx}" onclick="agentGenArgo('${_jq(task.id)}',${idx})" style="font-size:11px;padding:3px 10px;">${(r.argoText||'').trim() ? '🔄 Rigenera Argo' : '📝 Genera Argo'}</button>
                         </div>`).join('');
                     body = `
                         ${!task.griglia && task.status !== 'approved' ? _agentGrigliaPickerHtml(task, { note: 'Hai scelto la griglia dopo la valutazione: premi 🔄 Rigenera per rifare voto e feedback con questa griglia.' }) : ''}
                         ${task.audioFileName ? _agentPlayerHtml(task) : ''}
                         ${studentiCards}
                         <div class="agent-task-actions" style="margin-top:4px;">
-                            ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')">📥 Importa voti & feedback (tutti)</button>` : ''}
-                            ${task.status==='approved' ? `<button class="agent-btn-approve" onclick="agentReapproveValDialogo('${task.id}')" style="background:#7b3fa0;" title="Sovrascrive voti e feedback nello storico">🔄 Riscrivi storico</button>` : ''}
-                            <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera valutazioni</button>
-                            ${task.trascrizione ? `<button class="agent-btn-edit" onclick="agentDialogoEditSpeakers('${task.id}')">👥 Trascrizione / parlanti</button>` : ''}
-                            ${task.status==='ready' && _dialogoHasAudio(task) ? `<button class="agent-btn-edit" onclick="agentRitrascrivi('${task.id}')" title="Rifà la trascrizione dall'audio; poi la rivedi e rigeneri le valutazioni">🔁 Rigenera trascrizione</button>` : ''}
-                            <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                            ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${_jq(task.id)}')">📥 Importa voti & feedback (tutti)</button>` : ''}
+                            ${task.status==='approved' ? `<button class="agent-btn-approve" onclick="agentReapproveValDialogo('${_jq(task.id)}')" style="background:#7b3fa0;" title="Sovrascrive voti e feedback nello storico">🔄 Riscrivi storico</button>` : ''}
+                            <button class="agent-btn-edit" onclick="agentRegenerate('${_jq(task.id)}')">🔄 Rigenera valutazioni</button>
+                            ${task.trascrizione ? `<button class="agent-btn-edit" onclick="agentDialogoEditSpeakers('${_jq(task.id)}')">👥 Trascrizione / parlanti</button>` : ''}
+                            ${task.status==='ready' && _dialogoHasAudio(task) ? `<button class="agent-btn-edit" onclick="agentRitrascrivi('${_jq(task.id)}')" title="Rifà la trascrizione dall'audio; poi la rivedi e rigeneri le valutazioni">🔁 Rigenera trascrizione</button>` : ''}
+                            <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                         </div>
                         ${_agentClaudePanelHtml(task)}
                         ${_agentVersioniHtml(task)}`;
@@ -26867,13 +26869,13 @@ ${sectionInstr}`;
                         const prev   = (task[fieldKey]||'').slice(0,200).replace(/</g,'&lt;') + ((task[fieldKey]||'').length>200?'…':'');
                         // La sezione si apre già in modalità modifica: textarea visibile, preview nascosta
                         return `<details style="margin-bottom:8px;border:1px solid #e0e4ff;border-radius:8px;overflow:hidden;"
-                                    ontoggle="if(this.open) agentAutoOpenVO('${task.id}','${fieldKey}')">
+                                    ontoggle="if(this.open) agentAutoOpenVO('${_jq(task.id)}','${fieldKey}')">
                             <summary style="padding:7px 12px;cursor:pointer;font-size:12px;font-weight:700;color:#5c35c9;background:#f5f0ff;user-select:none;">${label}</summary>
                             <div style="padding:8px;">
                                 <div id="${prevId}" style="font-size:11px;color:#444;white-space:pre-wrap;max-height:80px;overflow:hidden;">${prev}</div>
                                 <textarea id="${eId}" style="display:none;width:100%;min-height:${minH}px;padding:8px;font-size:12px;border:1.5px solid #b39ddb;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;">${val}</textarea>
                                 <div style="display:flex;gap:6px;margin-top:6px;">
-                                    <button class="agent-btn-edit" id="${savId}" onclick="agentSaveVO('${task.id}','${fieldKey}')" style="font-size:11px;padding:3px 10px;display:none;">💾 Salva</button>
+                                    <button class="agent-btn-edit" id="${savId}" onclick="agentSaveVO('${_jq(task.id)}','${fieldKey}')" style="font-size:11px;padding:3px 10px;display:none;">💾 Salva</button>
                                 </div>
                             </div>
                         </details>`;
@@ -26885,7 +26887,7 @@ ${sectionInstr}`;
                           <input id="agentVotoEdit_${task.id}" type="number" step="0.5" min="1" max="10"
                             value="${task.votoValue}"
                             style="width:60px;font-size:14px;font-weight:700;padding:3px 6px;border:1.5px solid #a5d6a7;border-radius:6px;text-align:center;"
-                            onchange="agentUpdateVoto('${task.id}',this.value)"
+                            onchange="agentUpdateVoto('${_jq(task.id)}',this.value)"
                           >/10
                           <span style="font-size:11px;color:#888;">(modifica → JSON aggiornato)</span>` : ''}
                         </div>
@@ -26895,16 +26897,16 @@ ${sectionInstr}`;
                         ${_vdBloccoHtml(task, null, 'classroomText')}
                         ${mkSection('📝 Argo (registro) — solo su richiesta', 'argoText', 80)}
                         <div class="agent-task-actions" style="margin-top:4px;">
-                            ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')">📥 Importa feedback</button>` : ''}
-                            ${task.status==='approved' ? `<button class="agent-btn-approve" onclick="agentReapproveValOrale('${task.id}')" style="background:#7b3fa0;" title="Sovrascrive il voto e il JSON nello storico con i valori attualmente modificati">🔄 Riscrivi storico</button>` : ''}
-                            <button class="agent-btn-edit" id="agentArgoBtn_${task.id}_x" onclick="agentGenArgo('${task.id}')">${(task.argoText||'').trim() ? '🔄 Rigenera Argo' : '📝 Genera Argo'}</button>
-                            <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
-                            ${task.status==='ready' && task.trascrizione ? `<button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Rifai la valutazione con Claude (griglia, trascrizione e link dell'attività)">🟣 Valuta con Claude</button>` : ''}
-                            ${task.trascrizione ? `<button class="agent-btn-edit" onclick="agentToggleTranscript('${task.id}')">📝 Trascrizione</button>` : ''}
-                            <button class="agent-btn-edit" onclick="agentOpenEditTranscript('${task.id}')">✏️ Modifica trascrizione</button>
-                            ${task.status==='ready' && task.audioFileName ? `<button class="agent-btn-edit" onclick="agentRitrascrivi('${task.id}')" title="Rifà la trascrizione dall'audio; poi la rivedi e rigeneri la valutazione">🔁 Rigenera trascrizione</button>` : ''}
-                            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause lunghe sono attese per le slide — non penalizzare la fluency"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
-                            <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                            ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${_jq(task.id)}')">📥 Importa feedback</button>` : ''}
+                            ${task.status==='approved' ? `<button class="agent-btn-approve" onclick="agentReapproveValOrale('${_jq(task.id)}')" style="background:#7b3fa0;" title="Sovrascrive il voto e il JSON nello storico con i valori attualmente modificati">🔄 Riscrivi storico</button>` : ''}
+                            <button class="agent-btn-edit" id="agentArgoBtn_${task.id}_x" onclick="agentGenArgo('${_jq(task.id)}')">${(task.argoText||'').trim() ? '🔄 Rigenera Argo' : '📝 Genera Argo'}</button>
+                            <button class="agent-btn-edit" onclick="agentRegenerate('${_jq(task.id)}')">🔄 Rigenera</button>
+                            ${task.status==='ready' && task.trascrizione ? `<button class="agent-btn-edit" onclick="agentClaudePrepara('${_jq(task.id)}')" title="Rifai la valutazione con Claude (griglia, trascrizione e link dell'attività)">🟣 Valuta con Claude</button>` : ''}
+                            ${task.trascrizione ? `<button class="agent-btn-edit" onclick="agentToggleTranscript('${_jq(task.id)}')">📝 Trascrizione</button>` : ''}
+                            <button class="agent-btn-edit" onclick="agentOpenEditTranscript('${_jq(task.id)}')">✏️ Modifica trascrizione</button>
+                            ${task.status==='ready' && task.audioFileName ? `<button class="agent-btn-edit" onclick="agentRitrascrivi('${_jq(task.id)}')" title="Rifà la trascrizione dall'audio; poi la rivedi e rigeneri la valutazione">🔁 Rigenera trascrizione</button>` : ''}
+                            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause lunghe sono attese per le slide — non penalizzare la fluency"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${_jq(task.id)}',this.checked)"> 🖼️ Con slide</label>
+                            <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                         </div>
                         ${_agentClaudePanelHtml(task)}
                         ${_agentVersioniHtml(task)}`;
@@ -26914,7 +26916,7 @@ ${sectionInstr}`;
                     const _vsEsclusiHtml = (task.esclusi||[]).length
                         ? `<div style="margin-top:8px;padding:6px 10px;background:#fff5f5;border:1px solid #ffcdd2;border-radius:8px;font-size:12px;color:#b71c1c;">🚫 <strong>Esclusi</strong> (nessun voto all'approvazione): ` +
                           task.esclusi.map(e => String(e.nome||e.safe).replace(/</g,'&lt;') +
-                            (task.status !== 'approved' ? ` <button onclick="agentReinserisciAlunnoVS('${task.id}','${_vsJs(e.safe)}')" style="font-size:10px;padding:0 6px;border-radius:8px;border:1px solid #a5d6a7;background:#f0faf5;color:#1b5e20;cursor:pointer;line-height:1.6;">↩ reinserisci</button>` : '')).join(' · ') +
+                            (task.status !== 'approved' ? ` <button onclick="agentReinserisciAlunnoVS('${_jq(task.id)}','${_vsJs(e.safe)}')" style="font-size:10px;padding:0 6px;border-radius:8px;border:1px solid #a5d6a7;background:#f0faf5;color:#1b5e20;cursor:pointer;line-height:1.6;">↩ reinserisci</button>` : '')).join(' · ') +
                           `</div>`
                         : '';
                     // ── Riepilogo voti ─────────────────────────────────────────
@@ -26924,7 +26926,7 @@ ${sectionInstr}`;
                             const vColor = (r.votoValue||0) >= 6 ? '#1b5e20' : (r.votoValue||0) >= 5 ? '#e65100' : '#b71c1c';
                             return `<tr>
                                 <td style="padding:3px 8px;font-weight:600;">${(r.nome||'').replace(/</g,'&lt;')}
-                                    ${task.status !== 'approved' ? `<button onclick="agentEscludiAlunnoVS('${task.id}','${_vsJs(r.nome)}')" title="Togli questo alunno dalla valutazione: nessun voto né feedback all'approvazione (es. ha già il voto da un'altra valutazione)" style="font-size:10px;padding:0 6px;margin-left:4px;border-radius:8px;border:1px solid #ef9a9a;background:#fff5f5;color:#c62828;cursor:pointer;line-height:1.6;">🚫 escludi</button>` : ''}</td>
+                                    ${task.status !== 'approved' ? `<button onclick="agentEscludiAlunnoVS('${_jq(task.id)}','${_vsJs(r.nome)}')" title="Togli questo alunno dalla valutazione: nessun voto né feedback all'approvazione (es. ha già il voto da un'altra valutazione)" style="font-size:10px;padding:0 6px;margin-left:4px;border-radius:8px;border:1px solid #ef9a9a;background:#fff5f5;color:#c62828;cursor:pointer;line-height:1.6;">🚫 escludi</button>` : ''}</td>
                                 <td style="text-align:center;padding:3px 8px;">${r.pct ?? '—'}%</td>
                                 <td style="text-align:center;padding:3px 8px;font-weight:700;color:${vColor};">${r.votoLabel||'—'}</td>
                                 <td style="padding:3px 8px;font-size:10px;color:#666;">${tagStr||'—'}</td>
@@ -26962,17 +26964,17 @@ ${sectionInstr}`;
                         const regenColor  = hasContent ? '#2e7d32' : '#6a1b9a';
                         const regenBg     = hasContent ? '#e8f5e9' : '#f3e5f5';
                         return `<details style="margin-bottom:6px;border:1px solid #e0e4ff;border-radius:8px;overflow:hidden;"
-                                    ontoggle="if(this.open) agentAutoOpenVS('${tid}','${field}','${safeNomeJs}')">
+                                    ontoggle="if(this.open) agentAutoOpenVS('${_jq(tid)}','${field}','${safeNomeJs}')">
                             <summary style="padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700;color:#5c35c9;background:#f5f0ff;user-select:none;display:flex;justify-content:space-between;align-items:center;">
                                 <span>${label}</span>
-                                <button id="${regenBtnId}" data-label="${regenLabel}" onclick="event.stopPropagation(); agentRegenSingleBlock('${tid}','${safeNomeJs}','${field}')" style="font-size:10px;padding:2px 9px;border-radius:10px;border:1.5px solid ${regenColor};background:${regenBg};color:${regenColor};cursor:pointer;font-weight:700;line-height:1.5;">${regenLabel}</button>
+                                <button id="${regenBtnId}" data-label="${regenLabel}" onclick="event.stopPropagation(); agentRegenSingleBlock('${_jq(tid)}','${safeNomeJs}','${field}')" style="font-size:10px;padding:2px 9px;border-radius:10px;border:1.5px solid ${regenColor};background:${regenBg};color:${regenColor};cursor:pointer;font-weight:700;line-height:1.5;">${regenLabel}</button>
                             </summary>
                             <div style="padding:8px;">
                                 <div id="${prvId}" style="font-size:12px;color:#333;white-space:pre-wrap;line-height:1.45;">${prev}</div>
                                 <textarea id="${eId}" style="display:none;width:100%;min-height:${minH}px;padding:8px;font-size:12px;border:1.5px solid #b39ddb;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;">${val}</textarea>
                                 <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
-                                    ${hasContent ? `<button class="agent-btn-edit" onclick="agentAutoOpenVS('${tid}','${field}','${safeNomeJs}',true)" style="font-size:11px;padding:3px 10px;">✏️ Modifica</button>` : ''}
-                                    <button class="agent-btn-edit" id="${savId}" onclick="agentSaveVS('${tid}','${field}','${safeNomeJs}')" style="font-size:11px;padding:3px 10px;display:none;">💾 Salva</button>
+                                    ${hasContent ? `<button class="agent-btn-edit" onclick="agentAutoOpenVS('${_jq(tid)}','${field}','${safeNomeJs}',true)" style="font-size:11px;padding:3px 10px;">✏️ Modifica</button>` : ''}
+                                    <button class="agent-btn-edit" id="${savId}" onclick="agentSaveVS('${_jq(tid)}','${field}','${safeNomeJs}')" style="font-size:11px;padding:3px 10px;display:none;">💾 Salva</button>
                                 </div>
                             </div>
                         </details>`;
@@ -27001,18 +27003,18 @@ ${sectionInstr}`;
                         return `<div style="border:1px solid #d1c4e9;border-radius:10px;padding:10px;margin-bottom:10px;background:#faf8ff;">
                             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
                                 <span style="font-size:14px;font-weight:700;color:#4527a0;">👤 ${r.nome.replace(/</g,'&lt;')}</span>
-                                <button onclick="agentRenameStudentVS('${task.id}','${safeNomeJs}')" title="Rinomina alunno (se ha inserito il nome sbagliato)" style="font-size:10px;padding:1px 7px;border-radius:10px;background:transparent;border:1px solid #9575cd;color:#7b1fa2;cursor:pointer;line-height:1.6;">✏️ rinomina</button>
-                                ${task.status !== 'approved' ? `<button onclick="agentEscludiAlunnoVS('${task.id}','${safeNomeJs}')" title="Togli questo alunno dalla valutazione: nessun voto né feedback all'approvazione" style="font-size:10px;padding:1px 7px;border-radius:10px;background:#fff5f5;border:1px solid #ef9a9a;color:#c62828;cursor:pointer;line-height:1.6;">🚫 escludi</button>` : ''}
+                                <button onclick="agentRenameStudentVS('${_jq(task.id)}','${safeNomeJs}')" title="Rinomina alunno (se ha inserito il nome sbagliato)" style="font-size:10px;padding:1px 7px;border-radius:10px;background:transparent;border:1px solid #9575cd;color:#7b1fa2;cursor:pointer;line-height:1.6;">✏️ rinomina</button>
+                                ${task.status !== 'approved' ? `<button onclick="agentEscludiAlunnoVS('${_jq(task.id)}','${safeNomeJs}')" title="Togli questo alunno dalla valutazione: nessun voto né feedback all'approvazione" style="font-size:10px;padding:1px 7px;border-radius:10px;background:#fff5f5;border:1px solid #ef9a9a;color:#c62828;cursor:pointer;line-height:1.6;">🚫 escludi</button>` : ''}
                                 <span style="font-size:13px;font-weight:700;color:#2e7d32;">🏆</span>
                                 <input type="number" step="0.5" min="1" max="10" value="${r.votoValue||''}"
                                     style="width:56px;font-size:13px;font-weight:700;padding:2px 5px;border:1.5px solid #a5d6a7;border-radius:6px;text-align:center;"
-                                    onchange="agentUpdateVotoVS('${task.id}','${safeNomeJs}',this.value)">/10
+                                    onchange="agentUpdateVotoVS('${_jq(task.id)}','${safeNomeJs}',this.value)">/10
                                 <span style="font-size:12px;color:${vColor};font-weight:700;">${r.pct??'—'}%</span>
                             </div>
                             <details style="margin-bottom:6px;border:1px solid ${analisiVuota?'#ffccbc':'#c8e6c9'};border-radius:8px;overflow:hidden;">
                                 <summary style="padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700;color:${analisiVuota?'#bf360c':'#1b5e20'};background:${analisiVuota?'#fff3e0':'#f0faf5'};user-select:none;display:flex;justify-content:space-between;align-items:center;">
                                     <span>📋 Valutazione docente ${analisiVuota?'⚠️ non trovata':'(storico)'}</span>
-                                    <button id="agentRegenBtn_doc_${task.id}_${safeKey}" data-label="${analisiVuota?'✨ Genera':'🔄 Rigenera'}" onclick="event.stopPropagation(); agentRegenSingleBlock('${task.id}','${safeNomeJs}','doc')" style="font-size:10px;padding:2px 9px;border-radius:10px;border:1.5px solid ${analisiVuota?'#6a1b9a':'#2e7d32'};background:${analisiVuota?'#f3e5f5':'#e8f5e9'};color:${analisiVuota?'#6a1b9a':'#2e7d32'};cursor:pointer;font-weight:700;line-height:1.5;">${analisiVuota?'✨ Genera':'🔄 Rigenera'}</button>
+                                    <button id="agentRegenBtn_doc_${task.id}_${safeKey}" data-label="${analisiVuota?'✨ Genera':'🔄 Rigenera'}" onclick="event.stopPropagation(); agentRegenSingleBlock('${_jq(task.id)}','${safeNomeJs}','doc')" style="font-size:10px;padding:2px 9px;border-radius:10px;border:1.5px solid ${analisiVuota?'#6a1b9a':'#2e7d32'};background:${analisiVuota?'#f3e5f5':'#e8f5e9'};color:${analisiVuota?'#6a1b9a':'#2e7d32'};cursor:pointer;font-weight:700;line-height:1.5;">${analisiVuota?'✨ Genera':'🔄 Rigenera'}</button>
                                 </summary>
                                 <div style="padding:8px;">
                                     <div id="agentVSPrev_analisi_${task.id}_${safeKey}" style="font-size:12px;color:#333;white-space:pre-wrap;line-height:1.45;">${analisiPrev||'<em style="color:#999;">Nessuna analisi generata per questo alunno.</em>'}</div>
@@ -27021,7 +27023,7 @@ ${sectionInstr}`;
                                         <button class="agent-btn-edit" style="font-size:11px;padding:3px 10px;"
                                             onclick="(function(){const pr=document.getElementById('agentVSPrev_analisi_${task.id}_${safeKey}'),ta=document.getElementById('agentVS_analisi_${task.id}_${safeKey}');if(ta.style.display==='none'){pr.style.display='none';ta.style.display='block';}else{pr.style.display='';ta.style.display='none';}})()">✏️ Modifica</button>
                                         <button class="agent-btn-edit" style="font-size:11px;padding:3px 10px;"
-                                            onclick="(function(){const ta=document.getElementById('agentVS_analisi_${task.id}_${safeKey}');const v=ta.value;const t=agentTasks.find(x=>x.id==='${task.id}');if(!t)return;if(!t.studentAnalysis)t.studentAnalysis={};t.studentAnalysis['${safeNomeJs}']=v;agentSaveTasks(agentTasks);const pr=document.getElementById('agentVSPrev_analisi_${task.id}_${safeKey}');pr.textContent=v;pr.style.display='';ta.style.display='none';})()">💾 Salva</button>
+                                            onclick="(function(){const ta=document.getElementById('agentVS_analisi_${task.id}_${safeKey}');const v=ta.value;const t=agentTasks.find(x=>x.id==='${_jq(task.id)}');if(!t)return;if(!t.studentAnalysis)t.studentAnalysis={};t.studentAnalysis['${safeNomeJs}']=v;agentSaveTasks(agentTasks);const pr=document.getElementById('agentVSPrev_analisi_${task.id}_${safeKey}');pr.textContent=v;pr.style.display='';ta.style.display='none';})()">💾 Salva</button>
                                     </div>
                                 </div>
                             </details>
@@ -27050,14 +27052,14 @@ ${sectionInstr}`;
                             : `⚠️ <strong>Blocchi incompleti</strong> — uno o più blocchi (LiveLearn, Val.Docente) mancano per <strong>${missingStudents.length} alunno/i</strong>: ${missingStudents.map(r=>r.nome).join(', ')}`
                         }<br>
                         <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <button class="agent-btn-edit" style="font-size:11px;padding:4px 12px;background:#e65100;color:white;border-color:#e65100;" ${isMissingProcessing?'disabled':''} onclick="agentRegenerateMissing('${task.id}')">&#x26A1; Rigenera mancanti (${missingStudents.length})</button>
-                            <button class="agent-btn-edit" style="font-size:11px;padding:4px 12px;" ${isMissingProcessing?'disabled':''} onclick="agentRegenerateAllVS('${task.id}')">&#x1F504; Rigenera tutti (${(task.importData||[]).length})</button>
+                            <button class="agent-btn-edit" style="font-size:11px;padding:4px 12px;background:#e65100;color:white;border-color:#e65100;" ${isMissingProcessing?'disabled':''} onclick="agentRegenerateMissing('${_jq(task.id)}')">&#x26A1; Rigenera mancanti (${missingStudents.length})</button>
+                            <button class="agent-btn-edit" style="font-size:11px;padding:4px 12px;" ${isMissingProcessing?'disabled':''} onclick="agentRegenerateAllVS('${_jq(task.id)}')">&#x1F504; Rigenera tutti (${(task.importData||[]).length})</button>
                         </div>
                     </div>` : '';
                     // Barra in cima: le azioni sull'intera verifica senza scorrere tutte le card
                     const vsTopBar = task.status !== 'approved' && task.status !== 'processing' ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
-                            <button class="agent-btn-edit" onclick="agentRegenerateAllVS('${task.id}')" title="Rigenera da capo la valutazione di tutti gli alunni di questa verifica">🔄 Rigenera tutti (${(task.importData||[]).length || (task.students||[]).length})</button>
-                            ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')">📥 Importa voti &amp; feedback</button>` : ''}
+                            <button class="agent-btn-edit" onclick="agentRegenerateAllVS('${_jq(task.id)}')" title="Rigenera da capo la valutazione di tutti gli alunni di questa verifica">🔄 Rigenera tutti (${(task.importData||[]).length || (task.students||[]).length})</button>
+                            ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${_jq(task.id)}')">📥 Importa voti &amp; feedback</button>` : ''}
                         </div>` : '';
                     body = `
                         ${task._autoRegenBlocked && !task.valDocente && !task.classroomBlock ? `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:6px 10px;font-size:12px;color:#92400e;margin-bottom:8px;">⚠️ La valutazione generata non ha le sezioni attese (o è andata persa). L'agente non la rigenera da solo per non consumare token: premi 🔄 Rigenera tutti o 🟣 Rifai con Claude Code.</div>` : ''}
@@ -27066,14 +27068,14 @@ ${sectionInstr}`;
                         ${vsTable}
                         ${vsCards}
                         <div class="agent-task-actions" style="margin-top:4px;">
-                            ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')">📥 Importa voti &amp; feedback</button>` : ''}
-                            ${task.status==='approved' ? `<button class="agent-btn-approve" onclick="agentApprove('${task.id}')" style="background:#7b3fa0;" title="Sovrascrive voti e feedback nello storico">🔄 Riscrivi storico</button>` : ''}
-                            <button class="agent-btn-edit" onclick="agentRecalcAndRegenerate('${task.id}')">📊 Riprendi con dati aggiornati</button>
-                            <button class="agent-btn-edit" onclick="agentValToClaude('${task.id}')" title="Prepara la consegna per Claude Code (📤 esporta, 📥 importa): la valutazione attuale viene sostituita quando importi il file" style="background:#f5f3ff;color:#6d28d9;border-color:#c4b5fd;">🟣 Rifai con Claude Code</button>
-                            <button class="agent-btn-edit" onclick="agentRegenerateMissing('${task.id}', true)" ${task.status==='processing'?'disabled':''} title="Argo non viene più generato in automatico: lo genera ora per gli alunni che non ce l'hanno">📝 Genera Argo (tutti)</button>
-                            <button class="agent-btn-edit" onclick="agentRegenerateAllVS('${task.id}')">🔄 Rigenera tutti</button>
+                            ${task.status==='ready' ? `<button class="agent-btn-approve" onclick="agentApprove('${_jq(task.id)}')">📥 Importa voti &amp; feedback</button>` : ''}
+                            ${task.status==='approved' ? `<button class="agent-btn-approve" onclick="agentApprove('${_jq(task.id)}')" style="background:#7b3fa0;" title="Sovrascrive voti e feedback nello storico">🔄 Riscrivi storico</button>` : ''}
+                            <button class="agent-btn-edit" onclick="agentRecalcAndRegenerate('${_jq(task.id)}')">📊 Riprendi con dati aggiornati</button>
+                            <button class="agent-btn-edit" onclick="agentValToClaude('${_jq(task.id)}')" title="Prepara la consegna per Claude Code (📤 esporta, 📥 importa): la valutazione attuale viene sostituita quando importi il file" style="background:#f5f3ff;color:#6d28d9;border-color:#c4b5fd;">🟣 Rifai con Claude Code</button>
+                            <button class="agent-btn-edit" onclick="agentRegenerateMissing('${_jq(task.id)}', true)" ${task.status==='processing'?'disabled':''} title="Argo non viene più generato in automatico: lo genera ora per gli alunni che non ce l'hanno">📝 Genera Argo (tutti)</button>
+                            <button class="agent-btn-edit" onclick="agentRegenerateAllVS('${_jq(task.id)}')">🔄 Rigenera tutti</button>
                             ${!task.soloAlunno && task.sessionCode ? `<button class="agent-btn-edit" onclick="agentRiscopriAlunno('${task.sessionCode}')" style="background:#e8f5e9;color:#1b5e20;border-color:#81c784;" title="Rimette in coda la verifica di UN alunno di questa sessione (es. passato da esercitazione a test)">👤 Riscopri un alunno</button>` : ''}
-                            <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                            <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                         </div>`;
                 } else {
                     const preview = (task.content||'').slice(0, 400) + ((task.content||'').length > 400 ? '…' : '');
@@ -27112,27 +27114,27 @@ ${sectionInstr}`;
                         <textarea class="agent-task-edit-area" id="${editId}" style="display:none;">${(task.content||'').replace(/</g,'&lt;')}</textarea>
                         <div class="agent-task-actions">
                             ${task.status==='ready' ? `
-                            <button class="agent-btn-approve" onclick="agentApprove('${task.id}')">
+                            <button class="agent-btn-approve" onclick="agentApprove('${_jq(task.id)}')">
                                 ${task.type==='glo' ? '📋 Copia & Approva'
                                   : task.type==='valscritta' ? '📥 Importa voti & feedback'
                                   : task.type==='analisididattica' ? '📤 Approva & Invia allo studente'
                                   : '✅ Approva & Salva'}
                             </button>` : ''}
                             ${task.type==='analisididattica'
-                                ? `<button class="agent-btn-edit" onclick="apriEditorAnalisi({taskId:'${task.id}'})">✏️ Modifica e impagina</button>`
-                                : `<button class="agent-btn-edit" onclick="agentToggleEdit('${task.id}','${editId}')">✏️ Modifica</button>`}
-                            <button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Rigenera</button>
-                            ${task.type==='valscritta' ? `<button class="agent-btn-edit" onclick="agentRecalcAndRegenerate('${task.id}')">📊 Riprendi con dati aggiornati</button>` : ''}
-                            ${task.type==='valscritta' ? `<button class="agent-btn-edit" onclick="agentValToClaude('${task.id}')" title="Prepara la consegna per Claude Code: la valutazione attuale resta finché non importi il file">🟣 Rifai con Claude Code</button>` : ''}
-                            <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                                ? `<button class="agent-btn-edit" onclick="apriEditorAnalisi({taskId:'${_jq(task.id)}'})">✏️ Modifica e impagina</button>`
+                                : `<button class="agent-btn-edit" onclick="agentToggleEdit('${_jq(task.id)}','${_jq(editId)}')">✏️ Modifica</button>`}
+                            <button class="agent-btn-edit" onclick="agentRegenerate('${_jq(task.id)}')">🔄 Rigenera</button>
+                            ${task.type==='valscritta' ? `<button class="agent-btn-edit" onclick="agentRecalcAndRegenerate('${_jq(task.id)}')">📊 Riprendi con dati aggiornati</button>` : ''}
+                            ${task.type==='valscritta' ? `<button class="agent-btn-edit" onclick="agentValToClaude('${_jq(task.id)}')" title="Prepara la consegna per Claude Code: la valutazione attuale resta finché non importi il file">🟣 Rifai con Claude Code</button>` : ''}
+                            <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                         </div>`;}
 
             } else if (task.status === 'failed') {
                 const retries = task.retryCount || 0;
                 body = `<div style="color:#7f0000;font-size:13px;padding:8px 0;">⛔ Tentativi esauriti (${retries}/${AGENT_MAX_RETRY}) — ${(task.error||'').replace(/</g,'&lt;')}<br><small style="opacity:0.7">Rimuovi il task e risolvi il problema prima di riprovare manualmente.</small></div>
                     <div class="agent-task-actions">
-                        <button class="agent-btn-edit" onclick="agentForceRetry('${task.id}')">🔄 Forza riprova</button>
-                        <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                        <button class="agent-btn-edit" onclick="agentForceRetry('${_jq(task.id)}')">🔄 Forza riprova</button>
+                        <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                     </div>`;
             } else if (task.status === 'error') {
                 const retries = task.retryCount || 0;
@@ -27141,8 +27143,8 @@ ${sectionInstr}`;
                 const handleLost = task.type === 'valorale' && typeof task.audioHandle?.getFile !== 'function';
                 body = `<div style="color:#c62828;font-size:13px;padding:8px 0;">⚠️ ${(task.error||'').replace(/</g,'&lt;')}<br><small style="opacity:0.7">${handleLost ? '📁 Riseleziona la cartella audio nell\'agente e riesegui.' : `Tentativo ${retries}/${AGENT_MAX_RETRY}`}</small></div>
                     <div class="agent-task-actions">
-                        ${!handleLost ? `<button class="agent-btn-edit" onclick="agentRegenerate('${task.id}')">🔄 Riprova</button>` : ''}
-                        <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                        ${!handleLost ? `<button class="agent-btn-edit" onclick="agentRegenerate('${_jq(task.id)}')">🔄 Riprova</button>` : ''}
+                        <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                     </div>`;
             } else if (task.status === 'awaiting_claude') {
                 body = `<div style="background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px;padding:8px 12px;font-size:13px;color:#5b21b6;">
@@ -27151,8 +27153,8 @@ ${sectionInstr}`;
                     <div class="agent-task-actions">
                         <button class="agent-btn-approve" onclick="agentValExportForClaude()">📤 Esporta per Claude</button>
                         <button class="agent-btn-edit" onclick="agentValImportFromClaude()">📥 Importa da Claude</button>
-                        <button class="agent-btn-edit" onclick="agentValGenerateNow('${task.id}')" title="Genera subito con il generatore automatico (Gemini → Anthropic)">⚡ Genera con Gemini/Haiku</button>
-                        <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                        <button class="agent-btn-edit" onclick="agentValGenerateNow('${_jq(task.id)}')" title="Genera subito con il generatore automatico (Gemini → Anthropic)">⚡ Genera con Gemini/Haiku</button>
+                        <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                     </div>`;
             } else if (task.status === 'awaiting_transcript') {
                 const existing = (task.trascrizione||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
@@ -27171,18 +27173,18 @@ ${sectionInstr}`;
                 </div>
                 ${atAudio}
                 ${_agentGrigliaPickerHtml(task)}
-                <textarea id="manualTranscript_${task.id}" oninput="agentTranscriptInput('${task.id}',this.value)"
+                <textarea id="manualTranscript_${task.id}" oninput="agentTranscriptInput('${_jq(task.id)}',this.value)"
                     style="width:100%;min-height:120px;margin-top:8px;padding:8px;font-size:12px;border:1.5px solid #ce93d8;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;"
                     placeholder="D: What did you do last weekend?&#10;S: I go... I went to the beach with my family..."
                 >${existing}</textarea>
                 <div class="agent-task-actions" style="margin-top:8px;">
-                    <button class="agent-btn-approve" onclick="agentSubmitManualTranscript('${task.id}')">${toReview ? '✅ Approva trascrizione e genera valutazione' : '🤖 Genera valutazione'}</button>
+                    <button class="agent-btn-approve" onclick="agentSubmitManualTranscript('${_jq(task.id)}')">${toReview ? '✅ Approva trascrizione e genera valutazione' : '🤖 Genera valutazione'}</button>
                     ${_agentTranscriptSaveBtn(task)}
-                    <button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta con Claude</button>
+                    <button class="agent-btn-edit" onclick="agentClaudePrepara('${_jq(task.id)}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta con Claude</button>
                     ${task.audioFileName ? _agentRitrascriviBtns(task) : ''}
-                    ${(task.valDocente||'').trim() ? `<button class="agent-btn-edit" onclick="agentTornaAiRisultati('${task.id}')" title="Riapri la valutazione già fatta, senza rigenerarla">↩ Torna alla valutazione già fatta</button>` : ''}
-                    <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause sono attese per le slide — non penalizzare"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
-                    <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                    ${(task.valDocente||'').trim() ? `<button class="agent-btn-edit" onclick="agentTornaAiRisultati('${_jq(task.id)}')" title="Riapri la valutazione già fatta, senza rigenerarla">↩ Torna alla valutazione già fatta</button>` : ''}
+                    <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause sono attese per le slide — non penalizzare"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${_jq(task.id)}',this.checked)"> 🖼️ Con slide</label>
+                    <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                 </div>
                 ${_agentClaudePanelHtml(task)}
                 ${_agentVersioniHtml(task)}`;
@@ -27195,7 +27197,7 @@ ${sectionInstr}`;
                     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
                         <span style="font-size:12px;font-weight:700;color:#5b3fd4;min-width:90px;">STUDENTE_${k}</span>
                         <span style="color:#999;">→</span>
-                        <select onchange="agentDialogoSetSpeaker('${task.id}','${k}',this.value)"
+                        <select onchange="agentDialogoSetSpeaker('${_jq(task.id)}','${k}',this.value)"
                             style="flex:1;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid #b39ddb;">
                             <option value="">— non assegnato —</option>
                             ${studOpts(task.speakerMap?.[k])}
@@ -27204,32 +27206,32 @@ ${sectionInstr}`;
                 const studentiChips = (task.studenti||[]).map(s =>
                     `<span style="display:inline-flex;align-items:center;gap:4px;background:#ede7f6;color:#4527a0;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:600;margin:2px;">
                         ${s.studentName}
-                        <span onclick="agentClaudePrepara('${task.id}','${s.studentSafe}')" style="cursor:pointer;background:#5b3fd4;color:white;border-radius:8px;padding:0 6px;font-weight:700;" title="Valuta con Claude solo ${s.studentName}">🟣 Valuta con Claude</span>
-                        ${(task.studenti||[]).length>2?`<span onclick="agentDialogoRemoveStudent('${task.id}','${s.studentSafe}')" style="cursor:pointer;color:#b71c1c;font-weight:700;" title="Rimuovi">✕</span>`:''}
+                        <span onclick="agentClaudePrepara('${_jq(task.id)}','${_jq(s.studentSafe)}')" style="cursor:pointer;background:#5b3fd4;color:white;border-radius:8px;padding:0 6px;font-weight:700;" title="Valuta con Claude solo ${s.studentName}">🟣 Valuta con Claude</span>
+                        ${(task.studenti||[]).length>2?`<span onclick="agentDialogoRemoveStudent('${_jq(task.id)}','${_jq(s.studentSafe)}')" style="cursor:pointer;color:#b71c1c;font-weight:700;" title="Rimuovi">✕</span>`:''}
                     </span>`).join('');
                 const existing = (task.trascrizione||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
                 body = `${task.error ? `<div style="color:#6a1e8a;font-size:12px;padding:4px 0 8px;">ℹ️ ${(task.error||'').replace(/</g,'&lt;')}</div>` : ''}
                     <div style="background:#f8f9ff;border:1px solid #e0e4ff;border-radius:8px;padding:8px;margin-bottom:8px;">
                         <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:4px;">👥 Studenti del dialogo (${(task.studenti||[]).length})</div>
                         <div>${studentiChips}</div>
-                        ${(task.studenti||[]).length<3?`<button onclick="agentDialogoAddStudent('${task.id}')" style="margin-top:6px;font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid #9575cd;background:white;color:#5b3fd4;cursor:pointer;font-weight:600;">➕ Aggiungi terzo studente</button>`:''}
+                        ${(task.studenti||[]).length<3?`<button onclick="agentDialogoAddStudent('${_jq(task.id)}')" style="margin-top:6px;font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid #9575cd;background:white;color:#5b3fd4;cursor:pointer;font-weight:600;">➕ Aggiungi terzo studente</button>`:''}
                     </div>
                     ${task.audioFileName || _dialogoAudioFiles[task.id] ? _agentPlayerHtml(task) : ''}
                     ${_agentGrigliaPickerHtml(task)}
                     <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:4px;">🔗 Associa ogni parlante a uno studente</div>
                     <div style="background:#faf8ff;border:1px solid #e0e4ff;border-radius:8px;padding:8px;margin-bottom:8px;">${speakerRows}</div>
                     <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:4px;">✍️ Trascrizione (rivedi e correggi se serve)</div>
-                    <textarea id="dlgTranscript_${task.id}" oninput="agentTranscriptInput('${task.id}',this.value)"
+                    <textarea id="dlgTranscript_${task.id}" oninput="agentTranscriptInput('${_jq(task.id)}',this.value)"
                         style="width:100%;min-height:140px;padding:8px;font-size:12px;border:1.5px solid #ce93d8;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;"
                         placeholder="STUDENTE_A: Hello, how are you?&#10;STUDENTE_B: I'm fine thanks, and you?&#10;DOCENTE: ...">${existing}</textarea>
                     <div class="agent-task-actions" style="margin-top:8px;">
                         ${_agentTranscriptSaveBtn(task)}
-                        <button class="agent-btn-approve" onclick="agentDialogoGenerate('${task.id}')">✅ Approva trascrizione e genera valutazioni</button>
-                        <button class="agent-btn-edit" onclick="agentClaudePrepara('${task.id}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta tutti con Claude</button>
+                        <button class="agent-btn-approve" onclick="agentDialogoGenerate('${_jq(task.id)}')">✅ Approva trascrizione e genera valutazioni</button>
+                        <button class="agent-btn-edit" onclick="agentClaudePrepara('${_jq(task.id)}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta tutti con Claude</button>
                         ${_dialogoHasAudio(task) ? _agentRitrascriviBtns(task) : ''}
-                        ${Array.isArray(task.results) && task.results.some(r => (r.valDocente||'').trim()) ? `<button class="agent-btn-edit" onclick="agentTornaAiRisultati('${task.id}')" title="Riapri le valutazioni già fatte, senza rigenerarle">↩ Torna alle valutazioni già fatte</button>` : ''}
-                        <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide</label>
-                        <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                        ${Array.isArray(task.results) && task.results.some(r => (r.valDocente||'').trim()) ? `<button class="agent-btn-edit" onclick="agentTornaAiRisultati('${_jq(task.id)}')" title="Riapri le valutazioni già fatte, senza rigenerarle">↩ Torna alle valutazioni già fatte</button>` : ''}
+                        <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${_jq(task.id)}',this.checked)"> 🖼️ Con slide</label>
+                        <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                     </div>
                     ${_agentClaudePanelHtml(task)}
                     ${_agentVersioniHtml(task)}`;
@@ -27252,20 +27254,20 @@ ${sectionInstr}`;
                             <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:6px;">🎙️ Audio del dialogo ${hasAudio?`<span style="color:#2e7d32;">✅ ${task.audioFileName||'allegato'}</span>`:'<span style="color:#e65100;">— non allegato</span>'}</div>
                             <label style="font-size:11px;color:#5b3fd4;cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border:1px solid #9575cd;border-radius:6px;background:white;font-weight:600;">
                                 📎 ${hasAudio?'Cambia file audio':'Allega file audio'}
-                                <input type="file" accept="audio/*" style="display:none;" onchange="agentDialogoAttachAudio('${task.id}',this)">
+                                <input type="file" accept="audio/*" style="display:none;" onchange="agentDialogoAttachAudio('${_jq(task.id)}',this)">
                             </label>
-                            ${hasAudio?`<button onclick="agentDialogoPlayAudio('${task.id}','agentDlgAudioPend_${task.id}')" style="font-size:11px;padding:5px 10px;margin-left:6px;border-radius:6px;border:1px solid #7b61ff;background:#ede9ff;color:#5b3fd4;cursor:pointer;font-weight:600;">▶ Ascolta</button><div id="agentDlgAudioPend_${task.id}" style="margin-top:6px;"></div>`:''}
+                            ${hasAudio?`<button onclick="agentDialogoPlayAudio('${_jq(task.id)}','agentDlgAudioPend_${task.id}')" style="font-size:11px;padding:5px 10px;margin-left:6px;border-radius:6px;border:1px solid #7b61ff;background:#ede9ff;color:#5b3fd4;cursor:pointer;font-weight:600;">▶ Ascolta</button><div id="agentDlgAudioPend_${task.id}" style="margin-top:6px;"></div>`:''}
                         </div>
                         ${_agentGrigliaPickerHtml(task)}
                         <div style="margin:6px 0;">
                             <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:5px 10px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#555'};">
-                                <input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide
+                                <input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${_jq(task.id)}',this.checked)"> 🖼️ Con slide
                             </label>
                         </div>
                         <div class="agent-task-actions">
-                            <button class="agent-btn-approve" onclick="agentStartDialogoTranscribe('${task.id}')" ${hasAudio?'':'disabled style="opacity:.5;cursor:not-allowed;"'}>▶ Avvia trascrizione</button>
-                            <button class="agent-btn-edit" onclick="agentDialogoSkipToManual('${task.id}')">✍️ Trascrizione manuale</button>
-                            <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                            <button class="agent-btn-approve" onclick="agentStartDialogoTranscribe('${_jq(task.id)}')" ${hasAudio?'':'disabled style="opacity:.5;cursor:not-allowed;"'}>▶ Avvia trascrizione</button>
+                            <button class="agent-btn-edit" onclick="agentDialogoSkipToManual('${_jq(task.id)}')">✍️ Trascrizione manuale</button>
+                            <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                         </div>`;
                 } else if (task.type === 'valorale') {
                     const grigliaSelectorHtml = _agentGrigliaPickerHtml(task);
@@ -27274,12 +27276,12 @@ ${sectionInstr}`;
                         ${grigliaSelectorHtml}
                         <div style="margin:6px 0;">
                             <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:5px 10px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#555'};" title="Attiva se lo studente ha usato le slide: le pause vengono annotate come [slide] senza penalizzare la fluency">
-                                <input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${task.id}',this.checked)"> 🖼️ Con slide
+                                <input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${_jq(task.id)}',this.checked)"> 🖼️ Con slide
                             </label>
                         </div>
                         <div class="agent-task-actions">
-                            <button class="agent-btn-approve" onclick="agentProcessValOrale('${task.id}')">▶ Avvia ora</button>
-                            <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                            <button class="agent-btn-approve" onclick="agentProcessValOrale('${_jq(task.id)}')">▶ Avvia ora</button>
+                            <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                         </div>`;
                 } else if (task.type === 'audio_abbina') {
                     // Card identificazione manuale: player audio + dropdown classe + studente
@@ -27291,7 +27293,7 @@ ${sectionInstr}`;
                         <small style="color:#555;">Ascolta l'audio, poi seleziona classe e studente.</small>
                     </div>
                     <div style="margin-bottom:8px;">
-                        <button onclick="agentPlayAudio('${task.id}')"
+                        <button onclick="agentPlayAudio('${_jq(task.id)}')"
                             style="font-size:12px;padding:5px 12px;border-radius:6px;border:1px solid #7b61ff;background:#ede9ff;color:#5b3fd4;cursor:pointer;font-weight:600;">
                             ▶ Ascolta audio
                         </button>
@@ -27301,7 +27303,7 @@ ${sectionInstr}`;
                         <div>
                             <label style="font-size:11px;font-weight:700;color:#555;display:block;margin-bottom:3px;">Classe</label>
                             <select id="agentAbbina_classe_${task.id}"
-                                onchange="agentAbbinaUpdateStudenti('${task.id}', this.value)"
+                                onchange="agentAbbinaUpdateStudenti('${_jq(task.id)}', this.value)"
                                 style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid #ffcc80;width:100%;">
                                 <option value="">— Seleziona classe —</option>
                                 ${classiOpts}
@@ -27317,14 +27319,14 @@ ${sectionInstr}`;
                     </div>
                     <div class="agent-task-actions">
                         <button class="agent-btn-approve"
-                            onclick="agentConfirmAudioAbbina('${task.id}')">✅ Conferma abbinamento</button>
+                            onclick="agentConfirmAudioAbbina('${_jq(task.id)}')">✅ Conferma abbinamento</button>
                         <button class="agent-btn-reject"
-                            onclick="agentRemoveTask('${task.id}')">🗑 Ignora</button>
+                            onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Ignora</button>
                     </div>`;
                 } else {
                     body = `<div style="color:#aaa;font-size:13px;padding:8px 0;">⏳ In attesa di elaborazione…</div>
                         <div class="agent-task-actions">
-                            <button class="agent-btn-reject" onclick="agentRemoveTask('${task.id}')">🗑 Rimuovi</button>
+                            <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                         </div>`;
                 }
             }
@@ -27349,7 +27351,7 @@ ${sectionInstr}`;
                     </span>`;
             }
             return `<div class="agent-task-card${collapsedClass}" data-task-id="${task.id}">
-                <div class="agent-task-header" onclick="agentToggleTaskCollapse('${task.id}', event)">
+                <div class="agent-task-header" onclick="agentToggleTaskCollapse('${_jq(task.id)}', event)">
                     <span class="agent-task-icon">${tl.icon}</span>
                     ${_agentTaskHeadHtml(task, tl, subtitle)}
                     ${pill}
@@ -27361,7 +27363,7 @@ ${sectionInstr}`;
                     ${_agentAiPickerHtml(task)}
                     ${_agentPrelimAggHtml(task)}
                     ${_agentPrelimPanelHtml(task)}
-                    ${task.type === 'analisididattica' && task.status === 'approved' ? `<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;"><button class="agent-btn-edit" onclick="apriEditorAnalisi({taskId:'${task.id}'})">✏️ Modifica e reinvia</button><button class="agent-btn-edit" onclick="agentReinviaAnalisi('${task.id}')" title="Rimanda a StudentApp l'analisi salvata in MyClass">📤 Invia di nuovo a StudentApp</button></div>` : ''}
+                    ${task.type === 'analisididattica' && task.status === 'approved' ? `<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;"><button class="agent-btn-edit" onclick="apriEditorAnalisi({taskId:'${_jq(task.id)}'})">✏️ Modifica e reinvia</button><button class="agent-btn-edit" onclick="agentReinviaAnalisi('${_jq(task.id)}')" title="Rimanda a StudentApp l'analisi salvata in MyClass">📤 Invia di nuovo a StudentApp</button></div>` : ''}
                     ${body}
                 </div>
             </div>`;
@@ -31840,7 +31842,7 @@ ${base}`, task, true);
     function _agentTranscriptSaveBtn(task) {
         const at = task.trascrizioneSalvataAt
             ? new Date(task.trascrizioneSalvataAt).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : '';
-        return `<button class="agent-btn-edit" onclick="agentTranscriptSave('${task.id}')" title="Salva le correzioni alla trascrizione senza generare la valutazione">💾 Salva trascrizione</button>
+        return `<button class="agent-btn-edit" onclick="agentTranscriptSave('${_jq(task.id)}')" title="Salva le correzioni alla trascrizione senza generare la valutazione">💾 Salva trascrizione</button>
             <span id="trSaved_${task.id}" style="font-size:11px;color:#2e7d32;align-self:center;">${at ? '✓ salvata alle ' + at : ''}</span>`;
     }
     function _agentTranscriptSaved(task, testo) {
@@ -31914,8 +31916,8 @@ ${base}`, task, true);
     }
 
     function _agentRitrascriviBtns(task) {
-        return `<button class="agent-btn-edit" onclick="agentRitrascrivi('${task.id}')" title="Rifà la trascrizione dall'audio (utile se è a metà o mancano pezzi)">🔁 Rigenera trascrizione</button>` +
-            (task.trascrizionePrecedente ? `<button class="agent-btn-edit" onclick="agentRipristinaTrascrizione('${task.id}')" title="Torna alla trascrizione prima dell'ultima rigenerazione">↩ Ripristina precedente</button>` : '');
+        return `<button class="agent-btn-edit" onclick="agentRitrascrivi('${_jq(task.id)}')" title="Rifà la trascrizione dall'audio (utile se è a metà o mancano pezzi)">🔁 Rigenera trascrizione</button>` +
+            (task.trascrizionePrecedente ? `<button class="agent-btn-edit" onclick="agentRipristinaTrascrizione('${_jq(task.id)}')" title="Torna alla trascrizione prima dell'ultima rigenerazione">↩ Ripristina precedente</button>` : '');
     }
 
     // Apre il pannello di modifica trascrizione (porta il task in awaiting_transcript)
@@ -32017,7 +32019,7 @@ ${base}`, task, true);
                 <div style="font-size:11.5px;font-weight:700;color:#3949ab;margin:5px 0 3px;">📝 Annotazioni in diretta${nota ? ' <span style="font-weight:400;color:#666;">(puoi correggerle prima di confermare)</span>' : ''}</div>
                 <textarea rows="${nota ? 3 : 1}" style="width:100%;font-size:12px;padding:6px 8px;border:1px solid #c5cae9;border-radius:6px;font-family:inherit;resize:vertical;"
                     placeholder="Nessuna annotazione: puoi scriverne qui (es. pronunce o errori sentiti)"
-                    oninput="agentPrelimNota('${task.id}','${safe}',this.value)">${e(nota)}</textarea>
+                    oninput="agentPrelimNota('${_jq(task.id)}','${_jq(safe)}',this.value)">${e(nota)}</textarea>
             </div>`;
         }).join('');
         const fatto = !!(task.votoValue !== undefined || (task.results||[]).length);
@@ -32027,17 +32029,17 @@ ${base}`, task, true);
             <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:5px 10px;border-radius:6px;margin-top:8px;
                 background:${task.usePrelim ? '#e8f5e9' : '#f5f5f5'};border:1.5px solid ${task.usePrelim ? '#66bb6a' : '#bdbdbd'};color:${task.usePrelim ? '#1b5e20' : '#555'};font-weight:${task.usePrelim ? '700' : '400'};"
                 title="Se attivo, l'AI usa punteggi e annotazioni per la valutazione, senza dire da dove vengono">
-                <input type="checkbox" style="margin:0;" ${task.usePrelim ? 'checked' : ''} onchange="agentTogglePrelim('${task.id}',this.checked)">
+                <input type="checkbox" style="margin:0;" ${task.usePrelim ? 'checked' : ''} onchange="agentTogglePrelim('${_jq(task.id)}',this.checked)">
                 🎯 Confermo: tieni conto della valutazione preliminare e delle annotazioni
             </label>
             <br>
             <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:5px 10px;border-radius:6px;margin-top:6px;
                 background:${task.noTrascrizione ? '#fff3e0' : '#f5f5f5'};border:1.5px solid ${task.noTrascrizione ? '#fb8c00' : '#bdbdbd'};color:${task.noTrascrizione ? '#8a4b00' : '#555'};font-weight:${task.noTrascrizione ? '700' : '400'};"
                 title="L'AI valuta solo da punteggi e annotazioni: la trascrizione (o l'audio) non si usa e non serve">
-                <input type="checkbox" style="margin:0;" ${task.noTrascrizione ? 'checked' : ''} onchange="agentToggleNoTrascr('${task.id}',this.checked)">
+                <input type="checkbox" style="margin:0;" ${task.noTrascrizione ? 'checked' : ''} onchange="agentToggleNoTrascr('${_jq(task.id)}',this.checked)">
                 📵 Escludi la trascrizione: valuta solo da punteggi e annotazioni
             </label>
-            ${task.noTrascrizione && task.status !== 'processing' ? `<div style="margin-top:8px;"><button class="agent-btn-approve" onclick="agentRegenerate('${task.id}')">▶ ${fatto ? 'Rivaluta' : 'Valuta'} senza trascrizione</button>
+            ${task.noTrascrizione && task.status !== 'processing' ? `<div style="margin-top:8px;"><button class="agent-btn-approve" onclick="agentRegenerate('${_jq(task.id)}')">▶ ${fatto ? 'Rivaluta' : 'Valuta'} senza trascrizione</button>
                 <span style="font-size:11px;color:#666;margin-left:6px;">${task.aiScelta === 'claude' ? 'prepara il testo per Claude' : 'usa il generatore scelto qui sopra'}</span></div>` : ''}
             ${fatto && !task.noTrascrizione ? `<div style="font-size:11px;color:#666;margin-top:5px;">Se cambi queste scelte dopo la valutazione, premi 🔄 Rigenera.</div>` : ''}
         </div>`;
@@ -32200,8 +32202,8 @@ Valuta SOLO in base alla valutazione preliminare con la griglia e alle annotazio
             return `<details style="margin-top:6px;border:1px solid #e0e4ff;border-radius:8px;background:#fafaff;">
                 <summary style="padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700;color:#3949ab;">${e(_AGENT_PROV_LBL[v.provider] || v.provider || 'AI')} · ${e(dt(v.at))} · ${voto}${v.nonUsata ? ' · <span style="color:#7b3fa0;">💾 salvata, non ancora usata</span>' : ''}</summary>
                 <div style="padding:4px 10px 10px;">${corpo}
-                    ${task.status !== 'approved' ? `<button class="agent-btn-edit" style="margin-top:8px;" onclick="agentUsaVersione('${task.id}',${i})">↩ Usa questa versione</button>
-                    <button class="agent-btn-edit" style="margin-top:8px;" onclick="agentUsaVersione('${task.id}',${i},true)" title="La rende attuale e apre l'editor della valutazione docente">✏️ Usa e modifica</button>` : ''}
+                    ${task.status !== 'approved' ? `<button class="agent-btn-edit" style="margin-top:8px;" onclick="agentUsaVersione('${_jq(task.id)}',${i})">↩ Usa questa versione</button>
+                    <button class="agent-btn-edit" style="margin-top:8px;" onclick="agentUsaVersione('${_jq(task.id)}',${i},true)" title="La rende attuale e apre l'editor della valutazione docente">✏️ Usa e modifica</button>` : ''}
                 </div></details>`;
         }).join('');
         return `<div style="margin-top:10px;padding:8px 10px;background:#f3f4ff;border:1px dashed #9fa8da;border-radius:10px;">
@@ -32282,7 +32284,7 @@ Valuta SOLO in base alla valutazione preliminare con la griglia e alle annotazio
         return `<div style="margin:8px 0;border:1px solid ${fb ? '#b2dfdb' : '#d1c4e9'};border-radius:10px;background:#fff;">
             <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;background:${fb ? '#e0f2f1' : '#f3eefe'};border-radius:10px 10px 0 0;">
                 <span style="font-size:12px;font-weight:800;color:${fb ? '#00695c' : '#4527a0'};flex:1;">${fb ? '💬 Feedback all\'alunno (LiveLearn / StudentApp)' : '📝 Valutazione docente'}</span>
-                <button class="agent-btn-edit" style="font-size:11px;padding:3px 10px;" onclick="apriEditorValDocente('${task.id}',${sx},'${campo}')">${testo.trim() ? '✏️ Modifica e impagina' : '✏️ Scrivi'}</button>
+                <button class="agent-btn-edit" style="font-size:11px;padding:3px 10px;" onclick="apriEditorValDocente('${_jq(task.id)}',${sx},'${campo}')">${testo.trim() ? '✏️ Modifica e impagina' : '✏️ Scrivi'}</button>
             </div>
             <div style="padding:8px 14px;max-height:280px;overflow:auto;font-size:13px;line-height:1.7;color:#222;">${html}</div>
         </div>`;
@@ -32672,17 +32674,17 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
                 <div style="font-size:11px;color:#555;margin-bottom:6px;">1) Il testo qui sotto (griglia, trascrizione, link dell'attività della lezione) è già negli appunti: incollalo in Claude. Se correggi la trascrizione, ripremi "🟣 Valuta con Claude" per aggiornarlo.</div>
                 <textarea readonly style="width:100%;min-height:90px;max-height:200px;padding:6px;font-size:11px;border:1px solid #d1c4e9;border-radius:6px;font-family:monospace;box-sizing:border-box;background:white;" onclick="this.select()">${esc(task.claudePrompt)}</textarea>
                 <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0 8px;">
-                    <button class="agent-btn-edit" onclick="agentClaudeCopia('${task.id}')">📋 Copia di nuovo</button>
+                    <button class="agent-btn-edit" onclick="agentClaudeCopia('${_jq(task.id)}')">📋 Copia di nuovo</button>
                     <span id="claudeMsg_${task.id}" style="font-size:11px;color:#2e7d32;"></span>
                 </div>
                 <div style="font-size:11px;color:#555;margin-bottom:4px;">2) Incolla qui la risposta di Claude:</div>
-                <textarea id="claudeResp_${task.id}" oninput="agentClaudeSalvaBozza('${task.id}',this.value)"
+                <textarea id="claudeResp_${task.id}" oninput="agentClaudeSalvaBozza('${_jq(task.id)}',this.value)"
                     style="width:100%;min-height:120px;padding:8px;font-size:12px;border:1.5px solid #9575cd;border-radius:8px;font-family:monospace;resize:vertical;box-sizing:border-box;"
                     placeholder="=== VALUTAZIONE DOCENTE ===&#10;...&#10;=== CLASSROOM ===&#10;...">${esc(task.claudeRisposta)}</textarea>
                 <div class="agent-task-actions" style="margin-top:6px;">
-                    <button class="agent-btn-approve" onclick="agentClaudeUsaRisposta('${task.id}')">📥 Approva trascrizione e usa la risposta di Claude</button>
-                    <button class="agent-btn-edit" onclick="agentClaudeSalvaRisposta('${task.id}')" title="La risposta viene elaborata e salvata tra le versioni: non approva la trascrizione e non sostituisce nulla. Potrai usarla dopo.">💾 Salva la risposta senza usarla</button>
-                    <button class="agent-btn-reject" onclick="agentClaudeChiudi('${task.id}')">✖ Chiudi</button>
+                    <button class="agent-btn-approve" onclick="agentClaudeUsaRisposta('${_jq(task.id)}')">📥 Approva trascrizione e usa la risposta di Claude</button>
+                    <button class="agent-btn-edit" onclick="agentClaudeSalvaRisposta('${_jq(task.id)}')" title="La risposta viene elaborata e salvata tra le versioni: non approva la trascrizione e non sostituisce nulla. Potrai usarla dopo.">💾 Salva la risposta senza usarla</button>
+                    <button class="agent-btn-reject" onclick="agentClaudeChiudi('${_jq(task.id)}')">✖ Chiudi</button>
                 </div>
             </div>`;
     }
@@ -32705,7 +32707,7 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
         return `
             <div style="margin:8px 0;padding:8px;background:${task.griglia ? '#f8f9ff' : '#fff8e1'};border:1px solid ${task.griglia ? '#e0e4ff' : '#ffcc80'};border-radius:8px;">
                 <div style="font-size:11px;font-weight:700;color:#555;margin-bottom:6px;">📐 Griglia di valutazione${task.type === 'valdialogo' ? ' (uguale per tutti)' : ''} ${sel}</div>
-                ${griglie.length ? `<select onchange="agentSetGrigliaManuale('${task.id}',this.value)"
+                ${griglie.length ? `<select onchange="agentSetGrigliaManuale('${_jq(task.id)}',this.value)"
                     style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid #b39ddb;width:100%;margin-bottom:6px;">
                     <option value="">— Seleziona griglia —</option>
                     ${griglie.map(g=>`<option value="${esc(g.id)}" ${task.griglia?.id===g.id?'selected':''}>${esc(g.nome)} (${esc((g.aree||[]).map(a=>a.nome+'/'+a.max).join(', '))})</option>`).join('')}
@@ -32713,7 +32715,7 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
                 <label style="font-size:11px;color:#6c47ff;cursor:pointer;display:flex;align-items:center;gap:4px;">
                     📎 Allega griglia JSON
                     <input type="file" accept=".json" style="display:none;"
-                        onchange="agentAttachGrigliaFromJson('${task.id}',this)">
+                        onchange="agentAttachGrigliaFromJson('${_jq(task.id)}',this)">
                 </label>
                 ${opts.note ? `<div style="font-size:11px;color:#777;margin-top:4px;">${opts.note}</div>` : ''}
             </div>`;
@@ -33351,16 +33353,16 @@ ${blocchiPerAlunno}`;
         const b = 'border:1px solid #b39ddb;background:white;color:#4527a0;border-radius:8px;padding:5px 9px;font-size:12px;font-weight:700;cursor:pointer;';
         return `<div class="agent-player" style="margin:8px 0;padding:8px 10px;background:#f3eefe;border:1.5px solid #d1c4e9;border-radius:10px;">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                <button style="${b}" onclick="agentPlayerSkip('${id}',-10)" title="Indietro di 10 secondi">⏪ 10s</button>
-                <button style="${b}" onclick="agentPlayerSkip('${id}',-5)" title="Indietro di 5 secondi">↺ 5s</button>
-                <button id="apBtn_${id}" style="${b}background:#5b3fd4;color:white;border-color:#5b3fd4;min-width:72px;font-size:13px;" onclick="agentPlayerToggle('${id}')" title="Play / pausa">${playing ? '⏸ Pausa' : '▶ Play'}</button>
-                <button style="${b}" onclick="agentPlayerSkip('${id}',5)" title="Avanti di 5 secondi">5s ↻</button>
-                <button style="${b}" onclick="agentPlayerSkip('${id}',10)" title="Avanti di 10 secondi">10s ⏩</button>
-                <button id="apRate_${id}" style="${b}" onclick="agentPlayerRate('${id}')" title="Velocità di riproduzione">${rate}×</button>
+                <button style="${b}" onclick="agentPlayerSkip('${_jq(id)}',-10)" title="Indietro di 10 secondi">⏪ 10s</button>
+                <button style="${b}" onclick="agentPlayerSkip('${_jq(id)}',-5)" title="Indietro di 5 secondi">↺ 5s</button>
+                <button id="apBtn_${id}" style="${b}background:#5b3fd4;color:white;border-color:#5b3fd4;min-width:72px;font-size:13px;" onclick="agentPlayerToggle('${_jq(id)}')" title="Play / pausa">${playing ? '⏸ Pausa' : '▶ Play'}</button>
+                <button style="${b}" onclick="agentPlayerSkip('${_jq(id)}',5)" title="Avanti di 5 secondi">5s ↻</button>
+                <button style="${b}" onclick="agentPlayerSkip('${_jq(id)}',10)" title="Avanti di 10 secondi">10s ⏩</button>
+                <button id="apRate_${id}" style="${b}" onclick="agentPlayerRate('${_jq(id)}')" title="Velocità di riproduzione">${rate}×</button>
                 <span id="apTime_${id}" style="font-size:12px;color:#555;font-variant-numeric:tabular-nums;margin-left:auto;">${_apFmt(cur)} / ${dur ? _apFmt(dur) : '--:--'}</span>
             </div>
             <input id="apSeek_${id}" type="range" min="0" max="${dur || 0}" step="0.1" value="${cur}" style="width:100%;margin-top:6px;accent-color:#5b3fd4;"
-                oninput="agentPlayerSeek('${id}',this.value)" ${dur ? '' : 'disabled'}>
+                oninput="agentPlayerSeek('${_jq(id)}',this.value)" ${dur ? '' : 'disabled'}>
             <div id="apMsg_${id}" style="font-size:10px;color:#9e9e9e;">🎙️ ${name}</div>
         </div>`;
     }
