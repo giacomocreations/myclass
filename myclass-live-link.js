@@ -503,7 +503,7 @@
             + (items.some(function (x) { return x.resend; }) ? ' ⚠️ ' + items.filter(function (x) { return x.resend; }).length + ' corretti qui ma non ancora in MyClass (già spuntati).' : '');
         render();
       };
-      request('prom-list', { gridId: opts.grid.id }, build);
+      request('prom-list', { gridId: opts.grid.id, grid: opts.grid.ver ? opts.grid : undefined }, build);
     }
     function changed(it) { return it.neu.join('-') !== it.old.join('-') || it.note !== it.note0; }
     function scores(it, k) {

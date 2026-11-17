@@ -9572,9 +9572,24 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 const o = old.find(x => nrm(x.nome) === nrm(a.nome)) || (old.length === g.aree.length ? old[k] : null);
                 return { ...(o || {}), nome: o ? o.nome : a.nome, max: +a.max, descrittori: a.descrittori.map(d => ({ pt: +d.pt, testo: String(d.testo || '') })) };
             });
+            const convPrima = JSON.stringify(G.conversione_voto || null);
             if (g.conversione_voto && typeof g.conversione_voto === 'object') G.conversione_voto = { ...g.conversione_voto };
             G.ver = +g.ver;
             G.aggiornata = new Date().toISOString().slice(0, 10);
+            // Conversione punti → voto cambiata: i promemoria con questa griglia (stesso totale massimo)
+            // prendono il voto nuovo dagli stessi punti; agg avvisa l'agente (Rigenera / Riscrivi storico)
+            if (JSON.stringify(G.conversione_voto || null) !== convPrima && G.conversione_voto) {
+                const tm = G.aree.reduce((t, a) => t + (+a.max || 0), 0);
+                let nv = 0;
+                (data.classi || []).forEach(c => (c.studenti || []).forEach(st => (st.votiPromemoria || []).forEach(p => {
+                    if (!p || p.grigliaId !== G.id || +p.totMax !== tm) return;
+                    const v = G.conversione_voto[String(Math.round(+p.tot || 0))];
+                    if (v === undefined || +v === +p.voto10) return;
+                    if (!p.votoPrima) p.votoPrima = { voto10: p.voto10, tot: p.tot, totMax: p.totMax };
+                    p.voto10 = +v; p.agg = Date.now(); p.convAggiornata = G.aggiornata; nv++;
+                })));
+                if (nv) console.info(`[MyClass] ${nv} promemoria "${G.nome}" con il voto ricalcolato (nuova conversione punti → voto)`);
+            }
             saveData();
             console.info('[MyClass] griglia aggiornata dall\'attività:', G.nome, 'v' + G.ver);
             return true;
@@ -9623,9 +9638,14 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             bc.onmessage = e => {
                 const m = e.data || {};
                 // Rivalutazione dei promemoria con la griglia nuova: risponde MyClass, LIVE aperta o no
-                if ((m.type === 'prom-list' || m.type === 'prom-update') && m.reqId && !String(m.reqId).startsWith('mc')) {
+                // 'grid': la finestra docente manda la sua griglia (versione, descrittori, conversione) appena si apre
+                if ((m.type === 'prom-list' || m.type === 'prom-update' || m.type === 'grid') && m.reqId && !String(m.reqId).startsWith('mc')) {
                     if (window._tabBlocked) { bc.postMessage({ type: 'ack', reqId: m.reqId, ok: false, paused: true, msg: 'questa scheda di MyClass è in pausa (MyClass è aperta due volte).' }); return; }
-                    let r; try { r = m.type === 'prom-list' ? mcPromemoriaLista(m.gridId) : mcPromemoriaAggiorna(m.grid, m.items || []); }
+                    let r; try {
+                        if (m.type === 'grid') r = { ok: true, updated: mcAggiornaGrigliaDaAttivita(m.grid) };
+                        else if (m.type === 'prom-list') { if (m.grid) mcAggiornaGrigliaDaAttivita(m.grid); r = mcPromemoriaLista(m.gridId); }
+                        else r = mcPromemoriaAggiorna(m.grid, m.items || []);
+                    }
                     catch(err) { r = { ok: false, msg: 'errore in MyClass (' + (err && err.message || err) + ')' }; }
                     bc.postMessage({ type: 'ack', reqId: m.reqId, ...r });
                     return;
