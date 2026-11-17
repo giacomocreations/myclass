@@ -1190,7 +1190,8 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
 <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva e prossimo</button><button data-act="reset">↺ Azzera</button></div>
 <div class="msg" id="t-msg"></div>
 <h2>Voti salvati</h2>
-<div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-act="clear">🗑 Svuota</button></div>
+<div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-rv="open" title="Rivedi alunno per alunno le valutazioni di questa attività (anche i promemoria di MyClass): nota e punteggi correggibili">♻️ Rivedi / correggi</button><button data-act="clear">🗑 Svuota</button></div>
+<div id="t-riv"></div>
 <div id="t-saved"></div>
 </body></html>`;
 
@@ -1201,6 +1202,7 @@ function openTeacherWin() {
   const d = teacherWin.document; d.open(); d.write(TEACHER_HTML); d.close();
   if (window.DrillZoom) DrillZoom.attach(d);   // A− / A+ anche nella finestra docente
   d.addEventListener('click', onTeacherClick);
+  if (review) review.bind();   // ♻️ Rivedi / correggi (myclass-live-link.js)
   d.addEventListener('keydown', onTeacherKey);
   d.addEventListener('change', e => {
     if (e.target.id === 't-cap') { swapCap = e.target.checked; if (swapCap && rub[0] > 3) rub[0] = 3; renderTeacherRubric(); renderSummary(); pushLive(); }
@@ -1222,6 +1224,8 @@ const twOpen = () => teacherWin && !teacherWin.closed && teacherWin.document.get
 const tw = id => teacherWin.document.getElementById(id);
 // Segue la LIVE di MyClass: stato del collegamento e alunno selezionato (myclass-live-link.js)
 const liveFollow = window.MyClassLive && MyClassLive.follow && MyClassLive.follow(() => twOpen() ? teacherWin.document : null, { nameId: 't-name', classId: 't-class', onStudent: n => twMsg('👤 Dalla LIVE: ' + n), savedToday: () => loadGrades().filter(g => g.date === new Date().toLocaleDateString('it-IT')).map(g => g.name) });
+// ♻️ Rivedi / correggi: valutazioni salvate qui e promemoria di MyClass, nota e punteggi correggibili
+const review = window.MyClassLive && MyClassLive.review && MyClassLive.review({ getDoc: () => twOpen() ? teacherWin.document : null, boxId: 't-riv', grid: GRID, loadGrades, storeGrades, voto: t => voto(t), onLocalSaved: () => renderTeacherSaved() });
 
 function updateTeacherWin() {
   if (!twOpen()) return;
@@ -1263,7 +1267,7 @@ function renderTeacherRubric() {
 function renderTeacherSaved() {
   if (!twOpen()) return;
   const g = loadGrades();
-  tw('t-saved').innerHTML = g.length ? `<table class="sv"><tr><th>Data</th><th>Cl.</th><th>Studente</th><th>Voto</th><th>M-V-C</th><th>Scheda</th><th>Tempo</th><th></th></tr>${g.map((x, i) => `<tr><td>${esc(x.date)}</td><td>${esc(x.cls)}</td><td>${esc(x.name)}${x.note ? `<br><small>${esc(x.note)}</small>` : ''}</td><td class="v">${esc(x.voto)}</td><td>${esc(x.det)}</td><td>${esc(x.card)}</td><td>${esc(x.tempo)}</td><td><button class="x" data-act="del" data-i="${i}" title="Elimina">✕</button></td></tr>`).reverse().join('')}</table>` : '<div class="empty">Nessun voto salvato.</div>';
+  tw('t-saved').innerHTML = g.length ? `<table class="sv"><tr><th>Data</th><th>Cl.</th><th>Studente</th><th>Voto</th><th>M-V-C</th><th>Scheda</th><th>Tempo</th><th></th></tr>${g.map((x, i) => `<tr><td>${esc(x.date)}</td><td>${esc(x.cls)}</td><td>${esc(x.name)}${x.note ? `<br><small>${esc(x.note)}</small>` : ''}</td><td class="v">${esc(x.voto)}${x.riv ? `<br><small title="Corretto il ${esc(x.riv)}${x.prima ? ' · prima ' + esc(x.prima) : ''}">♻️</small>` : ''}</td><td>${esc(x.det)}</td><td>${esc(x.card)}</td><td>${esc(x.tempo)}</td><td><button class="x" data-act="del" data-i="${i}" title="Elimina">✕</button></td></tr>`).reverse().join('')}</table>` : '<div class="empty">Nessun voto salvato.</div>';
 }
 function twMsg(t) { if (!twOpen()) return; tw('t-msg').textContent = t; clearTimeout(twMsg.t); twMsg.t = setTimeout(() => { if (twOpen()) tw('t-msg').textContent = ''; }, 2600); }
 function onTeacherClick(e) {
