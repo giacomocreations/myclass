@@ -1596,12 +1596,12 @@ function checkSpeech(raw) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  GRIGLIA DI VALUTAZIONE (Oral test) · 16 punti — versione 5 (novembre 2026)
+//  GRIGLIA DI VALUTAZIONE (Oral test) · 16 punti — versione 6 (novembre 2026)
 //  Comunicazione 4 · Lessico 4 · Present continuous 4 · Pronuncia e fluenza 4
 //  Più severa della prima (15 punti, pronuncia /3): il 10 solo senza errori,
 //  già 2–3 errori di present continuous o di lessico portano la voce a 2.
 // ══════════════════════════════════════════════════════════════════
-const RUB_VER = 5;   // 3: pronuncia meno severa · 4: articolo/colore dopo il nome pesano da 4 errori (−1, mai sotto 1) · 5: lessico in proporzione a quanto dice
+const RUB_VER = 6;   // 3: pronuncia meno severa · 4: articolo/colore dopo il nome pesano da 4 errori (−1, mai sotto 1) · 5–6: lessico = il più basso tra capi (in % su quelli della scena) e verbi (su quelli detti)
 const RUBRIC = [
   { id: 'com', name: 'Comunicazione', max: 4, d: {
     4: 'Descrive i personaggi in autonomia e in modo completo (vestiti + azione), senza domande guida; risponde con sicurezza alle domande extra. Il messaggio arriva sempre chiaro, anche se c\'è qualche errore. Articolo sbagliato (a black shoes, articolo singolare con il plurale) e colore dopo il nome (a T-shirt red) tolgono un solo punto, e solo se in tutto sono 4 o più; vanno comunque sempre segnalati all\'alunno.',
@@ -1610,10 +1610,10 @@ const RUBRIC = [
     1: 'Frasi isolate o parole singole, solo con supporto continuo; la comunicazione passa a fatica.',
     0: 'Non comunica.' } },
   { id: 'lex', name: 'Lessico (vestiti, colori, azioni)', max: 4, d: {
-    4: 'Nomina con sicurezza almeno 5 capi diversi (o tutti quelli della scena, se sono meno) con il loro colore e descrive l\'azione con il lessico giusto, senza errori di lessico. Per le calzature va bene anche il termine generico "shoes".',
-    3: 'Nomina 4 capi diversi con il colore e l\'azione, oppure sbaglia poche parole: una sola, o al massimo 1 su 5 di quelle che dice (un colore sbagliato, jumper/hoodie scambiati, un verbo che non conosce…).',
-    2: 'Nomina 2–3 capi di base, oppure sbaglia più parole (fino a 2 su 5 di quelle che dice); l\'azione detta in modo generico o con aiuto.',
-    1: 'Una o due parole pertinenti, anche con aiuto, oppure sbaglia più di 2 parole su 5; ricorre all\'italiano.',
+    4: 'Dice giusti, con il colore, almeno il 70% dei capi della scena e tutti i verbi delle azioni, senza errori di lessico. Per le calzature va bene anche il termine generico "shoes".',
+    3: 'Dice giusti almeno metà dei capi della scena; oppure un solo errore sui capi (o al massimo 1 su 5 di quelli che dice: un colore sbagliato, jumper/hoodie scambiati…); oppure sbaglia un verbo su tre (meno della metà) o non dice le azioni.',
+    2: 'Dice giusti almeno il 30% dei capi; oppure sbaglia fino a 2 capi su 5 di quelli che dice; oppure sbaglia più della metà dei verbi (2 su 3).',
+    1: 'Dice giusti meno del 30% dei capi, oppure sbaglia più di 2 capi su 5, oppure sbaglia tutti i verbi; ricorre all\'italiano.',
     0: 'Non produce lessico pertinente.' } },
   { id: 'pc', name: 'Uso del present continuous', max: 4, d: {
     4: 'Forma sempre corretta: is / \'s wearing e is + -ing per l\'azione, anche con he / she / they; negative e risposte brevi corrette (No, she isn\'t).',
@@ -1738,20 +1738,40 @@ function errCounts(k, n) {
   const lexE = k.col + k.aLex + M(k.word, n(LEX_ERR_NOTES[0])) + n(LEX_ERR_NOTES[1]);
   return { pcE, lexE, pcNote: pcE - k.mi - k.ww - k.ti - k.form, lexNote: lexE - k.col - k.aLex - k.word };
 }
-// Lessico. n = capi diversi detti col colore (null = non spuntati), aOk = azioni giuste, imp = errori di
-// lessico, words = parole del lessico che ha detto (capi + azioni, giuste e sbagliate; 0 = non si sa),
-// nAv = tipi di capo diversi a disposizione nelle scene (0 = non si sa).
-// Varietà: 5 capi diversi (o tutti quelli della scena, se sono meno) + l'azione → 4; uno in meno → 3; 2 → 2.
-// Errori in proporzione a quanto dice: 1 errore → al massimo 3; da 2 in su, fino a 1 parola su 5 → 3,
-// fino a 2 su 5 → 2, oltre → 1 (se non si sa quante parole ha detto: 2–3 → 2, 4 o più → 1).
-function lexScore(n, aOk, imp, words, nAv) {
-  const need = nAv ? Math.max(2, Math.min(5, nAv)) : 5;
-  let v = n === null ? 4 : n >= need && aOk ? 4 : n >= need - 1 ? 3 : n >= 2 ? 2 : 1;
-  let cap = 4;
-  if (imp === 1) cap = 3;
-  else if (imp >= 2) { const r = words ? imp / Math.max(words, imp) : null; cap = r === null ? (imp >= 4 ? 1 : 2) : r <= 0.2 ? 3 : r <= 0.4 ? 2 : 1; }
-  return Math.min(v, cap);
+// Lessico = il più basso tra CAPI e VERBI.
+// o: { okN capi detti giusti col colore, avail capi a disposizione nelle scene (0 = non si sa), types capi
+//      diversi, typesAv tipi a disposizione, said capi spuntati (giusti e sbagliati), cE errori sui capi
+//      (colore, parola sbagliata, parola in italiano, colore al plurale), vOk / vErr verbi giusti / sbagliati }
+// CAPI: in percentuale su quelli della scena (70% → 4, 50% → 3, 30% → 2, meno → 1); se non si sa quanti
+// erano (note vecchie), dalla varietà: 5 capi diversi (o tutti quelli della scena) → 4, uno in meno → 3, 2 → 2.
+// Errori sui capi in proporzione a quelli che dice: 1 → al massimo 3; fino a 1 su 5 → 3, fino a 2 su 5 → 2, oltre → 1.
+// VERBI (uno per personaggio): tutti giusti → 4; almeno metà giusti (1 sbagliato su 3) → 3; meno di metà
+// (2 su 3) → 2; tutti sbagliati → 1; nessuna azione detta → al massimo 3.
+function lexClothes(o) {
+  if (o.okN === null) return o.cE ? lexErrCap(o.cE, o.said) : null;
+  let v;
+  if (o.avail) { const c = o.okN / o.avail; v = c >= 0.7 ? 4 : c >= 0.5 ? 3 : c >= 0.3 ? 2 : 1; }
+  else { const need = o.typesAv ? Math.max(2, Math.min(5, o.typesAv)) : 5; v = o.types >= need ? 4 : o.types >= need - 1 ? 3 : o.types >= 2 ? 2 : 1; }
+  return Math.min(v, lexErrCap(o.cE, o.said));
 }
+function lexErrCap(e, said) {
+  if (!e) return 4;
+  if (e === 1) return 3;
+  const r = said ? e / Math.max(said, e) : null;
+  return r === null ? (e >= 4 ? 1 : 2) : r <= 0.2 ? 3 : r <= 0.4 ? 2 : 1;
+}
+function lexVerbs(o) {
+  const n = o.vOk + o.vErr;
+  if (!n) return o.okN !== null ? 3 : null;
+  if (!o.vErr) return 4;
+  if (!o.vOk) return 1;
+  return o.vOk / n >= 0.5 ? 3 : 2;
+}
+function lexScore(o) {
+  const c = lexClothes(o), v = lexVerbs(o);
+  return c === null && v === null ? null : Math.min(c ?? 4, v ?? 4);
+}
+const lexWhy = o => `${o.okN === null ? 'capi non spuntati' : `capi giusti ${o.okN}${o.avail ? ` su ${o.avail} (${Math.round(o.okN / o.avail * 100)}%)` : ` (${o.types} diversi${o.typesAv ? ` su ${o.typesAv}` : ''})`}`}${o.cE ? ` · errori sui capi ×${o.cE} su ${o.said}` : ''} · ${o.vOk + o.vErr ? `verbi giusti ${o.vOk} su ${o.vOk + o.vErr}` : 'nessuna azione detta'}`;
 // e = errori, ok = frasi giuste: 0 → 4 · 1 → 3 · 2–3 → 2 · 4 o più (o più di metà delle frasi) → 1
 function pcScore(e, ok) {
   if (!e) return 4;
@@ -1788,12 +1808,10 @@ function computeHints() {
   // Lessico /4: capi diversi detti col colore; ogni errore di lessico (colore sbagliato, parola
   // sbagliata, azione detta male, note «parola in italiano» / «colore al plurale») abbassa il massimo:
   // 1 → 3, 2–3 → 2, 4 o più → 1. L'articolo sbagliato non è lessico: pesa sulla Comunicazione (sopra).
-  const imp = s.lexE;
-  if (s.said || imp) {
-    const words = s.said + s.aOk + s.aForm + s.aLex;
-    const v = lexScore(s.said ? s.okTypes : null, s.aOk, imp, words, s.availTypes);
-    H.lex = { v, why: `${s.said ? `${s.okTypes} capi diversi con il colore${s.availTypes ? ` su ${s.availTypes} nella scena` : ''}${s.aOk ? ' + azione' : ' · nessuna azione giusta'}` : 'capi non spuntati'} · ${imp ? `errori di lessico ×${imp} su ${words} parole dette` : 'nessun errore di lessico'}` };
-  }
+  const imp = s.lexE;   // errori di lessico: sui capi + verbi sbagliati
+  const lo = { okN: s.said ? s.okN : null, avail: s.avail, types: s.okTypes, typesAv: s.availTypes, said: s.said, cE: imp - s.aLex, vOk: s.aOk + s.aForm, vErr: s.aLex };
+  const lv = lexScore(lo);
+  if (lv !== null) H.lex = { v: lv, why: lexWhy(lo) };
   // Present continuous /4: errori dalle spunte (is wearing, forma dell'azione) + note di errore
   // (she wearing, he wear, they is, -ing mancante, present simple)
   const pcE = s.pcE, pcOk = s.sOk + s.aOk;
@@ -2126,7 +2144,7 @@ function parseNote(note) {
   const parts = segs.flatMap(x => /^(Pronuncia|Errori): /.test(x) ? [] : x.split(' · '));
   const num = re => { for (const p of parts) { const m = p.match(re); if (m) return +m[1]; } return 0; };
   const typ = parts.map(p => p.match(/\((\d+) diversi(?: su (\d+))?\)/)).find(Boolean);
-  const okN = num(/^capi con colore giusti (\d+)/);
+  const okN = num(/^capi con colore giusti (\d+)/), avail = num(/^capi con colore giusti \d+ su (\d+)/);
   const list = pre => { const x = segs.find(t => t.startsWith(pre)); return x ? x.slice(pre.length).split(', ').map(t => { const m = t.match(/^(.*?)(?: ×(\d+))?$/); return { t: m[1], n: +(m[2] || 1) }; }) : []; };
   const isw = parts.find(p => p.startsWith('is wearing'));
   const det = isw && isw.includes('✗ ') ? isw.slice(isw.indexOf('✗ ') + 2).split(', ') : [];
@@ -2138,15 +2156,16 @@ function parseNote(note) {
   const gnNote = sum(er, [ART_NOTE, INV_NOTE]);
   const aOk = num(/^azioni ✓(\d+)/);
   return { gn: Math.max(gnLine, gnNote), types: typ ? +typ[1] : null, typesAv: typ && typ[2] ? +typ[2] : 0, aOk, sOk: num(/^is wearing ✓(\d+)/),
-    words: okN + k.col + k.word + aOk + k.form + k.aLex,
+    lo: { okN: typ ? okN : null, avail, types: typ ? +typ[1] : 0, typesAv: typ && typ[2] ? +typ[2] : 0, said: okN + k.col + k.word, vOk: aOk + k.form, vErr: k.aLex },
     ...errCounts(k, t => sum(er, [t])),
     Hs: num(/^esitazioni ×(\d+)/), B: num(/^blocchi ×(\d+)/), P: sum(pr),
     any: !!(segs[0] && !/^(Pronuncia|Errori): /.test(segs[0])) || pr.length > 0 };
 }
 // Suggerimenti dalla nota: { lex, pc, pro } (null = la nota non dice niente su quella voce)
 function noteSug(note) {
-  const c = parseNote(note), imp = c.lexE, pcOk = c.sOk + c.aOk;
-  return [null, c.types !== null || imp ? lexScore(c.types, c.aOk, imp, c.words, c.typesAv) : null, c.pcE + pcOk ? pcScore(c.pcE, pcOk) : null, c.any ? proScore(c.P, c.Hs, c.B) : null];
+  const c = parseNote(note), pcOk = c.sOk + c.aOk;
+  const lo = { ...c.lo, cE: c.lexE - c.lo.vErr };
+  return [null, lexScore(lo), c.pcE + pcOk ? pcScore(c.pcE, pcOk) : null, c.any ? proScore(c.P, c.Hs, c.B) : null];
 }
 // Punto di partenza: i punteggi dati allora (con la griglia vecchia la pronuncia /3 diventa /4: 3 → 4, 2 → 3)
 const rivBase = it => it.v1 ? [it.old[0], it.old[1], it.old[2], { 3: 4, 2: 3, 1: 1, 0: 0 }[it.old[3]] ?? it.old[3]] : it.old.slice();
