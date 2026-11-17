@@ -25238,6 +25238,10 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
             if (AGENT_DO_ORALI && agentAudioDirHandle) {
                 await agentCheckAudioFolder();
             }
+            // anche senza audio: verifiche orali con il promemoria della LIVE
+            if (AGENT_DO_ORALI) {
+                try { agentCheckPromemoriaOrali(); } catch (e) { console.warn('[Agente] promemoria orali:', e); }
+            }
 
             // ── 5. Analisi didattiche richieste da StudentApp ──────────────────
             if (!_fbSkip) try {
@@ -26219,7 +26223,7 @@ ${sectionInstr}`;
             <div style="margin-top:14px;padding-top:12px;border-top:1px solid #eee;">
                 <div style="font-size:12px;font-weight:800;color:#555;margin-bottom:4px;">NON È IN ELENCO?</div>
                 <div style="font-size:12px;color:#666;margin-bottom:8px;">Le schede cancellate prima di questo aggiornamento non si possono ripristinare, ma l'audio è ancora nella cartella: l'agente ricrea la scheda (da trascrivere di nuovo) se per quella data l'alunno non ha già un voto orale in MyClass.</div>
-                <button onclick="agentRicercaAudioOrali()" style="padding:8px 14px;border-radius:8px;border:1px solid #b39ddb;background:#ede7f6;color:#4527a0;font-weight:700;cursor:pointer;">🔍 Cerca di nuovo gli audio nella cartella</button>
+                <button onclick="agentRicercaAudioOrali()" style="padding:8px 14px;border-radius:8px;border:1px solid #b39ddb;background:#ede7f6;color:#4527a0;font-weight:700;cursor:pointer;">🔍 Cerca di nuovo gli audio e i promemoria della LIVE</button>
                 <span id="roMsg" style="font-size:12px;color:#1b5e20;margin-left:8px;"></span>
             </div>
             <div style="text-align:right;margin-top:14px;"><button onclick="document.getElementById('riscopriOraleModal').remove()" style="padding:8px 16px;border-radius:8px;border:1px solid #ccc;background:#f5f5f5;cursor:pointer;">Chiudi</button></div>
@@ -26241,10 +26245,10 @@ ${sectionInstr}`;
     }
     async function agentRicercaAudioOrali() {
         const m = document.getElementById('roMsg');
-        if (!agentAudioDirHandle) { if (m) { m.style.color = '#b35c00'; m.textContent = '⚠️ Prima riapri la cartella audio nelle impostazioni dell\'agente.'; } return; }
         const prima = new Set(agentTasks.map(t => t.id));
         if (m) { m.style.color = '#555'; m.textContent = '⏳ Cerco…'; }
-        try { await agentCheckAudioFolder(); } catch (e) { if (m) { m.style.color = '#c62828'; m.textContent = '⚠️ ' + e.message; } return; }
+        try { if (agentAudioDirHandle) await agentCheckAudioFolder(); agentCheckPromemoriaOrali(); } catch (e) { if (m) { m.style.color = '#c62828'; m.textContent = '⚠️ ' + e.message; } return; }
+        if (!agentAudioDirHandle && !agentTasks.some(t => !prima.has(t.id))) { if (m) { m.style.color = '#b35c00'; m.textContent = '⚠️ Nessun promemoria LIVE nuovo con verifica orale. Per cercare anche gli audio riapri la cartella audio nelle impostazioni dell\'agente.'; } return; }
         agentSaveTasks(agentTasks); agentRenderPanel();
         const nuovi = agentTasks.filter(t => !prima.has(t.id) && (t.type === 'valorale' || t.type === 'audio_abbina'));
         if (m) { m.style.color = '#1b5e20'; m.textContent = nuovi.length ? `✅ ${nuovi.length} schede ricreate: ${nuovi.map(t => t.studentName || t.audioFileName).join(', ')}` : 'Nessuna scheda nuova: gli audio hanno già una scheda o un voto orale per quella data.'; }
@@ -26704,6 +26708,8 @@ ${sectionInstr}`;
             }
             const sl = (task.status === 'awaiting_transcript' && task.transcriptToReview)
                 ? '🔎 Trascrizione da approvare'
+                : (task.status === 'awaiting_transcript' && task.noAudio)
+                ? '📵 Senza audio · da valutare'
                 : (statusLabels[task.status] || task.status);
             const pill = `<span class="agent-status-pill ${task.status}">${sl}</span>`;
             const aiBadge = task.aiProvider ? (aiLabels[task.aiProvider] || '') : '';
@@ -27101,7 +27107,10 @@ ${sectionInstr}`;
             } else if (task.status === 'awaiting_transcript') {
                 const existing = (task.trascrizione||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
                 const toReview = !!task.transcriptToReview;
-                const atHead = toReview
+                const atHead = task.noAudio && !toReview
+                    ? `📵 <strong>Verifica orale senza audio</strong> · dal promemoria della LIVE<br>
+                    <small style="color:#555;">Nessun audio per questo alunno: la valutazione parte dai punteggi e dalle annotazioni prese in diretta (riquadro qui sopra: correggi le annotazioni se serve, poi <b>▶ Valuta senza trascrizione</b>). Se vuoi, puoi anche incollare qui sotto una trascrizione e togliere 📵.</small>`
+                    : toReview
                     ? `🔎 <strong>Trascrizione da approvare</strong><br>
                     <small style="color:#555;">Rileggi la trascrizione automatica (riascolta l'audio se serve), correggi gli errori e poi approvala: la valutazione e i feedback vengono generati solo dopo la tua approvazione.</small>`
                     : `✍️ <strong>Trascrizione manuale richiesta</strong><br>
@@ -30866,6 +30875,74 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
     }
 
     // Scansiona la cartella audio — usa le lezioni orali rilevate automaticamente dal piano
+    // ── Verifiche orali SENZA audio: dai promemoria della LIVE ──────────────
+    // Se in un giorno c'è una verifica orale nel piano (±1 giorno) e un alunno ha un promemoria
+    // con il voto preliminare, ma nessun audio è stato abbinato, crea la stessa scheda «valorale»
+    // degli audio, già pronta per valutare dai punteggi e dalle annotazioni prese in diretta
+    // (📵 trascrizione esclusa, 🎯 valutazione preliminare confermata). Si può comunque incollare
+    // una trascrizione, usare Claude o, se poi arriva l'audio, la scheda lo prende.
+    // Salta: voto orale già nello storico per quella data, schede già presenti (anche rimosse)
+    // per lo stesso alunno entro ±2 giorni, promemoria più vecchi di 21 giorni.
+    function agentCheckPromemoriaOrali() {
+        const today = new Date().toISOString().split('T')[0];
+        const ms = d => new Date(String(d || '').slice(0, 10)).getTime();
+        const tOggi = ms(today), DAY = 86400000;
+        const isOrale = lz => AGENT_ORALE_TIPI.some(t => String(lz.tipo || '').toLowerCase().includes(t));
+        const nuovi = [];
+        for (const classe of (data.classi || [])) {
+            const piano = classe.pianificazione?.piano || [];
+            for (const studente of (classe.studenti || [])) {
+                const safe = _toSafe(`${studente.cognome} ${studente.nome}`);
+                const visti = new Set();
+                for (const p of (studente.votiPromemoria || [])) {
+                    const sessionDate = String(p?.data || '').slice(0, 10);
+                    const t = ms(sessionDate);
+                    if (!sessionDate || isNaN(t) || t > tOggi || tOggi - t > 21 * DAY || !(Number(p.voto10) > 0) || visti.has(sessionDate)) continue;
+                    visti.add(sessionDate);
+                    // c'è una verifica orale quel giorno (o il giorno prima / dopo)?
+                    const lez = piano.filter(lz => isOrale(lz) && Math.abs(ms(lz.data) - t) <= DAY)
+                        .sort((a, b) => Math.abs(ms(a.data) - t) - Math.abs(ms(b.data) - t))[0];
+                    if (!lez) continue;
+                    if ((studente.orale || []).some(g => String(g.data || '').slice(0, 10) === sessionDate)) continue;
+                    const giaScheda = agentTasks.some(x => (x.type === 'valorale' && x.studentSafe === safe && x.classe === classe.nome
+                            || x.type === 'valdialogo' && (x.studenti || []).some(z => z.studentSafe === safe))
+                        && Math.abs(ms(x.sessionDate) - t) <= 2 * DAY);
+                    if (giaScheda) continue;
+                    const _gr = _agentTrovaGrigliaOrale(classe, sessionDate, [studente]);
+                    const g = _gr.griglia;
+                    const tid = `valorale_${_toSafe(classe.nome)}_${safe}_${sessionDate}`;
+                    agentTasks.push({
+                        id: tid, type: 'valorale',
+                        classe:        classe.nome,
+                        studentName:   `${studente.cognome} ${studente.nome}`,
+                        studentNome:   studente.nome,
+                        studentSafe:   safe,
+                        unit:          lez.unit || lez.titolo || '',
+                        griglia:       g ? { id: g.id, nome: g.nome, aree: g.aree, conversione_voto: g.conversione_voto || null, guida: g.guida || null } : null,
+                        grigliaFonte:  g ? _gr.fonte : '',
+                        audioFileName: null,
+                        audioHandle:   null,
+                        noAudio:       true,          // ← nata dal promemoria della LIVE, senza audio
+                        sessionDate,
+                        prelimLiveData: { ...p, _auto: true },
+                        usePrelim:     true,
+                        noTrascrizione: true,
+                        status: 'awaiting_transcript',
+                        createdAt: new Date().toISOString()
+                    });
+                    nuovi.push(`${studente.cognome} ${studente.nome} (${classe.nome}, ${sessionDate})`);
+                }
+            }
+        }
+        if (nuovi.length) {
+            console.log(`[Agente] ${nuovi.length} verifiche orali senza audio dai promemoria LIVE: ${nuovi.join(', ')}`);
+            agentSaveTasks(agentTasks);
+            agentRenderPanel();
+        }
+        return nuovi;
+    }
+    window.agentCheckPromemoriaOrali = agentCheckPromemoriaOrali;
+
     async function agentCheckAudioFolder() {
         if (!agentAudioDirHandle) return;
 
@@ -31020,8 +31097,15 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
                 // Skip se task già in coda con questa stessa sessionDate
                 const safe = _toSafe(`${studente.cognome} ${studente.nome}`);
                 const tid  = `valorale_${_toSafe(classe.nome)}_${safe}_${sessionDate}`;
-                if (agentTasks.find(t => t.id === tid)) {
-                    console.log(`[Agente] ${tid}: già in coda — skip`);
+                const _esist = agentTasks.find(t => t.id === tid);
+                if (_esist) {
+                    // Scheda nata dal promemoria senza audio: l'audio arrivato dopo si aggancia lì
+                    if (_esist.noAudio && !['approved', 'dismissed', 'processing'].includes(_esist.status)) {
+                        _esist.audioFileName = audio.name; _esist.audioHandle = audio.handle; _esist.noAudio = false;
+                        const fatto = _esist.votoValue !== undefined || (_esist.valDocente || '').trim() || (_esist.trascrizione || '').trim();
+                        if (!fatto) { _esist.noTrascrizione = false; _esist.status = 'pending'; }
+                        console.log(`[Agente] ${tid}: audio ${audio.name} agganciato alla scheda nata dal promemoria`);
+                    } else console.log(`[Agente] ${tid}: già in coda — skip`);
                     break;
                 }
 
