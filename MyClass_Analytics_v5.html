@@ -26276,7 +26276,7 @@ ${sectionInstr}`;
             <div style="font-size:12px;font-weight:800;color:#555;margin-bottom:6px;">ORALI E DIALOGHI RIMOSSI (${rimossi.length})</div>
             ${rimossi.some(t => promInfo(t).has) ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px;padding:8px 10px;background:#f3e5f5;border-radius:8px;font-size:12px;">
                 <b>Più insieme:</b> spunta gli orali e premi
-                <button onclick="agentRivalutaSelezionati()" style="padding:6px 12px;border-radius:8px;border:1px solid #5e35b1;background:#5e35b1;color:#fff;font-weight:700;cursor:pointer;">♻️ Rivaluta i selezionati col promemoria di adesso</button>
+                <button onclick="agentRivalutaSelezionati()" title="Tornano in coda con il promemoria LIVE di adesso, segnati «♻️ Da rivalutare»: poi in ogni scheda scegli l'AI e avvii tu la valutazione" style="padding:6px 12px;border-radius:8px;border:1px solid #5e35b1;background:#5e35b1;color:#fff;font-weight:700;cursor:pointer;">♻️ Rimetti in lista i selezionati col promemoria di adesso</button>
                 <a href="#" onclick="document.querySelectorAll('#riscopriOraleModal input[data-ro-sel]').forEach(c => c.checked = true); return false;" style="color:#4527a0;">tutti</a>
                 <a href="#" onclick="document.querySelectorAll('#riscopriOraleModal input[data-ro-sel]').forEach(c => c.checked = false); return false;" style="color:#4527a0;">nessuno</a>
                 <span id="roBatchMsg" style="color:#4527a0;font-weight:700;"></span>
@@ -26289,7 +26289,7 @@ ${sectionInstr}`;
                     <div style="font-size:11.5px;color:#444;margin-top:2px;">${promInfo(t).html}</div>
                 </div>
                 <div style="display:flex;flex-direction:column;gap:4px;">
-                ${promInfo(t).has ? `<button onclick="agentRivalutaDaPromemoria('${_jq(t.id)}')" title="Riprende la scheda, legge il promemoria LIVE di adesso (punteggi e annotazioni corrette) e rifà la valutazione su quella base. La valutazione di prima resta tra le versioni precedenti." style="padding:6px 12px;border-radius:8px;border:1px solid #7e57c2;background:${promInfo(t).nuovo ? '#5e35b1;color:#fff' : '#ede7f6;color:#4527a0'};font-weight:700;cursor:pointer;">♻️ Rivaluta col promemoria di adesso</button>` : ''}
+                ${promInfo(t).has ? `<button onclick="agentRivalutaDaPromemoria('${_jq(t.id)}')" title="Torna in coda con il promemoria LIVE di adesso (punteggi e annotazioni corrette), segnata «♻️ Da rivalutare»: poi scegli tu l'AI e avvii la valutazione. Quella di prima resta recuperabile." style="padding:6px 12px;border-radius:8px;border:1px solid #7e57c2;background:${promInfo(t).nuovo ? '#5e35b1;color:#fff' : '#ede7f6;color:#4527a0'};font-weight:700;cursor:pointer;">♻️ Rimetti in lista col promemoria di adesso</button>` : ''}
                 <button onclick="agentRipristinaOrale('${_jq(t.id)}')" title="Riprende la scheda così com'era, con la valutazione già fatta" style="padding:6px 12px;border-radius:8px;border:1px solid #81c784;background:#e8f5e9;color:#1b5e20;font-weight:700;cursor:pointer;">↩ Ripristina com'era</button>
                 </div>
             </div>`).join('') : '<div style="font-size:13px;color:#999;margin-bottom:8px;">Nessun orale rimosso da recuperare.</div>'}
@@ -26320,38 +26320,34 @@ ${sectionInstr}`;
     // la copia vecchia del promemoria e le note corrette nella scheda si buttano, 🎯 si attiva,
     // senza trascrizione né audio si valuta solo da punteggi e annotazioni (📵). La valutazione
     // di prima finisce tra le versioni precedenti. Se era già importata: poi 🔄 Riscrivi storico.
-    async function agentRivalutaDaPromemoria(taskId) {
-        const t = await _agentRivalutaCore(taskId, { singola: true });
-        if (t && t.approvedAt && t.status === 'ready') alert(`♻️ ${t.studentName || 'Valutazione'} rifatta sul promemoria di adesso.\n\nEra già nello storico: controlla e premi «📥 Importa» (sostituisce il voto di quella data) oppure «🔄 Riscrivi storico».`);
+    function agentRivalutaDaPromemoria(taskId) {
+        const t = _agentRivalutaCore(taskId);
+        if (!t) return;
+        agentSaveTasks(agentTasks); agentBadgeUpdate();
+        document.getElementById('riscopriOraleModal')?.remove();
+        agentRenderPanel();
+        try { document.querySelector(`[data-task-id="${CSS.escape(t.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
     }
     // Più schede insieme, una dopo l'altra (pausa tra una e l'altra per i limiti dell'AI)
-    async function agentRivalutaSelezionati() {
+    // Più schede insieme: tornano tutte in coda (♻️ Da rivalutare), nessuna valutazione parte da sola
+    function agentRivalutaSelezionati() {
         const ids = [...document.querySelectorAll('#riscopriOraleModal input[data-ro-sel]:checked')].map(c => c.getAttribute('data-ro-sel'));
         const msg = document.getElementById('roBatchMsg');
         if (!ids.length) { if (msg) msg.textContent = 'Nessun orale selezionato.'; return; }
-        if (!confirm(`Rivalutare ${ids.length} ${ids.length === 1 ? 'orale' : 'orali'} sul promemoria LIVE di adesso?\n\nLe valutazioni di prima restano tra le versioni precedenti di ogni scheda.`)) return;
+        const fatti = ids.map(id => _agentRivalutaCore(id)).filter(Boolean);
+        agentSaveTasks(agentTasks); agentBadgeUpdate();
         document.getElementById('riscopriOraleModal')?.remove();
-        const fatti = [], storico = [];
-        for (let i = 0; i < ids.length; i++) {
-            const tt = agentTasks.find(x => x.id === ids[i]);
-            _agentToastBatch(`♻️ Rivaluto ${i + 1} di ${ids.length}: ${tt ? (tt.studentName || (tt.studenti || []).map(s => s.studentName).join(' + ')) : ''}…`);
-            if (i > 0) await new Promise(r => setTimeout(r, 4000));
-            try { const t = await _agentRivalutaCore(ids[i], {}); if (t) { fatti.push(t); if (t.approvedAt) storico.push(t.studentName || ''); } }
-            catch (e) { console.warn('[Agente] rivaluta', ids[i], e); }
-        }
-        _agentToastBatch(null);
         agentRenderPanel();
-        alert(`♻️ Rivalutati ${fatti.length} di ${ids.length} sul promemoria di adesso: li trovi nella coda dell'agente (controlla voto e feedback).`
-            + (storico.length ? `\n\nEra già nello storico per: ${storico.join(', ')}. Per sostituire il voto premi «📥 Importa» (o «🔄 Riscrivi storico») nelle loro schede.` : '\n\nPoi importali come sempre.'));
+        const storico = fatti.filter(t => t.approvedAt).map(t => t.studentName || '');
+        alert(`♻️ ${fatti.length} ${fatti.length === 1 ? 'orale rimesso' : 'orali rimessi'} in coda col promemoria LIVE di adesso, segnati «♻️ Da rivalutare».\n\nIn ogni scheda scegli l'AI (Gemini, Haiku, Claude…) e avvia la valutazione: niente è partito da solo.`
+            + (storico.length ? `\n\nGià nello storico: ${storico.join(', ')}. Dopo la nuova valutazione «📥 Importa» sostituisce il voto di quella data.` : ''));
     }
     window.agentRivalutaSelezionati = agentRivalutaSelezionati;
-    function _agentToastBatch(txt) {
-        let el = document.getElementById('agentBatchToast');
-        if (!txt) { el?.remove(); return; }
-        if (!el) { el = document.createElement('div'); el.id = 'agentBatchToast'; el.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99999;background:#4527a0;color:#fff;padding:10px 18px;border-radius:10px;font:600 14px system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.3);'; document.body.appendChild(el); }
-        el.textContent = txt;
-    }
-    async function _agentRivalutaCore(taskId, opts) {
+    // Riprende una scheda rimossa e la rimette in coda sul promemoria LIVE di adesso, SENZA valutarla:
+    // copia vecchia del promemoria e note corrette nella scheda buttate, 🎯 attivo, 📵 se non c'è né
+    // trascrizione né audio. Poi il docente sceglie nella scheda come valutare (Gemini, Haiku, Claude…).
+    // La valutazione di prima resta («↩ Torna alla valutazione già fatta» e, rigenerando, tra le versioni).
+    function _agentRivalutaCore(taskId) {
         const t = agentTasks.find(x => x.id === taskId);
         if (!t) return null;
         delete t.dismissedAt; delete t.rimossoDaUtente; delete t.statusPrimaRimozione;
@@ -26362,15 +26358,10 @@ ${sectionInstr}`;
         const haTrascr = !!(t.trascrizione || '').trim();
         const haAudio = !!t.audioFileName || (t.type === 'valdialogo' && _dialogoHasAudio(t));
         if (!haTrascr && !haAudio) t.noTrascrizione = true;
-        t.status = t.approvedAt ? 'approved' : (t.valDocente || (t.results || []).length) ? 'ready' : haTrascr ? (t.type === 'valdialogo' ? 'awaiting_speakers' : 'awaiting_transcript') : 'pending';
-        agentSaveTasks(agentTasks); agentBadgeUpdate();
-        if (opts && opts.singola) {
-            document.getElementById('riscopriOraleModal')?.remove();
-            agentRenderPanel();
-            try { document.querySelector(`[data-task-id="${CSS.escape(t.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
-        }
-        if (haTrascr || _agentSenzaTrascr(t)) await agentRegenerate(t.id);          // rifà la valutazione (o prepara il testo per Claude)
-        else if (haAudio && t.type === 'valorale') await agentProcessValOrale(t.id); // audio non ancora trascritto: il solito percorso
+        t.status = t.type === 'valdialogo'
+            ? (haTrascr ? 'awaiting_speakers' : 'pending')
+            : (haTrascr || t.noTrascrizione ? 'awaiting_transcript' : 'pending');
+        t.daRivalutare = true;
         return t;
     }
     window.agentRivalutaDaPromemoria = agentRivalutaDaPromemoria;
@@ -26839,6 +26830,8 @@ ${sectionInstr}`;
             }
             const sl = (task.status === 'awaiting_transcript' && task.transcriptToReview)
                 ? '🔎 Trascrizione da approvare'
+                : (task.daRivalutare && ['awaiting_transcript', 'awaiting_speakers', 'pending'].includes(task.status))
+                ? '♻️ Da rivalutare'
                 : (task.status === 'awaiting_transcript' && task.noAudio)
                 ? '📵 Senza audio · da valutare'
                 : (statusLabels[task.status] || task.status);
@@ -27238,7 +27231,10 @@ ${sectionInstr}`;
             } else if (task.status === 'awaiting_transcript') {
                 const existing = (task.trascrizione||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
                 const toReview = !!task.transcriptToReview;
-                const atHead = task.noAudio && !toReview
+                const atHead = task.daRivalutare && !toReview
+                    ? `♻️ <strong>Da rivalutare col promemoria LIVE aggiornato</strong><br>
+                    <small style="color:#555;">Punteggi e annotazioni di adesso sono nel riquadro qui sopra (correggili se serve). Scegli l'AI in «🤖 AI per questa valutazione», poi ${task.noTrascrizione ? '<b>▶ Valuta senza trascrizione</b>' : '<b>🤖 Genera valutazione</b> (con la trascrizione qui sotto)'} oppure <b>🟣 Valuta con Claude</b>.${(task.valDocente || '').trim() ? ' La valutazione di prima si riapre con «↩ Torna alla valutazione già fatta».' : ''}</small>`
+                    : task.noAudio && !toReview
                     ? `📵 <strong>Verifica orale senza audio</strong> · dal promemoria della LIVE<br>
                     <small style="color:#555;">Nessun audio per questo alunno: la valutazione parte dai punteggi e dalle annotazioni prese in diretta (riquadro qui sopra: correggi le annotazioni se serve, poi <b>▶ Valuta senza trascrizione</b>). Se vuoi, puoi anche incollare qui sotto una trascrizione e togliere 📵.</small>`
                     : toReview
@@ -31522,6 +31518,7 @@ Lunghezza ${aree.length ? '170-260' : '120-200'} parole in tutto. A parte ${aree
     // opts.onlyPrompt → non chiama l'AI: restituisce il prompt (per "Valuta con Claude")
     // opts.raw        → usa questa risposta (incollata da Claude) al posto della chiamata AI
     async function agentTaskValOrale(task, opts = {}) {
+        if (!opts.onlyPrompt) delete task.daRivalutare;
         const _prima = { provider: task.aiProvider, at: task.generatedAt };   // per le versioni precedenti
         // Trascrizione esclusa dal docente: si valuta solo da valutazione preliminare e annotazioni
         const skipTranscription = _agentSenzaTrascr(task) || !!(task.trascrizione && task.trascrizione.trim());
@@ -32064,7 +32061,7 @@ ${base}`, task, true);
     }
     // Promemoria aggiornato DOPO la valutazione dell'agente: avviso con cosa fare
     function _agentPrelimAggHtml(task) {
-        if ((task.type !== 'valorale' && task.type !== 'valdialogo') || task.status === 'dismissed' || task.status === 'processing') return '';
+        if ((task.type !== 'valorale' && task.type !== 'valdialogo') || task.status === 'dismissed' || task.status === 'processing' || task.daRivalutare) return '';
         const fatto = task.votoValue != null || (task.results || []).length;
         if (!fatto || !task.generatedAt) return '';
         const t0 = Date.parse(task.generatedAt) || 0;
@@ -32292,6 +32289,7 @@ Valuta SOLO in base alla valutazione preliminare con la griglia e alle annotazio
     function agentTornaAiRisultati(taskId) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
+        delete task.daRivalutare;
         _agentKeepTranscriptDraft(task);
         task.status = 'ready'; task.error = ''; task.transcriptToReview = false;
         agentSaveTasks(agentTasks); agentRenderPanel();
@@ -32645,6 +32643,7 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
     async function agentClaudePrepara(taskId, soloSafe) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
+        delete task.daRivalutare;
         _agentKeepTranscriptDraft(task);
         if (task.type === 'valdialogo') task.claudeSolo = soloSafe || null;
         // Valutazione già pronta: la scheda resta sui risultati (il riquadro per Claude si
@@ -33177,6 +33176,7 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
     // FASE 3: valuta tutti gli studenti del dialogo in una singola chiamata AI.
     // opts.onlyPrompt / opts.raw: come agentTaskValOrale (per "Valuta con Claude")
     async function agentEvaluateDialogo(task, opts = {}) {
+        if (!opts.onlyPrompt) delete task.daRivalutare;
         const _prima = { provider: task.aiProvider, at: task.generatedAt };   // per le versioni precedenti
         if (!opts.onlyPrompt) { task.status = 'processing'; agentRenderPanel(); }
         try {
