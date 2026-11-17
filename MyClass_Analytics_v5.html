@@ -9607,29 +9607,58 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             return { ok: true, items, grigliaVer: G ? (+G.ver || 1) : 0, griglia: !!G };
         }
         // Riscrive i promemoria indicati (stessa data) con i nuovi punteggi della griglia aggiornata
+        // Riscrive i promemoria indicati (stessa data) con i nuovi punteggi della griglia aggiornata.
+        // Se il promemoria non c'è più (cancellato) o non c'è mai stato, lo crea con la data della prova.
+        // it: { cls, student, ts (se viene da MyClass), data 'AAAA-MM-GG', scores, nota }
         function mcPromemoriaAggiorna(g, items) {
             if (!g || !g.id) return { ok: false, msg: 'griglia mancante' };
             mcAggiornaGrigliaDaAttivita(g);
-            const G = (data.griglie || []).find(x => x.id === g.id);
+            let G = (data.griglie || []).find(x => x.id === g.id);
+            // griglia non ancora in MyClass (mai importata o cancellata): la aggiunge, così l'agente la trova
+            if (!G && Array.isArray(g.aree) && g.aree.length && g.aree.every(a => Array.isArray(a.descrittori))) {
+                G = { id: g.id, nome: g.nome || 'Griglia', aree: g.aree.map(a => ({ nome: a.nome, max: +a.max, descrittori: a.descrittori.map(d => ({ pt: +d.pt, testo: String(d.testo || '') })) })),
+                      ...(g.conversione_voto ? { conversione_voto: { ...g.conversione_voto } } : {}), ...(+g.ver ? { ver: +g.ver } : {}) };
+                (data.griglie = data.griglie || []).push(G);
+            }
             const aree = G ? G.aree : g.aree, conv = (G && G.conversione_voto) || g.conversione_voto || null;
             const totMax = aree.reduce((t, a) => t + (+a.max || 0), 0);
-            let n = 0; const miss = [];
+            const nrm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+            const trovaStudente = (c, nome) => {
+                const st = (c.studenti || []).find(x => `${x.cognome} ${x.nome}` === nome);
+                if (st) return st;
+                const w = nrm(nome).split(' ').filter(x => x.length > 1);
+                const cand = w.length ? (c.studenti || []).filter(x => { const n = nrm(`${x.cognome} ${x.nome}`).split(' '); return w.every(y => n.includes(y)); }) : [];
+                return cand.length === 1 ? cand[0] : null;
+            };
+            let n = 0, nuovi = 0; const miss = [];
             items.forEach(it => {
-                const c = (data.classi || []).find(x => x.nome === it.cls);
-                const st = c && (c.studenti || []).find(x => `${x.cognome} ${x.nome}` === it.student);
-                const p = st && (st.votiPromemoria || []).find(x => x.grigliaId === g.id && x.ts === it.ts);
-                if (!p || !Array.isArray(it.scores) || it.scores.length !== aree.length) { miss.push(it.student); return; }
+                let c = (data.classi || []).find(x => x.nome === it.cls) || (it.cls ? (data.classi || []).find(x => nrm(x.nome).replace(/ /g, '') === nrm(it.cls).replace(/ /g, '')) : null);
+                let st = c && trovaStudente(c, it.student);
+                if (!c && !it.cls) {   // classe non scritta nella finestra docente: l'alunno, se è uno solo in tutte le classi
+                    const tutti = (data.classi || []).map(x => ({ c: x, st: trovaStudente(x, it.student) })).filter(x => x.st);
+                    if (tutti.length === 1) { c = tutti[0].c; st = tutti[0].st; }
+                }
+                if (!st || !Array.isArray(it.scores) || it.scores.length !== aree.length) { miss.push(it.student + (c ? '' : ` (classe ${it.cls || '?'} non trovata)`)); return; }
+                if (!st.votiPromemoria) st.votiPromemoria = [];
+                const dataP = String(it.data || '').slice(0, 10);
+                let p = (it.ts && st.votiPromemoria.find(x => x.grigliaId === g.id && x.ts === it.ts))
+                    || (/^\d{4}-\d{2}-\d{2}$/.test(dataP) && st.votiPromemoria.find(x => x.grigliaId === g.id && String(x.data).slice(0, 10) === dataP));
+                if (!p) {
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(dataP)) { miss.push(it.student + ' (data mancante)'); return; }
+                    p = { data: dataP, grigliaId: g.id, grigliaNome: (G && G.nome) || g.nome || '', ts: Date.now() + n + nuovi };
+                    st.votiPromemoria.push(p); nuovi++;
+                }
                 const punteggi = aree.map((a, k) => ({ nome: a.nome, voto: Math.max(0, Math.min(+a.max, +it.scores[k] || 0)), max: +a.max }));
                 const tot = punteggi.reduce((t, x) => t + x.voto, 0);
-                const voto10 = conv && conv[String(Math.round(tot))] !== undefined ? conv[String(Math.round(tot))] : Math.round(tot / totMax * 100) / 10;
-                if (!p.votoPrima && p.voto10 !== voto10) p.votoPrima = { voto10: p.voto10, tot: p.tot, totMax: p.totMax };
+                const voto10 = conv && conv[String(Math.round(tot))] !== undefined ? +conv[String(Math.round(tot))] : Math.round(tot / totMax * 100) / 10;
+                if (p.voto10 !== undefined && !p.votoPrima && p.voto10 !== voto10) p.votoPrima = { voto10: p.voto10, tot: p.tot, totMax: p.totMax };
                 // agg = quando è stato riscritto: l'agente lo usa per accorgersi che il promemoria è cambiato
                 Object.assign(p, { punteggi, tot, totMax, voto10, ver: +g.ver || 0, rivalutato: new Date().toISOString().slice(0, 10), agg: Date.now() });
                 if (typeof it.nota === 'string' && it.nota.trim()) p.nota = it.nota.trim().slice(0, 1500);
                 n++;
             });
             if (n) saveData();
-            return { ok: true, n, miss };
+            return { ok: true, n, nuovi, miss };
         }
         function _mcLiveBoot() {
             if (window._mcLiveBootBC) return;
