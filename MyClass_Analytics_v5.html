@@ -26255,6 +26255,12 @@ ${sectionInstr}`;
         const e = x => String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;');
         const rimossi = agentTasks.filter(t => (t.type === 'valorale' || t.type === 'valdialogo') && t.status === 'dismissed')
             .sort((a, b) => String(b.dismissedAt || '').localeCompare(String(a.dismissedAt || '')));
+        // Orali in coda già valutati con una griglia o un promemoria che poi sono cambiati
+        agentTasks.forEach(t => { try { _agentGrigliaSync(t); } catch (e) {} });
+        const daRifare = agentTasks.filter(t => (t.type === 'valorale' || t.type === 'valdialogo') && !['dismissed', 'processing'].includes(t.status) && !t.daRivalutare
+            && (t.votoValue != null || (t.results || []).length)
+            && (t.grigliaCambiata || _agentPrelimVoci(t).some(v => +v.p.agg > (Date.parse(t.generatedAt || 0) || 0))))
+            .sort((a, b) => String(a.classe).localeCompare(String(b.classe)) || String(a.studentName || '').localeCompare(String(b.studentName || '')));
         const nome = t => t.type === 'valdialogo' ? (t.studenti || []).map(s => s.studentName).join(' + ') : (t.studentName || '');
         const voto = t => t.type === 'valdialogo' ? (t.results || []).map(r => r.votoValue ?? '—').join(' / ') : (t.votoValue ?? '—');
         const stato = t => t.approvedAt ? '✔ era approvata' : (t.valDocente || (t.results || []).length) ? '✅ valutata, non approvata' : t.trascrizione ? '✍️ con trascrizione' : '⏳ da trascrivere';
@@ -26273,6 +26279,13 @@ ${sectionInstr}`;
         ov.innerHTML = `<div style="background:#fff;border-radius:14px;padding:22px 26px;max-width:680px;width:92%;max-height:86vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25);">
             <div style="font-weight:800;font-size:16px;color:#311b92;margin-bottom:4px;">🎙️ Riscopri un orale</div>
             <div style="font-size:12px;color:#777;margin-bottom:12px;">Le schede degli orali rimosse restano recuperabili per 30 giorni, con trascrizione e valutazione.</div>
+            ${daRifare.length ? `<div style="font-size:12px;font-weight:800;color:#555;margin-bottom:6px;">ORALI DA RIFARE · valutati prima che griglia o promemoria cambiassero (${daRifare.length})</div>
+            ${daRifare.map(t => `<label style="display:flex;align-items:center;gap:10px;padding:7px 10px;border:1px solid #ffe0b2;background:#fffaf2;border-radius:8px;margin-bottom:5px;cursor:pointer;">
+                <input type="checkbox" data-ro-sel="${e(t.id)}" checked style="width:17px;height:17px;flex-shrink:0;">
+                <div style="flex:1;min-width:0;"><div style="font-weight:800;color:#1a237e;"><span style="background:#3949ab;color:#fff;border-radius:6px;padding:1px 7px;font-size:12px;margin-right:6px;">${e(String(t.classe || '').toUpperCase())}</span>${e(nome(t))}</div>
+                <div style="font-size:11px;color:#666;">📅 ${e(t.sessionDate || '')} · voto ${e(voto(t))} · ${t.status === 'approved' ? '✔ già nello storico' : 'da importare'} · ${[t.grigliaCambiata ? '📐 griglia aggiornata' : '', _agentPrelimVoci(t).some(v => +v.p.agg > (Date.parse(t.generatedAt || 0) || 0)) ? '📊 promemoria aggiornato' : ''].filter(Boolean).join(' · ')}</div></div>
+            </label>`).join('')}
+            <div style="margin:4px 0 14px;"><button onclick="agentRivalutaSelezionati()" style="padding:7px 13px;border-radius:8px;border:1px solid #5e35b1;background:#5e35b1;color:#fff;font-weight:700;cursor:pointer;">♻️ Rimetti da rivalutare i selezionati</button> <span style="font-size:11.5px;color:#666;">tornano «♻️ Da rivalutare» con griglia e promemoria di adesso: poi scegli l'AI in ogni scheda</span></div>` : ''}
             <div style="font-size:12px;font-weight:800;color:#555;margin-bottom:6px;">ORALI E DIALOGHI RIMOSSI (${rimossi.length})</div>
             ${rimossi.some(t => promInfo(t).has) ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px;padding:8px 10px;background:#f3e5f5;border-radius:8px;font-size:12px;">
                 <b>Più insieme:</b> spunta gli orali e premi
@@ -26354,6 +26367,8 @@ ${sectionInstr}`;
         if (t.type === 'valdialogo') delete t.prelimLive; else delete t.prelimLiveData;
         delete t.prelimNote;
         _agentPrelimEnsure(t);
+        try { _agentGrigliaSync(t); } catch (e) {}
+        delete t.grigliaCambiata;
         t.usePrelim = true;
         const haTrascr = !!(t.trascrizione || '').trim();
         const haAudio = !!t.audioFileName || (t.type === 'valdialogo' && _dialogoHasAudio(t));
@@ -26614,12 +26629,14 @@ ${sectionInstr}`;
         }
         return document.scrollingElement || document.documentElement;
     }
+    let _agentGrigliaSyncDirty = false;
     function agentRenderPanel() {
         const _fid = window._agentFocusTask;
         const _fcard = _fid ? document.querySelector(`.agent-task-card[data-task-id="${CSS.escape(_fid)}"]`) : null;
         const _ftop = _fcard ? _fcard.getBoundingClientRect().top : null;
         const _vis = _fcard && _ftop > -_fcard.offsetHeight && _ftop < window.innerHeight;
         _agentRenderPanelKeep();
+        if (_agentGrigliaSyncDirty) { _agentGrigliaSyncDirty = false; try { agentSaveTasks(agentTasks); } catch (e) {} }
         if (_vis) {
             const nc = document.querySelector(`.agent-task-card[data-task-id="${CSS.escape(_fid)}"]`);
             if (nc) {
@@ -26825,6 +26842,9 @@ ${sectionInstr}`;
                 && task.status !== 'approved' && task.status !== 'processing') {
                 try { _agentEnsureGrigliaOrale(task); } catch(e) { console.warn('[Agente] ricerca griglia:', e.message); }
             }
+            if ((task.type === 'valorale' || task.type === 'valdialogo') && task.status !== 'processing') {
+                try { if (_agentGrigliaSync(task)) _agentGrigliaSyncDirty = true; } catch(e) { console.warn('[Agente] griglia aggiornata:', e.message); }
+            }
             if ((task.type === 'valorale' || task.type === 'valdialogo') && task.status !== 'processing' && task.status !== 'dismissed') {
                 try { _agentPrelimEnsure(task); } catch(e) { console.warn('[Agente] ricerca promemoria LIVE:', e.message); }
             }
@@ -26870,8 +26890,8 @@ ${sectionInstr}`;
                 task.eventTitle  ? `📅 ${task.eventTitle}` : '',
                 task.type === 'valorale' && task.sessionDate ? `📅 ${task.sessionDate}` : '',
                 task.type === 'valdialogo' && task.sessionDate ? `📅 ${task.sessionDate}` : '',
-                task.type === 'valorale' ? (task.griglia ? `📐 ${task.griglia.nome}` : '📐 ⚠️ Griglia non impostata') : '',
-                task.type === 'valdialogo' ? (task.griglia ? `📐 ${task.griglia.nome}` : '📐 ⚠️ Griglia non impostata') : '',
+                task.type === 'valorale' ? (task.griglia ? `📐 ${task.griglia.nome}${task.griglia.ver ? ' (v' + task.griglia.ver + ')' : ''}` : '📐 ⚠️ Griglia non impostata') : '',
+                task.type === 'valdialogo' ? (task.griglia ? `📐 ${task.griglia.nome}${task.griglia.ver ? ' (v' + task.griglia.ver + ')' : ''}` : '📐 ⚠️ Griglia non impostata') : '',
                 task.type === 'valorale' && task.audioFileName ? `🎙️ ${task.audioFileName}` : '',
                 task.type === 'valdialogo' && task.audioFileName ? `🎙️ ${task.audioFileName}` : '',
                 task.requestedAt && task.type==='analisididattica' ? `📩 Richiesta: ${new Date(task.requestedAt).toLocaleString('it')}` : '',
@@ -27436,6 +27456,7 @@ ${sectionInstr}`;
                 <div class="agent-task-body">
                     ${meta ? `<div class="agent-task-meta" style="margin-bottom:8px;">${meta}</div>` : ''}
                     ${_agentAiPickerHtml(task)}
+                    ${task.grigliaCambiata && !task.daRivalutare && task.status !== 'dismissed' && (task.votoValue != null || (task.results || []).length) ? `<div style="background:#fff8e1;border:1.5px solid #ffb300;border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:12.5px;color:#6d4c00;">📐 <strong>Griglia aggiornata dopo questa valutazione</strong>${task.grigliaCambiata.ora ? ` (ora v${task.grigliaCambiata.ora}${task.grigliaCambiata.prima ? ', valutata con la v' + task.grigliaCambiata.prima : ''})` : ''}: la scheda usa già quella nuova. Rifai la valutazione (scegli l'AI e <b>🔄 Rigenera</b>)${task.status === 'approved' ? ', poi <b>🔄 Riscrivi storico</b>' : ', poi importa'}. Per più orali insieme: <b>🎙️ Riscopri orale</b> → «orali da rifare».</div>` : ''}
                     ${_agentPrelimAggHtml(task)}
                     ${_agentPrelimPanelHtml(task)}
                     ${task.type === 'analisididattica' && task.status === 'approved' ? `<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;"><button class="agent-btn-edit" onclick="apriEditorAnalisi({taskId:'${_jq(task.id)}'})">✏️ Modifica e reinvia</button><button class="agent-btn-edit" onclick="agentReinviaAnalisi('${_jq(task.id)}')" title="Rimanda a StudentApp l'analisi salvata in MyClass">📤 Invia di nuovo a StudentApp</button></div>` : ''}
@@ -31518,7 +31539,8 @@ Lunghezza ${aree.length ? '170-260' : '120-200'} parole in tutto. A parte ${aree
     // opts.onlyPrompt → non chiama l'AI: restituisce il prompt (per "Valuta con Claude")
     // opts.raw        → usa questa risposta (incollata da Claude) al posto della chiamata AI
     async function agentTaskValOrale(task, opts = {}) {
-        if (!opts.onlyPrompt) delete task.daRivalutare;
+        try { _agentGrigliaSync(task); } catch (e) {}
+        if (!opts.onlyPrompt) { delete task.daRivalutare; delete task.grigliaCambiata; }
         const _prima = { provider: task.aiProvider, at: task.generatedAt };   // per le versioni precedenti
         // Trascrizione esclusa dal docente: si valuta solo da valutazione preliminare e annotazioni
         const skipTranscription = _agentSenzaTrascr(task) || !!(task.trascrizione && task.trascrizione.trim());
@@ -32041,6 +32063,20 @@ ${base}`, task, true);
     // Aggiorna il promemoria del task con quello più recente (es. salvato dopo la creazione del task)
     // Versione di un promemoria: riscritto (♻️ Rivedi nella finestra docente) → agg, se no ts
     const _agentPrelimVer = p => +(p && (p.agg || p.ts)) || 0;
+    // La scheda tiene una copia della griglia: se in MyClass quella griglia è stata aggiornata
+    // (descrittori, punteggi massimi, conversione punti → voto, es. dalla finestra docente) la copia
+    // si rinnova. Se la scheda era già valutata, grigliaCambiata segnala di rifare la valutazione.
+    const _agentGrigliaFirma = g => g ? JSON.stringify([(g.aree || []).map(a => [a.nome, +a.max, (a.descrittori || []).map(d => [+d.pt, d.testo])]), g.conversione_voto || null]) : '';
+    function _agentGrigliaSync(task) {
+        if (!task || !task.griglia || !task.griglia.id || !['valorale', 'valdialogo'].includes(task.type)) return false;
+        const G = (data.griglie || []).find(x => x.id === task.griglia.id);
+        if (!G || _agentGrigliaFirma(G) === _agentGrigliaFirma(task.griglia)) return false;
+        const fatto = task.votoValue != null || (task.results || []).length;
+        const prima = task.griglia;
+        task.griglia = { id: G.id, nome: G.nome, aree: G.aree, conversione_voto: G.conversione_voto || null, guida: G.guida || prima.guida || null, ...(G.ver ? { ver: +G.ver } : {}) };
+        if (fatto && task.status !== 'processing') task.grigliaCambiata = { prima: prima.ver || null, ora: G.ver || null, il: new Date().toISOString().slice(0, 10) };
+        return true;
+    }
     function _agentPrelimEnsure(task) {
         const pick = (cur, st, safe) => {
             const f = _agentPrelimTrova(task.classe, st, task.sessionDate, task.griglia?.id);
@@ -32644,6 +32680,7 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
         delete task.daRivalutare;
+        try { _agentGrigliaSync(task); } catch (e) {}
         _agentKeepTranscriptDraft(task);
         if (task.type === 'valdialogo') task.claudeSolo = soloSafe || null;
         // Valutazione già pronta: la scheda resta sui risultati (il riquadro per Claude si
@@ -33176,7 +33213,8 @@ Trascrivi fedelmente inclusi gli errori. ${pauseNote} Segnala gli errori di pron
     // FASE 3: valuta tutti gli studenti del dialogo in una singola chiamata AI.
     // opts.onlyPrompt / opts.raw: come agentTaskValOrale (per "Valuta con Claude")
     async function agentEvaluateDialogo(task, opts = {}) {
-        if (!opts.onlyPrompt) delete task.daRivalutare;
+        try { _agentGrigliaSync(task); } catch (e) {}
+        if (!opts.onlyPrompt) { delete task.daRivalutare; delete task.grigliaCambiata; }
         const _prima = { provider: task.aiProvider, at: task.generatedAt };   // per le versioni precedenti
         if (!opts.onlyPrompt) { task.status = 'processing'; agentRenderPanel(); }
         try {
