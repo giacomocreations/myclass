@@ -1938,6 +1938,7 @@
                         </select>
                     </label>
                     <button class="agent-btn-clear" onclick="agentForceRediscoverScritta()" style="background:#fff3e0;color:#e65100;border-color:#ffb74d;" title="Rimuove i task valscritta dismissed dal localStorage e rilancia la scansione">🔁 Riscopri scritto</button>
+                    <button class="agent-btn-clear" onclick="agentOraliClaudeApri()" style="background:#5e35b1;color:#fff;border-color:#5e35b1;" title="Scegli gli orali in coda e scarica UN file per Claude con tutte le valutazioni; poi importi il file che Claude crea">🟣 Orali con Claude (file unico)</button>
                     <button class="agent-btn-clear" onclick="agentRiscopriOrale()" style="background:#ede7f6;color:#4527a0;border-color:#b39ddb;" title="Ripristina un orale o un dialogo rimosso, o cerca di nuovo gli audio nella cartella">🎙️ Riscopri orale</button>
                     <button class="agent-btn-clear" onclick="agentRiscopriAlunno()" style="background:#e8f5e9;color:#1b5e20;border-color:#81c784;" title="Rimette in coda la verifica di UN alunno (es. passato da esercitazione a test in LiveLearn) per generarne la valutazione e importarne il voto">👤 Riscopri un alunno</button>
                     <span style="font-size:12px;color:#aaa;" id="agentNextRunLabel"></span>
@@ -26947,6 +26948,7 @@ ${sectionInstr}`;
                 task.type === 'valdialogo' ? (task.griglia ? `📐 ${task.griglia.nome}${task.griglia.ver ? ' (v' + task.griglia.ver + ')' : ''}` : '📐 ⚠️ Griglia non impostata') : '',
                 task.type === 'valorale' && task.audioFileName ? `🎙️ ${task.audioFileName}` : '',
                 task.type === 'valdialogo' && task.audioFileName ? `🎙️ ${task.audioFileName}` : '',
+                (task.type === 'valorale' || task.type === 'valdialogo') && task.claudeFile ? `🟣 nel file per Claude (codice ${task.claudeFile})` : '',
                 task.requestedAt && task.type==='analisididattica' ? `📩 Richiesta: ${new Date(task.requestedAt).toLocaleString('it')}` : '',
                 task.generatedAt ? new Date(task.generatedAt).toLocaleString('it') : '',
             ].filter(Boolean).join(' · ');
@@ -30440,6 +30442,201 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
         agentRenderPanel();
         alert(`📥 Import da Claude completato: ${ok} valutazion${ok === 1 ? 'e pronta' : 'i pronte'} da approvare.` +
               (problemi.length ? `\n\n⚠️ Da controllare:\n• ${problemi.join('\n• ')}` : ''));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  VALUTAZIONI ORALI CON CLAUDE IN UN FILE UNICO (come le scritte)
+    //  Si scelgono gli orali in coda → un file «orali_per_claude_*.json» con la consegna di ognuno
+    //  (la stessa di «🟣 Valuta con Claude»), senza nomi: alunni [A1], [A2]… → Claude crea
+    //  «orali_da_claude.json» → «📥 Importa» lo distribuisce nelle schede (pronte da controllare e importare).
+    // ═══════════════════════════════════════════════════════════════════════
+    const _AGENT_ORALI_CLAUDE_CONSEGNA = `Sei Claude e prepari le VALUTAZIONI delle verifiche orali di inglese (scuola media italiana) per MyClass.
+Questo file è stato esportato da MyClass. "ruolo" contiene le tue istruzioni di ruolo: seguile come istruzioni di sistema.
+In "valutazioni" ci sono più verifiche orali, INDIPENDENTI tra loro. Per OGNUNA segui ESATTAMENTE la sua "consegna" (griglia, trascrizione o valutazione preliminare e annotazioni del docente, formato della risposta) e scrivi la risposta completa che la consegna chiede, con tutti i blocchi e i marcatori indicati (ad esempio "VALUTAZIONE DOCENTE"). Non mescolare dati di orali diversi.
+ALUNNI SENZA NOMI: ogni alunno è indicato da un codice tra parentesi quadre ([A1], [A2]…, elenco in "alunni" di ogni valutazione).
+- Dove la consegna chiede il nome dell'alunno (header, intestazioni) scrivi il codice, es. [A1].
+- Nel testo rivolto all'alunno, dove andrebbe il suo nome (es. "Ciao [nome]"), scrivi [NOME_A1] con il suo codice: MyClass lo sostituisce con il nome vero.
+- Non inventare nomi.
+OUTPUT: crea UN file "orali_da_claude.json" (solo JSON valido) con questa struttura:
+{
+  "formato": "myclass-orali-import",
+  "versione": 1,
+  "export_id": "<copia export_id di questo file>",
+  "valutazioni": [ { "ref": "<ref>", "testo": "<risposta completa per quell'orale, nel formato della sua consegna>" } ]
+}
+Una voce per ogni elemento di "valutazioni", nello stesso ordine, "ref" copiato esattamente. Non saltarne nessuna.
+Prima di consegnare verifica con uno script che il file sia JSON valido, che ci sia una voce per ogni "ref" e che ogni "testo" contenga "VALUTAZIONE DOCENTE".
+Il docente lo importa in MyClass con «🟣 Orali con Claude» → «📥 Importa»: lì controlla e importa come sempre.`;
+    const _AGENT_ORALI_MAN_KEY = 'agent_orali_claude_manifest';
+    function _agentOraliManifest() { try { return JSON.parse(localStorage.getItem(_AGENT_ORALI_MAN_KEY) || '{}'); } catch { return {}; } }
+    function _agentOraliManifestSave(exportId, entries) {
+        const all = _agentOraliManifest();
+        all[exportId] = { at: Date.now(), entries };
+        Object.keys(all).sort((a, b) => all[b].at - all[a].at).slice(10).forEach(k => delete all[k]);
+        try { localStorage.setItem(_AGENT_ORALI_MAN_KEY, JSON.stringify(all)); } catch (e) { console.warn('[Agente] manifest orali Claude non salvato:', e.message); }
+    }
+    // Codici degli alunni di un orale (uno, o due-tre nel dialogo) con le varianti del nome da togliere
+    function _agentOraliCodes(task) {
+        const cls = (data.classi || []).find(c => c.nome === task.classe);
+        const nomi = task.type === 'valdialogo' ? (task.studenti || []).map(s => s.studentName) : [task.studentName];
+        return nomi.map((nome, i) => {
+            nome = String(nome || '').trim();
+            const stu = cls?.studenti?.find(x => `${x.cognome} ${x.nome}` === nome);
+            const words = nome.split(/\s+/).filter(Boolean);
+            const varianti = [nome, words.slice().reverse().join(' '), stu ? `${stu.nome} ${stu.cognome}` : '', stu?.cognome || '', stu?.nome || task.studentNome || '']
+                .map(x => String(x || '').trim()).filter(x => x.length > 2);
+            return { code: 'A' + (i + 1), nome, primo: stu?.nome || task.studentNome || words[words.length - 1] || nome, varianti: [...new Set(varianti)] };
+        });
+    }
+    // Nomi degli alunni dell'orale → codici; nomi di altri compagni della classe (es. citati nelle annotazioni) → [compagno]
+    function _agentOraliPseudo(text, codes, task) {
+        let t = _agentValPseudo(text, codes);
+        const cls = (data.classi || []).find(c => c.nome === task.classe);
+        const propri = new Set(codes.map(c => c.nome));
+        const altri = (cls?.studenti || []).filter(x => !propri.has(`${x.cognome} ${x.nome}`))
+            .flatMap(x => [`${x.cognome} ${x.nome}`, `${x.nome} ${x.cognome}`, x.cognome, x.nome]).map(v => String(v || '').trim()).filter(v => v.length > 2)
+            .sort((a, b) => b.length - a.length);
+        for (const v of [...new Set(altri)]) {
+            const re = new RegExp('(^|[^\\p{L}\\[])(' + v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')(?![\\p{L}\\]])', 'gu');
+            t = t.replace(re, '$1[compagno]');
+        }
+        return t;
+    }
+    // Si può mandare a Claude: trascrizione, oppure valutazione senza trascrizione (promemoria + 📵)
+    function _agentOraleClaudeOk(t) {
+        if (t.type === 'valdialogo') return _agentSenzaTrascr(t) || ((t.trascrizione || '').trim() && Object.keys(t.speakerMap || {}).length);
+        return !!((t.trascrizione || '').trim() || _agentSenzaTrascr(t));
+    }
+    function agentOraliClaudeApri() {
+        document.getElementById('oraliClaudeModal')?.remove();
+        const e = x => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        agentTasks.forEach(t => { try { _agentGrigliaSync(t); _agentPrelimEnsure(t); } catch (er) {} });
+        const lista = agentTasks.filter(t => (t.type === 'valorale' || t.type === 'valdialogo') && !['dismissed', 'processing', 'approved'].includes(t.status))
+            .sort((a, b) => String(a.classe).localeCompare(String(b.classe), 'it', { numeric: true }) || String(a.studentName || '').localeCompare(String(b.studentName || ''), 'it'));
+        const nome = t => t.type === 'valdialogo' ? (t.studenti || []).map(s => s.studentName).join(' + ') : (t.studentName || '');
+        const fatto = t => t.votoValue != null || (t.results || []).length;
+        const daFare = t => !fatto(t) || t.daRivalutare || t.grigliaCambiata || _agentPrelimVoci(t).some(v => +v.p.agg > (Date.parse(t.generatedAt || 0) || 0));
+        const classi = [...new Set(lista.map(t => t.classe))];
+        const man = _agentOraliManifest(), ultimo = Object.entries(man).sort((a, b) => b[1].at - a[1].at)[0];
+        const riga = t => {
+            const ok = _agentOraleClaudeOk(t);
+            const info = [t.sessionDate ? '📅 ' + e(t.sessionDate) : '', t.griglia ? '📐 ' + e(String(t.griglia.nome).split(' — ')[0]) + (t.griglia.ver ? ' v' + t.griglia.ver : '') : '⚠️ senza griglia',
+                _agentSenzaTrascr(t) ? '📵 da promemoria' : (t.trascrizione || '').trim() ? '✍️ trascrizione' : '',
+                t.daRivalutare ? '♻️ da rivalutare' : fatto(t) ? '✅ già valutato (voto ' + e(t.votoValue ?? (t.results || []).map(r => r.votoValue ?? '—').join('/')) + ')' : '⏳ da valutare',
+                t.claudeFile ? '🟣 già nel file ' + e(t.claudeFile) : ''].filter(Boolean).join(' · ');
+            return `<label style="display:flex;align-items:center;gap:10px;padding:6px 10px;border:1px solid ${ok ? '#e0e0f0' : '#f5d0d0'};border-radius:8px;margin-bottom:4px;cursor:${ok ? 'pointer' : 'default'};background:${ok ? '#fff' : '#fff7f7'};">
+                <input type="checkbox" data-oc-sel="${e(t.id)}" ${ok ? (daFare(t) ? 'checked' : '') : 'disabled'} style="width:17px;height:17px;flex-shrink:0;">
+                <div style="flex:1;min-width:0;"><div style="font-weight:700;color:#1a237e;">${e(nome(t))}${t.type === 'valdialogo' ? ' <span style="font-weight:400;color:#777;">(dialogo)</span>' : ''}</div>
+                <div style="font-size:11px;color:#666;">${info}${ok ? '' : ' · <b style="color:#b71c1c;">manca la trascrizione (o il promemoria con 📵): non si può mandare</b>'}</div></div></label>`;
+        };
+        const ov = document.createElement('div');
+        ov.id = 'oraliClaudeModal';
+        ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center;';
+        ov.innerHTML = `<div style="background:#fff;border-radius:14px;padding:22px 26px;max-width:760px;width:94%;max-height:88vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25);">
+            <div style="font-weight:800;font-size:17px;color:#311b92;">🟣 Orali con Claude · file unico</div>
+            <ol style="font-size:12.5px;color:#444;margin:8px 0 14px;padding-left:20px;line-height:1.6;">
+                <li><b>Scegli gli orali</b> qui sotto e premi <b>📤 Scarica il file per Claude</b>.</li>
+                <li>In Claude (claude.ai o Claude Code) <b>allega il file</b> e scrivi: <i>«Svolgi le valutazioni orali seguendo la consegna nel file»</i>.</li>
+                <li>Scarica il file <b>orali_da_claude.json</b> che Claude crea.</li>
+                <li>Qui premi <b>📥 Importa il file di Claude</b>: ogni orale diventa pronto nella sua scheda, lo controlli e lo importi come sempre.</li>
+            </ol>
+            <div style="font-size:12px;font-weight:800;color:#555;margin-bottom:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">1 · ORALI IN CODA (${lista.length})
+                <a href="#" onclick="document.querySelectorAll('#oraliClaudeModal input[data-oc-sel]:not(:disabled)').forEach(c => c.checked = true); return false;" style="color:#4527a0;font-weight:600;">tutti</a>
+                <a href="#" onclick="document.querySelectorAll('#oraliClaudeModal input[data-oc-sel]').forEach(c => c.checked = false); return false;" style="color:#4527a0;font-weight:600;">nessuno</a>
+                <span style="font-weight:400;color:#888;">già spuntati: da valutare, da rivalutare o con griglia/promemoria cambiati</span></div>
+            ${lista.length ? classi.map(c => `<div style="margin:8px 0 4px;font-weight:800;color:#3949ab;">Classe ${e(c)}
+                <a href="#" onclick="document.querySelectorAll('#oraliClaudeModal [data-oc-cls=&quot;${e(c)}&quot;] input:not(:disabled)').forEach(x => x.checked = true); return false;" style="font-size:11px;font-weight:600;color:#4527a0;margin-left:6px;">tutta la classe</a></div>
+                <div data-oc-cls="${e(c)}">${lista.filter(t => t.classe === c).map(riga).join('')}</div>`).join('') : '<div style="color:#999;font-size:13px;">Nessun orale in coda.</div>'}
+            <div style="margin:12px 0 18px;"><button onclick="agentOraliClaudeEsporta()" style="padding:9px 16px;border-radius:9px;border:none;background:#5e35b1;color:#fff;font-weight:800;cursor:pointer;">📤 Scarica il file per Claude</button>
+                <span id="ocMsg" style="font-size:12px;margin-left:8px;color:#4527a0;font-weight:700;"></span></div>
+            <div style="font-size:12px;font-weight:800;color:#555;margin-bottom:6px;">2 · RISPOSTA DI CLAUDE</div>
+            ${ultimo ? `<div style="font-size:12px;color:#666;margin-bottom:6px;">Ultimo file per Claude: <b>${Object.keys(ultimo[1].entries || {}).length} orali</b> · ${e(new Date(ultimo[1].at).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))} · codice ${e(ultimo[0])}</div>` : ''}
+            <button onclick="agentOraliClaudeImporta()" style="padding:9px 16px;border-radius:9px;border:1px solid #5e35b1;background:#ede7f6;color:#4527a0;font-weight:800;cursor:pointer;">📥 Importa il file di Claude (orali_da_claude.json)</button>
+            <div style="font-size:11.5px;color:#888;margin-top:6px;">Nel file non ci sono nomi: gli alunni sono [A1], [A2]… e solo questo browser sa ricollegarli. Importa da questo stesso computer.</div>
+            <div style="text-align:right;margin-top:16px;"><button onclick="document.getElementById('oraliClaudeModal').remove()" style="padding:8px 16px;border-radius:8px;border:1px solid #ccc;background:#f5f5f5;cursor:pointer;">Chiudi</button></div>
+        </div>`;
+        ov.addEventListener('click', ev => { if (ev.target === ov) ov.remove(); });
+        document.body.appendChild(ov);
+    }
+    window.agentOraliClaudeApri = agentOraliClaudeApri;
+    async function agentOraliClaudeEsporta() {
+        const ids = [...document.querySelectorAll('#oraliClaudeModal input[data-oc-sel]:checked')].map(c => c.getAttribute('data-oc-sel'));
+        const msg = document.getElementById('ocMsg');
+        if (!ids.length) { if (msg) msg.textContent = 'Seleziona almeno un orale.'; return; }
+        if (msg) msg.textContent = '⏳ Preparo il file…';
+        const exportId = (Date.now().toString(36) + Math.random().toString(36).slice(2, 5)).toUpperCase().slice(-7);
+        const manifest = {}, valutazioni = [], saltati = [];
+        for (const id of ids) {
+            const t = agentTasks.find(x => x.id === id);
+            if (!t) continue;
+            try {
+                _agentGrigliaSync(t); _agentKeepTranscriptDraft(t);
+                const full = t.type === 'valdialogo' ? await agentEvaluateDialogo(t, { onlyPrompt: true, solo: null }) : await agentTaskValOrale(t, { onlyPrompt: true });
+                if (!full) { saltati.push(t.studentName || id); continue; }
+                const codes = _agentOraliCodes(t);
+                const ref = `${exportId}-${valutazioni.length + 1}`;
+                manifest[ref] = { taskId: t.id, codes: codes.map(({ code, nome, primo }) => ({ code, nome, primo })) };
+                valutazioni.push({ ref, classe: t.classe || '', data: t.sessionDate || '', tipo: t.type === 'valdialogo' ? 'dialogo' : 'orale', griglia: t.griglia?.nome || '',
+                    alunni: codes.map(c => `[${c.code}]`), consegna: _agentOraliPseudo(full, codes, t) });
+                t.claudeFile = exportId;
+            } catch (er) { console.warn('[Agente] orale per Claude', id, er); saltati.push(t.studentName || id); }
+        }
+        if (!valutazioni.length) { if (msg) msg.textContent = '⚠️ Nessun orale preparato.'; return; }
+        _agentOraliManifestSave(exportId, manifest);
+        agentSaveTasks(agentTasks);
+        const fileObj = { formato: 'myclass-orali-export', versione: 1, export_id: exportId, creato: new Date().toISOString(),
+            consegna_generale: _AGENT_ORALI_CLAUDE_CONSEGNA, ruolo: AGENT_SYSTEM, valutazioni };
+        const blob = new Blob([JSON.stringify(fileObj, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+        a.href = URL.createObjectURL(blob); a.download = `orali_per_claude_${ts}.json`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        if (msg) msg.textContent = `✅ Scaricato «${a.download}»: ${valutazioni.length} orali (codice ${exportId}).` + (saltati.length ? ` ⚠️ Non preparati: ${saltati.join(', ')}` : '');
+        agentRenderPanel();
+    }
+    window.agentOraliClaudeEsporta = agentOraliClaudeEsporta;
+    function agentOraliClaudeImporta() {
+        const inp = document.createElement('input');
+        inp.type = 'file'; inp.accept = '.json,application/json';
+        inp.onchange = async () => {
+            const f = inp.files && inp.files[0];
+            if (!f) return;
+            try { await _agentOraliApplyImport(JSON.parse(await f.text())); }
+            catch (er) { alert('❌ Import non riuscito: ' + er.message); }
+        };
+        inp.click();
+    }
+    window.agentOraliClaudeImporta = agentOraliClaudeImporta;
+    async function _agentOraliApplyImport(fd) {
+        if (fd?.formato === 'myclass-orali-export') throw new Error('questo è il file ESPORTATO da MyClass: serve quello creato da Claude ("orali_da_claude.json").');
+        if (fd?.formato === 'myclass-valutazioni-import') throw new Error('questo è il file delle verifiche SCRITTE: importalo con «📥 Importa da Claude» delle scritte.');
+        if (!fd || !Array.isArray(fd.valutazioni)) throw new Error('manca l\'elenco "valutazioni".');
+        const all = _agentOraliManifest();
+        const findLocal = ref => { for (const m of Object.values(all)) if (m?.entries?.[ref]) return m.entries[ref]; return null; };
+        document.getElementById('oraliClaudeModal')?.remove();
+        const ok = [], problemi = [];
+        for (const v of fd.valutazioni) {
+            const L = v && findLocal(v.ref);
+            const task = L && agentTasks.find(t => t.id === L.taskId);
+            if (!L || !task) { problemi.push(`${v?.ref || '?'}: orale sconosciuto in questo browser`); continue; }
+            const chi = task.studentName || (task.studenti || []).map(s => s.studentName).join(' + ');
+            let testo = String(v.testo || '').trim();
+            if (!testo) { problemi.push(`${chi}: risposta vuota`); continue; }
+            const byCode = Object.fromEntries((L.codes || []).map(c => [c.code, c]));
+            testo = testo.replace(/\[NOME_(A\d+)\]/g, (m, c) => byCode[c]?.primo ?? m).replace(/\[(A\d+)\]/g, (m, c) => byCode[c]?.nome ?? m);
+            if (!/VALUTAZIONE\s+DOCENTE/i.test(testo)) problemi.push(`${chi}: manca il blocco «VALUTAZIONE DOCENTE», controlla la scheda`);
+            try {
+                task.error = '';
+                if (task.type === 'valdialogo') await agentEvaluateDialogo(task, { raw: testo, solo: null });
+                else { task.trascrizione = (task.trascrizione || '').trim(); task.transcriptToReview = false; task.transcriptApprovedAt = new Date().toISOString(); await agentTaskValOrale(task, { raw: testo }); }
+                if (task.status === 'ready') { delete task.claudeFile; task.claudeOpen = false; task.claudePrompt = ''; task.claudeRisposta = ''; ok.push(chi); }
+                else problemi.push(`${chi}: ${task.error || 'risposta non usata, controlla la scheda'}`);
+            } catch (er) { problemi.push(`${chi}: ${er.message}`); }
+            agentSaveTasks(agentTasks);
+        }
+        agentBadgeUpdate(); agentRenderPanel();
+        alert(`📥 Import da Claude: ${ok.length} ${ok.length === 1 ? 'orale pronto' : 'orali pronti'} da controllare e importare nelle loro schede.` + (problemi.length ? `\n\n⚠️ Da controllare:\n• ${problemi.join('\n• ')}` : ''));
     }
 
     // Scelta del generatore dalla barra dell'agente (stessa impostazione del riquadro ⚙️)
