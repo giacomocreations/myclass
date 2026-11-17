@@ -1596,15 +1596,15 @@ function checkSpeech(raw) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  GRIGLIA DI VALUTAZIONE (Oral test) · 16 punti — versione 3 (novembre 2026)
+//  GRIGLIA DI VALUTAZIONE (Oral test) · 16 punti — versione 4 (novembre 2026)
 //  Comunicazione 4 · Lessico 4 · Present continuous 4 · Pronuncia e fluenza 4
 //  Più severa della prima (15 punti, pronuncia /3): il 10 solo senza errori,
 //  già 2–3 errori di present continuous o di lessico portano la voce a 2.
 // ══════════════════════════════════════════════════════════════════
-const RUB_VER = 3;   // 3: pronuncia meno severa (un errore isolato non toglie punti)
+const RUB_VER = 4;   // 3: pronuncia meno severa · 4: articolo/colore dopo il nome pesano da 4 errori (−1, mai sotto 1)
 const RUBRIC = [
   { id: 'com', name: 'Comunicazione', max: 4, d: {
-    4: 'Descrive i personaggi in autonomia e in modo completo (vestiti + azione), senza domande guida; risponde con sicurezza alle domande extra. Il messaggio arriva sempre chiaro, anche se c\'è qualche errore. Articolo sbagliato (a black shoes) e colore dopo il nome (a T-shirt red) tolgono un punto solo se in tutto sono 3 o più; vanno comunque segnalati all\'alunno.',
+    4: 'Descrive i personaggi in autonomia e in modo completo (vestiti + azione), senza domande guida; risponde con sicurezza alle domande extra. Il messaggio arriva sempre chiaro, anche se c\'è qualche errore. Articolo sbagliato (a black shoes, articolo singolare con il plurale) e colore dopo il nome (a T-shirt red) tolgono un solo punto, e solo se in tutto sono 4 o più; vanno comunque sempre segnalati all\'alunno.',
     3: 'Descrizione chiara con al massimo una domanda guida; risponde alle domande extra, a volte con brevi esitazioni. Gli errori non ostacolano mai la comprensione.',
     2: 'Descrizione essenziale (alcuni capi e/o l\'azione) che richiede più domande guida; il messaggio si capisce nel complesso, ma alcune parti vanno ricostruite.',
     1: 'Frasi isolate o parole singole, solo con supporto continuo; la comunicazione passa a fatica.',
@@ -1657,7 +1657,7 @@ const WI_LBL = ['', '✓ ', '🎨 ', '🔤 ', '↔️ ', '✗ '], WI_CLS = ['n',
 const WI_TITLE = '✓ giusto → 🎨 colore sbagliato → 🔤 articolo sbagliato (a black shoes) → ↔️ colore dopo il nome (a T-shirt red) → ✗ parola sbagliata';
 const INV_NOTE = 'colore dopo il nome (a T-shirt red)';
 const ART_NOTE = 'articolo sbagliato (a black shoes)';
-const ART_SOGLIA = 3;   // da quanti errori (articolo + colore dopo il nome) pesano sulla Comunicazione
+const ART_SOGLIA = 4;   // da quanti errori (articolo + colore dopo il nome) pesano sulla Comunicazione
 const WA_LBL = ['— azione?', '✓ azione', '✗ forma (manca is / -ing)', '✗ lessico'], WA_CLS = ['n', 'ok', 'bad', 'no'];
 const WS_LBL = ['— is wearing?', '✓ is wearing', '✗ manca is (she wearing)', '✗ wear / wears', '✗ they is / he are'], WS_CLS = ['n', 'ok', 'bad', 'bad', 'bad'];
 const WQ_LBL = ['— risposta?', '✓ giusta', '~ con aiuto', '✗ sbagliata'], WQ_CLS = ['n', 'ok', 'bad', 'no'];
@@ -1691,7 +1691,8 @@ function wkStats() {
   const acts = all.map(x => x.a).filter(Boolean), strs = all.map(x => x.s).filter(Boolean);
   const artNote = wk.notes.er.filter(x => x.t === ART_NOTE).reduce((t, x) => t + x.n, 0);
   const invNote = wk.notes.er.filter(x => x.t === INV_NOTE).reduce((t, x) => t + x.n, 0);
-  return { said: items.length, okN: cnt(items.map(x => x.v), 1) + cnt(items.map(x => x.v), 3) + cnt(items.map(x => x.v), 4), okTypes: okTypes.size, col: cnt(items.map(x => x.v), 2), art: cnt(items.map(x => x.v), 3) + artNote, inv: cnt(items.map(x => x.v), 4) + invNote, word: cnt(items.map(x => x.v), 5),
+  return { said: items.length, ok1: cnt(items.map(x => x.v), 1), okN: cnt(items.map(x => x.v), 1) + cnt(items.map(x => x.v), 3) + cnt(items.map(x => x.v), 4), okTypes: okTypes.size, col: cnt(items.map(x => x.v), 2), art: Math.max(cnt(items.map(x => x.v), 3), artNote), inv: Math.max(cnt(items.map(x => x.v), 4), invNote),   // spunta e nota dello stesso errore: non si sommano
+    word: cnt(items.map(x => x.v), 5),
     aOk: cnt(acts, 1), aForm: cnt(acts, 2), aLex: cnt(acts, 3), sOk: cnt(strs, 1), sErr: strs.filter(v => v > 1).length,
     sDet: [2, 3, 4].filter(v => cnt(strs, v)).map(v => WS_LBL[v].replace('✗ ', '') + (cnt(strs, v) > 1 ? ' ×' + cnt(strs, v) : '')),
     q, chars: all.length, tot: all.reduce((t, x) => t + (x.tot || 0), 0), aSaid: all.filter(x => x.a).length,
@@ -1753,17 +1754,20 @@ function computeHints() {
   const qTxt = s.q.length ? `domande ✓${qOk}${qHelp ? ' ~' + qHelp : ''}${qBad ? ' ✗' + qBad : ''}` : 'nessuna domanda extra segnata';
   // Comunicazione /4: autonomia (domande guida), completezza (capi + azione), domande extra
   if (s.chars || s.q.length || wk.guide || wk.block || s.art || s.inv) {
+    // Completezza dalla checklist solo se hai spuntato anche quello che dice giusto (✓ su un capo,
+    // un'azione o is wearing): se segni solo gli errori, quanto ha detto non si può sapere e non pesa.
+    const ticked = s.ok1 + s.aOk + s.sOk > 0;
     const cover = s.tot ? s.said / s.tot : 0;
-    const complete = s.chars > 0 && cover >= 0.6 && s.aSaid >= s.chars;
+    const complete = !ticked || (s.chars > 0 && cover >= 0.6 && s.aSaid >= s.chars);
     let v = 4;
     if (!complete || wk.guide >= 1 || qHelp) v = 3;
-    if (wk.guide >= 2 || (s.chars && cover < 0.4) || (qBad && qBad >= qOk)) v = 2;
-    if (wk.guide >= 4 || wk.block >= 2 || (s.chars && s.said <= 1 && !s.aSaid)) v = 1;
+    if (wk.guide >= 2 || (ticked && s.chars && cover < 0.4) || (qBad && qBad >= qOk)) v = 2;
+    if (wk.guide >= 4 || wk.block >= 2 || (ticked && s.chars && s.said <= 1 && !s.aSaid)) v = 1;
     // errori nel gruppo del nome — articolo (a black shoes) + colore dopo il nome (a T-shirt red):
-    // pesano solo se in tutto sono almeno 3 (−1)
+    // vanno sempre segnalati all'alunno, ma pesano poco: −1 solo da ART_SOGLIA in su, mai sotto 1
     const gn = s.art + s.inv;
-    if (gn >= ART_SOGLIA) v = Math.max(0, v - 1);
-    H.com = { v, why: `${wk.guide} domande guida · ${s.chars ? `capi detti ${s.said}/${s.tot}, azione ${s.aSaid}/${s.chars}` : 'descrizione non spuntata'} · ${qTxt}${gn ? ` · articolo ×${s.art} + colore dopo il nome ×${s.inv}${gn >= ART_SOGLIA ? ' (−1)' : ` (pesano da ${ART_SOGLIA})`}` : ''}` };
+    if (gn >= ART_SOGLIA && v > 1) v -= 1;
+    H.com = { v, why: `${wk.guide} domande guida · ${s.chars ? (ticked ? `capi detti ${s.said}/${s.tot}, azione ${s.aSaid}/${s.chars}` : 'spuntati solo errori: completezza non valutata') : 'descrizione non spuntata'} · ${qTxt}${gn ? ` · articolo ×${s.art} + colore dopo il nome ×${s.inv}${gn >= ART_SOGLIA ? ' (−1)' : ` (pesano da ${ART_SOGLIA})`}` : ''}` };
   }
   // Lessico /4: capi diversi detti col colore; ogni errore di lessico (colore sbagliato, parola
   // sbagliata, azione detta male, note «parola in italiano» / «colore al plurale») abbassa il massimo:
@@ -2112,7 +2116,9 @@ function parseNote(note) {
   const er = list('Errori: '), pr = list('Pronuncia: ');
   const sum = (arr, names) => arr.filter(x => !names || names.includes(x.t)).reduce((t, x) => t + x.n, 0);
   const k = { mi: sCnt('manca is'), ww: sCnt('wear / wears'), ti: sCnt('they is'), form: num(/^forma ✗(\d+)/), col: num(/^colore sbagliato ×(\d+)/), word: num(/^parola sbagliata ×(\d+)/), aLex: num(/^lessico ✗(\d+)/) };
-  return { types: typ ? +typ[1] : null, aOk: num(/^azioni ✓(\d+)/), sOk: num(/^is wearing ✓(\d+)/),
+  const gnLine = num(/^articolo sbagliato ×(\d+)/) + num(/^colore dopo il nome ×(\d+)/);
+  const gnNote = sum(er, [ART_NOTE, INV_NOTE]);
+  return { gn: Math.max(gnLine, gnNote), types: typ ? +typ[1] : null, aOk: num(/^azioni ✓(\d+)/), sOk: num(/^is wearing ✓(\d+)/),
     ...errCounts(k, t => sum(er, [t])),
     Hs: num(/^esitazioni ×(\d+)/), B: num(/^blocchi ×(\d+)/), P: sum(pr),
     any: !!(segs[0] && !/^(Pronuncia|Errori): /.test(segs[0])) || pr.length > 0 };
@@ -2185,7 +2191,8 @@ ${present.length ? `<div class="bar" style="margin:6px 0;align-items:center;font
 <div id="riv-sc-${k}">${rivScores(it, k)}</div></div></td></tr>`;
 }
 function rivScores(it, k) {
-  return RUBRIC.map((r, j) => `<div class="r" style="margin-top:6px"><div class="rh"><div class="rn">${r.name} <small>/ ${r.max}</small> <small style="color:#a49cbd">· allora ${it.old[j]}${it.v1 && j === 3 ? '/3' : ''}${it.sug[j] !== null && it.sug[j] !== undefined ? ' · dalla nota ' + it.sug[j] : ''}${it.man[j] !== undefined ? ' · <button class="x" data-act="rivauto" data-k="' + k + '" data-j="' + j + '">↺ automatico</button>' : ''}</small></div><div class="pts">${Array.from({ length: r.max + 1 }, (_, v) => r.max - v).map(v => `<button class="${it.neu[j] === v ? 'on' : ''}" data-act="rivpt" data-k="${k}" data-j="${j}" data-v="${v}" title="${esc(r.d[v])}">${v}</button>`).join('')}</div></div></div>`).join('')
+  const gn = parseNote(it.note).gn;
+  return RUBRIC.map((r, j) => `<div class="r" style="margin-top:6px"><div class="rh"><div class="rn">${r.name} <small>/ ${r.max}</small> <small style="color:#a49cbd">· allora ${it.old[j]}${it.v1 && j === 3 ? '/3' : ''}${j === 0 && gn ? ` · articolo/colore dopo il nome ×${gn}: ${gn >= ART_SOGLIA ? 'ora −1 (prima poteva pesare di più)' : `ora non pesano (da ${ART_SOGLIA})`} — la Comunicazione non si ricalcola da sola, scegli tu` : ''}${it.sug[j] !== null && it.sug[j] !== undefined ? ' · dalla nota ' + it.sug[j] : ''}${it.man[j] !== undefined ? ' · <button class="x" data-act="rivauto" data-k="' + k + '" data-j="' + j + '">↺ automatico</button>' : ''}</small></div><div class="pts">${Array.from({ length: r.max + 1 }, (_, v) => r.max - v).map(v => `<button class="${it.neu[j] === v ? 'on' : ''}" data-act="rivpt" data-k="${k}" data-j="${j}" data-v="${v}" title="${esc(r.d[v])}">${v}</button>`).join('')}</div></div></div>`).join('')
     + `<div class="tot" style="margin-top:8px"><span class="v">${voto(rivSum(it.neu))}</span><span class="p">${rivSum(it.neu)} / ${RUB_MAX} punti · prima ${rivVotoOld(it)} (${rivSum(it.old)}/${it.v1 ? 15 : RUB_MAX})</span></div>`;
 }
 function rivRow(it, k) {
