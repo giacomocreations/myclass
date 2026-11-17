@@ -6106,7 +6106,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                             <div class="vote" style="color:#667eea;font-size:20px;">${p.voto10}</div>
                             <div style="flex:1;">
                                 <div style="font-size:13px;font-weight:700;color:#3949ab;">📊 ${p.grigliaNome||'Griglia'}</div>
-                                <div style="font-size:12px;color:#666;">${formatDate(p.data)} — ${p.tot}/${p.totMax} pt</div>
+                                <div style="font-size:12px;color:#666;">${formatDate(p.data)} — ${p.tot}/${p.totMax} pt${p.rivalutato ? ` · <span style="color:#00897b;font-weight:700;" title="Rivisto con la griglia aggiornata il ${formatDate(p.rivalutato)}">♻️ rivalutato${p.votoPrima ? ` (prima ${p.votoPrima.voto10} · ${p.votoPrima.tot}/${p.votoPrima.totMax})` : ''}</span>` : ''}</div>
                                 <div style="margin-top:4px;">${righe}</div>
                                 ${p.nota ? `<div style="margin-top:5px;font-size:12px;color:#444;background:#f7f7fb;border-radius:6px;padding:5px 8px;white-space:pre-wrap;">📝 ${_escH(p.nota)}</div>` : ''}
                             </div>
@@ -9543,7 +9543,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             const lz = (cl.pianificazione?.piano || []).find(p => p.data === today);
             return lz ? lzId(lz) : today + '_1';
         }
-        function mcApriLiveDaAttivita(cls, alunno) {
+        function mcApriLiveDaAttivita(cls, alunno, norec) {
             const nrm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
             if (document.getElementById('myclass-live-overlay')) return { ok: false, msg: 'c\'è già una LIVE aperta.' };
             const ci = (data.classi || []).findIndex(c => nrm(c.nome).replace(/ /g, '') === nrm(cls).replace(/ /g, ''));
@@ -9555,16 +9555,80 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             apriLive(ci, _mcSlotOggi(ci));
             if (!document.getElementById('myclass-live-overlay')) return { ok: false, msg: 'la LIVE non si è aperta.' };
             // la LIVE ha il suo canale: le passo la selezione (lì parte anche la registrazione)
-            setTimeout(() => { try { window._mcLiveBootBC?.postMessage({ type: 'select', reqId: 'mc' + Date.now().toString(36), student: alunno, cls: data.classi[ci].nome }); } catch(e) {} }, 500);
+            setTimeout(() => { try { window._mcLiveBootBC?.postMessage({ type: 'select', reqId: 'mc' + Date.now().toString(36), student: alunno, cls: data.classi[ci].nome, norec: !!norec }); } catch(e) {} }, 500);
             return { ok: true, classe: data.classi[ci].nome };
         }
         window.mcApriLiveDaAttivita = mcApriLiveDaAttivita;
+        // ── Griglie delle attività con una versione (es. What Are They Wearing? v2, pronuncia /4) ──
+        // Quando l'attività manda una versione più nuova (con i descrittori), MyClass aggiorna la sua
+        // copia: massimi, descrittori e conversione punti→voto. I nomi delle voci restano quelli di MyClass.
+        function mcAggiornaGrigliaDaAttivita(g) {
+            if (!g || !g.id || !(+g.ver > 0) || !Array.isArray(g.aree) || !g.aree.length || !g.aree.every(a => Array.isArray(a.descrittori))) return false;
+            const G = (data.griglie || []).find(x => x.id === g.id);
+            if (!G || (+G.ver || 1) >= +g.ver) return false;
+            const nrm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+            const old = G.aree || [];
+            G.aree = g.aree.map((a, k) => {
+                const o = old.find(x => nrm(x.nome) === nrm(a.nome)) || (old.length === g.aree.length ? old[k] : null);
+                return { ...(o || {}), nome: o ? o.nome : a.nome, max: +a.max, descrittori: a.descrittori.map(d => ({ pt: +d.pt, testo: String(d.testo || '') })) };
+            });
+            if (g.conversione_voto && typeof g.conversione_voto === 'object') G.conversione_voto = { ...g.conversione_voto };
+            G.ver = +g.ver;
+            G.aggiornata = new Date().toISOString().slice(0, 10);
+            saveData();
+            console.info('[MyClass] griglia aggiornata dall\'attività:', G.nome, 'v' + G.ver);
+            return true;
+        }
+        window.mcAggiornaGrigliaDaAttivita = mcAggiornaGrigliaDaAttivita;
+        // Promemoria salvati con una griglia, in tutte le classi (per la rivalutazione nell'attività)
+        function mcPromemoriaLista(gridId) {
+            const G = (data.griglie || []).find(x => x.id === gridId);
+            const items = [];
+            (data.classi || []).forEach(c => (c.studenti || []).forEach(st => (st.votiPromemoria || []).forEach(p => {
+                if (p && p.grigliaId === gridId) items.push({ cls: c.nome, student: `${st.cognome} ${st.nome}`, data: p.data, ts: p.ts, voto10: p.voto10, tot: p.tot, totMax: p.totMax,
+                    punteggi: p.punteggi || [], nota: p.nota || '', ver: p.ver || 0, rivalutato: p.rivalutato || null });
+            })));
+            items.sort((a, b) => String(a.data).localeCompare(String(b.data)) || a.cls.localeCompare(b.cls) || a.student.localeCompare(b.student));
+            return { ok: true, items, grigliaVer: G ? (+G.ver || 1) : 0, griglia: !!G };
+        }
+        // Riscrive i promemoria indicati (stessa data) con i nuovi punteggi della griglia aggiornata
+        function mcPromemoriaAggiorna(g, items) {
+            if (!g || !g.id) return { ok: false, msg: 'griglia mancante' };
+            mcAggiornaGrigliaDaAttivita(g);
+            const G = (data.griglie || []).find(x => x.id === g.id);
+            const aree = G ? G.aree : g.aree, conv = (G && G.conversione_voto) || g.conversione_voto || null;
+            const totMax = aree.reduce((t, a) => t + (+a.max || 0), 0);
+            let n = 0; const miss = [];
+            items.forEach(it => {
+                const c = (data.classi || []).find(x => x.nome === it.cls);
+                const st = c && (c.studenti || []).find(x => `${x.cognome} ${x.nome}` === it.student);
+                const p = st && (st.votiPromemoria || []).find(x => x.grigliaId === g.id && x.ts === it.ts);
+                if (!p || !Array.isArray(it.scores) || it.scores.length !== aree.length) { miss.push(it.student); return; }
+                const punteggi = aree.map((a, k) => ({ nome: a.nome, voto: Math.max(0, Math.min(+a.max, +it.scores[k] || 0)), max: +a.max }));
+                const tot = punteggi.reduce((t, x) => t + x.voto, 0);
+                const voto10 = conv && conv[String(Math.round(tot))] !== undefined ? conv[String(Math.round(tot))] : Math.round(tot / totMax * 100) / 10;
+                if (!p.votoPrima && p.voto10 !== voto10) p.votoPrima = { voto10: p.voto10, tot: p.tot, totMax: p.totMax };
+                Object.assign(p, { punteggi, tot, totMax, voto10, ver: +g.ver || 0, rivalutato: new Date().toISOString().slice(0, 10) });
+                if (typeof it.nota === 'string' && it.nota.trim()) p.nota = it.nota.trim().slice(0, 1500);
+                n++;
+            });
+            if (n) saveData();
+            return { ok: true, n, miss };
+        }
         function _mcLiveBoot() {
             if (window._mcLiveBootBC) return;
             let bc; try { bc = new BroadcastChannel('myclass-live-griglia'); } catch(e) { return; }
             window._mcLiveBootBC = bc;
             bc.onmessage = e => {
                 const m = e.data || {};
+                // Rivalutazione dei promemoria con la griglia nuova: risponde MyClass, LIVE aperta o no
+                if ((m.type === 'prom-list' || m.type === 'prom-update') && m.reqId && !String(m.reqId).startsWith('mc')) {
+                    if (window._tabBlocked) { bc.postMessage({ type: 'ack', reqId: m.reqId, ok: false, paused: true, msg: 'questa scheda di MyClass è in pausa (MyClass è aperta due volte).' }); return; }
+                    let r; try { r = m.type === 'prom-list' ? mcPromemoriaLista(m.gridId) : mcPromemoriaAggiorna(m.grid, m.items || []); }
+                    catch(err) { r = { ok: false, msg: 'errore in MyClass (' + (err && err.message || err) + ')' }; }
+                    bc.postMessage({ type: 'ack', reqId: m.reqId, ...r });
+                    return;
+                }
                 if (!['hello', 'select', 'scores'].includes(m.type) || !m.reqId || String(m.reqId).startsWith('mc')) return;
                 if (document.getElementById('myclass-live-overlay')) return;   // risponde la LIVE
                 if (window._tabBlocked) {
@@ -9574,18 +9638,18 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 }
                 if (m.type === 'hello') { bc.postMessage({ type: 'live', reqId: m.reqId, closed: true, myclass: true }); return; }
                 if (m.type === 'scores') { bc.postMessage({ type: 'ack', reqId: m.reqId, ok: false, msg: 'la LIVE è chiusa: scegli l\'alunno dall\'elenco della finestra docente e la apro io.' }); return; }
-                const r = mcApriLiveDaAttivita(m.cls, m.student);
+                const r = mcApriLiveDaAttivita(m.cls, m.student, m.norec);
                 bc.postMessage({ type: 'ack', reqId: m.reqId, ok: r.ok, msg: r.msg || '', opening: r.ok, student: m.student, classe: r.classe || m.cls });
             };
         }
         function _mcAutoLiveDaUrl() {
             const u = new URLSearchParams(location.search), cls = u.get('apriLive');
             if (!cls) return;
-            const al = u.get('alunno') || '';
-            u.delete('apriLive'); u.delete('alunno');
+            const al = u.get('alunno') || '', norec = u.get('norec') === '1';
+            u.delete('apriLive'); u.delete('alunno'); u.delete('norec');
             try { history.replaceState(null, '', location.pathname + (u.toString() ? '?' + u : '') + location.hash); } catch(e) {}
             if (window._tabBlocked) return;
-            const r = mcApriLiveDaAttivita(cls, al);
+            const r = mcApriLiveDaAttivita(cls, al, norec);
             if (!r.ok) alert('MyClass: ' + r.msg);
         }
         window.addEventListener('load', () => setTimeout(() => { _mcLiveBoot(); _mcAutoLiveDaUrl(); }, 600));
@@ -18144,8 +18208,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             }
 
             async function lvStartRec(studenti) {
-                // Ferma eventuale registrazione precedente senza salvare
-                if (LV.recActive) lvStopRec(false);
+                // Ferma e salva (scarica) l'eventuale registrazione precedente: cambiando alunno
+                // non si perde quella di prima
+                if (LV.recActive) lvStopRec(true);
                 if (!navigator.mediaDevices?.getUserMedia) {
                     console.warn('[REC] MediaDevices non supportato in questo browser.');
                     return;
@@ -18389,9 +18454,17 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 const s=studentiDati[i],el=q('lv-sd');if(!el)return;
                 el.style.display='block';
                 // ── Auto-avvio registrazione (solo modalità singolo) ────────
+                // Alunno scelto dalla finestra docente di un'attività che registra da sé (norec):
+                // qui non parte una seconda registrazione; quella di un altro alunno si ferma e si salva,
+                // quella dello stesso alunno (avviata prima qui) continua.
+                const noRec=!!LV._noRecOnce; LV._noRecOnce=false; LV._recKept=false;
                 if(!LV.coppiaMode){
                     const nomeRec=s.cognome+'_'+s.nome;
-                    if(!LV.recActive||(LV.recStudenti[0]!==nomeRec)){
+                    if(noRec){
+                        if(LV.recActive&&LV.recStudenti[0]===nomeRec)LV._recKept=true;
+                        else if(LV.recActive)lvStopRec(true);
+                    }
+                    else if(!LV.recActive||(LV.recStudenti[0]!==nomeRec)){
                         lvStartRec([nomeRec]);
                     }
                 }
@@ -19245,6 +19318,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 if (LV.coppiaMode) { reply(false, 'la LIVE è in modalità coppia/trio: lì i punteggi vanno inseriti a mano.'); return; }
                 const cls = _lvNrm(m.cls).replace(/ /g,'');
                 if (/^[1-5][a-z]$/.test(cls) && cls !== _lvNrm(classe.nome).replace(/ /g,'')) { reply(false, `la LIVE aperta è della ${classe.nome}, non della ${m.cls}.`); return; }
+                try { window.mcAggiornaGrigliaDaAttivita?.(m.grid); } catch(e) { console.warn('[LIVE] griglia dall\'attività:', e); }
                 const tg = _lvTrovaGriglia(m.grid);
                 if (!tg) { reply(false, `nessuna griglia corrispondente a "${m.grid?.nome||'questa attività'}". Sceglila nella LIVE (stesse voci) e riprova.`); return; }
                 // Alunno: prima il nome scritto nell'attività, poi quello selezionato nella LIVE
@@ -19269,7 +19343,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 // Tabella punti→voto dell'attività, se la griglia di MyClass non ne ha una
                 if (m.grid?.conversione_voto) LV._convExt = { gid: LV.grigliaAttiva.id, conv: m.grid.conversione_voto };
                 const selNow = [...qa('#lv-sl .lv-scard')].findIndex(c => c.classList.contains('sel'));
-                if (selNow !== si || q('lv-sd')?.style.display === 'none') lvSelS(si);
+                if (selNow !== si || q('lv-sd')?.style.display === 'none') { LV._noRecOnce = !!m.norec; lvSelS(si); }
                 const GA = LV.grigliaAttiva.aree || [];
                 let n = 0;
                 (m.grid?.aree || []).forEach((a, k) => {
@@ -19308,9 +19382,12 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 if (r.idx < 0) { reply(false, r.n > 1 ? `"${m.student}": più alunni con questo nome.` : `"${m.student}" non è nella ${classe.nome}.`); return; }
                 if (q('lv-pnl-vo')?.style.display === 'none') lvSetMod('vo');
                 const selNow = [...qa('#lv-sl .lv-scard')].findIndex(c => c.classList.contains('sel'));
-                if (selNow !== r.idx || q('lv-sd')?.style.display === 'none') lvSelS(r.idx);
-                const st = studentiDati[r.idx];
-                reply(true, '', { student: `${st.cognome} ${st.nome}` });
+                const st = studentiDati[r.idx], nomeRec = st.cognome + '_' + st.nome;
+                LV._recKept = false;
+                if (selNow !== r.idx || q('lv-sd')?.style.display === 'none') { LV._noRecOnce = !!m.norec; lvSelS(r.idx); }
+                else if (m.norec) LV._recKept = !!(LV.recActive && LV.recStudenti?.[0] === nomeRec);
+                // l'attività registra da sé, a meno che qui non si stesse già registrando questo alunno
+                reply(true, '', { student: `${st.cognome} ${st.nome}`, recMyClass: !!(m.norec && LV._recKept) });
             }
             // Stato della LIVE per le finestre docente (alunno selezionato, griglia)
             function _lvStato(){
