@@ -852,23 +852,32 @@ const p2Of = id => ck.p2[id] || (ck.p2[id] = { rows: {}, bec: {}, guide: 0, mean
 function p2Status(it, m) { const t = modType(m); return t === it.t ? 'ok' : (t === 'no' && it.t === 'nn') || (t === 'nn' && it.t === 'no') ? 'sw' : 'no'; }
 const cyBtn = (act, attrs, cls, txt, title) => `<button class="cy ${cls}" data-act="${act}" ${attrs}${title ? ` title="${esc(title)}"` : ''}>${txt}</button>`;
 const exBtn = k => { const v = ck.ex[k] || 0; return cyBtn('ex', `data-k="${k}"`, EX_CLS[v], EX_LBL[v], 'Clic: ✓ → con aiuto → ✗ → nessuna'); };
+// because detto in quella frase della Parte 1 (clic: sì / no)
+const becBtn = (attrs, on) => `<button class="cy ${on ? 'ok' : 'n'}" data-act="cb" ${attrs} title="Ha spiegato il perché con because in questa frase? (clic: sì / no)">${on ? '✔ because' : '+ because'}</button>`;
 const cntBox = (k, lbl, v) => `<span class="cnt">${lbl} <b>${v}</b><button data-act="cnt" data-k="${k}" data-d="-1" title="Togli">−</button><button data-act="cnt" data-k="${k}" data-d="1" title="Aggiungi">+</button></span>`;
 
+// because della Parte 1: frasi spuntate con «+ because» (+ il contatore per le frasi non in elenco)
+function p1Bec() {
+  const rows = Object.values(ck.p1).concat(ck.p1x);
+  return { n: rows.filter(x => x.b).length + ck.p1n.bec, of: rows.length };
+}
 function renderCkP1() {
   const row = ([k, obj, ok]) => {
     const x = ck.p1[k];
     if (!x) return `<div class="cr"><button class="lb" data-act="c1" data-k="${k}">☐ <b>${esc(ok[0])}</b> ${esc(obj)}</button></div>`;
     const vo = verbOpts(ok), v = vo[x.v];
-    return `<div class="cr on"><button class="lb" data-act="c1" data-k="${k}" title="Togli">✔ ${esc(obj)}</button>${cyBtn('cv', `data-k="${k}"`, ok.includes(v) ? 'ok' : 'bad', esc(v), 'Verbo: clic per cambiarlo')}${cyBtn('cm', `data-k="${k}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}</div>`;
+    return `<div class="cr on"><button class="lb" data-act="c1" data-k="${k}" title="Togli">✔ ${esc(obj)}</button>${cyBtn('cv', `data-k="${k}"`, ok.includes(v) ? 'ok' : 'bad', esc(v), 'Verbo: clic per cambiarlo')}${cyBtn('cm', `data-k="${k}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}${becBtn(`data-k="${k}"`, x.b)}</div>`;
   };
   const rule = ([k, txt, def]) => {
     const x = ck.p1[k];
     if (!x) return `<div class="cr"><button class="lb" data-act="c1" data-k="${k}" data-m="${esc(def)}">☐ ${esc(txt)}</button></div>`;
-    return `<div class="cr on"><button class="lb" data-act="c1" data-k="${k}" title="Togli">✔ ${esc(txt)}</button>${cyBtn('cm', `data-k="${k}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}</div>`;
+    return `<div class="cr on"><button class="lb" data-act="c1" data-k="${k}" title="Togli">✔ ${esc(txt)}</button>${cyBtn('cm', `data-k="${k}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}${becBtn(`data-k="${k}"`, x.b)}</div>`;
   };
   const mine = ([k, obj, ok]) => row([k, obj, ok]).replace(/<\/div>$/, `<button class="x" data-act="cmdel" data-k="${k}" title="Togli dall'elenco">✕</button></div>`);
-  const extra = ck.p1x.map((x, i) => `<div class="cr on"><button class="lb" data-act="cxdel" data-i="${i}" title="Togli">✔ ${esc(x.t)}</button>${cyBtn('cxm', `data-i="${i}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}</div>`).join('');
-  return `<div class="ckh">✅ 📖 Faccende fatte in classe <small>· clic sulla faccenda quando la dice, poi clic su verbo e modale finché non c'è quello che ha detto (arancione = verbo sbagliato)</small></div>
+  const extra = ck.p1x.map((x, i) => `<div class="cr on"><button class="lb" data-act="cxdel" data-i="${i}" title="Togli">✔ ${esc(x.t)}</button>${cyBtn('cxm', `data-i="${i}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}${becBtn(`data-i="${i}" data-x="1"`, x.b)}</div>`).join('');
+  const pb = p1Bec();
+  return `<div class="ckh">✅ 📖 Faccende fatte in classe <small>· clic sulla faccenda quando la dice, poi clic su verbo e modale finché non c'è quello che ha detto (arancione = verbo sbagliato) · <b>+ because</b> se spiega il perché</small></div>
+    <div class="ckl" style="margin:2px 0 4px">💬 because nella Parte 1: <b>${pb.n}</b> su ${pb.of} ${pb.of === 1 ? 'frase' : 'frasi'}${ck.p1n.bec ? ` (+${ck.p1n.bec} dal contatore)` : ''}</div>
     <div class="ck">${CK_BOOK.map(row).join('')}</div>
     <div class="ckh">➕ Altre faccende</div>
     <div class="ck">${CK_MORE.map(row).join('')}${CK_MINE.map(mine).join('')}</div>
@@ -876,7 +885,7 @@ function renderCkP1() {
     <div class="ckh">🚫 Regole di casa (mustn't / don't have to)</div>
     <div class="ck">${CK_RULES.map(rule).join('')}${extra}</div>
     <div class="addr"><input id="t-add" placeholder="＋ Altra regola detta (es. watch TV after dinner) + Invio" autocomplete="off"><button data-act="cxadd">＋</button></div>
-    <div class="cnts">${cntBox('bec', 'because', ck.p1n.bec)}${cntBox('guide', 'domande guida', ck.p1n.guide)}</div>`;
+    <div class="cnts">${cntBox('bec', 'because (altre frasi)', ck.p1n.bec)}${cntBox('guide', 'domande guida', ck.p1n.guide)}</div>`;
 }
 
 function p1Stats() {
@@ -903,11 +912,12 @@ function vocabHint(s) {
 }
 function p1Line(html) {
   const s = p1Stats();
-  if (!s.mods.length && !s.exs.length && !ck.p1n.bec && !ck.p1n.guide) return '';
+  const pb = p1Bec();
+  if (!s.mods.length && !s.exs.length && !pb.n && !ck.p1n.guide) return '';
   const b = t => html ? `<b>${t}</b>` : t;
   const parts = [`${b(s.chores.length)} faccende (${s.book} del libro)${s.extra ? ` · ${s.extra} ${s.extra === 1 ? 'regola aggiunta' : 'regole aggiunte'}` : ''}` + (s.wrong.length ? ` · verbo sbagliato ${s.wrong.length}: ${s.wrong.map(([k, obj, ok]) => verbOpts(ok)[ck.p1[k].v] + ' ' + obj).join(', ')}` : '')];
   if (s.mods.length) parts.push(MODS.filter(m => s.cnt[m]).map(m => `${m} ${s.cnt[m]}`).join(', '));
-  if (ck.p1n.bec) parts.push(`because ×${ck.p1n.bec}`);
+  if (pb.n) parts.push(`because ×${pb.n}${pb.of ? ` su ${pb.of} frasi` : ''}`);
   if (ck.p1n.guide) parts.push(`domande guida ×${ck.p1n.guide}`);
   if (s.exs.length) parts.push(`domande a sorpresa ${exSum(s.exs)}`);
   return 'P1: ' + parts.join(' · ');
@@ -963,17 +973,21 @@ function computeHints() {
   }
   // Comunicazione /5: autonomia, frasi per tipo, because, domande extra, pronuncia e fluenza
   const guide = ck.p1n.guide + p2.reduce((t, x) => t + x.guide, 0);
-  const bec = ck.p1n.bec + p2.reduce((t, x) => t + x.bec, 0);
+  // because: quelli della Parte 1 (parlato libero, il descrittore guarda lì) + quelli della Parte 2
+  const bec1 = p1Bec().n, bec2 = p2.reduce((t, x) => t + x.bec, 0), bec = bec1 + bec2;
   const exAll = Object.values(ck.ex).filter(Boolean), exHelp = exAll.filter(x => x === 2).length, exBad = exAll.filter(x => x === 3).length;
   const P = noteN('pr'), PA = ck.flu.pause, B = ck.flu.block;
   if (s.mods.length || guide || exAll.length || P || PA || B) {
     const types = ['ob', 'no', 'nn'], less = types.filter(t => s.per[t] < 2).length, none = types.filter(t => !s.per[t]).length;
+    // because nella Parte 1: per il 5 almeno 2 frasi con because (o tutte, se ne dice meno di 2);
+    // anche uno solo → 4 («almeno qualche volta»); mai, né nella Parte 1 né nella 2, con 4+ frasi → 3
+    const becOk = !s.mods.length || bec1 >= Math.min(2, s.mods.length);
     let v = 5;
-    if (guide >= 1 || less >= 1 || exHelp || P >= 1 || PA >= 2 || (s.mods.length && !bec)) v = 4;
+    if (guide >= 1 || less >= 1 || exHelp || P >= 1 || PA >= 2 || !becOk) v = 4;
     if (guide >= 2 || none >= 1 || less >= 2 || exBad || B >= 1 || P >= 3 || PA >= 4 || (s.mods.length >= 4 && !bec)) v = 3;
     if (guide >= 4 || (guide >= 2 && !bec) || B >= 2 || P >= 5 || PA >= 6 || (s.mods.length && s.mods.length <= 2)) v = 2;
     if (B >= 4 || (s.mods.length <= 1 && guide >= 3)) v = 1;
-    H[2] = { v, why: `Parte 1: ${pl(s.mods.length, 'frase', 'frasi')} (have to/must ${s.per.ob}, mustn't ${s.per.no}, don't have to ${s.per.nn}) · because ×${bec} · domande guida ×${guide}${exAll.length ? ` · domande extra ${exSum(exAll)}` : ''} · pronuncia ×${P} · esitazioni ×${PA} · blocchi ×${B}` };
+    H[2] = { v, why: `Parte 1: ${pl(s.mods.length, 'frase', 'frasi')} (have to/must ${s.per.ob}, mustn't ${s.per.no}, don't have to ${s.per.nn}) · because ×${bec} (Parte 1: ${bec1}, Parte 2: ${bec2}) · domande guida ×${guide}${exAll.length ? ` · domande extra ${exSum(exAll)}` : ''} · pronuncia ×${P} · esitazioni ×${PA} · blocchi ×${B}` };
   }
   return H;
 }
@@ -1053,6 +1067,7 @@ function onCkClick(act, b) {
     else ck.p1[k] = { v: 0, m: b.dataset.m || 'have to' };
   } else if (act === 'cv') { const ok = allChores().find(x => x[0] === k)[2]; ck.p1[k].v = (ck.p1[k].v + 1) % verbOpts(ok).length; }
   else if (act === 'cm') ck.p1[k].m = MODS[(MODS.indexOf(ck.p1[k].m) + 1) % MODS.length];
+  else if (act === 'cb') { const x = b.dataset.x ? ck.p1x[i] : ck.p1[k]; if (x) x.b = !x.b; }
   else if (act === 'cxm') ck.p1x[i].m = MODS[(MODS.indexOf(ck.p1x[i].m) + 1) % MODS.length];
   else if (act === 'cxdel') ck.p1x.splice(i, 1);
   else if (act === 'cxadd') { addCustom(); return true; }
