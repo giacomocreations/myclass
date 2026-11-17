@@ -2228,8 +2228,10 @@ function rivOpen() {
       rivCompute(it); it.sel = true; it.resend = true;
     });
     items.sort((x, y) => String(y.data).localeCompare(String(x.data)) || String(x.cls).localeCompare(String(y.cls)) || String(x.student).localeCompare(String(y.student)));
+    // MyClass risponde ma non ha il promemoria (cancellato o mai arrivato): si crea salvando (ultimi 21 giorni)
+    if (r && r.ok) items.forEach(it => { if (it.src === 'local' && Date.now() - new Date(it.data).getTime() <= 21 * 864e5) { it.missingMc = true; it.sel = true; } });
     rivItems = items;
-    rivItems.mcMsg = !r ? '⚪ MyClass non risponde (aprila in questo browser per aggiornare anche i promemoria): qui ci sono solo i voti salvati su questa pagina.'
+    rivItems.mcMsg = !r ? `⚠️ <b>MyClass non risponde</b>: qui ci sono solo i voti salvati su questa pagina e i promemoria non si aggiornano. MyClass deve essere aperta in questo stesso browser e dallo stesso indirizzo di questa pagina (<b>${esc(location.protocol === 'file:' ? 'file sul computer' : location.host)}</b>), in una sola scheda; poi premi di nuovo ♻️ Rivedi.`
       : !r.ok ? '⚠️ MyClass: ' + esc(r.msg || 'errore') + ' — qui ci sono solo i voti salvati su questa pagina.'
       : `🔗 MyClass: ${items.filter(x => x.src === 'mc').length} promemoria di questa attività${items.some(x => x.resend) ? ` · ⚠️ ${items.filter(x => x.resend).length} rivisti qui ma non ancora in MyClass (già spuntati)` : ''} (${items.filter(x => x.src === 'mc' && x.v1).length} con la griglia vecchia /15, ${items.filter(x => x.src === 'mc' && x.stale).length} con una versione precedente della /16).`;
     rivRender();
@@ -2252,7 +2254,7 @@ function rivScores(it, k) {
 }
 function rivRow(it, k) {
   const ch = it.neu.join('-') !== rivBase(it).join('-') || it.note !== it.note0;
-  return `<tr><td><input type="checkbox" data-riv="${k}"${it.sel ? ' checked' : ''}></td><td>${esc(itFromIso(it.data))}</td><td>${esc(it.cls)}</td><td>${esc(it.student)}${it.src === 'local' ? '<br><small>solo qui</small>' : ''}${it.resend ? '<br><small style="color:#ffb547">⚠️ rivisto qui, ma in MyClass c\'è ancora la bozza: salva per mandarlo</small>' : it.riv ? '<br><small>♻️ già rivisto</small>' : ''}</td>`
+  return `<tr><td><input type="checkbox" data-riv="${k}"${it.sel ? ' checked' : ''}></td><td>${esc(itFromIso(it.data))}</td><td>${esc(it.cls)}</td><td>${esc(it.student)}${it.src === 'local' ? (it.missingMc ? '<br><small style="color:#ffb547">⚠️ non è in MyClass: salva per creare il promemoria</small>' : '<br><small>solo qui</small>') : ''}${it.resend ? '<br><small style="color:#ffb547">⚠️ rivisto qui, ma in MyClass c\'è ancora la bozza: salva per mandarlo</small>' : it.riv ? '<br><small>♻️ già rivisto</small>' : ''}</td>`
     + `<td>${rivVotoOld(it)} <small>(${rivSum(it.old)}/${it.v1 ? 15 : RUB_MAX})</small></td><td>${it.old.join('-')}</td>`
     + `<td id="riv-nv-${k}" class="${ch ? 'up' : 'eq'}">${voto(rivSum(it.neu))} <small>(${rivSum(it.neu)})</small></td><td id="riv-nd-${k}">${it.neu.join('-')}${it.note !== it.note0 ? '<br><small>nota corretta</small>' : ''}</td>`
     + `<td><button data-act="rivedit" data-k="${k}" title="Rivedi questo alunno: nota e punteggi">${it.open ? '▴' : '✏️'}</button></td></tr>` + (it.open ? rivEditor(it, k) : '');
@@ -2303,12 +2305,13 @@ function rivApply() {
     Object.assign(x, { prima: x.prima || `${x.voto} (${x.punti}/${x.max || 15}, ${x.det})`, voto: voto(tot), punti: tot, det: it.neu.join('-'), max: RUB_MAX, ver: RUB_VER, note: it.note, riv: today });
   });
   storeGrades(g); renderTeacherSaved();
-  const mc = sel.filter(it => it.src === 'mc'), nLoc = sel.filter(it => it.li >= 0).length;
+  // tutte le righe vanno a MyClass: quelle che ci sono si aggiornano, le altre (promemoria cancellati, MyClass chiusa) si creano
+  const mc = sel, nLoc = sel.filter(it => it.li >= 0).length;
   const done = r => {
     if (!twOpen()) return;
-    tw('t-riv').innerHTML = `<div class="riv">${mc.length ? (r && r.ok ? `💾 MyClass: ${r.n} promemoria aggiornati (stessa data, voto ricalcolato; il voto di prima resta annotato)${r.miss && r.miss.length ? ` · ⚠️ non trovati: ${esc(r.miss.join(', '))}` : ''}.` : `⚠️ MyClass non ha aggiornato i promemoria${r && r.msg ? ': ' + esc(r.msg) : ' (non risponde)'}. Riprova con MyClass aperta in questo browser.`) : ''}${nLoc ? `<br>✅ ${nLoc} voti aggiornati anche nell'elenco qui sotto.` : ''}<div class="bar" style="margin-top:8px"><button data-act="riv">♻️ Riapri l'elenco</button><button data-act="rivclose">Chiudi</button></div></div>`;
+    tw('t-riv').innerHTML = `<div class="riv">${mc.length ? (r && r.ok ? `💾 MyClass: ${r.n - (r.nuovi || 0)} promemoria aggiornati${r.nuovi ? `, ${r.nuovi} creati` : ''} (stessa data della prova; il voto di prima resta annotato)${r.miss && r.miss.length ? ` · ⚠️ non trovati in MyClass: ${esc(r.miss.join(', '))} (controlla nome e classe)` : ''}.` : `⚠️ MyClass non ha aggiornato i promemoria${r && r.msg ? ': ' + esc(r.msg) : ' (non risponde)'}. Riprova con MyClass aperta in questo browser.`) : ''}${nLoc ? `<br>✅ ${nLoc} voti aggiornati anche nell'elenco qui sotto.` : ''}<div class="bar" style="margin-top:8px"><button data-act="riv">♻️ Riapri l'elenco</button><button data-act="rivclose">Chiudi</button></div></div>`;
   };
-  if (mc.length && window.MyClassLive && MyClassLive.request) MyClassLive.request('prom-update', { grid: LIVE_GRID(), items: mc.map(it => ({ cls: it.cls, student: it.student, ts: it.ts, scores: it.neu, nota: it.note })) }, done);
+  if (mc.length && window.MyClassLive && MyClassLive.request) MyClassLive.request('prom-update', { grid: LIVE_GRID(), items: mc.map(it => ({ cls: it.cls, student: it.student, ts: it.ts || null, data: it.data, scores: it.neu, nota: it.note })) }, done);
   else done(null);
 }
 function copyGrades() {

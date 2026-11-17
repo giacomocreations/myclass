@@ -488,7 +488,9 @@
           items.push({ src: 'mc', cls: p.cls, student: p.student, data: p.data, ts: p.ts, old: old, note: p.nota || (li ? li.g.note : '') || '', li: li ? li.i : -1, riv: p.rivalutato });
         });
         local.filter(function (o) { return !o.used; }).forEach(function (o) { items.push({ src: 'local', cls: o.g.cls, student: o.g.name, data: isoFromIt(o.g.date), old: String(o.g.det).split('-').map(Number), note: o.g.note || '', li: o.i, riv: o.g.riv }); });
-        items.forEach(function (it) { it.neu = it.old.slice(); it.note0 = it.note; it.sel = false; it.open = false; });
+        items.forEach(function (it) { it.neu = it.old.slice(); it.note0 = it.note; it.sel = false; it.open = false;
+          // MyClass risponde ma non ha il promemoria (cancellato o mai arrivato): si crea salvando (ultimi 21 giorni)
+          if (r && r.ok && it.src === 'local' && Date.now() - new Date(it.data).getTime() <= 21 * 864e5) { it.missingMc = true; it.sel = true; } });
         // Corretto qui ma MyClass ha ancora la versione di prima (era chiusa quando hai salvato): si rimanda
         var gl = opts.loadGrades() || [];
         items.forEach(function (it) {
@@ -497,7 +499,7 @@
           it.neu = String(y.det).split('-').map(Number); if (y.note) it.note = y.note; it.sel = true; it.resend = true;
         });
         items.sort(function (a, b) { return String(b.data).localeCompare(String(a.data)) || String(a.cls).localeCompare(String(b.cls)) || String(a.student).localeCompare(String(b.student)); });
-        msg = !r ? '⚪ MyClass non risponde (aprila in questo browser per correggere anche i promemoria): qui ci sono solo i voti salvati su questa pagina.'
+        msg = !r ? '⚠️ <b>MyClass non risponde</b>: qui ci sono solo i voti salvati su questa pagina e i promemoria non si aggiornano. MyClass deve essere aperta in questo stesso browser e dallo stesso indirizzo di questa pagina (<b>' + esc(location.protocol === 'file:' ? 'file sul computer' : location.host) + '</b>), in una sola scheda; poi premi di nuovo ♻️ Rivedi.'
           : !r.ok ? '⚠️ MyClass: ' + esc(r.msg || 'errore') + ' — qui ci sono solo i voti salvati su questa pagina.'
           : '🔗 MyClass: ' + items.filter(function (x) { return x.src === 'mc'; }).length + ' promemoria di questa attività.'
             + (items.some(function (x) { return x.resend; }) ? ' ⚠️ ' + items.filter(function (x) { return x.resend; }).length + ' corretti qui ma non ancora in MyClass (già spuntati).' : '');
@@ -516,7 +518,7 @@
     }
     function row(it, k) {
       var ch = changed(it);
-      var h = '<tr><td ' + td + '><input type="checkbox" data-rvsel="' + k + '"' + (it.sel ? ' checked' : '') + '></td><td ' + td + '>' + esc(itFromIso(it.data)) + '</td><td ' + td + '>' + esc(it.cls) + '</td><td ' + td + '>' + esc(it.student) + (it.src === 'local' ? '<br><small>solo qui</small>' : '') + (it.resend ? '<br><small style="color:#ffb547">⚠️ corretto qui, ma in MyClass c\'è ancora la versione di prima: salva per mandarlo</small>' : it.riv ? '<br><small>♻️ già rivisto</small>' : '') + '</td>'
+      var h = '<tr><td ' + td + '><input type="checkbox" data-rvsel="' + k + '"' + (it.sel ? ' checked' : '') + '></td><td ' + td + '>' + esc(itFromIso(it.data)) + '</td><td ' + td + '>' + esc(it.cls) + '</td><td ' + td + '>' + esc(it.student) + (it.src === 'local' ? (it.missingMc ? '<br><small style="color:#ffb547">⚠️ non è in MyClass: salva per creare il promemoria</small>' : '<br><small>solo qui</small>') : '') + (it.resend ? '<br><small style="color:#ffb547">⚠️ corretto qui, ma in MyClass c\'è ancora la versione di prima: salva per mandarlo</small>' : it.riv ? '<br><small>♻️ già rivisto</small>' : '') + '</td>'
         + '<td ' + td + '>' + esc(votoTxt(it.old)) + ' <small>(' + it.old.join('-') + ')</small></td>'
         + '<td ' + td + ' id="rv-nv-' + k + '"><b style="color:' + (ch ? '#ffb547' : 'inherit') + '">' + esc(votoTxt(it.neu)) + '</b> <small>(' + it.neu.join('-') + ')' + (it.note !== it.note0 ? '<br>nota corretta' : '') + '</small></td>'
         + '<td ' + td + '><button data-rv="edit" data-k="' + k + '" title="Rivedi questo alunno: nota e punteggi">' + (it.open ? '▴' : '✏️') + '</button></td></tr>';
@@ -551,14 +553,14 @@
         y.det = it.neu.join('-'); y.punti = sum(it.neu); y.voto = votoTxt(it.neu); y.note = it.note; y.riv = today;
       });
       opts.storeGrades(g); if (opts.onLocalSaved) opts.onLocalSaved();
-      var mc = sel.filter(function (it) { return it.src === 'mc'; }), nLoc = sel.filter(function (it) { return it.li >= 0; }).length;
+      var mc = sel, nLoc = sel.filter(function (it) { return it.li >= 0; }).length;
       var done = function (r) {
         var b2 = box(); if (!b2) return;
-        b2.innerHTML = wrap((mc.length ? (r && r.ok ? '💾 MyClass: ' + r.n + ' promemoria aggiornati (stessa data; il voto di prima resta annotato)' + (r.miss && r.miss.length ? ' · ⚠️ non trovati: ' + esc(r.miss.join(', ')) : '') + '.' : '⚠️ MyClass non ha aggiornato i promemoria' + (r && r.msg ? ': ' + esc(r.msg) : ' (non risponde)') + '. Riprova con MyClass aperta in questo browser.') : '')
+        b2.innerHTML = wrap((mc.length ? (r && r.ok ? '💾 MyClass: ' + (r.n - (r.nuovi || 0)) + ' promemoria aggiornati' + (r.nuovi ? ', ' + r.nuovi + ' creati' : '') + ' (stessa data della prova; il voto di prima resta annotato)' + (r.miss && r.miss.length ? ' · ⚠️ non trovati in MyClass: ' + esc(r.miss.join(', ')) + ' (controlla nome e classe)' : '') + '.' : '⚠️ MyClass non ha aggiornato i promemoria' + (r && r.msg ? ': ' + esc(r.msg) : ' (non risponde)') + '. Riprova con MyClass aperta in questo browser.') : '')
           + (nLoc ? '<br>✅ ' + nLoc + ' voti aggiornati anche nell\'elenco qui sotto.' : '') + '<div class="bar" style="margin-top:8px"><button data-rv="open">♻️ Riapri l\'elenco</button><button data-rv="close">Chiudi</button></div>');
       };
       if (mc.length) request('prom-update', { grid: { id: opts.grid.id, nome: opts.grid.nome, aree: aree().map(function (a) { return { nome: a.nome, max: a.max }; }), conversione_voto: opts.grid.conversione_voto },
-        items: mc.map(function (it) { return { cls: it.cls, student: it.student, ts: it.ts, scores: it.neu, nota: it.note }; }) }, done);
+        items: mc.map(function (it) { return { cls: it.cls, student: it.student, ts: it.ts || null, data: it.data, scores: it.neu, nota: it.note }; }) }, done);
       else done(null);
     }
     return { open: open, bind: bind };
