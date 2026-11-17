@@ -1596,12 +1596,12 @@ function checkSpeech(raw) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  GRIGLIA DI VALUTAZIONE (Oral test) · 16 punti — versione 4 (novembre 2026)
+//  GRIGLIA DI VALUTAZIONE (Oral test) · 16 punti — versione 5 (novembre 2026)
 //  Comunicazione 4 · Lessico 4 · Present continuous 4 · Pronuncia e fluenza 4
 //  Più severa della prima (15 punti, pronuncia /3): il 10 solo senza errori,
 //  già 2–3 errori di present continuous o di lessico portano la voce a 2.
 // ══════════════════════════════════════════════════════════════════
-const RUB_VER = 4;   // 3: pronuncia meno severa · 4: articolo/colore dopo il nome pesano da 4 errori (−1, mai sotto 1)
+const RUB_VER = 5;   // 3: pronuncia meno severa · 4: articolo/colore dopo il nome pesano da 4 errori (−1, mai sotto 1) · 5: lessico in proporzione a quanto dice
 const RUBRIC = [
   { id: 'com', name: 'Comunicazione', max: 4, d: {
     4: 'Descrive i personaggi in autonomia e in modo completo (vestiti + azione), senza domande guida; risponde con sicurezza alle domande extra. Il messaggio arriva sempre chiaro, anche se c\'è qualche errore. Articolo sbagliato (a black shoes, articolo singolare con il plurale) e colore dopo il nome (a T-shirt red) tolgono un solo punto, e solo se in tutto sono 4 o più; vanno comunque sempre segnalati all\'alunno.',
@@ -1610,10 +1610,10 @@ const RUBRIC = [
     1: 'Frasi isolate o parole singole, solo con supporto continuo; la comunicazione passa a fatica.',
     0: 'Non comunica.' } },
   { id: 'lex', name: 'Lessico (vestiti, colori, azioni)', max: 4, d: {
-    4: 'Nomina con sicurezza almeno 5 capi diversi con il loro colore e descrive l\'azione con il lessico giusto, senza errori di lessico. Per le calzature va bene anche il termine generico "shoes".',
-    3: 'Nomina 4 capi con il colore e l\'azione, oppure 5 o più con un solo errore di lessico (un colore sbagliato, jumper/hoodie scambiati, una parola in italiano…).',
-    2: 'Nomina 2–3 capi di base, oppure fa 2–3 errori di lessico (colori o parole sbagliati, azione detta male); l\'azione detta in modo generico o con aiuto.',
-    1: 'Una o due parole pertinenti, anche con aiuto, oppure 4 o più errori di lessico; ricorre all\'italiano.',
+    4: 'Nomina con sicurezza almeno 5 capi diversi (o tutti quelli della scena, se sono meno) con il loro colore e descrive l\'azione con il lessico giusto, senza errori di lessico. Per le calzature va bene anche il termine generico "shoes".',
+    3: 'Nomina 4 capi diversi con il colore e l\'azione, oppure sbaglia poche parole: una sola, o al massimo 1 su 5 di quelle che dice (un colore sbagliato, jumper/hoodie scambiati, un verbo che non conosce…).',
+    2: 'Nomina 2–3 capi di base, oppure sbaglia più parole (fino a 2 su 5 di quelle che dice); l\'azione detta in modo generico o con aiuto.',
+    1: 'Una o due parole pertinenti, anche con aiuto, oppure sbaglia più di 2 parole su 5; ricorre all\'italiano.',
     0: 'Non produce lessico pertinente.' } },
   { id: 'pc', name: 'Uso del present continuous', max: 4, d: {
     4: 'Forma sempre corretta: is / \'s wearing e is + -ing per l\'azione, anche con he / she / they; negative e risposte brevi corrette (No, she isn\'t).',
@@ -1663,12 +1663,17 @@ const WS_LBL = ['— is wearing?', '✓ is wearing', '✗ manca is (she wearing)
 const WQ_LBL = ['— risposta?', '✓ giusta', '~ con aiuto', '✗ sbagliata'], WQ_CLS = ['n', 'ok', 'bad', 'no'];
 const NOTE_PR = ['clothes /kləʊðz/', 'wearing /ˈweərɪŋ/', '-ing finale', 'jeans', 'shoes', 'trousers', 'jacket', 'T-shirt', 'trainers', 'socks (-s finale)', 'purple', 'orange', 'pronuncia all\'italiana'];
 const NOTE_ER = ['she wearing (manca is)', 'he wear / wears', 'they is', '-ing mancante', 'present simple al posto del continuous', INV_NOTE, ART_NOTE, 'colore al plurale (reds)', 'he / she scambiati', 'parola in italiano'];
-const wkNew = () => ({ cur: {}, q: 0, done: [], qDone: [], guide: 0, pause: 0, block: 0, notes: { pr: [], er: [] } });
+const wkNew = () => ({ cur: {}, q: 0, done: [], qDone: [], guide: 0, pause: 0, block: 0, notes: { pr: [], er: [] }, av: {} });
+// Capi a disposizione: tutti i personaggi delle scene in cui hai spuntato qualcosa (anche quelli che non ha
+// descritto), ognuno contato una volta sola anche se cambi un capo. { chiave: { tot, types } }
+const avKey = c => c.name + '|' + worn(c).map(w => w.type + ':' + w.color).join(',');
+function avAdd(map) { if (Object.keys(wk.cur).length) state.chars.forEach(c => { map[avKey(c)] = { tot: worn(c).length, types: worn(c).map(w => FEET.has(w.type) ? 'feet' : w.type) }; }); return map; }
 let wk = wkNew();
 // cur[i] = { it: { slot: 0-3 }, a: 0-3, s: 0-4 } per il personaggio i della scena attuale
 const wkChar = i => wk.cur[i] || (wk.cur[i] = { it: {}, a: 0, s: 0 });
 // porta nel conteggio quello che è spuntato sulla scena attuale (prima di cambiarla)
 function wkFold() {
+  avAdd(wk.av);
   Object.keys(wk.cur).forEach(i => {
     const c = state.chars[i], x = wk.cur[i]; if (!c) return;
     const items = worn(c).filter(w => x.it[w.slot]).map(w => ({ type: w.type, v: x.it[w.slot] }));
@@ -1686,12 +1691,14 @@ function wkStats() {
   const items = all.flatMap(x => x.items);
   // con l'articolo sbagliato capo e colore restano detti: contano tra i capi, l'articolo è un'imprecisione
   const okTypes = new Set(items.filter(x => x.v === 1 || x.v === 3 || x.v === 4).map(x => FEET.has(x.type) ? 'feet' : x.type));
+  const av = Object.values(avAdd({ ...wk.av }));
+  const avail = av.reduce((t, x) => t + x.tot, 0), availTypes = new Set(av.flatMap(x => x.types)).size;
   const q = wk.qDone.concat(wk.q ? [wk.q] : []);
   const cnt = (arr, v) => arr.filter(x => x === v).length;
   const acts = all.map(x => x.a).filter(Boolean), strs = all.map(x => x.s).filter(Boolean);
   const artNote = wk.notes.er.filter(x => x.t === ART_NOTE).reduce((t, x) => t + x.n, 0);
   const invNote = wk.notes.er.filter(x => x.t === INV_NOTE).reduce((t, x) => t + x.n, 0);
-  return { said: items.length, ok1: cnt(items.map(x => x.v), 1), okN: cnt(items.map(x => x.v), 1) + cnt(items.map(x => x.v), 3) + cnt(items.map(x => x.v), 4), okTypes: okTypes.size, col: cnt(items.map(x => x.v), 2), art: Math.max(cnt(items.map(x => x.v), 3), artNote), inv: Math.max(cnt(items.map(x => x.v), 4), invNote),   // spunta e nota dello stesso errore: non si sommano
+  return { avail, availTypes, said: items.length, ok1: cnt(items.map(x => x.v), 1), okN: cnt(items.map(x => x.v), 1) + cnt(items.map(x => x.v), 3) + cnt(items.map(x => x.v), 4), okTypes: okTypes.size, col: cnt(items.map(x => x.v), 2), art: Math.max(cnt(items.map(x => x.v), 3), artNote), inv: Math.max(cnt(items.map(x => x.v), 4), invNote),   // spunta e nota dello stesso errore: non si sommano
     word: cnt(items.map(x => x.v), 5),
     aOk: cnt(acts, 1), aForm: cnt(acts, 2), aLex: cnt(acts, 3), sOk: cnt(strs, 1), sErr: strs.filter(v => v > 1).length,
     sDet: [2, 3, 4].filter(v => cnt(strs, v)).map(v => WS_LBL[v].replace('✗ ', '') + (cnt(strs, v) > 1 ? ' ×' + cnt(strs, v) : '')),
@@ -1703,7 +1710,7 @@ function wkStats() {
 function wkLine(html) {
   const s = wkStats(), b = t => html ? `<b>${t}</b>` : t;
   const parts = [];
-  if (s.said || s.art || s.inv) parts.push(`capi con colore giusti ${b(s.okN)} (${s.okTypes} diversi)` + (s.col ? ` · colore sbagliato ×${s.col}` : '')
+  if (s.said || s.art || s.inv) parts.push(`capi con colore giusti ${b(s.okN)}${s.avail ? ` su ${s.avail}` : ''} (${s.okTypes} diversi${s.availTypes ? ` su ${s.availTypes}` : ''})` + (s.col ? ` · colore sbagliato ×${s.col}` : '')
     + (s.art ? ` · articolo sbagliato ×${s.art} (a black shoes; segnala all'alunno)` : '')
     + (s.inv ? ` · colore dopo il nome ×${s.inv} (a T-shirt red; segnala all'alunno)` : '') + (s.word ? ` · parola sbagliata ×${s.word}` : ''));
   if (s.aOk + s.aForm + s.aLex) parts.push(`azioni ✓${s.aOk}` + (s.aForm ? ` · forma ✗${s.aForm}` : '') + (s.aLex ? ` · lessico ✗${s.aLex}` : ''));
@@ -1731,11 +1738,19 @@ function errCounts(k, n) {
   const lexE = k.col + k.aLex + M(k.word, n(LEX_ERR_NOTES[0])) + n(LEX_ERR_NOTES[1]);
   return { pcE, lexE, pcNote: pcE - k.mi - k.ww - k.ti - k.form, lexNote: lexE - k.col - k.aLex - k.word };
 }
-// n = capi diversi detti col colore (null = non spuntati), aOk = azioni giuste, imp = errori di lessico
-function lexScore(n, aOk, imp) {
-  let v = n === null ? 4 : n >= 5 && aOk ? 4 : n >= 4 ? 3 : n >= 2 ? 2 : 1;
-  if (imp >= 4) v = Math.min(v, 1); else if (imp >= 2) v = Math.min(v, 2); else if (imp === 1) v = Math.min(v, 3);
-  return v;
+// Lessico. n = capi diversi detti col colore (null = non spuntati), aOk = azioni giuste, imp = errori di
+// lessico, words = parole del lessico che ha detto (capi + azioni, giuste e sbagliate; 0 = non si sa),
+// nAv = tipi di capo diversi a disposizione nelle scene (0 = non si sa).
+// Varietà: 5 capi diversi (o tutti quelli della scena, se sono meno) + l'azione → 4; uno in meno → 3; 2 → 2.
+// Errori in proporzione a quanto dice: 1 errore → al massimo 3; da 2 in su, fino a 1 parola su 5 → 3,
+// fino a 2 su 5 → 2, oltre → 1 (se non si sa quante parole ha detto: 2–3 → 2, 4 o più → 1).
+function lexScore(n, aOk, imp, words, nAv) {
+  const need = nAv ? Math.max(2, Math.min(5, nAv)) : 5;
+  let v = n === null ? 4 : n >= need && aOk ? 4 : n >= need - 1 ? 3 : n >= 2 ? 2 : 1;
+  let cap = 4;
+  if (imp === 1) cap = 3;
+  else if (imp >= 2) { const r = words ? imp / Math.max(words, imp) : null; cap = r === null ? (imp >= 4 ? 1 : 2) : r <= 0.2 ? 3 : r <= 0.4 ? 2 : 1; }
+  return Math.min(v, cap);
 }
 // e = errori, ok = frasi giuste: 0 → 4 · 1 → 3 · 2–3 → 2 · 4 o più (o più di metà delle frasi) → 1
 function pcScore(e, ok) {
@@ -1745,8 +1760,9 @@ function pcScore(e, ok) {
   return e <= 3 ? 2 : 1;
 }
 // P = errori di pronuncia annotati, Hs = esitazioni, B = blocchi
-// un errore o un'esitazione isolati non tolgono niente: 0–1 → 4 · 2–3 → 3 · 4–5 → 2 · 6 o più (o un blocco) → 1
-const proScore = (P, Hs, B) => B >= 3 ? 0 : B >= 1 || Hs >= 6 || P >= 6 ? 1 : P >= 4 || Hs >= 4 ? 2 : P >= 2 || Hs >= 2 ? 3 : 4;
+// un errore o un'esitazione isolati non tolgono niente: 0–1 → 4 · 2–3 → 3 · 4–5 → 2 · 6 o più → 1
+// blocchi (si ferma e non riparte da solo): 1 → al massimo 2 · 2 → 1 · 3 o più → 0
+const proScore = (P, Hs, B) => B >= 3 ? 0 : B >= 2 || Hs >= 6 || P >= 6 ? 1 : B >= 1 || P >= 4 || Hs >= 4 ? 2 : P >= 2 || Hs >= 2 ? 3 : 4;
 // Suggerimenti per le quattro voci della griglia: { id voce: { v, why } }
 function computeHints() {
   const s = wkStats(), line = wkLine(false), H = {};
@@ -1774,8 +1790,9 @@ function computeHints() {
   // 1 → 3, 2–3 → 2, 4 o più → 1. L'articolo sbagliato non è lessico: pesa sulla Comunicazione (sopra).
   const imp = s.lexE;
   if (s.said || imp) {
-    const v = lexScore(s.said ? s.okTypes : null, s.aOk, imp);
-    H.lex = { v, why: `${s.said ? `${s.okTypes} capi diversi con il colore${s.aOk ? ' + azione' : ''}` : 'capi non spuntati'} · ${imp ? `errori di lessico ×${imp}` : 'nessun errore di lessico'}` };
+    const words = s.said + s.aOk + s.aForm + s.aLex;
+    const v = lexScore(s.said ? s.okTypes : null, s.aOk, imp, words, s.availTypes);
+    H.lex = { v, why: `${s.said ? `${s.okTypes} capi diversi con il colore${s.availTypes ? ` su ${s.availTypes} nella scena` : ''}${s.aOk ? ' + azione' : ' · nessuna azione giusta'}` : 'capi non spuntati'} · ${imp ? `errori di lessico ×${imp} su ${words} parole dette` : 'nessun errore di lessico'}` };
   }
   // Present continuous /4: errori dalle spunte (is wearing, forma dell'azione) + note di errore
   // (she wearing, he wear, they is, -ing mancante, present simple)
@@ -2108,7 +2125,8 @@ function parseNote(note) {
   const segs = String(note || '').split(' | ');
   const parts = segs.flatMap(x => /^(Pronuncia|Errori): /.test(x) ? [] : x.split(' · '));
   const num = re => { for (const p of parts) { const m = p.match(re); if (m) return +m[1]; } return 0; };
-  const typ = parts.map(p => p.match(/\((\d+) diversi\)/)).find(Boolean);
+  const typ = parts.map(p => p.match(/\((\d+) diversi(?: su (\d+))?\)/)).find(Boolean);
+  const okN = num(/^capi con colore giusti (\d+)/);
   const list = pre => { const x = segs.find(t => t.startsWith(pre)); return x ? x.slice(pre.length).split(', ').map(t => { const m = t.match(/^(.*?)(?: ×(\d+))?$/); return { t: m[1], n: +(m[2] || 1) }; }) : []; };
   const isw = parts.find(p => p.startsWith('is wearing'));
   const det = isw && isw.includes('✗ ') ? isw.slice(isw.indexOf('✗ ') + 2).split(', ') : [];
@@ -2118,7 +2136,9 @@ function parseNote(note) {
   const k = { mi: sCnt('manca is'), ww: sCnt('wear / wears'), ti: sCnt('they is'), form: num(/^forma ✗(\d+)/), col: num(/^colore sbagliato ×(\d+)/), word: num(/^parola sbagliata ×(\d+)/), aLex: num(/^lessico ✗(\d+)/) };
   const gnLine = num(/^articolo sbagliato ×(\d+)/) + num(/^colore dopo il nome ×(\d+)/);
   const gnNote = sum(er, [ART_NOTE, INV_NOTE]);
-  return { gn: Math.max(gnLine, gnNote), types: typ ? +typ[1] : null, aOk: num(/^azioni ✓(\d+)/), sOk: num(/^is wearing ✓(\d+)/),
+  const aOk = num(/^azioni ✓(\d+)/);
+  return { gn: Math.max(gnLine, gnNote), types: typ ? +typ[1] : null, typesAv: typ && typ[2] ? +typ[2] : 0, aOk, sOk: num(/^is wearing ✓(\d+)/),
+    words: okN + k.col + k.word + aOk + k.form + k.aLex,
     ...errCounts(k, t => sum(er, [t])),
     Hs: num(/^esitazioni ×(\d+)/), B: num(/^blocchi ×(\d+)/), P: sum(pr),
     any: !!(segs[0] && !/^(Pronuncia|Errori): /.test(segs[0])) || pr.length > 0 };
@@ -2126,17 +2146,18 @@ function parseNote(note) {
 // Suggerimenti dalla nota: { lex, pc, pro } (null = la nota non dice niente su quella voce)
 function noteSug(note) {
   const c = parseNote(note), imp = c.lexE, pcOk = c.sOk + c.aOk;
-  return [null, c.types !== null || imp ? lexScore(c.types, c.aOk, imp) : null, c.pcE + pcOk ? pcScore(c.pcE, pcOk) : null, c.any ? proScore(c.P, c.Hs, c.B) : null];
+  return [null, c.types !== null || imp ? lexScore(c.types, c.aOk, imp, c.words, c.typesAv) : null, c.pcE + pcOk ? pcScore(c.pcE, pcOk) : null, c.any ? proScore(c.P, c.Hs, c.B) : null];
 }
 // Punto di partenza: i punteggi dati allora (con la griglia vecchia la pronuncia /3 diventa /4: 3 → 4, 2 → 3)
 const rivBase = it => it.v1 ? [it.old[0], it.old[1], it.old[2], { 3: 4, 2: 3, 1: 1, 0: 0 }[it.old[3]] ?? it.old[3]] : it.old.slice();
-// Nuovi punteggi: per le voci non toccate a mano, il più basso tra quello di allora e il suggerito dalla nota
-// (le regole nuove abbassano, non alzano); la Comunicazione resta com'era. Con la griglia nuova si
-// ricalcola solo se hai corretto la nota.
+// Nuovi punteggi per le voci non toccate a mano (la Comunicazione resta com'era):
+// • griglia vecchia /15: il più basso tra quello di allora e il suggerito dalla nota (le regole nuove abbassano)
+// • griglia /16 di una versione precedente (stale) o nota corretta: il suggerito dalla nota con le regole di adesso
+// • griglia attuale: resta com'era (il suggerito si vede accanto)
 function rivCompute(it) {
-  const base = rivBase(it), sug = it.v1 || it.noteEdited ? noteSug(it.note) : [null, null, null, null];
+  const base = rivBase(it), sug = noteSug(it.note);
   it.sug = sug;
-  it.neu = base.map((v, k) => it.man[k] !== undefined ? it.man[k] : sug[k] === null ? v : Math.min(v, sug[k]));
+  it.neu = base.map((v, k) => it.man[k] !== undefined ? it.man[k] : sug[k] === null ? v : it.v1 ? Math.min(v, sug[k]) : it.stale || it.noteEdited ? sug[k] : v);
 }
 function rescore(old, note) { const it = { old, note, v1: true, man: {} }; rivCompute(it); return it.neu; }
 const isoFromIt = d => { const m = String(d || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : String(d || ''); };
@@ -2168,15 +2189,15 @@ function rivOpen() {
       const old = RUBRIC.map((rr, k) => { const a = p.punteggi.find(q => nrmName(q.nome) === nrmName(rr.name)) || p.punteggi[k]; return +a.voto || 0; });
       const li = local.find(({ x }) => !x._used && isoFromIt(x.date) === p.data && sameStudent(x.name, p.student));
       if (li) li.x._used = true;
-      items.push({ src: 'mc', cls: p.cls, student: p.student, data: p.data, ts: p.ts, old, v1: (p.ver || 0) < RUB_VER && tm === 15, note: p.nota || (li ? li.x.note : '') || '', li: li ? li.i : -1, riv: p.rivalutato });
+      items.push({ src: 'mc', cls: p.cls, student: p.student, data: p.data, ts: p.ts, old, v1: tm === 15, stale: tm !== 15 && (p.ver || (li && li.x.ver) || 0) < RUB_VER, note: p.nota || (li ? li.x.note : '') || '', li: li ? li.i : -1, riv: p.rivalutato });
     });
-    local.filter(({ x }) => !x._used).forEach(({ x, i }) => items.push({ src: 'local', cls: x.cls, student: x.name, data: isoFromIt(x.date), old: String(x.det).split('-').map(Number), v1: !x.ver, note: x.note || '', li: i, riv: x.riv }));
-    items.forEach(it => { it.man = {}; it.note0 = it.note; it.sel = it.v1; it.open = false; rivCompute(it); });
+    local.filter(({ x }) => !x._used).forEach(({ x, i }) => items.push({ src: 'local', cls: x.cls, student: x.name, data: isoFromIt(x.date), old: String(x.det).split('-').map(Number), v1: !x.ver && (x.max || 15) === 15, stale: !!x.ver && x.ver < RUB_VER, note: x.note || '', li: i, riv: x.riv }));
+    items.forEach(it => { it.man = {}; it.note0 = it.note; it.open = false; rivCompute(it); it.sel = it.v1 || (it.stale && it.neu.join('-') !== rivBase(it).join('-')); });
     items.sort((x, y) => String(y.data).localeCompare(String(x.data)) || String(x.cls).localeCompare(String(y.cls)) || String(x.student).localeCompare(String(y.student)));
     rivItems = items;
     rivItems.mcMsg = !r ? '⚪ MyClass non risponde (aprila in questo browser per aggiornare anche i promemoria): qui ci sono solo i voti salvati su questa pagina.'
       : !r.ok ? '⚠️ MyClass: ' + esc(r.msg || 'errore') + ' — qui ci sono solo i voti salvati su questa pagina.'
-      : `🔗 MyClass: ${items.filter(x => x.src === 'mc').length} promemoria di questa attività (${items.filter(x => x.src === 'mc' && x.v1).length} con la griglia vecchia).`;
+      : `🔗 MyClass: ${items.filter(x => x.src === 'mc').length} promemoria di questa attività (${items.filter(x => x.src === 'mc' && x.v1).length} con la griglia vecchia /15, ${items.filter(x => x.src === 'mc' && x.stale).length} con una versione precedente della /16).`;
     rivRender();
   };
   if (window.MyClassLive && MyClassLive.request) MyClassLive.request('prom-list', { gridId: LIVE_GRID().id }, build); else build(null);
@@ -2206,7 +2227,7 @@ function rivRender() {
   if (!twOpen()) return;
   const items = rivItems, box = tw('t-riv');
   if (!items.length) { box.innerHTML = `<div class="riv">${items.mcMsg || ''}<br>Nessuna valutazione di questa attività da rivedere.<div class="bar" style="margin-top:8px"><button data-act="rivclose">Chiudi</button></div></div>`; return; }
-  box.innerHTML = `<div class="riv"><b>♻️ Rivedi le valutazioni · griglia nuova /16</b><div class="sub" style="margin:4px 0">${items.mcMsg} Quelle con la griglia vecchia (/15) sono già spuntate: lessico, present continuous e pronuncia ricalcolati dalla nota, senza salire sopra il punteggio di allora. Con ✏️ rivedi un alunno: correggi la nota e cambi a mano qualsiasi voce. Si salvano solo le righe spuntate.</div>
+  box.innerHTML = `<div class="riv"><b>♻️ Rivedi le valutazioni · griglia nuova /16</b><div class="sub" style="margin:4px 0">${items.mcMsg} Già spuntate quelle da aggiornare: con la griglia vecchia (/15) lessico, present continuous e pronuncia sono ricalcolati dalla nota senza salire sopra il punteggio di allora; con una versione precedente della /16 sono ricalcolati con le regole di adesso. Con ✏️ rivedi un alunno: correggi la nota e cambi a mano qualsiasi voce. Si salvano solo le righe spuntate.</div>
 <table><tr><th></th><th>Data</th><th>Cl.</th><th>Studente</th><th>Allora</th><th>C-L-PC-P</th><th>Ora /16</th><th>C-L-PC-P</th><th></th></tr>${items.map(rivRow).join('')}</table>
 <div class="bar" style="margin-top:8px"><button class="pri" data-act="rivapply">✅ Salva le righe spuntate</button><button data-act="rivall" data-v="1">tutte</button><button data-act="rivall" data-v="0">nessuna</button><button data-act="rivclose">Chiudi</button></div></div>`;
 }
