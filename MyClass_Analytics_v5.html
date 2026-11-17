@@ -9564,9 +9564,49 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
         // ── Griglie delle attività con una versione (es. What Are They Wearing? v2, pronuncia /4) ──
         // Quando l'attività manda una versione più nuova (con i descrittori), MyClass aggiorna la sua
         // copia: massimi, descrittori e conversione punti→voto. I nomi delle voci restano quelli di MyClass.
+        // Griglie di MyClass che corrispondono alla griglia di un'attività: stesso id; se no stesso nome;
+        // se no (una sola) con le stesse voci. Serve perché importando un file MyClass può dare un id nuovo.
+        function mcGriglieEquivalenti(g) {
+            if (!g) return [];
+            const all = data.griglie || [];
+            const nrm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+            const byId = all.filter(x => g.id && x.id === g.id);
+            const byNome = g.nome ? all.filter(x => nrm(x.nome) === nrm(g.nome) && !byId.includes(x)) : [];
+            if (byId.length || byNome.length) return byId.concat(byNome);
+            const firma = x => (x.aree || []).map(a => nrm(a.nome)).sort().join('|');
+            const f = Array.isArray(g.aree) && g.aree.length ? firma(g) : '';
+            const byVoci = f ? all.filter(x => firma(x) === f) : [];
+            return byVoci.length === 1 ? byVoci : [];
+        }
+        window.mcGriglieEquivalenti = mcGriglieEquivalenti;
+        // Griglie delle attività pubblicate sul sito (attivita/…json, con versione): MyClass le legge da sola
+        // all'avvio e quando si apre Riscopri orale, così si aggiorna anche senza aprire la finestra docente.
+        const MC_GRIGLIE_ATTIVITA = ['attivita/griglia_myclass_present_continuous_clothes.json', 'attivita/griglia_myclass_rules_obligations.json'];
+        async function mcAggiornaGriglieDalSito() {
+            if (!/^https?:$/.test(location.protocol) || window._tabBlocked) return [];
+            const out = [];
+            for (const f of MC_GRIGLIE_ATTIVITA) {
+                try {
+                    const r = await fetch(f + '?v=' + Date.now(), { cache: 'no-store' });
+                    if (!r.ok) continue;
+                    const g = await r.json();
+                    const eq = mcGriglieEquivalenti(g);
+                    const upd = mcAggiornaGrigliaDaAttivita(g);
+                    out.push({ nome: g.nome, ver: +g.ver || 0, trovata: eq.length > 0, aggiornata: upd, inMyClass: eq.map(x => +x.ver || 1) });
+                } catch (e) { console.warn('[MyClass] griglia dal sito', f, e.message); }
+            }
+            window._mcGriglieSito = out;
+            if (out.some(x => x.aggiornata)) { try { if (typeof agentRenderPanel === 'function') agentRenderPanel(); } catch (e) {} }
+            return out;
+        }
+        window.mcAggiornaGriglieDalSito = mcAggiornaGriglieDalSito;
         function mcAggiornaGrigliaDaAttivita(g) {
             if (!g || !g.id || !(+g.ver > 0) || !Array.isArray(g.aree) || !g.aree.length || !g.aree.every(a => Array.isArray(a.descrittori))) return false;
-            const G = (data.griglie || []).find(x => x.id === g.id);
+            let upd = false;
+            mcGriglieEquivalenti(g).forEach(G => { if (_mcAggiornaUnaGriglia(G, g)) upd = true; });
+            return upd;
+        }
+        function _mcAggiornaUnaGriglia(G, g) {
             if (!G || (+G.ver || 1) >= +g.ver) return false;
             const nrm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
             const old = G.aree || [];
@@ -9598,11 +9638,13 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
         }
         window.mcAggiornaGrigliaDaAttivita = mcAggiornaGrigliaDaAttivita;
         // Promemoria salvati con una griglia, in tutte le classi (per la rivalutazione nell'attività)
-        function mcPromemoriaLista(gridId) {
-            const G = (data.griglie || []).find(x => x.id === gridId);
+        function mcPromemoriaLista(gridId, grid) {
+            const eq = mcGriglieEquivalenti(grid || { id: gridId });
+            const ids = new Set([gridId, ...eq.map(x => x.id)]);
+            const G = eq[0] || (data.griglie || []).find(x => x.id === gridId);
             const items = [];
             (data.classi || []).forEach(c => (c.studenti || []).forEach(st => (st.votiPromemoria || []).forEach(p => {
-                if (p && p.grigliaId === gridId) items.push({ cls: c.nome, student: `${st.cognome} ${st.nome}`, data: p.data, ts: p.ts, voto10: p.voto10, tot: p.tot, totMax: p.totMax,
+                if (p && ids.has(p.grigliaId)) items.push({ cls: c.nome, student: `${st.cognome} ${st.nome}`, data: p.data, ts: p.ts, voto10: p.voto10, tot: p.tot, totMax: p.totMax,
                     punteggi: p.punteggi || [], nota: p.nota || '', ver: p.ver || 0, rivalutato: p.rivalutato || null });
             })));
             items.sort((a, b) => String(a.data).localeCompare(String(b.data)) || a.cls.localeCompare(b.cls) || a.student.localeCompare(b.student));
@@ -9615,7 +9657,9 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
         function mcPromemoriaAggiorna(g, items) {
             if (!g || !g.id) return { ok: false, msg: 'griglia mancante' };
             mcAggiornaGrigliaDaAttivita(g);
-            let G = (data.griglie || []).find(x => x.id === g.id);
+            const eqG = mcGriglieEquivalenti(g);
+            let G = eqG[0] || null;
+            const gids = new Set([g.id, ...eqG.map(x => x.id)]);
             // griglia non ancora in MyClass (mai importata o cancellata): la aggiunge, così l'agente la trova
             if (!G && Array.isArray(g.aree) && g.aree.length && g.aree.every(a => Array.isArray(a.descrittori))) {
                 G = { id: g.id, nome: g.nome || 'Griglia', aree: g.aree.map(a => ({ nome: a.nome, max: +a.max, descrittori: a.descrittori.map(d => ({ pt: +d.pt, testo: String(d.testo || '') })) })),
@@ -9643,11 +9687,11 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 if (!st || !Array.isArray(it.scores) || it.scores.length !== aree.length) { miss.push(it.student + (c ? '' : ` (classe ${it.cls || '?'} non trovata)`)); return; }
                 if (!st.votiPromemoria) st.votiPromemoria = [];
                 const dataP = String(it.data || '').slice(0, 10);
-                let p = (it.ts && st.votiPromemoria.find(x => x.grigliaId === g.id && x.ts === it.ts))
-                    || (/^\d{4}-\d{2}-\d{2}$/.test(dataP) && st.votiPromemoria.find(x => x.grigliaId === g.id && String(x.data).slice(0, 10) === dataP));
+                let p = (it.ts && st.votiPromemoria.find(x => gids.has(x.grigliaId) && x.ts === it.ts))
+                    || (/^\d{4}-\d{2}-\d{2}$/.test(dataP) && st.votiPromemoria.find(x => gids.has(x.grigliaId) && String(x.data).slice(0, 10) === dataP));
                 if (!p) {
                     if (!/^\d{4}-\d{2}-\d{2}$/.test(dataP)) { miss.push(it.student + ' (data mancante)'); return; }
-                    p = { data: dataP, grigliaId: g.id, grigliaNome: (G && G.nome) || g.nome || '', ts: Date.now() + n + nuovi };
+                    p = { data: dataP, grigliaId: (G && G.id) || g.id, grigliaNome: (G && G.nome) || g.nome || '', ts: Date.now() + n + nuovi };
                     st.votiPromemoria.push(p); nuovi++;
                 }
                 const punteggi = aree.map((a, k) => ({ nome: a.nome, voto: Math.max(0, Math.min(+a.max, +it.scores[k] || 0)), max: +a.max }));
@@ -9674,7 +9718,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                     if (window._tabBlocked) { bc.postMessage({ type: 'ack', reqId: m.reqId, ok: false, paused: true, msg: 'questa scheda di MyClass è in pausa (MyClass è aperta due volte).' }); return; }
                     let r; try {
                         if (m.type === 'grid') r = { ok: true, updated: mcAggiornaGrigliaDaAttivita(m.grid) };
-                        else if (m.type === 'prom-list') { if (m.grid) mcAggiornaGrigliaDaAttivita(m.grid); r = mcPromemoriaLista(m.gridId); }
+                        else if (m.type === 'prom-list') { if (m.grid) mcAggiornaGrigliaDaAttivita(m.grid); r = mcPromemoriaLista(m.gridId, m.grid); }
                         else r = mcPromemoriaAggiorna(m.grid, m.items || []);
                     }
                     catch(err) { r = { ok: false, msg: 'errore in MyClass (' + (err && err.message || err) + ')' }; }
@@ -9704,7 +9748,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             const r = mcApriLiveDaAttivita(cls, al, norec);
             if (!r.ok) alert('MyClass: ' + r.msg);
         }
-        window.addEventListener('load', () => setTimeout(() => { _mcLiveBoot(); _mcAutoLiveDaUrl(); }, 600));
+        window.addEventListener('load', () => setTimeout(() => { _mcLiveBoot(); _mcAutoLiveDaUrl(); mcAggiornaGriglieDalSito(); }, 600));
     
         // ============================================================
         // PIANO DIDATTICO - FUNZIONI PRINCIPALI
@@ -26250,8 +26294,12 @@ ${sectionInstr}`;
     }
 
     // ── Riscopri un ORALE (o dialogo) rimosso ─────────────────────────────
-    function agentRiscopriOrale() {
+    function agentRiscopriOrale(giaControllate) {
         document.getElementById('riscopriOraleModal')?.remove();
+        // prima ricontrolla le griglie delle attività sul sito (versione nuova → schede da rifare)
+        if (!giaControllate && typeof mcAggiornaGriglieDalSito === 'function') {
+            mcAggiornaGriglieDalSito().then(() => { if (document.getElementById('riscopriOraleModal')) agentRiscopriOrale(true); }).catch(() => {});
+        }
         const e = x => String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;');
         const rimossi = agentTasks.filter(t => (t.type === 'valorale' || t.type === 'valdialogo') && t.status === 'dismissed')
             .sort((a, b) => String(b.dismissedAt || '').localeCompare(String(a.dismissedAt || '')));
@@ -26278,7 +26326,12 @@ ${sectionInstr}`;
         ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center;';
         ov.innerHTML = `<div style="background:#fff;border-radius:14px;padding:22px 26px;max-width:680px;width:92%;max-height:86vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25);">
             <div style="font-weight:800;font-size:16px;color:#311b92;margin-bottom:4px;">🎙️ Riscopri un orale</div>
-            <div style="font-size:12px;color:#777;margin-bottom:12px;">Le schede degli orali rimosse restano recuperabili per 30 giorni, con trascrizione e valutazione.</div>
+            <div style="font-size:12px;color:#777;margin-bottom:8px;">Le schede degli orali rimosse restano recuperabili per 30 giorni, con trascrizione e valutazione.</div>
+            <div style="font-size:11.5px;color:#555;background:#f5f5f5;border-radius:8px;padding:6px 10px;margin-bottom:12px;">📐 Griglie delle attività in MyClass: ${(() => {
+                const sito = window._mcGriglieSito || [];
+                if (!sito.length) return '<i>controllo in corso…</i> (se resta così, apri MyClass dal sito, non da un file)';
+                return sito.map(x => `${e(String(x.nome).replace(/^Oral test · /, '').split(' — ')[0])}: ${x.trovata ? (x.inMyClass.every(v => v >= x.ver) ? `<b style="color:#1b5e20;">v${x.ver} ✓</b>` : `<b style="color:#b35c00;">v${x.inMyClass.join('/')}, sul sito v${x.ver}</b>`) : '<b style="color:#b71c1c;">non trovata in MyClass</b> (importala da Impostazioni → Griglie)'}`).join(' · ');
+            })()}</div>
             ${daRifare.length ? `<div style="font-size:12px;font-weight:800;color:#555;margin-bottom:6px;">ORALI DA RIFARE · valutati prima che griglia o promemoria cambiassero (${daRifare.length})</div>
             ${daRifare.map(t => `<label style="display:flex;align-items:center;gap:10px;padding:7px 10px;border:1px solid #ffe0b2;background:#fffaf2;border-radius:8px;margin-bottom:5px;cursor:pointer;">
                 <input type="checkbox" data-ro-sel="${e(t.id)}" checked style="width:17px;height:17px;flex-shrink:0;">
