@@ -1601,15 +1601,15 @@ function checkSpeech(raw) {
 // ══════════════════════════════════════════════════════════════════
 const RUBRIC = [
   { id: 'com', name: 'Comunicazione', max: 4, d: {
-    4: 'Descrive i personaggi in autonomia e in modo completo (vestiti + azione), senza domande guida; risponde con sicurezza alle domande extra. Il messaggio arriva sempre chiaro, anche se c\'è qualche errore.',
+    4: 'Descrive i personaggi in autonomia e in modo completo (vestiti + azione), senza domande guida; risponde con sicurezza alle domande extra. Il messaggio arriva sempre chiaro, anche se c\'è qualche errore. L\'articolo sbagliato (a black shoes) toglie un punto solo se ripetuto 3 volte o più; va comunque segnalato all\'alunno.',
     3: 'Descrizione chiara con al massimo una domanda guida; risponde alle domande extra, a volte con brevi esitazioni. Gli errori non ostacolano mai la comprensione.',
     2: 'Descrizione essenziale (alcuni capi e/o l\'azione) che richiede più domande guida; il messaggio si capisce nel complesso, ma alcune parti vanno ricostruite.',
     1: 'Frasi isolate o parole singole, solo con supporto continuo; la comunicazione passa a fatica.',
     0: 'Non comunica.' } },
   { id: 'lex', name: 'Lessico (vestiti, colori, azioni)', max: 4, d: {
     4: 'Nomina con sicurezza almeno 5 capi diversi con il loro colore e descrive l\'azione con il lessico giusto. Per le calzature va bene anche il termine generico "shoes".',
-    3: 'Nomina 4 capi con il colore e l\'azione; qualche imprecisione isolata (un colore sbagliato, jumper/hoodie scambiati, un articolo sbagliato come "a black shoes"…).',
-    2: 'Nomina 2–3 capi di base; colori spesso mancanti o sbagliati, articoli spesso sbagliati (a jeans, a black shoes); l\'azione detta in modo generico o con aiuto.',
+    3: 'Nomina 4 capi con il colore e l\'azione; qualche imprecisione isolata (un colore sbagliato, jumper/hoodie scambiati…).',
+    2: 'Nomina 2–3 capi di base; colori spesso mancanti o sbagliati; l\'azione detta in modo generico o con aiuto.',
     1: 'Una o due parole pertinenti, anche con aiuto; ricorre all\'italiano.',
     0: 'Non produce lessico pertinente.' } },
   { id: 'pc', name: 'Uso del present continuous', max: 4, d: {
@@ -1644,6 +1644,7 @@ function storeGrades(g) { try { localStorage.setItem(GKEY, JSON.stringify(g)); }
 // 3 = articolo sbagliato: «a black shoes», «a jeans», «a orange T-shirt» (capo e colore giusti)
 const WI_LBL = ['', '✓ ', '🎨 ', '🔤 ', '✗ '], WI_CLS = ['n', 'ok', 'bad', 'bad', 'no'];
 const ART_NOTE = 'articolo sbagliato (a black shoes)';
+const ART_SOGLIA = 3;   // da quante volte l'articolo sbagliato pesa sulla Comunicazione
 const WA_LBL = ['— azione?', '✓ azione', '✗ forma (manca is / -ing)', '✗ lessico'], WA_CLS = ['n', 'ok', 'bad', 'no'];
 const WS_LBL = ['— is wearing?', '✓ is wearing', '✗ manca is (she wearing)', '✗ wear / wears', '✗ they is / he are'], WS_CLS = ['n', 'ok', 'bad', 'bad', 'bad'];
 const WQ_LBL = ['— risposta?', '✓ giusta', '~ con aiuto', '✗ sbagliata'], WQ_CLS = ['n', 'ok', 'bad', 'no'];
@@ -1685,7 +1686,7 @@ function wkStats() {
 function wkLine(html) {
   const s = wkStats(), b = t => html ? `<b>${t}</b>` : t;
   const parts = [];
-  if (s.said || s.art) parts.push(`capi con colore giusti ${b(s.okN)} (${s.okTypes} diversi)` + (s.col ? ` · colore sbagliato ×${s.col}` : '') + (s.art ? ` · articolo sbagliato ×${s.art} (a black shoes)` : '') + (s.word ? ` · parola sbagliata ×${s.word}` : ''));
+  if (s.said || s.art) parts.push(`capi con colore giusti ${b(s.okN)} (${s.okTypes} diversi)` + (s.col ? ` · colore sbagliato ×${s.col}` : '') + (s.art ? ` · articolo sbagliato ×${s.art} (a black shoes; segnala all'alunno)` : '') + (s.word ? ` · parola sbagliata ×${s.word}` : ''));
   if (s.aOk + s.aForm + s.aLex) parts.push(`azioni ✓${s.aOk}` + (s.aForm ? ` · forma ✗${s.aForm}` : '') + (s.aLex ? ` · lessico ✗${s.aLex}` : ''));
   if (s.sOk + s.sErr) parts.push('is wearing' + (s.sOk ? ` ✓${s.sOk}` : '') + (s.sErr ? ` ✗ ${s.sDet.join(', ')}` : ''));
   if (s.q.length) { const c = v => s.q.filter(x => x === v).length; parts.push('domande ' + [c(1) && `✓${c(1)}`, c(2) && `~${c(2)}`, c(3) && `✗${c(3)}`].filter(Boolean).join(' ')); }
@@ -1705,22 +1706,25 @@ function computeHints() {
   const qc = v => s.q.filter(x => x === v).length, qOk = qc(1), qHelp = qc(2), qBad = qc(3);
   const qTxt = s.q.length ? `domande ✓${qOk}${qHelp ? ' ~' + qHelp : ''}${qBad ? ' ✗' + qBad : ''}` : 'nessuna domanda extra segnata';
   // Comunicazione /4: autonomia (domande guida), completezza (capi + azione), domande extra
-  if (s.chars || s.q.length || wk.guide || wk.block) {
+  if (s.chars || s.q.length || wk.guide || wk.block || s.art) {
     const cover = s.tot ? s.said / s.tot : 0;
     const complete = s.chars > 0 && cover >= 0.6 && s.aSaid >= s.chars;
     let v = 4;
     if (!complete || wk.guide >= 1 || qHelp) v = 3;
     if (wk.guide >= 2 || (s.chars && cover < 0.4) || (qBad && qBad >= qOk)) v = 2;
     if (wk.guide >= 4 || wk.block >= 2 || (s.chars && s.said <= 1 && !s.aSaid)) v = 1;
-    H.com = { v, why: `${wk.guide} domande guida · ${s.chars ? `capi detti ${s.said}/${s.tot}, azione ${s.aSaid}/${s.chars}` : 'descrizione non spuntata'} · ${qTxt}` };
+    // articolo sbagliato (a black shoes): pesa solo se ripetuto almeno 3 volte (−1)
+    if (s.art >= ART_SOGLIA) v = Math.max(0, v - 1);
+    H.com = { v, why: `${wk.guide} domande guida · ${s.chars ? `capi detti ${s.said}/${s.tot}, azione ${s.aSaid}/${s.chars}` : 'descrizione non spuntata'} · ${qTxt}${s.art ? ` · articolo sbagliato ×${s.art}${s.art >= ART_SOGLIA ? ' (−1)' : ` (pesa da ${ART_SOGLIA})`}` : ''}` };
   }
-  // Lessico: capi diversi detti col colore; colori e articoli sbagliati sono imprecisioni
-  // (una isolata non pesa, 2–3 → al massimo 3, 4 o più → al massimo 2)
-  if (s.said || s.art) {
-    const n = s.okTypes, imp = s.col + s.art;
+  // Lessico: capi diversi detti col colore; i colori sbagliati sono imprecisioni
+  // (una isolata non pesa, 2–3 → al massimo 3, 4 o più → al massimo 2).
+  // L'articolo sbagliato non è lessico: pesa sulla Comunicazione (sopra).
+  if (s.said) {
+    const n = s.okTypes, imp = s.col;
     let v = n >= 5 && s.aOk ? 4 : n >= 4 ? 3 : n >= 2 ? 2 : 1;
     if (imp >= 4) v = Math.min(v, 2); else if (imp >= 2) v = Math.min(v, 3);
-    H.lex = { v, why: `${n} capi diversi con il colore${s.aOk ? ' + azione' : ''}${imp ? ` · imprecisioni ${imp} (colore ×${s.col}, articolo ×${s.art})` : ''}` };
+    H.lex = { v, why: `${n} capi diversi con il colore${s.aOk ? ' + azione' : ''}${imp ? ` · colori sbagliati ×${imp}` : ''}` };
   }
   const pcE = s.sErr + s.aForm, pcN = pcE + s.sOk + s.aOk;
   if (pcN) H.pc = { v: !pcE ? 4 : pcE <= 2 && pcE < pcN / 2 ? 3 : pcE <= pcN / 2 ? 2 : 1, why: `errori: ${pcE} su ${pcN} frasi spuntate` };
