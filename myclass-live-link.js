@@ -489,10 +489,18 @@
         });
         local.filter(function (o) { return !o.used; }).forEach(function (o) { items.push({ src: 'local', cls: o.g.cls, student: o.g.name, data: isoFromIt(o.g.date), old: String(o.g.det).split('-').map(Number), note: o.g.note || '', li: o.i, riv: o.g.riv }); });
         items.forEach(function (it) { it.neu = it.old.slice(); it.note0 = it.note; it.sel = false; it.open = false; });
+        // Corretto qui ma MyClass ha ancora la versione di prima (era chiusa quando hai salvato): si rimanda
+        var gl = opts.loadGrades() || [];
+        items.forEach(function (it) {
+          var y = it.src === 'mc' && it.li >= 0 && gl[it.li];
+          if (!y || !y.riv || String(y.det) === it.old.join('-')) return;
+          it.neu = String(y.det).split('-').map(Number); if (y.note) it.note = y.note; it.sel = true; it.resend = true;
+        });
         items.sort(function (a, b) { return String(b.data).localeCompare(String(a.data)) || String(a.cls).localeCompare(String(b.cls)) || String(a.student).localeCompare(String(b.student)); });
         msg = !r ? '⚪ MyClass non risponde (aprila in questo browser per correggere anche i promemoria): qui ci sono solo i voti salvati su questa pagina.'
           : !r.ok ? '⚠️ MyClass: ' + esc(r.msg || 'errore') + ' — qui ci sono solo i voti salvati su questa pagina.'
-          : '🔗 MyClass: ' + items.filter(function (x) { return x.src === 'mc'; }).length + ' promemoria di questa attività.';
+          : '🔗 MyClass: ' + items.filter(function (x) { return x.src === 'mc'; }).length + ' promemoria di questa attività.'
+            + (items.some(function (x) { return x.resend; }) ? ' ⚠️ ' + items.filter(function (x) { return x.resend; }).length + ' corretti qui ma non ancora in MyClass (già spuntati).' : '');
         render();
       };
       request('prom-list', { gridId: opts.grid.id }, build);
@@ -508,7 +516,7 @@
     }
     function row(it, k) {
       var ch = changed(it);
-      var h = '<tr><td ' + td + '><input type="checkbox" data-rvsel="' + k + '"' + (it.sel ? ' checked' : '') + '></td><td ' + td + '>' + esc(itFromIso(it.data)) + '</td><td ' + td + '>' + esc(it.cls) + '</td><td ' + td + '>' + esc(it.student) + (it.src === 'local' ? '<br><small>solo qui</small>' : '') + (it.riv ? '<br><small>♻️ già rivisto</small>' : '') + '</td>'
+      var h = '<tr><td ' + td + '><input type="checkbox" data-rvsel="' + k + '"' + (it.sel ? ' checked' : '') + '></td><td ' + td + '>' + esc(itFromIso(it.data)) + '</td><td ' + td + '>' + esc(it.cls) + '</td><td ' + td + '>' + esc(it.student) + (it.src === 'local' ? '<br><small>solo qui</small>' : '') + (it.resend ? '<br><small style="color:#ffb547">⚠️ corretto qui, ma in MyClass c\'è ancora la versione di prima: salva per mandarlo</small>' : it.riv ? '<br><small>♻️ già rivisto</small>' : '') + '</td>'
         + '<td ' + td + '>' + esc(votoTxt(it.old)) + ' <small>(' + it.old.join('-') + ')</small></td>'
         + '<td ' + td + ' id="rv-nv-' + k + '"><b style="color:' + (ch ? '#ffb547' : 'inherit') + '">' + esc(votoTxt(it.neu)) + '</b> <small>(' + it.neu.join('-') + ')' + (it.note !== it.note0 ? '<br>nota corretta' : '') + '</small></td>'
         + '<td ' + td + '><button data-rv="edit" data-k="' + k + '" title="Rivedi questo alunno: nota e punteggi">' + (it.open ? '▴' : '✏️') + '</button></td></tr>';

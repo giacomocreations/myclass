@@ -9608,7 +9608,8 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 const tot = punteggi.reduce((t, x) => t + x.voto, 0);
                 const voto10 = conv && conv[String(Math.round(tot))] !== undefined ? conv[String(Math.round(tot))] : Math.round(tot / totMax * 100) / 10;
                 if (!p.votoPrima && p.voto10 !== voto10) p.votoPrima = { voto10: p.voto10, tot: p.tot, totMax: p.totMax };
-                Object.assign(p, { punteggi, tot, totMax, voto10, ver: +g.ver || 0, rivalutato: new Date().toISOString().slice(0, 10) });
+                // agg = quando è stato riscritto: l'agente lo usa per accorgersi che il promemoria è cambiato
+                Object.assign(p, { punteggi, tot, totMax, voto10, ver: +g.ver || 0, rivalutato: new Date().toISOString().slice(0, 10), agg: Date.now() });
                 if (typeof it.nota === 'string' && it.nota.trim()) p.nota = it.nota.trim().slice(0, 1500);
                 n++;
             });
@@ -26703,7 +26704,7 @@ ${sectionInstr}`;
                 && task.status !== 'approved' && task.status !== 'processing') {
                 try { _agentEnsureGrigliaOrale(task); } catch(e) { console.warn('[Agente] ricerca griglia:', e.message); }
             }
-            if ((task.type === 'valorale' || task.type === 'valdialogo') && task.status !== 'approved' && task.status !== 'processing' && task.status !== 'dismissed') {
+            if ((task.type === 'valorale' || task.type === 'valdialogo') && task.status !== 'processing' && task.status !== 'dismissed') {
                 try { _agentPrelimEnsure(task); } catch(e) { console.warn('[Agente] ricerca promemoria LIVE:', e.message); }
             }
             const sl = (task.status === 'awaiting_transcript' && task.transcriptToReview)
@@ -27309,6 +27310,7 @@ ${sectionInstr}`;
                 <div class="agent-task-body">
                     ${meta ? `<div class="agent-task-meta" style="margin-bottom:8px;">${meta}</div>` : ''}
                     ${_agentAiPickerHtml(task)}
+                    ${_agentPrelimAggHtml(task)}
                     ${_agentPrelimPanelHtml(task)}
                     ${task.type === 'analisididattica' && task.status === 'approved' ? `<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;"><button class="agent-btn-edit" onclick="apriEditorAnalisi({taskId:'${task.id}'})">✏️ Modifica e reinvia</button><button class="agent-btn-edit" onclick="agentReinviaAnalisi('${task.id}')" title="Rimanda a StudentApp l'analisi salvata in MyClass">📤 Invia di nuovo a StudentApp</button></div>` : ''}
                     ${body}
@@ -31910,18 +31912,39 @@ ${base}`, task, true);
         return cand.length ? cand[0].p : null;
     }
     // Aggiorna il promemoria del task con quello più recente (es. salvato dopo la creazione del task)
+    // Versione di un promemoria: riscritto (♻️ Rivedi nella finestra docente) → agg, se no ts
+    const _agentPrelimVer = p => +(p && (p.agg || p.ts)) || 0;
     function _agentPrelimEnsure(task) {
-        const pick = (cur, st) => {
+        const pick = (cur, st, safe) => {
             const f = _agentPrelimTrova(task.classe, st, task.sessionDate, task.griglia?.id);
             if (!f) return cur || null;
-            if (!cur || ((f.ts||0) > (cur.ts||0) && f.data === cur.data) || (f.data !== cur.data && cur._auto)) return { ...f, _auto: true };
+            const sameOne = cur && f.data === cur.data && (f.ts || 0) === (cur.ts || 0);
+            if (!cur || (_agentPrelimVer(f) > _agentPrelimVer(cur) && f.data === cur.data) || (f.data !== cur.data && cur._auto)) {
+                // lo stesso promemoria ricalcolato: la nota corretta qui prima vale meno di quella nuova
+                if (sameOne && task.prelimNote && task.prelimNote[safe] !== undefined) delete task.prelimNote[safe];
+                return { ...f, _auto: true };
+            }
             return cur;
         };
-        if (task.type === 'valorale') task.prelimLiveData = pick(task.prelimLiveData, { studentName: task.studentName });
+        if (task.type === 'valorale') task.prelimLiveData = pick(task.prelimLiveData, { studentName: task.studentName }, '_');
         else if (task.type === 'valdialogo') {
             if (!task.prelimLive) task.prelimLive = {};
-            (task.studenti||[]).forEach(s => { const v = pick(task.prelimLive[s.studentSafe], s); if (v) task.prelimLive[s.studentSafe] = v; });
+            (task.studenti||[]).forEach(s => { const v = pick(task.prelimLive[s.studentSafe], s, s.studentSafe); if (v) task.prelimLive[s.studentSafe] = v; });
         }
+    }
+    // Promemoria aggiornato DOPO la valutazione dell'agente: avviso con cosa fare
+    function _agentPrelimAggHtml(task) {
+        if ((task.type !== 'valorale' && task.type !== 'valdialogo') || task.status === 'dismissed' || task.status === 'processing') return '';
+        const fatto = task.votoValue != null || (task.results || []).length;
+        if (!fatto || !task.generatedAt) return '';
+        const t0 = Date.parse(task.generatedAt) || 0;
+        const voci = _agentPrelimVoci(task).filter(v => v.p && +v.p.agg > t0);
+        if (!voci.length) return '';
+        const e = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        return `<div style="background:#fff8e1;border:1.5px solid #ffb300;border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:12.5px;color:#6d4c00;">
+            ♻️ <strong>Promemoria LIVE ricalcolato dopo questa valutazione</strong> (${voci.map(v => `${task.type === 'valdialogo' ? e(v.nome) + ': ' : ''}ora ${e(v.p.voto10)}/10${v.p.votoPrima ? `, prima ${e(v.p.votoPrima.voto10)}` : ''}`).join(' · ')}).<br>
+            Per usare i nuovi punteggi e le annotazioni corrette: ${task.usePrelim || task.noTrascrizione ? '' : 'spunta 🎯 «tieni conto della valutazione preliminare», poi '}premi <b>🔄 Rigenera</b>${task.status === 'approved' ? ' e poi <b>🔄 Riscrivi storico</b> per sovrascrivere il voto già importato' : ' e poi importa'}.
+        </div>`;
     }
     function _agentPrelimVoci(task) {
         return task.type === 'valdialogo'
@@ -31930,7 +31953,7 @@ ${base}`, task, true);
     }
     function _agentPrelimNotaDi(task, safe, p) { return (task.prelimNote && task.prelimNote[safe] !== undefined) ? task.prelimNote[safe] : (p?.nota || ''); }
     function _agentPrelimPanelHtml(task) {
-        if ((task.type !== 'valorale' && task.type !== 'valdialogo') || task.status === 'approved' || task.status === 'dismissed') return '';
+        if ((task.type !== 'valorale' && task.type !== 'valdialogo') || task.status === 'dismissed') return '';
         const voci = _agentPrelimVoci(task);
         if (!voci.length) return '';
         const e = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -32790,11 +32813,14 @@ ISTRUZIONI DI RISPOSTA: rispondi SOLO con i blocchi richiesti sopra, con esattam
                     console.log(`[Agente] ➕ Voto orale ${task.sessionDate} aggiunto (non trovato nello storico) per ${task.studentName}`);
                 }
             } else {
-                // Prima approvazione: evita duplicati
+                // Prima approvazione: evita duplicati. Se per quella data c'è già un voto dell'agente
+                // (valutazione rigenerata dopo un promemoria ricalcolato, poi importata di nuovo) lo sostituisce.
+                const _idxAg = studente.orale.findIndex(g => (g.data || '').slice(0, 10) === task.sessionDate && g.source === 'agent' && !(g.titolo || '').includes('dialogo'));
                 const _dup = studente.orale.some(g =>
                     (g.data || '').slice(0, 10) === task.sessionDate && g.voto === task.votoValue
                 );
-                if (!_dup) studente.orale.push(nuovoVoto);
+                if (_idxAg >= 0) studente.orale[_idxAg] = nuovoVoto;
+                else if (!_dup) studente.orale.push(nuovoVoto);
             }
 
             saveData();
@@ -33213,8 +33239,10 @@ ${blocchiPerAlunno}`;
                     const idx = studente.orale.findIndex(g => (g.data||'').slice(0,10) === task.sessionDate && (g.titolo||'').includes('dialogo'));
                     if (idx >= 0) studente.orale[idx] = nuovoVoto; else studente.orale.push(nuovoVoto);
                 } else {
+                    const _idxAg = studente.orale.findIndex(g => (g.data||'').slice(0,10) === task.sessionDate && g.source === 'agent' && (g.titolo||'').includes('dialogo'));
                     const _dup = studente.orale.some(g => (g.data||'').slice(0,10) === task.sessionDate && g.voto === r.votoValue && (g.titolo||'').includes('dialogo'));
-                    if (!_dup) studente.orale.push(nuovoVoto);
+                    if (_idxAg >= 0) studente.orale[_idxAg] = nuovoVoto;   // rigenerata e reimportata: sostituisce
+                    else if (!_dup) studente.orale.push(nuovoVoto);
                 }
                 if (typeof _pianoCheckTrigger === 'function')
                     _pianoCheckTrigger(studente, 'orale', task.unit || '', task.classe).catch(e => console.warn('[Piano]', e.message));
