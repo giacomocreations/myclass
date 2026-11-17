@@ -20,6 +20,8 @@
 //    "Salva e prossimo". Alla LIVE si dice norec: lì non parte una seconda
 //    registrazione. Se l'alunno si sceglie nella LIVE, registra MyClass come
 //    sempre (e qui si ferma quella in corso).
+//  • Rivedi / correggi (MyClassLive.review): elenco degli alunni valutati, nota
+//    e punteggi correggibili a mano, salvati anche nel promemoria di MyClass.
 //  • Rivalutazione: { type:'prom-list', gridId } → MyClass risponde con i
 //    promemoria salvati con quella griglia (items); { type:'prom-update',
 //    grid, items:[{cls, student, ts, scores}] } li riscrive con i nuovi
@@ -426,6 +428,134 @@
     };
   }
 
-  window.MyClassLive = { available: !!bc, send: send, select: select, hello: hello, request: request, follow: follow, roster: roster,
+  // ── Rivedi / correggi le valutazioni salvate (finestra docente) ──
+  // Elenca i promemoria di MyClass con questa griglia (LIVE aperta o no) e i voti salvati nella pagina;
+  // per ogni alunno (✏️) si corregge la nota e si cambiano a mano i punteggi; «Salva» riscrive il
+  // promemoria con la stessa data (il voto di prima resta annotato) e il voto salvato qui.
+  //   opts: { getDoc(), boxId:'t-riv', grid:{id, aree:[{nome,max,descrittori}], conversione_voto},
+  //           loadGrades(), storeGrades(g), voto(tot) → testo, onLocalSaved() }
+  //   voti salvati qui: { name, cls, date 'g/m/aaaa', det 'a-b-c', voto, punti, note }
+  function review(opts) {
+    var items = [], msg = '', boundDoc = null;
+    var esc = function (t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+    var norm = function (t) { return String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim(); };
+    var same = function (a, b) { var wa = norm(a).split(' ').filter(Boolean), wb = norm(b).split(' ').filter(Boolean); if (!wa.length || !wb.length) return false; var sm = wa.length <= wb.length ? wa : wb, bg = sm === wa ? wb : wa; return sm.every(function (x) { return bg.indexOf(x) >= 0; }); };
+    var isoFromIt = function (d) { var m = String(d || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : String(d || ''); };
+    var itFromIso = function (d) { var m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? +m[3] + '/' + +m[2] + '/' + m[1] : String(d || ''); };
+    var aree = function () { return opts.grid.aree; };
+    var sum = function (a) { return a.reduce(function (t, v) { return t + (+v || 0); }, 0); };
+    var max = function () { return sum(aree().map(function (a) { return a.max; })); };
+    var votoTxt = function (a) { return opts.voto ? opts.voto(sum(a)) : String(sum(a)); };
+    var doc = function () { return opts.getDoc(); };
+    var box = function () { var d = doc(); return d && d.getElementById(opts.boxId || 't-riv'); };
+    var wrap = function (h) { return '<div style="background:rgba(127,127,127,.08);border:1px solid rgba(62,198,255,.45);border-radius:12px;padding:10px 12px;margin-top:10px">' + h + '</div>'; };
+    var td = 'style="text-align:left;padding:5px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top"';
+    function bind() {
+      var d = doc(); if (!d || boundDoc === d) return; boundDoc = d;
+      d.addEventListener('click', function (e) {
+        var b = e.target.closest && e.target.closest('[data-rv]'); if (!b) return;
+        var act = b.getAttribute('data-rv'), k = +b.getAttribute('data-k'), it = items[k];
+        if (act === 'open') open();
+        else if (act === 'close') { items = []; var x = box(); if (x) x.innerHTML = ''; }
+        else if (act === 'edit') { it.open = !it.open; render(); }
+        else if (act === 'pt') { it.neu[+b.getAttribute('data-j')] = +b.getAttribute('data-v'); it.sel = true; refresh(k); }
+        else if (act === 'undo') { it.note = it.note0; it.neu = it.old.slice(); render(); }
+        else if (act === 'rep') {
+          var f = d.querySelector('[data-rvfrom="' + k + '"]').value, t = d.querySelector('[data-rvto="' + k + '"]').value;
+          if (f) { it.note = it.note.split(f).join(t); it.sel = true; render(); }
+        }
+        else if (act === 'all' || act === 'none') { items.forEach(function (x) { x.sel = act === 'all'; }); render(); }
+        else if (act === 'apply') apply();
+      });
+      d.addEventListener('input', function (e) {
+        var t = e.target; if (!t.getAttribute) return;
+        var nk = t.getAttribute('data-rvnote'); if (nk !== null && items[+nk]) { items[+nk].note = t.value; items[+nk].sel = true; refresh(+nk); }
+        var sk = t.getAttribute('data-rvsel'); if (sk !== null && items[+sk]) items[+sk].sel = t.checked;
+      });
+    }
+    function open() {
+      bind();
+      var x = box(); if (!x) return;
+      x.innerHTML = wrap('⏳ Cerco in MyClass i promemoria di questa attività…');
+      var local = (opts.loadGrades() || []).map(function (g, i) { return { g: g, i: i }; }).filter(function (o) { return String(o.g.det).split('-').length === aree().length; });
+      var build = function (r) {
+        items = [];
+        if (r && r.ok && Array.isArray(r.items)) r.items.forEach(function (p) {
+          if ((p.punteggi || []).length !== aree().length) return;
+          var old = aree().map(function (a, k) { var q = p.punteggi.find(function (z) { return norm(z.nome) === norm(a.nome); }) || p.punteggi[k]; return +q.voto || 0; });
+          var li = local.find(function (o) { return !o.used && isoFromIt(o.g.date) === p.data && same(o.g.name, p.student); });
+          if (li) li.used = true;
+          items.push({ src: 'mc', cls: p.cls, student: p.student, data: p.data, ts: p.ts, old: old, note: p.nota || (li ? li.g.note : '') || '', li: li ? li.i : -1, riv: p.rivalutato });
+        });
+        local.filter(function (o) { return !o.used; }).forEach(function (o) { items.push({ src: 'local', cls: o.g.cls, student: o.g.name, data: isoFromIt(o.g.date), old: String(o.g.det).split('-').map(Number), note: o.g.note || '', li: o.i, riv: o.g.riv }); });
+        items.forEach(function (it) { it.neu = it.old.slice(); it.note0 = it.note; it.sel = false; it.open = false; });
+        items.sort(function (a, b) { return String(b.data).localeCompare(String(a.data)) || String(a.cls).localeCompare(String(b.cls)) || String(a.student).localeCompare(String(b.student)); });
+        msg = !r ? '⚪ MyClass non risponde (aprila in questo browser per correggere anche i promemoria): qui ci sono solo i voti salvati su questa pagina.'
+          : !r.ok ? '⚠️ MyClass: ' + esc(r.msg || 'errore') + ' — qui ci sono solo i voti salvati su questa pagina.'
+          : '🔗 MyClass: ' + items.filter(function (x) { return x.src === 'mc'; }).length + ' promemoria di questa attività.';
+        render();
+      };
+      request('prom-list', { gridId: opts.grid.id }, build);
+    }
+    function changed(it) { return it.neu.join('-') !== it.old.join('-') || it.note !== it.note0; }
+    function scores(it, k) {
+      return aree().map(function (a, j) {
+        var pts = []; for (var v = a.max; v >= 0; v--) pts.push(v);
+        var dsc = function (v) { var d = (a.descrittori || []).find(function (x) { return +x.pt === v; }); return d ? d.testo : ''; };
+        return '<div class="r" style="margin-top:6px"><div class="rh"><div class="rn">' + esc(a.nome) + ' <small>/ ' + a.max + ' · allora ' + it.old[j] + '</small></div><div class="pts">'
+          + pts.map(function (v) { return '<button class="' + (it.neu[j] === v ? 'on' : '') + '" data-rv="pt" data-k="' + k + '" data-j="' + j + '" data-v="' + v + '" title="' + esc(dsc(v)) + '">' + v + '</button>'; }).join('') + '</div></div></div>';
+      }).join('') + '<div class="tot" style="margin-top:8px"><span class="v">' + esc(votoTxt(it.neu)) + '</span><span class="p">' + sum(it.neu) + ' / ' + max() + ' punti · prima ' + esc(votoTxt(it.old)) + ' (' + sum(it.old) + ')</span></div>';
+    }
+    function row(it, k) {
+      var ch = changed(it);
+      var h = '<tr><td ' + td + '><input type="checkbox" data-rvsel="' + k + '"' + (it.sel ? ' checked' : '') + '></td><td ' + td + '>' + esc(itFromIso(it.data)) + '</td><td ' + td + '>' + esc(it.cls) + '</td><td ' + td + '>' + esc(it.student) + (it.src === 'local' ? '<br><small>solo qui</small>' : '') + (it.riv ? '<br><small>♻️ già rivisto</small>' : '') + '</td>'
+        + '<td ' + td + '>' + esc(votoTxt(it.old)) + ' <small>(' + it.old.join('-') + ')</small></td>'
+        + '<td ' + td + ' id="rv-nv-' + k + '"><b style="color:' + (ch ? '#ffb547' : 'inherit') + '">' + esc(votoTxt(it.neu)) + '</b> <small>(' + it.neu.join('-') + ')' + (it.note !== it.note0 ? '<br>nota corretta' : '') + '</small></td>'
+        + '<td ' + td + '><button data-rv="edit" data-k="' + k + '" title="Rivedi questo alunno: nota e punteggi">' + (it.open ? '▴' : '✏️') + '</button></td></tr>';
+      if (it.open) h += '<tr><td colspan="7" ' + td + '><div style="padding:4px 0 8px">'
+        + '<div style="font-size:12px;opacity:.8;margin-bottom:4px">🗒️ Nota: correggi pure il testo' + (changed(it) ? ' · <button data-rv="undo" data-k="' + k + '" style="padding:2px 8px;font-size:12px">↺ com\'era</button>' : '') + '</div>'
+        + '<textarea data-rvnote="' + k + '" rows="4" style="width:100%;box-sizing:border-box;font:inherit;font-size:13px;padding:7px 9px;border-radius:9px;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.25);color:inherit">' + esc(it.note) + '</textarea>'
+        + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0;font-size:12.5px">Sostituisci <input data-rvfrom="' + k + '" placeholder="testo sbagliato" style="flex:1;min-width:120px;font:inherit;font-size:12.5px;padding:4px 7px"> con <input data-rvto="' + k + '" placeholder="testo giusto" style="flex:1;min-width:120px;font:inherit;font-size:12.5px;padding:4px 7px"><button data-rv="rep" data-k="' + k + '" style="padding:4px 10px;font-size:12.5px">Sostituisci</button></div>'
+        + '<div id="rv-sc-' + k + '">' + scores(it, k) + '</div></div></td></tr>';
+      return h;
+    }
+    function render() {
+      var x = box(); if (!x) return;
+      if (!items.length) { x.innerHTML = wrap(msg + '<br>Nessuna valutazione di questa attività da rivedere.<div class="bar" style="margin-top:8px"><button data-rv="close">Chiudi</button></div>'); return; }
+      x.innerHTML = wrap('<b>♻️ Rivedi / correggi le valutazioni</b><div style="font-size:12.5px;opacity:.8;margin:4px 0">' + msg + ' Con ✏️ apri un alunno: correggi la nota e cambi i punteggi. Si salvano solo le righe spuntate (si spuntano da sole quando modifichi).</div>'
+        + '<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px"><tr><th ' + td + '></th><th ' + td + '>Data</th><th ' + td + '>Cl.</th><th ' + td + '>Studente</th><th ' + td + '>Allora</th><th ' + td + '>Ora</th><th ' + td + '></th></tr>' + items.map(row).join('') + '</table>'
+        + '<div class="bar" style="margin-top:8px"><button class="pri" data-rv="apply">✅ Salva le righe spuntate</button><button data-rv="all">tutte</button><button data-rv="none">nessuna</button><button data-rv="close">Chiudi</button></div>');
+    }
+    function refresh(k) {
+      var d = doc(), it = items[k]; if (!d || !it) return;
+      var sc = d.getElementById('rv-sc-' + k); if (sc) sc.innerHTML = scores(it, k);
+      var nv = d.getElementById('rv-nv-' + k); if (nv) nv.innerHTML = '<b style="color:#ffb547">' + esc(votoTxt(it.neu)) + '</b> <small>(' + it.neu.join('-') + ')' + (it.note !== it.note0 ? '<br>nota corretta' : '') + '</small>';
+      var cb = d.querySelector('[data-rvsel="' + k + '"]'); if (cb) cb.checked = true;
+    }
+    function apply() {
+      var sel = items.filter(function (it) { return it.sel; });
+      var x = box(); if (!x) return;
+      if (!sel.length) { x.querySelector('[data-rv="apply"]').textContent = '✅ Salva (nessuna riga spuntata)'; return; }
+      var today = new Date().toLocaleDateString('it-IT'), g = opts.loadGrades() || [];
+      sel.forEach(function (it) {
+        var y = it.li >= 0 && g[it.li]; if (!y) return;
+        if (!y.prima) y.prima = y.voto + ' (' + y.det + ')';
+        y.det = it.neu.join('-'); y.punti = sum(it.neu); y.voto = votoTxt(it.neu); y.note = it.note; y.riv = today;
+      });
+      opts.storeGrades(g); if (opts.onLocalSaved) opts.onLocalSaved();
+      var mc = sel.filter(function (it) { return it.src === 'mc'; }), nLoc = sel.filter(function (it) { return it.li >= 0; }).length;
+      var done = function (r) {
+        var b2 = box(); if (!b2) return;
+        b2.innerHTML = wrap((mc.length ? (r && r.ok ? '💾 MyClass: ' + r.n + ' promemoria aggiornati (stessa data; il voto di prima resta annotato)' + (r.miss && r.miss.length ? ' · ⚠️ non trovati: ' + esc(r.miss.join(', ')) : '') + '.' : '⚠️ MyClass non ha aggiornato i promemoria' + (r && r.msg ? ': ' + esc(r.msg) : ' (non risponde)') + '. Riprova con MyClass aperta in questo browser.') : '')
+          + (nLoc ? '<br>✅ ' + nLoc + ' voti aggiornati anche nell\'elenco qui sotto.' : '') + '<div class="bar" style="margin-top:8px"><button data-rv="open">♻️ Riapri l\'elenco</button><button data-rv="close">Chiudi</button></div>');
+      };
+      if (mc.length) request('prom-update', { grid: { id: opts.grid.id, nome: opts.grid.nome, aree: aree().map(function (a) { return { nome: a.nome, max: a.max }; }), conversione_voto: opts.grid.conversione_voto },
+        items: mc.map(function (it) { return { cls: it.cls, student: it.student, ts: it.ts, scores: it.neu, nota: it.note }; }) }, done);
+      else done(null);
+    }
+    return { open: open, bind: bind };
+  }
+
+  window.MyClassLive = { available: !!bc, send: send, select: select, hello: hello, request: request, follow: follow, roster: roster, review: review,
     rec: { start: recStart, stop: recStop, state: function () { return { active: rec.active, starting: rec.starting, who: rec.who }; } } };
 })();
