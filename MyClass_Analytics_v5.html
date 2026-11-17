@@ -30615,7 +30615,7 @@ Il docente lo importa in MyClass con «🟣 Orali con Claude» → «📥 Import
         const all = _agentOraliManifest();
         const findLocal = ref => { for (const m of Object.values(all)) if (m?.entries?.[ref]) return m.entries[ref]; return null; };
         document.getElementById('oraliClaudeModal')?.remove();
-        const ok = [], problemi = [];
+        const ok = [], problemi = [], sovrascritti = [], storico = [];
         for (const v of fd.valutazioni) {
             const L = v && findLocal(v.ref);
             const task = L && agentTasks.find(t => t.id === L.taskId);
@@ -30626,17 +30626,28 @@ Il docente lo importa in MyClass con «🟣 Orali con Claude» → «📥 Import
             const byCode = Object.fromEntries((L.codes || []).map(c => [c.code, c]));
             testo = testo.replace(/\[NOME_(A\d+)\]/g, (m, c) => byCode[c]?.primo ?? m).replace(/\[(A\d+)\]/g, (m, c) => byCode[c]?.nome ?? m);
             if (!/VALUTAZIONE\s+DOCENTE/i.test(testo)) problemi.push(`${chi}: manca il blocco «VALUTAZIONE DOCENTE», controlla la scheda`);
+            // già valutato (anche con questo stesso file): la nuova risposta sostituisce, la vecchia va tra le versioni precedenti
+            const giaValutato = task.votoValue != null || (task.results || []).length;
+            const eraStorico = task.status === 'approved' || !!task.approvedAt;
+            if (task.status === 'dismissed') { delete task.dismissedAt; delete task.rimossoDaUtente; delete task.statusPrimaRimozione; }
             try {
                 task.error = '';
                 if (task.type === 'valdialogo') await agentEvaluateDialogo(task, { raw: testo, solo: null });
                 else { task.trascrizione = (task.trascrizione || '').trim(); task.transcriptToReview = false; task.transcriptApprovedAt = new Date().toISOString(); await agentTaskValOrale(task, { raw: testo }); }
-                if (task.status === 'ready') { delete task.claudeFile; task.claudeOpen = false; task.claudePrompt = ''; task.claudeRisposta = ''; ok.push(chi); }
+                if (task.status === 'ready') {
+                    delete task.claudeFile; delete task.daRivalutare; task.claudeOpen = false; task.claudePrompt = ''; task.claudeRisposta = ''; ok.push(chi);
+                    if (giaValutato) sovrascritti.push(chi);
+                    if (eraStorico) storico.push(`${chi} (${task.classe})`);
+                }
                 else problemi.push(`${chi}: ${task.error || 'risposta non usata, controlla la scheda'}`);
             } catch (er) { problemi.push(`${chi}: ${er.message}`); }
             agentSaveTasks(agentTasks);
         }
         agentBadgeUpdate(); agentRenderPanel();
-        alert(`📥 Import da Claude: ${ok.length} ${ok.length === 1 ? 'orale pronto' : 'orali pronti'} da controllare e importare nelle loro schede.` + (problemi.length ? `\n\n⚠️ Da controllare:\n• ${problemi.join('\n• ')}` : ''));
+        alert(`📥 Import da Claude: ${ok.length} ${ok.length === 1 ? 'orale pronto' : 'orali pronti'} da controllare e importare nelle loro schede.`
+            + (sovrascritti.length ? `\n\n♻️ Sostituite le valutazioni già presenti di ${sovrascritti.length} (quelle di prima sono tra le versioni precedenti della scheda).` : '')
+            + (storico.length ? `\n\n📥 Erano già nello storico: ${storico.join(', ')}.\nNelle loro schede premi «📥 Importa»: sostituisce il voto di quella data.` : '')
+            + (problemi.length ? `\n\n⚠️ Da controllare:\n• ${problemi.join('\n• ')}` : ''));
     }
 
     // Scelta del generatore dalla barra dell'agente (stessa impostazione del riquadro ⚙️)
