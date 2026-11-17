@@ -26274,7 +26274,15 @@ ${sectionInstr}`;
             <div style="font-weight:800;font-size:16px;color:#311b92;margin-bottom:4px;">🎙️ Riscopri un orale</div>
             <div style="font-size:12px;color:#777;margin-bottom:12px;">Le schede degli orali rimosse restano recuperabili per 30 giorni, con trascrizione e valutazione.</div>
             <div style="font-size:12px;font-weight:800;color:#555;margin-bottom:6px;">ORALI E DIALOGHI RIMOSSI (${rimossi.length})</div>
+            ${rimossi.some(t => promInfo(t).has) ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px;padding:8px 10px;background:#f3e5f5;border-radius:8px;font-size:12px;">
+                <b>Più insieme:</b> spunta gli orali e premi
+                <button onclick="agentRivalutaSelezionati()" style="padding:6px 12px;border-radius:8px;border:1px solid #5e35b1;background:#5e35b1;color:#fff;font-weight:700;cursor:pointer;">♻️ Rivaluta i selezionati col promemoria di adesso</button>
+                <a href="#" onclick="document.querySelectorAll('#riscopriOraleModal input[data-ro-sel]').forEach(c => c.checked = true); return false;" style="color:#4527a0;">tutti</a>
+                <a href="#" onclick="document.querySelectorAll('#riscopriOraleModal input[data-ro-sel]').forEach(c => c.checked = false); return false;" style="color:#4527a0;">nessuno</a>
+                <span id="roBatchMsg" style="color:#4527a0;font-weight:700;"></span>
+            </div>` : ''}
             ${rimossi.length ? rimossi.map(t => `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid #ede7f6;border-radius:8px;margin-bottom:6px;">
+                ${promInfo(t).has ? `<input type="checkbox" data-ro-sel="${e(t.id)}" ${promInfo(t).nuovo ? 'checked' : ''} title="Seleziona per «Rivaluta i selezionati» (già spuntati quelli col promemoria aggiornato dopo la valutazione)" style="width:17px;height:17px;cursor:pointer;flex-shrink:0;">` : '<span style="width:17px;flex-shrink:0;"></span>'}
                 <div style="flex:1;min-width:0;">
                     <div style="font-weight:800;color:#1a237e;"><span style="background:#3949ab;color:#fff;border-radius:6px;padding:1px 7px;font-size:12px;margin-right:6px;">${e(String(t.classe || '').toUpperCase())}</span>${e(nome(t))}</div>
                     <div style="font-size:11px;color:#666;">${t.type === 'valdialogo' ? 'Dialogo · ' : ''}📅 ${e(t.sessionDate || '')} · voto ${e(voto(t))} · ${stato(t)} · rimossa il ${e(t.dismissedAt ? new Date(t.dismissedAt).toLocaleString('it-IT', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '')}</div>
@@ -26313,8 +26321,39 @@ ${sectionInstr}`;
     // senza trascrizione né audio si valuta solo da punteggi e annotazioni (📵). La valutazione
     // di prima finisce tra le versioni precedenti. Se era già importata: poi 🔄 Riscrivi storico.
     async function agentRivalutaDaPromemoria(taskId) {
+        const t = await _agentRivalutaCore(taskId, { singola: true });
+        if (t && t.approvedAt && t.status === 'ready') alert(`♻️ ${t.studentName || 'Valutazione'} rifatta sul promemoria di adesso.\n\nEra già nello storico: controlla e premi «📥 Importa» (sostituisce il voto di quella data) oppure «🔄 Riscrivi storico».`);
+    }
+    // Più schede insieme, una dopo l'altra (pausa tra una e l'altra per i limiti dell'AI)
+    async function agentRivalutaSelezionati() {
+        const ids = [...document.querySelectorAll('#riscopriOraleModal input[data-ro-sel]:checked')].map(c => c.getAttribute('data-ro-sel'));
+        const msg = document.getElementById('roBatchMsg');
+        if (!ids.length) { if (msg) msg.textContent = 'Nessun orale selezionato.'; return; }
+        if (!confirm(`Rivalutare ${ids.length} ${ids.length === 1 ? 'orale' : 'orali'} sul promemoria LIVE di adesso?\n\nLe valutazioni di prima restano tra le versioni precedenti di ogni scheda.`)) return;
+        document.getElementById('riscopriOraleModal')?.remove();
+        const fatti = [], storico = [];
+        for (let i = 0; i < ids.length; i++) {
+            const tt = agentTasks.find(x => x.id === ids[i]);
+            _agentToastBatch(`♻️ Rivaluto ${i + 1} di ${ids.length}: ${tt ? (tt.studentName || (tt.studenti || []).map(s => s.studentName).join(' + ')) : ''}…`);
+            if (i > 0) await new Promise(r => setTimeout(r, 4000));
+            try { const t = await _agentRivalutaCore(ids[i], {}); if (t) { fatti.push(t); if (t.approvedAt) storico.push(t.studentName || ''); } }
+            catch (e) { console.warn('[Agente] rivaluta', ids[i], e); }
+        }
+        _agentToastBatch(null);
+        agentRenderPanel();
+        alert(`♻️ Rivalutati ${fatti.length} di ${ids.length} sul promemoria di adesso: li trovi nella coda dell'agente (controlla voto e feedback).`
+            + (storico.length ? `\n\nEra già nello storico per: ${storico.join(', ')}. Per sostituire il voto premi «📥 Importa» (o «🔄 Riscrivi storico») nelle loro schede.` : '\n\nPoi importali come sempre.'));
+    }
+    window.agentRivalutaSelezionati = agentRivalutaSelezionati;
+    function _agentToastBatch(txt) {
+        let el = document.getElementById('agentBatchToast');
+        if (!txt) { el?.remove(); return; }
+        if (!el) { el = document.createElement('div'); el.id = 'agentBatchToast'; el.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99999;background:#4527a0;color:#fff;padding:10px 18px;border-radius:10px;font:600 14px system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.3);'; document.body.appendChild(el); }
+        el.textContent = txt;
+    }
+    async function _agentRivalutaCore(taskId, opts) {
         const t = agentTasks.find(x => x.id === taskId);
-        if (!t) return;
+        if (!t) return null;
         delete t.dismissedAt; delete t.rimossoDaUtente; delete t.statusPrimaRimozione;
         if (t.type === 'valdialogo') delete t.prelimLive; else delete t.prelimLiveData;
         delete t.prelimNote;
@@ -26325,12 +26364,14 @@ ${sectionInstr}`;
         if (!haTrascr && !haAudio) t.noTrascrizione = true;
         t.status = t.approvedAt ? 'approved' : (t.valDocente || (t.results || []).length) ? 'ready' : haTrascr ? (t.type === 'valdialogo' ? 'awaiting_speakers' : 'awaiting_transcript') : 'pending';
         agentSaveTasks(agentTasks); agentBadgeUpdate();
-        document.getElementById('riscopriOraleModal')?.remove();
-        agentRenderPanel();
-        try { document.querySelector(`[data-task-id="${CSS.escape(t.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+        if (opts && opts.singola) {
+            document.getElementById('riscopriOraleModal')?.remove();
+            agentRenderPanel();
+            try { document.querySelector(`[data-task-id="${CSS.escape(t.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+        }
         if (haTrascr || _agentSenzaTrascr(t)) await agentRegenerate(t.id);          // rifà la valutazione (o prepara il testo per Claude)
         else if (haAudio && t.type === 'valorale') await agentProcessValOrale(t.id); // audio non ancora trascritto: il solito percorso
-        if (t.approvedAt && t.status === 'ready') alert(`♻️ ${t.studentName || 'Valutazione'} rifatta sul promemoria di adesso.\n\nEra già nello storico: controlla e premi «📥 Importa» (sostituisce il voto di quella data) oppure «🔄 Riscrivi storico».`);
+        return t;
     }
     window.agentRivalutaDaPromemoria = agentRivalutaDaPromemoria;
     async function agentRicercaAudioOrali() {
