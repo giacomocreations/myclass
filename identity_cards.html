@@ -1070,8 +1070,15 @@ function ckChanged() { ckRefresh(); clearTimeout(ckChanged.t); ckChanged.t = set
 const MINE_NOTE_KEY = 'idc_note_mie';
 let NOTE_MIE = (() => { try { const x = JSON.parse(localStorage.getItem(MINE_NOTE_KEY)) || {}; return { pr: x.pr || [], er: x.er || [] }; } catch (e) { return { pr: [], er: [] }; } })();
 const saveNoteMie = () => { try { localStorage.setItem(MINE_NOTE_KEY, JSON.stringify(NOTE_MIE)); } catch (e) {} };
-const noteChips = (g, base, chip) => base.map(t => chip(g, t)).join('') + NOTE_MIE[g].filter(t => !base.includes(t))
-  .map(t => `<span style="display:inline-flex;align-items:center">${chip(g, t)}<button class="x" data-act="ntdel" data-g="${g}" data-t="${esc(t)}" title="Togli dall'elenco">✕</button></span>`).join('');
+// Evidenziate (rosse) solo le voci cliccate per questo alunno: quelle non cliccate sono andate bene.
+// La ✕ per togliere dall'elenco le voci aggiunte compare solo con "✏️ togli voci aggiunte".
+const NOTE_EDIT = { pr: false, er: false };
+const noteChips = (g, base, chip) => {
+  const mine = NOTE_MIE[g].filter(t => !base.includes(t));
+  return base.map(t => chip(g, t)).join('')
+    + mine.map(t => NOTE_EDIT[g] ? `<span style="display:inline-flex;align-items:center">${chip(g, t)}<button class="x" data-act="ntdel" data-g="${g}" data-t="${esc(t)}" title="Togli dall'elenco">✕</button></span>` : chip(g, t)).join('')
+    + (mine.length ? `<button class="ned" data-act="nedit" data-g="${g}" title="Togli dall'elenco le voci che hai aggiunto tu">${NOTE_EDIT[g] ? '✓ fine' : '✏️ togli voci aggiunte'}</button>` : '');
+};
 function addTyped(g) {
   if (!twOpen()) return;
   const id = g === 'pr' ? 't-inpr' : 't-iner', el = tw(id);
@@ -1097,6 +1104,7 @@ function onCkClick(act, b) {
   else if (act === 'c2') k.p2[id] = ((k.p2[id] || 0) + 1) % 4;
   else if (act === 'ckn') k.n[id] = Math.max(0, k.n[id] + +b.dataset.d);
   else if (act === 'nadd') { addTyped(b.dataset.g); return true; }
+  else if (act === 'nedit') { NOTE_EDIT[b.dataset.g] = !NOTE_EDIT[b.dataset.g]; renderNotes(); return true; }
   else if (act === 'ntdel') { delMine(b.dataset.g, b.dataset.t); return true; }
   else if (act === 'nt') { addNote(b.dataset.g, b.dataset.t); return true; }
   else if (act === 'ntx') { const x = k.notes[b.dataset.g][+b.dataset.i]; if (x && --x.n <= 0) k.notes[b.dataset.g].splice(+b.dataset.i, 1); }
@@ -1154,7 +1162,7 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
 .cnt b{min-width:16px;text-align:center;color:#ffd166}.cnt button{padding:2px 8px;font-size:13px}
 .sum{background:#142120;border:1px solid rgba(255,209,102,.35);border-radius:10px;padding:8px 11px;font-size:13px;line-height:1.55}
 .sum .sg{color:#ffd166;font-weight:700}.sum .hd{color:#94a8a3;font-weight:700;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}.sum .gr{color:#94a8a3}
-.chips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}.chips button{font-size:12px;padding:4px 8px;font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}.chips button{font-size:12px;padding:4px 8px;font-weight:600;opacity:.78}.chips button.on{opacity:1;background:#e63e62;color:#fff;border-color:transparent;outline:none}.chips button.x{opacity:1}.chips .ned{background:none;border:1px dashed rgba(255,255,255,.25);font-weight:500;opacity:.8}
 .nl{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}.nl span{background:#23343a;border-radius:7px;padding:3px 4px 3px 8px;font-size:12.5px}.nl span.er{background:#3a2632}
 .nl span button{background:none;border:none;color:#94a8a3;padding:0 4px;font-size:12px}
 .nin{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}.nin input{font-size:13px;padding:6px 9px}.nadd{display:flex;gap:4px}.nadd input{flex:1;min-width:0}.nadd button{padding:4px 11px;font-size:16px;line-height:1}@media (max-width:560px){.nin{grid-template-columns:1fr}}
@@ -1177,7 +1185,7 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
 <div class="ckh">🔊 Pronuncia <small>(un clic = annotato, di nuovo = ×2)</small></div><div class="chips" id="t-npr"></div>
 <div class="ckh">✏️ Errori</div><div class="chips" id="t-ner"></div>
 <div class="nin"><div class="nadd"><input id="t-inpr" placeholder="🔊 Altre parole pronunciate male (separate da virgola)" autocomplete="off"><button data-act="nadd" data-g="pr" title="Aggiungi (anche più di una, separate da virgola)">＋</button></div><div class="nadd"><input id="t-iner" placeholder="✏️ Altri errori sentiti (separati da virgola)" autocomplete="off"><button data-act="nadd" data-g="er" title="Aggiungi (anche più di uno, separati da virgola)">＋</button></div></div>
-<div class="sub" style="margin:0 0 4px">Quelle che aggiungi diventano pulsanti come gli altri e restano per i prossimi alunni (✕ per toglierle dall'elenco).</div>
+<div class="sub" style="margin:0 0 4px">Clicca solo quello che sbaglia (diventa rosso): il resto vuol dire che è andato bene. Le voci che aggiungi diventano pulsanti e restano per i prossimi alunni, non segnate.</div>
 <div class="nl" id="t-nl"></div>
 <div class="link" id="t-link">🔗 I punteggi vanno anche nella LIVE di MyClass, se è aperta su questo computer.</div>
 <div class="tot"><span class="v" id="t-voto">–</span><span class="p" id="t-pts">Scegli un punteggio per ogni area</span></div>
