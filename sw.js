@@ -46,7 +46,7 @@ messaging.onBackgroundMessage(payload => {
 });
 
 // ── CAMBIA QUESTO NUMERO AD OGNI DEPLOY ────────────────────────
-const CACHE_VERSION = 'v57';
+const CACHE_VERSION = 'v58';
 // ───────────────────────────────────────────────────────────────
 
 const CACHE_NAME = 'studentapp-' + CACHE_VERSION;

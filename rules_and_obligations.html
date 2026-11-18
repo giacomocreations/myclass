@@ -808,6 +808,10 @@ function storeGrades(g) { try { localStorage.setItem(GKEY, JSON.stringify(g)); }
 //           che si cambiano a ogni clic finché non c'è quello che ha detto.
 //  Parte 2: per ogni frase della scheda il modale usato (a ogni clic il
 //           successivo) e il because.
+//  In ogni frase, accanto: because a 3 colori (verde = detto bene, giallo =
+//  problema di forma, rosso = non ha senso), ✏️ forma del modale sbagliata
+//  (must to, don't must…) e 🔊 pronuncia sbagliata. Le frasi spuntate, con
+//  questi segni, vanno una per una nella nota (e nel promemoria di MyClass).
 // ══════════════════════════════════════════════════════════════════
 const MODS = ['have to', 'must', "mustn't", "don't have to"];
 const modType = m => m === "mustn't" ? 'no' : m === "don't have to" ? 'nn' : 'ob';
@@ -841,43 +845,69 @@ const CK_RULES = [
 const NOTE_PR = ["mustn't (t pronunciata)", 'have to /ˈhæftə/', 'has to /ˈhæstə/', 'because', 'washing-up', 'ironing /ˈaɪənɪŋ/', 'vacuuming', 'rubbish', 'dishwasher', '-ing finale', 'th (the, three)', 'pronuncia all\'italiana'];
 const NOTE_ER = ['must to', "don't must", 'he have to', "he don't have to", "doesn't has to", "mustn't ↔ don't have to", 'do / make scambiati', 'manca il verbo dopo il modale', 'risposta in italiano', 'frasi senza because'];
 const SWAP_NOTE = "mustn't ↔ don't have to";
-const ckNew = () => ({ p1: {}, p1x: [], p1n: { bec: 0, guide: 0 }, p2: {}, ex: {}, flu: { pause: 0, block: 0 }, notes: { pr: [], er: [] } });
+const ckNew = () => ({ p1: {}, p1x: [], p1n: { bec: 0, guide: 0 }, p2: {}, ex: {}, flu: { pause: 0, block: 0, lvl: 0 }, notes: { pr: [], er: [] }, seq: 0 });
 let ck = ckNew();
-// p1[chiave] = { v: indice verbo, m: modale } · p1x = [{ t: testo, m }] voci aggiunte
-// p2[id scheda] = { rows: { i: indice modale }, bec: { i: true }, guide: n }
+// p1[chiave] = { v: indice verbo, m: modale, b: because 0–3, f: forma sbagliata, p: pronuncia sbagliata, o: ordine }
+// p1x = [{ t: testo, m, b, f, p, o }] voci aggiunte
+// p2[id scheda] = { rows: { i: indice modale }, bec: { i: 0–3 }, form: { i: true }, pr: { i: true }, guide: n }
+// flu.lvl: fluidità generale 1 fluido · 2 qualche pausa · 3 molte pause (0 = non segnata)
 // ex[chiave] = 1 ✓ / 2 con aiuto / 3 ✗ (domande a sorpresa ed extra)
 const EX_LBL = ['—', '✓', '~ aiuto', '✗'], EX_CLS = ['n', 'ok', 'bad', 'no'];
 const p2Order = t => t === 'ob' ? ['must', 'have to', "mustn't", "don't have to"] : t === 'no' ? ["mustn't", "don't have to", 'must', 'have to'] : ["don't have to", "mustn't", 'must', 'have to'];
-const p2Of = id => ck.p2[id] || (ck.p2[id] = { rows: {}, bec: {}, guide: 0, mean: 0 });
+const p2Of = id => ck.p2[id] || (ck.p2[id] = { rows: {}, bec: {}, form: {}, pr: {}, guide: 0, mean: 0 });
 function p2Status(it, m) { const t = modType(m); return t === it.t ? 'ok' : (t === 'no' && it.t === 'nn') || (t === 'nn' && it.t === 'no') ? 'sw' : 'no'; }
 const cyBtn = (act, attrs, cls, txt, title) => `<button class="cy ${cls}" data-act="${act}" ${attrs}${title ? ` title="${esc(title)}"` : ''}>${txt}</button>`;
 const exBtn = k => { const v = ck.ex[k] || 0; return cyBtn('ex', `data-k="${k}"`, EX_CLS[v], EX_LBL[v], 'Clic: ✓ → con aiuto → ✗ → nessuna'); };
-// because detto in quella frase della Parte 1 (clic: sì / no)
-const becBtn = (attrs, on) => `<button class="cy ${on ? 'ok' : 'n'}" data-act="cb" ${attrs} title="Ha spiegato il perché con because in questa frase? (clic: sì / no)">${on ? '✔ because' : '+ because'}</button>`;
+// because in quella frase: 0 non detto · 1 verde = detto bene · 2 giallo = problema di forma · 3 rosso = non ha senso
+const BEC_LBL = ['+ because', '✔ because', '~ because', '✗ because'], BEC_CLS = ['n', 'ok', 'bad', 'no'];
+const BEC_TXT = ['', 'because ✓', 'because con errori di forma', 'because senza senso'];
+const becOf = x => x === true ? 1 : +x || 0;
+const becBtn = (act, attrs, v) => { v = becOf(v); return `<button class="cy bec ${BEC_CLS[v]}" data-act="${act}" ${attrs} title="because · clic: verde = detto bene → giallo = problema di forma → rosso = non ha senso → nessuno">${BEC_LBL[v]}</button>`; };
+// forma del modale (must to, don't must, he have to, manca il verbo…) e pronuncia della frase: clic = sbagliata
+const formBtn = (act, attrs, on) => `<button class="cy ${on ? 'bad' : 'n'}" data-act="${act}" ${attrs} title="Forma del modale sbagliata (must to, don't must, he have to, manca il verbo…)? clic: sì / no">${on ? '✏️ forma ✗' : '✏️ forma'}</button>`;
+const prBtn = (act, attrs, on) => `<button class="cy ${on ? 'no' : 'n'}" data-act="${act}" ${attrs} title="Pronuncia sbagliata in questa frase? clic: sì / no">${on ? '🔊 ✗' : '🔊'}</button>`;
+// i tre segni accanto a ogni frase della Parte 1
+const p1Marks = (attrs, x) => becBtn('cb', attrs, x.b) + formBtn('cf', attrs, x.f) + prBtn('cp', attrs, x.p);
 const cntBox = (k, lbl, v) => `<span class="cnt">${lbl} <b>${v}</b><button data-act="cnt" data-k="${k}" data-d="-1" title="Togli">−</button><button data-act="cnt" data-k="${k}" data-d="1" title="Aggiungi">+</button></span>`;
 
-// because della Parte 1: frasi spuntate con «+ because» (+ il contatore per le frasi non in elenco)
+// because della Parte 1: n = detti (verdi + gialli, + il contatore per le frasi non in elenco),
+// ok verdi, fm gialli (forma), bad rossi (senza senso: non contano come because)
 function p1Bec() {
-  const rows = Object.values(ck.p1).concat(ck.p1x);
-  return { n: rows.filter(x => x.b).length + ck.p1n.bec, of: rows.length };
+  const rows = Object.values(ck.p1).concat(ck.p1x), b = rows.map(x => becOf(x.b));
+  const c = v => b.filter(x => x === v).length;
+  return { n: c(1) + c(2) + ck.p1n.bec, ok: c(1), fm: c(2), bad: c(3), of: rows.length };
+}
+// frasi della Parte 1 nell'ordine in cui le hai spuntate, con verbo, modale e segni
+function p1Rows() {
+  const out = [];
+  allChores().forEach(([k, obj, ok]) => { const x = ck.p1[k]; if (!x) return; const v = verbOpts(ok)[x.v]; out.push({ x, txt: `${x.m} ${v} ${obj}`, verbBad: !ok.includes(v) ? ok[0] : '' }); });
+  CK_RULES.forEach(([k, txt]) => { const x = ck.p1[k]; if (x) out.push({ x, txt: `${x.m} ${txt}` }); });
+  ck.p1x.forEach(x => out.push({ x, txt: `${x.m} ${x.t}` }));
+  return out.sort((a, b) => (a.x.o || 0) - (b.x.o || 0));
+}
+const marksTxt = (x, extra) => [extra, BEC_TXT[becOf(x.b)], x.f && 'forma del modale ✗', x.p && 'pronuncia ✗'].filter(Boolean);
+function p1Detail(html) {
+  const r = p1Rows(); if (!r.length) return '';
+  const b = t => html ? `<b>${esc(t)}</b>` : t;
+  return 'P1 frasi: ' + r.map((o, i) => { const m = marksTxt(o.x, o.verbBad && `verbo ✗ (atteso ${o.verbBad})`); return `${i + 1}) ${b(o.txt)}${m.length ? ` [${m.join(', ')}]` : ''}`; }).join('; ');
 }
 function renderCkP1() {
   const row = ([k, obj, ok]) => {
     const x = ck.p1[k];
     if (!x) return `<div class="cr"><button class="lb" data-act="c1" data-k="${k}">☐ <b>${esc(ok[0])}</b> ${esc(obj)}</button></div>`;
     const vo = verbOpts(ok), v = vo[x.v];
-    return `<div class="cr on"><button class="lb" data-act="c1" data-k="${k}" title="Togli">✔ ${esc(obj)}</button>${cyBtn('cv', `data-k="${k}"`, ok.includes(v) ? 'ok' : 'bad', esc(v), 'Verbo: clic per cambiarlo')}${cyBtn('cm', `data-k="${k}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}${becBtn(`data-k="${k}"`, x.b)}</div>`;
+    return `<div class="cr on"><button class="lb" data-act="c1" data-k="${k}" title="Togli">✔ ${esc(obj)}</button>${cyBtn('cv', `data-k="${k}"`, ok.includes(v) ? 'ok' : 'bad', esc(v), 'Verbo: clic per cambiarlo (arancione = parola sbagliata, es. clean al posto di clear)')}${cyBtn('cm', `data-k="${k}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}${p1Marks(`data-k="${k}"`, x)}</div>`;
   };
   const rule = ([k, txt, def]) => {
     const x = ck.p1[k];
     if (!x) return `<div class="cr"><button class="lb" data-act="c1" data-k="${k}" data-m="${esc(def)}">☐ ${esc(txt)}</button></div>`;
-    return `<div class="cr on"><button class="lb" data-act="c1" data-k="${k}" title="Togli">✔ ${esc(txt)}</button>${cyBtn('cm', `data-k="${k}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}${becBtn(`data-k="${k}"`, x.b)}</div>`;
+    return `<div class="cr on"><button class="lb" data-act="c1" data-k="${k}" title="Togli">✔ ${esc(txt)}</button>${cyBtn('cm', `data-k="${k}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}${p1Marks(`data-k="${k}"`, x)}</div>`;
   };
   const mine = ([k, obj, ok]) => row([k, obj, ok]).replace(/<\/div>$/, `<button class="x" data-act="cmdel" data-k="${k}" title="Togli dall'elenco">✕</button></div>`);
-  const extra = ck.p1x.map((x, i) => `<div class="cr on"><button class="lb" data-act="cxdel" data-i="${i}" title="Togli">✔ ${esc(x.t)}</button>${cyBtn('cxm', `data-i="${i}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}${becBtn(`data-i="${i}" data-x="1"`, x.b)}</div>`).join('');
+  const extra = ck.p1x.map((x, i) => `<div class="cr on"><button class="lb" data-act="cxdel" data-i="${i}" title="Togli">✔ ${esc(x.t)}</button>${cyBtn('cxm', `data-i="${i}"`, 'ok', esc(x.m), 'Modale: clic per cambiarlo')}${p1Marks(`data-i="${i}" data-x="1"`, x)}</div>`).join('');
   const pb = p1Bec();
-  return `<div class="ckh">✅ 📖 Faccende fatte in classe <small>· clic sulla faccenda quando la dice, poi clic su verbo e modale finché non c'è quello che ha detto (arancione = verbo sbagliato) · <b>+ because</b> se spiega il perché</small></div>
-    <div class="ckl" style="margin:2px 0 4px">💬 because nella Parte 1: <b>${pb.n}</b> su ${pb.of} ${pb.of === 1 ? 'frase' : 'frasi'}${ck.p1n.bec ? ` (+${ck.p1n.bec} dal contatore)` : ''}</div>
+  return `<div class="ckh">✅ 📖 Faccende fatte in classe <small>· clic sulla faccenda quando la dice, poi clic su verbo e modale finché non c'è quello che ha detto (arancione = parola sbagliata) · <b>because</b>: verde = bene, giallo = forma, rosso = non ha senso · <b>✏️ forma</b> = modale detto male (must to, don't must…) · <b>🔊</b> = pronuncia</small></div>
+    <div class="ckl" style="margin:2px 0 4px">💬 because nella Parte 1: <b>${pb.n}</b> su ${pb.of} ${pb.of === 1 ? 'frase' : 'frasi'}${pb.fm ? ` · ${pb.fm} con errori di forma` : ''}${pb.bad ? ` · <span style="color:#ff9a9a">${pb.bad} senza senso</span>` : ''}${ck.p1n.bec ? ` (+${ck.p1n.bec} dal contatore)` : ''}</div>
     <div class="ck">${CK_BOOK.map(row).join('')}</div>
     <div class="ckh">➕ Altre faccende</div>
     <div class="ck">${CK_MORE.map(row).join('')}${CK_MINE.map(mine).join('')}</div>
@@ -901,7 +931,10 @@ function p2Stats(c) {
   const st = ck.p2[c.id]; if (!st) return null;
   const said = c.items.map((it, i) => st.rows[i] === undefined ? null : p2Status(it, p2Order(it.t)[st.rows[i]]));
   const n = said.filter(Boolean).length;
-  return { n, ok: said.filter(x => x === 'ok').length, sw: said.filter(x => x === 'sw').length, no: said.filter(x => x === 'no').length, bec: Object.values(st.bec).filter(Boolean).length, guide: st.guide, mean: st.mean || 0 };
+  const bv = Object.values(st.bec).map(becOf);
+  return { n, ok: said.filter(x => x === 'ok').length, sw: said.filter(x => x === 'sw').length, no: said.filter(x => x === 'no').length,
+    bec: bv.filter(v => v === 1 || v === 2).length, becFm: bv.filter(v => v === 2).length, becBad: bv.filter(v => v === 3).length,
+    form: Object.values(st.form || {}).filter(Boolean).length, pr: Object.values(st.pr || {}).filter(Boolean).length, guide: st.guide, mean: st.mean || 0 };
 }
 const exSum = arr => { if (!arr.length) return ''; const c = v => arr.filter(x => x === v).length; return [c(1) && `✓${c(1)}`, c(2) && `~${c(2)}`, c(3) && `✗${c(3)}`].filter(Boolean).join(' '); };
 // suggerimento per Vocabolario (Parte 1) dai descrittori della griglia
@@ -917,15 +950,18 @@ function p1Line(html) {
   const b = t => html ? `<b>${t}</b>` : t;
   const parts = [`${b(s.chores.length)} faccende (${s.book} del libro)${s.extra ? ` · ${s.extra} ${s.extra === 1 ? 'regola aggiunta' : 'regole aggiunte'}` : ''}` + (s.wrong.length ? ` · verbo sbagliato ${s.wrong.length}: ${s.wrong.map(([k, obj, ok]) => verbOpts(ok)[ck.p1[k].v] + ' ' + obj).join(', ')}` : '')];
   if (s.mods.length) parts.push(MODS.filter(m => s.cnt[m]).map(m => `${m} ${s.cnt[m]}`).join(', '));
-  if (pb.n) parts.push(`because ×${pb.n}${pb.of ? ` su ${pb.of} frasi` : ''}`);
+  if (pb.n || pb.bad) parts.push(`because ×${pb.n}${pb.of ? ` su ${pb.of} frasi` : ''}${pb.fm ? ` (${pb.fm} con errori di forma)` : ''}${pb.bad ? ` · because senza senso ×${pb.bad}` : ''}`);
+  const f1 = p1Rows().filter(o => o.x.f).length, pr1 = p1Rows().filter(o => o.x.p).length;
+  if (f1) parts.push(`forma del modale sbagliata ×${f1}`);
+  if (pr1) parts.push(`pronuncia sbagliata in ${pl(pr1, 'frase', 'frasi')}`);
   if (ck.p1n.guide) parts.push(`domande guida ×${ck.p1n.guide}`);
   if (s.exs.length) parts.push(`domande a sorpresa ${exSum(s.exs)}`);
   return 'P1: ' + parts.join(' · ');
 }
 function p2Line(html) {
-  const lines = CARDS.filter(x => ck.p2[x.id] && (p2Stats(x).n || p2Stats(x).guide || p2Stats(x).mean || Object.keys(ck.p2[x.id].bec).length)).map(x => {
+  const lines = CARDS.filter(x => ck.p2[x.id] && (p2Stats(x).n || p2Stats(x).guide || p2Stats(x).mean || p2Stats(x).form || p2Stats(x).pr || Object.values(ck.p2[x.id].bec).some(Boolean))).map(x => {
     const s = p2Stats(x), b = t => html ? `<b>${t}</b>` : t;
-    return `P2 (${x.n}. ${x.short}): ${b(s.ok + '/6')} giuste` + (s.sw ? ` · scambio mustn't/don't have to ×${s.sw}` : '') + (s.no ? ` · altro modale sbagliato ×${s.no}` : '') + (s.n < 6 ? ` · non dette ${6 - s.n}` : '') + ` · because ${s.bec}/6` + (s.guide ? ` · domande guida ×${s.guide}` : '') + (s.mean ? ` · chiede il significato ×${s.mean}` : '');
+    return `P2 (${x.n}. ${x.short}): ${b(s.ok + '/6')} giuste` + (s.sw ? ` · scambio mustn't/don't have to ×${s.sw}` : '') + (s.no ? ` · altro modale sbagliato ×${s.no}` : '') + (s.n < 6 ? ` · non dette ${6 - s.n}` : '') + ` · because ${s.bec}/6` + (s.becFm ? ` (${s.becFm} con errori di forma)` : '') + (s.becBad ? ` · because senza senso ×${s.becBad}` : '') + (s.form ? ` · forma del modale sbagliata ×${s.form}` : '') + (s.pr ? ` · pronuncia sbagliata in ${pl(s.pr, 'frase', 'frasi')}` : '') + (s.guide ? ` · domande guida ×${s.guide}` : '') + (s.mean ? ` · chiede il significato ×${s.mean}` : '');
   });
   const exs = EXTRA_Q.map((q, i) => ck.ex['e' + i] || 0).filter(Boolean);
   if (exs.length) lines.push(`domande extra ${exSum(exs)}`);
@@ -933,11 +969,26 @@ function p2Line(html) {
   if (ck.flu.block) lines.push(`blocchi ×${ck.flu.block}`);
   return lines.join(' · ');
 }
+// frasi della Parte 2 dette, una per una: modale usato e segni
+function p2Detail(html) {
+  return CARDS.filter(c => ck.p2[c.id]).map(c => {
+    const st = ck.p2[c.id];
+    const r = c.items.map((it, i) => {
+      const v = st.rows[i], m = v === undefined ? null : p2Order(it.t)[v];
+      const marks = marksTxt({ b: st.bec[i], f: st.form && st.form[i], p: st.pr && st.pr[i] }, m && { ok: '', sw: "scambio mustn't/don't have to", no: 'modale sbagliato' }[p2Status(it, m)]);
+      if (!m && !marks.length) return '';
+      const txt = `${m || '(modale non detto)'} ${lc1(it.p).replace(/\.$/, '')}`;
+      return `${i + 1}) ${html ? `<b>${esc(txt)}</b>` : txt}${marks.length ? ` [${marks.join(', ')}]` : ''}`;
+    }).filter(Boolean);
+    return r.length ? `P2 frasi (${c.n}. ${c.short}): ${r.join('; ')}` : '';
+  }).filter(Boolean).join(' | ');
+}
+const FLU_TXT = ['', 'fluido', 'qualche pausa', 'molte pause'];
 const noteList = g => ck.notes[g].map(x => x.t + (x.n > 1 ? ' ×' + x.n : '')).join(', ');
 // tutto quello che finisce nella nota del voto e nel promemoria di MyClass
 function composeNote() {
   const free = twOpen() ? tw('t-note').value.trim() : '';
-  return [p1Line(false), p2Line(false), ck.notes.pr.length && 'Pronuncia: ' + noteList('pr'), ck.notes.er.length && 'Errori: ' + noteList('er'), swapCap && !ck.notes.er.some(x => x.t === SWAP_NOTE) && "scambio mustn't/don't have to", free].filter(Boolean).join(' | ');
+  return [free && 'Impressioni: ' + free, ck.flu.lvl && 'Fluidità: ' + FLU_TXT[ck.flu.lvl], p1Line(false), p1Detail(false), p2Line(false), p2Detail(false), ck.notes.pr.length && 'Pronuncia: ' + noteList('pr'), ck.notes.er.length && 'Errori: ' + noteList('er'), swapCap && !ck.notes.er.some(x => x.t === SWAP_NOTE) && "scambio mustn't/don't have to"].filter(Boolean).join(' | ');
 }
 // Suggerimenti per le tre voci della griglia, dalle spunte e dalle note.
 // Ritorna { indice voce: { v, why } } (solo le voci per cui ci sono elementi).
@@ -949,7 +1000,8 @@ function computeHints() {
   const p2 = CARDS.filter(x => ck.p2[x.id]).map(p2Stats);
   const p2n = p2.reduce((t, x) => t + x.n, 0), p2ok = p2.reduce((t, x) => t + x.ok, 0);
   const sw = p2.reduce((t, x) => t + x.sw, 0) + noteN('er', [SWAP_NOTE]), other = p2.reduce((t, x) => t + x.no, 0);
-  const form = noteN('er', FORM_ER);
+  const f1 = p1Rows().filter(o => o.x.f).length, pr1 = p1Rows().filter(o => o.x.p).length;
+  const form = noteN('er', FORM_ER) + f1 + p2.reduce((t, x) => t + x.form, 0);
   const ex = k => ck.ex[k] || 0;
   // Grammatica /5: modale giusto (Parte 2 e frasi della Parte 1), scambi, errori di forma
   if (p2n || s.mods.length || form || sw) {
@@ -979,20 +1031,23 @@ function computeHints() {
   // Comunicazione /5: autonomia, frasi per tipo, because, domande extra, pronuncia e fluenza
   const guide = ck.p1n.guide + p2.reduce((t, x) => t + x.guide, 0);
   // because: quelli della Parte 1 (parlato libero, il descrittore guarda lì) + quelli della Parte 2
-  const bec1 = p1Bec().n, bec2 = p2.reduce((t, x) => t + x.bec, 0), bec = bec1 + bec2;
+  // (i rossi, «non ha senso», non contano: abbassano la Comunicazione)
+  const pb1 = p1Bec(), bec1 = pb1.n, bec2 = p2.reduce((t, x) => t + x.bec, 0), bec = bec1 + bec2;
+  const becBad = pb1.bad + p2.reduce((t, x) => t + x.becBad, 0);
+  const lvl = ck.flu.lvl || 0;
   const exAll = Object.values(ck.ex).filter(Boolean), exHelp = exAll.filter(x => x === 2).length, exBad = exAll.filter(x => x === 3).length;
-  const P = noteN('pr'), PA = ck.flu.pause, B = ck.flu.block;
-  if (s.mods.length || guide || exAll.length || P || PA || B) {
+  const P = noteN('pr') + pr1 + p2.reduce((t, x) => t + x.pr, 0), PA = ck.flu.pause, B = ck.flu.block;
+  if (s.mods.length || guide || exAll.length || P || PA || B || lvl || becBad) {
     // le frasi per tipo (2 per have to/must, mustn't, don't have to) pesano sulla Grammatica, non qui
     // because nella Parte 1: per il 5 almeno 2 frasi con because (o tutte, se ne dice meno di 2);
     // anche uno solo → 4 («almeno qualche volta»); mai, né nella Parte 1 né nella 2, con 4+ frasi → 3
     const becOk = !s.mods.length || bec1 >= Math.min(2, s.mods.length);
     let v = 5;
-    if (guide >= 1 || exHelp || P >= 1 || PA >= 2 || !becOk) v = 4;
-    if (guide >= 2 || exBad || B >= 1 || P >= 3 || PA >= 4 || (s.mods.length >= 4 && !bec)) v = 3;
+    if (guide >= 1 || exHelp || P >= 1 || PA >= 2 || !becOk || becBad >= 1 || lvl === 2) v = 4;
+    if (guide >= 2 || exBad || B >= 1 || P >= 3 || PA >= 4 || (s.mods.length >= 4 && !bec) || becBad >= 3 || lvl === 3) v = 3;
     if (guide >= 4 || (guide >= 2 && !bec) || B >= 2 || P >= 5 || PA >= 6 || (s.mods.length && s.mods.length <= 2)) v = 2;
     if (B >= 4 || (s.mods.length <= 1 && guide >= 3)) v = 1;
-    H[2] = { v, why: `Parte 1: ${pl(s.mods.length, 'frase', 'frasi')} · because ×${bec} (Parte 1: ${bec1}, Parte 2: ${bec2}) · domande guida ×${guide}${exAll.length ? ` · domande extra ${exSum(exAll)}` : ''} · pronuncia ×${P} · esitazioni ×${PA} · blocchi ×${B}` };
+    H[2] = { v, why: `Parte 1: ${pl(s.mods.length, 'frase', 'frasi')} · because ×${bec} (Parte 1: ${bec1}, Parte 2: ${bec2})${becBad ? ` · because senza senso ×${becBad}` : ''} · domande guida ×${guide}${exAll.length ? ` · domande extra ${exSum(exAll)}` : ''} · pronuncia ×${P}${lvl ? ` · fluidità: ${FLU_TXT[lvl]}` : ''} · esitazioni ×${PA} · blocchi ×${B}` };
   }
   return H;
 }
@@ -1012,7 +1067,7 @@ function applyHints() {
 function renderSummary() {
   if (!twOpen()) return;
   applyHints();
-  const l1 = p1Line(true), l2 = p2Line(true);
+  const l1 = [p1Line(true), p1Detail(true)].filter(Boolean).join('<br>'), l2 = [p2Line(true), p2Detail(true)].filter(Boolean).join('<br>');
   const hints = GRID.aree.map((a, i) => lastHints[i] ? `${SHORT[i]}: <span class="sg">${lastHints[i].v}</span>${rubManual[i] && rub[i] !== lastHints[i].v ? ' <span style="color:#97a3bd">(in griglia hai messo ' + rub[i] + ')</span>' : ''} <span style="color:#97a3bd">(${esc(lastHints[i].why)})</span>` : '').filter(Boolean);
   const show = l1 || l2 || hints.length;
   tw('t-sum').innerHTML = show ? `<div class="sum">${l1 ? `<div>${l1}</div>` : ''}${l2 ? `<div>${l2}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori · già messi in griglia</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
@@ -1024,7 +1079,8 @@ function renderNotes() {
   tw('t-ner').innerHTML = noteChips('er', NOTE_ER, chip);
   const all = ['pr', 'er'].flatMap(g => ck.notes[g].map((x, i) => `<span class="${g}">${g === 'pr' ? '🔊' : '✏️'} ${esc(x.t)}${x.n > 1 ? ' ×' + x.n : ''}<button data-act="ntx" data-g="${g}" data-i="${i}" title="Togli uno">✕</button></span>`));
   tw('t-nl').innerHTML = all.length ? all.join('') : '';
-  tw('t-flu').innerHTML = cntBox('pause', 'esitazioni / pause', ck.flu.pause) + cntBox('block', 'si blocca', ck.flu.block);
+  const fl = (v, t, c) => `<button class="cy ${ck.flu.lvl === v ? c : 'n'}" data-act="fl" data-v="${v}" title="Fluidità generale (clic di nuovo per togliere)">${t}</button>`;
+  tw('t-flu').innerHTML = `<span class="flv">${fl(1, '🟢 fluido', 'ok')}${fl(2, '🟡 qualche pausa', 'bad')}${fl(3, '🔴 molte pause', 'no')}</span>` + cntBox('pause', 'esitazioni / pause', ck.flu.pause) + cntBox('block', 'si blocca', ck.flu.block);
 }
 // Note aggiunte scrivendole (anche più di una, separate da virgola): diventano pulsanti
 // come quelli proposti e restano su questo computer per i prossimi alunni
@@ -1069,10 +1125,14 @@ function onCkClick(act, b) {
   const k = b.dataset.k, i = +b.dataset.i;
   if (act === 'c1') {
     if (ck.p1[k]) delete ck.p1[k];
-    else ck.p1[k] = { v: 0, m: b.dataset.m || 'have to' };
+    else ck.p1[k] = { v: 0, m: b.dataset.m || 'have to', o: ++ck.seq };
   } else if (act === 'cv') { const ok = allChores().find(x => x[0] === k)[2]; ck.p1[k].v = (ck.p1[k].v + 1) % verbOpts(ok).length; }
   else if (act === 'cm') ck.p1[k].m = MODS[(MODS.indexOf(ck.p1[k].m) + 1) % MODS.length];
-  else if (act === 'cb') { const x = b.dataset.x ? ck.p1x[i] : ck.p1[k]; if (x) x.b = !x.b; }
+  else if (act === 'cb' || act === 'cf' || act === 'cp') {
+    const x = b.dataset.x ? ck.p1x[i] : ck.p1[k]; if (!x) return true;
+    if (act === 'cb') x.b = (becOf(x.b) + 1) % 4; else if (act === 'cf') x.f = !x.f; else x.p = !x.p;
+  }
+  else if (act === 'fl') { const v = +b.dataset.v; ck.flu.lvl = ck.flu.lvl === v ? 0 : v; }
   else if (act === 'cxm') ck.p1x[i].m = MODS[(MODS.indexOf(ck.p1x[i].m) + 1) % MODS.length];
   else if (act === 'cxdel') ck.p1x.splice(i, 1);
   else if (act === 'cxadd') { addCustom(); return true; }
@@ -1090,7 +1150,8 @@ function onCkClick(act, b) {
     if (st.rows[i] > 3) delete st.rows[i];
     const it = state.card.items[i];
     if (st.rows[i] !== undefined && p2Status(it, p2Order(it.t)[st.rows[i]]) === 'sw' && !swapCap) { swapCap = true; if (rub[0] > 3) rub[0] = 3; renderTeacherRubric(); twMsg("Scambio mustn't / don't have to: Grammatica al massimo 3"); }
-  } else if (act === 'b2') { const st = p2Of(state.card.id); st.bec[i] = !st.bec[i]; }
+  } else if (act === 'b2') { const st = p2Of(state.card.id); st.bec[i] = (becOf(st.bec[i]) + 1) % 4; }
+  else if (act === 'f2' || act === 'p2') { const st = p2Of(state.card.id), o = act === 'f2' ? (st.form = st.form || {}) : (st.pr = st.pr || {}); o[i] = !o[i]; }
   else if (act === 'ex') ck.ex[k] = ((ck.ex[k] || 0) + 1) % 4;
   else if (act === 'nadd') { addTyped(b.dataset.g); return true; }
   else if (act === 'nedit') { NOTE_EDIT[b.dataset.g] = !NOTE_EDIT[b.dataset.g]; renderNotes(); return true; }
@@ -1103,7 +1164,7 @@ function onCkClick(act, b) {
 }
 function addCustom() {
   const el = tw('t-add'), t = el.value.trim(); if (!t) { el.focus(); return; }
-  ck.p1x.push({ t, m: "mustn't" });
+  ck.p1x.push({ t, m: "mustn't", o: ++ck.seq });
   ckChanged();
   if (twOpen()) tw('t-add').focus();
 }
@@ -1113,7 +1174,7 @@ function addMine() {
   const sp = t.indexOf(' '), verb = (sp > 0 ? t.slice(0, sp) : t).toLowerCase(), obj = sp > 0 ? t.slice(sp + 1) : '';
   let x = allChores().find(c => c[2].includes(verb) && c[1].toLowerCase() === obj.toLowerCase());
   if (!x) { x = ['u' + Date.now().toString(36), obj, [verb]]; CK_MINE.push(x); saveMine(); }
-  if (!ck.p1[x[0]]) ck.p1[x[0]] = { v: 0, m: 'have to' };
+  if (!ck.p1[x[0]]) ck.p1[x[0]] = { v: 0, m: 'have to', o: ++ck.seq };
   ckChanged();
   if (twOpen()) tw('t-addc').focus();
 }
@@ -1165,10 +1226,10 @@ label.cap{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:#ff
 table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}table.sv td,table.sv th{text-align:left;padding:5px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}table.sv th{color:#97a3bd;font-size:11px;text-transform:uppercase}td.v{font-weight:800;color:#ffd166}
 .x{background:none;border:none;color:#97a3bd;padding:0 4px}.empty{color:#97a3bd;font-style:italic}
 .ckh{font-size:12px;color:#97a3bd;font-weight:700;margin:12px 0 5px}.ckh small{font-weight:500}
-.ck{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:5px}
-.cr{display:flex;gap:4px;align-items:center;background:#161e2e;border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:3px}
+.ck{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:5px}
+.cr{display:flex;flex-wrap:wrap;gap:4px;align-items:center;background:#161e2e;border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:3px}
 .cr.on{border-color:rgba(91,227,154,.6);background:rgba(47,191,113,.1)}
-.cr .lb{flex:1;text-align:left;background:none;border:none;padding:5px 6px;font-weight:600;color:#b9c3d6;font-size:13px}
+.cr .lb{flex:1 1 150px;text-align:left;background:none;border:none;padding:5px 6px;font-weight:600;color:#b9c3d6;font-size:13px}
 .cr.on .lb{color:#fff}.cr .lb b{color:#8db6ff}
 .cy{padding:4px 7px;font-size:12px;border-radius:7px;white-space:nowrap}
 .cy.ok{background:rgba(47,191,113,.28);color:#7cf0b0;border-color:transparent}.cy.bad{background:rgba(255,181,71,.25);color:#ffcf8a;border-color:transparent}
@@ -1184,6 +1245,9 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
 .chips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}.chips button{font-size:12px;padding:4px 8px;font-weight:600;opacity:.78}.chips button.on{opacity:1;background:#e63e62;color:#fff;border-color:transparent;outline:none}.chips button.x{opacity:1}.chips .ned{background:none;border:1px dashed rgba(255,255,255,.25);font-weight:500;opacity:.8}
 .nl{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}.nl span{background:#26324a;border-radius:7px;padding:3px 4px 3px 8px;font-size:12.5px}.nl span.er{background:#3a2632}
 .nl span button{background:none;border:none;color:#97a3bd;padding:0 4px;font-size:12px}
+textarea{width:100%;background:#1a2234;border:1px solid rgba(255,255,255,.12);color:#eef2f8;font-family:inherit;font-size:14px;padding:8px 10px;border-radius:9px;resize:vertical}textarea:focus{outline:none;border-color:#3ec6ff}
+.imp{margin:10px 0 0;padding:9px 11px;border-radius:12px;background:#161e2e;border:1px solid rgba(62,198,255,.35)}.imp .ckh{margin:0 0 5px}
+.flv{display:inline-flex;gap:4px;flex-wrap:wrap}.flv .cy{font-size:12.5px;padding:5px 9px}
 .nin{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}.nin input{font-size:13px;padding:6px 9px}.nadd{display:flex;gap:4px}.nadd input{flex:1;min-width:0}.nadd button{padding:4px 11px;font-size:16px;line-height:1}@media (max-width:560px){.nin{grid-template-columns:1fr}}
 </style></head><body>
 <h1>🖥️ Finestra docente · Rules &amp; Obligations</h1>
@@ -1191,22 +1255,23 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
 <div class="tmr"><span class="tv" id="t-timer">2:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia</button><button data-act="treset" title="Azzera">↺</button><span class="tl" id="t-tlbl"></span></div>
 <div class="bar"><button class="or" data-act="p1">🏠 Parte 1 · Chores</button><button class="pri" data-act="draw">🎴 Pesca a caso</button></div>
 <div class="bar" id="t-cards" style="margin-top:6px"></div>
+<div class="imp"><div class="ckh">📝 Impressioni generali · 🗣️ fluidità <small>(vale per tutta la prova; va nella nota e nel promemoria di MyClass)</small></div>
+<textarea id="t-note" rows="2" placeholder="Impressioni, note generali sull'alunno…" autocomplete="off"></textarea>
+<div class="cnts" id="t-flu"></div></div>
 <h2 id="t-h">Soluzioni</h2><div id="t-sol"></div>
-<h2>📋 Riepilogo di quello che hai spuntato</h2><div id="t-sum"></div>
-<h2>Valutazione · /15</h2>
-<div class="fields"><input id="t-name" placeholder="Nome dello studente" autocomplete="off"><input id="t-class" placeholder="Classe (es. 3C)" autocomplete="off"></div>
-<div id="t-rub"></div>
 <h2>🗒️ Note veloci · pronuncia ed errori</h2>
-<div class="cnts" id="t-flu" style="margin:0 0 4px"></div>
 <div class="ckh">🔊 Pronuncia <small>(un clic = annotato, di nuovo = ×2)</small></div><div class="chips" id="t-npr"></div>
 <div class="ckh">✏️ Errori</div><div class="chips" id="t-ner"></div>
 <div class="nin"><div class="nadd"><input id="t-inpr" placeholder="🔊 Altre parole pronunciate male (separate da virgola)" autocomplete="off"><button data-act="nadd" data-g="pr" title="Aggiungi (anche più di una, separate da virgola)">＋</button></div><div class="nadd"><input id="t-iner" placeholder="✏️ Altri errori sentiti (separati da virgola)" autocomplete="off"><button data-act="nadd" data-g="er" title="Aggiungi (anche più di uno, separati da virgola)">＋</button></div></div>
 <div class="sub" style="margin:0 0 4px">Clicca solo quello che sbaglia (diventa rosso): il resto vuol dire che è andato bene. Le voci che aggiungi diventano pulsanti e restano per i prossimi alunni, non segnate.</div>
 <div class="nl" id="t-nl"></div>
+<h2>📋 Riepilogo di quello che hai spuntato</h2><div id="t-sum"></div>
+<h2>Valutazione · /15</h2>
+<div class="fields"><input id="t-name" placeholder="Nome dello studente" autocomplete="off"><input id="t-class" placeholder="Classe (es. 3C)" autocomplete="off"></div>
+<div id="t-rub"></div>
 <div class="link" id="t-link">🔗 I punteggi vanno anche nella LIVE di MyClass, se è aperta su questo computer.</div>
 <div class="tot"><span class="v" id="t-voto">–</span><span class="p" id="t-pts">Scegli un punteggio per ogni area</span></div>
-<input id="t-note" placeholder="Altra nota (facoltativa)" autocomplete="off">
-<div class="sub" style="margin:5px 0 0">Riepilogo, pronuncia, errori e nota vanno insieme nella nota del voto e nel promemoria della LIVE di MyClass.</div>
+<div class="sub" style="margin:5px 0 0">Impressioni, frasi spuntate (con because, forma e pronuncia), note veloci e fluidità vanno insieme nella nota del voto e nel promemoria della LIVE di MyClass.</div>
 <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva e prossimo</button><button data-act="reset">↺ Azzera</button></div>
 <div class="msg" id="t-msg"></div>
 <h2>Voti salvati</h2>
@@ -1271,7 +1336,7 @@ function updateTeacherWin() {
     const v = st.rows[i];
     const m = v === undefined ? null : p2Order(it.t)[v];
     const cls = m ? { ok: 'ok', sw: 'sw', no: 'bad' }[p2Status(it, m)] : 'n';
-    return `<div class="r2">${cyBtn('r2', `data-i="${i}"`, cls, m ? (cls === 'ok' ? '✔ ' : cls === 'sw' ? '⇄ ' : '✖ ') + esc(m) : '— modale detto?', 'Clic finché non c\'è il modale che ha detto · ancora = non detta')}${cyBtn('b2', `data-i="${i}"`, st.bec[i] ? 'ok' : 'n', st.bec[i] ? '✔ because' : 'because?', 'Ha spiegato il perché')}</div>`;
+    return `<div class="r2">${cyBtn('r2', `data-i="${i}"`, cls, m ? (cls === 'ok' ? '✔ ' : cls === 'sw' ? '⇄ ' : '✖ ') + esc(m) : '— modale detto?', 'Clic finché non c\'è il modale che ha detto · ancora = non detta')}${becBtn('b2', `data-i="${i}"`, st.bec[i])}${formBtn('f2', `data-i="${i}"`, st.form && st.form[i])}${prBtn('p2', `data-i="${i}"`, st.pr && st.pr[i])}</div>`;
   };
   tw('t-sol').innerHTML = `<div class="cur">${c.n}. ${esc(c.title)}</div><table class="sol">${c.items.map((it, i) => `<tr class="${it.t}"><td>${promptHTML(it)}${it.it ? `<div class="md">(${esc(it.it)})</div>` : ''}</td><td><span class="k">${TYPE[it.t].sym} ${TYPE[it.t].mod.toUpperCase()}</span><div class="md">${esc(model(it, { both: true }))}</div>${rowCk(it, i)}</td></tr>`).join('')}</table>
     <div class="cnts">${cntBox('g2', 'domande guida', st.guide)}${cntBox('m2', 'chiede il significato di una parola', st.mean || 0)}</div>

@@ -1667,21 +1667,27 @@ const WS_LBL = ['— is wearing?', '✓ is wearing', '✗ manca is (she wearing)
 const WQ_LBL = ['— risposta?', '✓ giusta', '~ con aiuto', '✗ sbagliata'], WQ_CLS = ['n', 'ok', 'bad', 'no'];
 const NOTE_PR = ['clothes /kləʊðz/', 'wearing /ˈweərɪŋ/', '-ing finale', 'jeans', 'shoes', 'trousers', 'jacket', 'T-shirt', 'trainers', 'socks (-s finale)', 'purple', 'orange', 'pronuncia all\'italiana'];
 const NOTE_ER = ['she wearing (manca is)', 'he wear / wears', 'they is', '-ing mancante', 'present simple al posto del continuous', INV_NOTE, ART_NOTE, 'colore al plurale (reds)', 'he / she scambiati', 'parola in italiano'];
-const wkNew = () => ({ cur: {}, q: 0, done: [], qDone: [], guide: 0, pause: 0, block: 0, notes: { pr: [], er: [] }, av: {} });
+const wkNew = () => ({ cur: {}, q: 0, done: [], qDone: [], guide: 0, pause: 0, block: 0, lvl: 0, notes: { pr: [], er: [] }, av: {} });
+// fluidità generale (segnata in alto nella finestra docente): 1 fluido · 2 qualche pausa · 3 molte pause
+const FLU_TXT = ['', 'fluido', 'qualche pausa', 'molte pause'];
+// come esitazioni contate: qualche pausa = almeno 2, molte pause = almeno 4
+const fluHs = (pause, lvl) => Math.max(pause, lvl === 3 ? 4 : lvl === 2 ? 2 : 0);
 // Capi a disposizione: tutti i personaggi delle scene in cui hai spuntato qualcosa (anche quelli che non ha
 // descritto), ognuno contato una volta sola anche se cambi un capo. { chiave: { tot, types } }
 const avKey = c => c.name + '|' + worn(c).map(w => w.type + ':' + w.color).join(',');
 function avAdd(map) { if (Object.keys(wk.cur).length) state.chars.forEach(c => { map[avKey(c)] = { tot: worn(c).length, types: worn(c).map(w => FEET.has(w.type) ? 'feet' : w.type) }; }); return map; }
 let wk = wkNew();
-// cur[i] = { it: { slot: 0-3 }, a: 0-3, s: 0-4 } per il personaggio i della scena attuale
-const wkChar = i => wk.cur[i] || (wk.cur[i] = { it: {}, a: 0, s: 0 });
+// cur[i] = { it: { slot: 0-5 }, a: 0-3, s: 0-4, p: pronuncia sbagliata } per il personaggio i della scena attuale
+const wkChar = i => wk.cur[i] || (wk.cur[i] = { it: {}, a: 0, s: 0, p: false });
+// quello che è stato spuntato su un personaggio, con nome, capi e azione (per il dettaglio nella nota)
+const wkEntry = (c, x) => ({ name: c.name, act: ACTIONS[c.action].ing, items: worn(c).filter(w => x.it[w.slot]).map(w => ({ type: w.type, color: w.color, v: x.it[w.slot] })), a: x.a, s: x.s, p: !!x.p, tot: worn(c).length });
 // porta nel conteggio quello che è spuntato sulla scena attuale (prima di cambiarla)
 function wkFold() {
   avAdd(wk.av);
   Object.keys(wk.cur).forEach(i => {
     const c = state.chars[i], x = wk.cur[i]; if (!c) return;
-    const items = worn(c).filter(w => x.it[w.slot]).map(w => ({ type: w.type, v: x.it[w.slot] }));
-    if (items.length || x.a || x.s) wk.done.push({ items, a: x.a, s: x.s, tot: worn(c).length });
+    const e = wkEntry(c, x);
+    if (e.items.length || x.a || x.s || x.p) wk.done.push(e);
   });
   if (wk.q) wk.qDone.push(wk.q);
   wk.cur = {}; wk.q = 0;
@@ -1690,7 +1696,7 @@ function wkStats() {
   const all = wk.done.slice();
   Object.keys(wk.cur).forEach(i => {
     const c = state.chars[i], x = wk.cur[i]; if (!c) return;
-    all.push({ items: worn(c).filter(w => x.it[w.slot]).map(w => ({ type: w.type, v: x.it[w.slot] })), a: x.a, s: x.s, tot: worn(c).length });
+    all.push(wkEntry(c, x));
   });
   const items = all.flatMap(x => x.items);
   // con l'articolo sbagliato capo e colore restano detti: contano tra i capi, l'articolo è un'imprecisione
@@ -1707,7 +1713,7 @@ function wkStats() {
     aOk: cnt(acts, 1), aForm: cnt(acts, 2), aLex: cnt(acts, 3), sOk: cnt(strs, 1), sErr: strs.filter(v => v > 1).length,
     sDet: [2, 3, 4].filter(v => cnt(strs, v)).map(v => WS_LBL[v].replace('✗ ', '') + (cnt(strs, v) > 1 ? ' ×' + cnt(strs, v) : '')),
     q, chars: all.length, tot: all.reduce((t, x) => t + (x.tot || 0), 0), aSaid: all.filter(x => x.a).length,
-    pr: wk.notes.pr.reduce((t, x) => t + x.n, 0),
+    pr: wk.notes.pr.reduce((t, x) => t + x.n, 0), prChars: all.filter(x => x.p).length,
     ...errCounts({ mi: cnt(strs, 2), ww: cnt(strs, 3), ti: cnt(strs, 4), form: cnt(acts, 2), col: cnt(items.map(x => x.v), 2), word: cnt(items.map(x => x.v), 5), aLex: cnt(acts, 3) },
       t => wk.notes.er.filter(x => x.t === t).reduce((a, x) => a + x.n, 0)) };
 }
@@ -1720,15 +1726,31 @@ function wkLine(html) {
   if (s.aOk + s.aForm + s.aLex) parts.push(`azioni ✓${s.aOk}` + (s.aForm ? ` · forma ✗${s.aForm}` : '') + (s.aLex ? ` · lessico ✗${s.aLex}` : ''));
   if (s.sOk + s.sErr) parts.push('is wearing' + (s.sOk ? ` ✓${s.sOk}` : '') + (s.sErr ? ` ✗ ${s.sDet.join(', ')}` : ''));
   if (s.q.length) { const c = v => s.q.filter(x => x === v).length; parts.push('domande ' + [c(1) && `✓${c(1)}`, c(2) && `~${c(2)}`, c(3) && `✗${c(3)}`].filter(Boolean).join(' ')); }
+  if (s.prChars) parts.push(`pronuncia ✗ in ${s.prChars} ${s.prChars === 1 ? 'descrizione' : 'descrizioni'}`);
   if (wk.guide) parts.push(`domande guida ×${wk.guide}`);
   if (wk.pause) parts.push(`esitazioni ×${wk.pause}`);
   if (wk.block) parts.push(`blocchi ×${wk.block}`);
   return parts.join(' · ');
 }
+// Dettaglio personaggio per personaggio di quello che hai spuntato (capi, azione, is wearing, pronuncia).
+// Niente « · » né « | » dentro: la rivalutazione (parseNote) legge i conteggi dalla riga di wkLine.
+const WI_TXT = ['', '✓', 'colore sbagliato', 'articolo sbagliato', 'colore dopo il nome', 'parola sbagliata'];
+function wkDetail(html) {
+  const all = wk.done.slice();
+  Object.keys(wk.cur).forEach(i => { const c = state.chars[i]; if (c) all.push(wkEntry(c, wk.cur[i])); });
+  const r = all.filter(e => e.name && (e.items.length || e.a || e.s || e.p)).map(e => {
+    const parts = e.items.map(it => `${phrase(it.type, it.color).replace(/^an? /, '')} ${WI_TXT[it.v]}`);
+    if (e.a) parts.push(`azione ${e.act} ${e.a === 1 ? '✓' : WA_LBL[e.a]}`);
+    if (e.s) parts.push(e.s === 1 ? 'is wearing ✓' : 'is wearing ' + WS_LBL[e.s]);
+    if (e.p) parts.push('pronuncia ✗');
+    return `${html ? `<b>${esc(e.name)}</b>` : e.name}: ${parts.join(', ')}`;
+  });
+  return r.length ? 'Descrizioni: ' + r.join('; ') : '';
+}
 const noteList = g => wk.notes[g].map(x => x.t + (x.n > 1 ? ' ×' + x.n : '')).join(', ');
 function composeNote() {
   const free = twOpen() ? tw('t-note').value.trim() : '';
-  return [wkLine(false), wk.notes.pr.length && 'Pronuncia: ' + noteList('pr'), wk.notes.er.length && 'Errori: ' + noteList('er'), help.class && '💡 con esempi', free].filter(Boolean).join(' | ');
+  return [wkLine(false), wkDetail(false), wk.notes.pr.length && 'Pronuncia: ' + noteList('pr'), wk.notes.er.length && 'Errori: ' + noteList('er'), help.class && '💡 con esempi', wk.lvl && 'Fluidità: ' + FLU_TXT[wk.lvl], free && 'Impressioni: ' + free].filter(Boolean).join(' | ');
 }
 // ── Punteggi delle voci dai conteggi (usati dai suggerimenti dal vivo e dalla rivalutazione) ──
 // note di errore che contano sul present continuous e sul lessico
@@ -1821,10 +1843,10 @@ function computeHints() {
   const pcE = s.pcE, pcOk = s.sOk + s.aOk;
   if (pcE + pcOk) H.pc = { v: pcScore(pcE, pcOk), why: `errori ×${pcE}${s.pcNote ? ` (di cui ${s.pcNote} dalle note)` : ''} · frasi giuste ✓${pcOk}` };
   // Pronuncia e fluenza /4: note di pronuncia + esitazioni + blocchi
-  if (line || s.pr) {
-    const P = s.pr, Hs = wk.pause, B = wk.block;
+  if (line || s.pr || wk.lvl) {
+    const P = s.pr + s.prChars, Hs = fluHs(wk.pause, wk.lvl), B = wk.block;
     H.pro = { v: proScore(P, Hs, B),
-      why: `${P} ${P === 1 ? 'errore' : 'errori'} di pronuncia annotati · ${Hs} ${Hs === 1 ? 'esitazione' : 'esitazioni'} · ${B} ${B === 1 ? 'blocco' : 'blocchi'}${!P && !Hs && !B ? ' — se ne senti, segnali con i contatori e le note' : ''}` };
+      why: `${P} ${P === 1 ? 'errore' : 'errori'} di pronuncia annotati${s.prChars ? ` (${s.prChars} accanto ai personaggi)` : ''}${wk.lvl ? ` · fluidità: ${FLU_TXT[wk.lvl]}` : ''} · ${wk.pause} ${wk.pause === 1 ? 'esitazione' : 'esitazioni'} · ${B} ${B === 1 ? 'blocco' : 'blocchi'}${!P && !Hs && !B ? ' — se ne senti, segnali con i contatori e le note' : ''}` };
   }
   return H;
 }
@@ -1844,7 +1866,7 @@ function applyHints() {
 function renderSummary() {
   if (!twOpen()) return;
   applyHints();
-  const line = wkLine(true), grey = t => ` <span style="color:#a49cbd">(${t})</span>`;
+  const line = [wkLine(true), wkDetail(true)].filter(Boolean).join('<br>'), grey = t => ` <span style="color:#a49cbd">(${t})</span>`;
   const hints = RUBRIC.map(r => { const h = lastHints[r.id]; return h ? `${r.name.replace(/ \(.*\)$/, '')}: <span class="sg">${h.v}</span>${rubManual[r.id] && rub[r.id] !== h.v ? grey('in griglia hai messo ' + rub[r.id]) : ''}${grey(esc(h.why))}` : ''; }).filter(Boolean);
   tw('t-sum').innerHTML = (line || hints.length) ? `<div class="sum">${line ? `<div>${line}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori · già messi in griglia</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
 }
@@ -1855,7 +1877,9 @@ function renderNotes() {
   tw('t-ner').innerHTML = noteChips('er', NOTE_ER, chip);
   tw('t-nl').innerHTML = ['pr', 'er'].flatMap(g => wk.notes[g].map((x, i) => `<span class="${g}">${g === 'pr' ? '🔊' : '✏️'} ${esc(x.t)}${x.n > 1 ? ' ×' + x.n : ''}<button data-act="ntx" data-g="${g}" data-i="${i}" title="Togli uno">✕</button></span>`)).join('');
   const cnt = (k, lbl, title) => `<span class="cnt" title="${title}">${lbl} <b>${wk[k]}</b><button data-act="gd" data-k="${k}" data-d="-1" title="Togli">−</button><button data-act="gd" data-k="${k}" data-d="1" title="Aggiungi">+</button></span>`;
-  tw('t-cnts').innerHTML = cnt('guide', 'domande guida', 'Ogni volta che devi aiutarlo con una domanda') + cnt('pause', 'esitazioni / pause', 'Pause lunghe, ripartenze, ehm…') + cnt('block', 'si blocca', 'Si ferma e non riparte da solo');
+  tw('t-cnts').innerHTML = cnt('guide', 'domande guida', 'Ogni volta che devi aiutarlo con una domanda');
+  const fl = (v, t, c) => `<button class="cy ${wk.lvl === v ? c : 'n'}" data-act="fl" data-v="${v}" title="Fluidità generale (clic di nuovo per togliere)">${t}</button>`;
+  tw('t-flu').innerHTML = `<span class="flv">${fl(1, '🟢 fluido', 'ok')}${fl(2, '🟡 qualche pausa', 'bad')}${fl(3, '🔴 molte pause', 'no')}</span>` + cnt('pause', 'esitazioni / pause', 'Pause lunghe, ripartenze, ehm…') + cnt('block', 'si blocca', 'Si ferma e non riparte da solo');
 }
 // Note aggiunte scrivendole (anche più di una, separate da virgola): diventano pulsanti
 // come quelli proposti e restano su questo computer per i prossimi alunni
@@ -1899,6 +1923,8 @@ function onCkClick(act, b) {
   if (act === 'wi') { const x = wkChar(i); x.it[b.dataset.s] = ((x.it[b.dataset.s] || 0) + 1) % WI_LBL.length; }
   else if (act === 'wa') { const x = wkChar(i); x.a = (x.a + 1) % WA_LBL.length; }
   else if (act === 'ws') { const x = wkChar(i); x.s = (x.s + 1) % WS_LBL.length; }
+  else if (act === 'wp') { const x = wkChar(i); x.p = !x.p; }
+  else if (act === 'fl') { const v = +b.dataset.v; wk.lvl = wk.lvl === v ? 0 : v; }
   else if (act === 'wq') wk.q = (wk.q + 1) % WQ_LBL.length;
   else if (act === 'gd') { const k = b.dataset.k || 'guide'; wk[k] = Math.max(0, wk[k] + +b.dataset.d); }
   else if (act === 'nadd') { addTyped(b.dataset.g); return true; }
@@ -1916,9 +1942,9 @@ function onTeacherKey(e) {
 }
 // capi + azione + struttura da spuntare sotto la descrizione di ogni personaggio
 function ckRow(c, i) {
-  const x = wk.cur[i] || { it: {}, a: 0, s: 0 };
+  const x = wk.cur[i] || { it: {}, a: 0, s: 0, p: false };
   const its = worn(c).map(w => { const v = x.it[w.slot] || 0; return `<button class="cy ${WI_CLS[v]}" data-act="wi" data-i="${i}" data-s="${w.slot}" title="${WI_TITLE}">${WI_LBL[v]}${esc(phrase(w.type, w.color).replace(/^an? /, ''))}</button>`; }).join('');
-  return `<div class="ckr">${its}</div><div class="ckr"><button class="cy ${WA_CLS[x.a]}" data-act="wa" data-i="${i}" title="Clic finché non c'è quello che ha detto">${x.a === 1 ? '✓ ' + esc(ACTIONS[c.action].ing) : x.a ? WA_LBL[x.a] : '— ' + esc(ACTIONS[c.action].ing) + '?'}</button><button class="cy ${WS_CLS[x.s]}" data-act="ws" data-i="${i}" title="Clic finché non c'è quello che ha detto">${WS_LBL[x.s]}</button></div>`;
+  return `<div class="ckr">${its}</div><div class="ckr"><button class="cy ${WA_CLS[x.a]}" data-act="wa" data-i="${i}" title="Clic finché non c'è quello che ha detto">${x.a === 1 ? '✓ ' + esc(ACTIONS[c.action].ing) : x.a ? WA_LBL[x.a] : '— ' + esc(ACTIONS[c.action].ing) + '?'}</button><button class="cy ${WS_CLS[x.s]}" data-act="ws" data-i="${i}" title="Clic finché non c'è quello che ha detto">${WS_LBL[x.s]}</button><button class="cy ${x.p ? 'no' : 'n'}" data-act="wp" data-i="${i}" title="Pronuncia sbagliata in questa descrizione? clic: sì / no (le parole precise puoi segnarle nelle note veloci qui sotto)">${x.p ? '🔊 pronuncia ✗' : '🔊 pronuncia'}</button></div>`;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1987,6 +2013,9 @@ td.v{font-weight:800;color:#ffd166}
 .nl span button{background:none;border:none;color:#a49cbd;padding:0 4px;font-size:12px}
 .nin{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}.nin input{font-size:13px;padding:6px 9px}.nadd{display:flex;gap:4px}.nadd input{flex:1;min-width:0}.nadd button{padding:4px 11px;font-size:16px;line-height:1}@media (max-width:560px){.nin{grid-template-columns:1fr}}
 .cnts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+textarea{width:100%;background:#231d36;border:1px solid rgba(255,255,255,.12);color:#efeaf7;font-family:inherit;font-size:14px;padding:8px 10px;border-radius:9px;resize:vertical}textarea:focus{outline:none;border-color:#3ec6ff}
+.imp{margin:12px 0 0;padding:9px 11px;border-radius:12px;background:#1d1830;border:1px solid rgba(62,198,255,.35)}.imp .ckh{margin:0 0 5px}
+.flv{display:inline-flex;gap:4px;flex-wrap:wrap}.flv .cy{font-size:12.5px;padding:5px 9px}
 .cnt{display:inline-flex;align-items:center;gap:5px;background:#1d1830;border:1px solid rgba(255,255,255,.1);border-radius:9px;padding:3px 4px 3px 9px;font-size:12.5px}
 .cnt b{min-width:16px;text-align:center;color:#ffd166}.cnt button{padding:2px 8px;font-size:13px}
 </style></head><body>
@@ -1995,25 +2024,27 @@ td.v{font-weight:800;color:#ffd166}
 <div class="tmr"><span class="tv" id="t-timer">3:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia 3:00</button><button data-act="treset" title="Azzera il timer">↺</button><span class="tl" id="t-tlbl">Tempo per l'interrogazione</span></div>
 <div class="bar"><button class="pri" data-act="new">🎲 Nuova scena</button><button data-act="q">❓ Nuova domanda</button></div>
 <div class="bar" style="margin-top:8px;align-items:center"><button id="t-help" data-act="help">💡 Mostra gli esempi alla LIM</button><span class="tl" id="t-help-st"></span></div>
+<div class="imp"><div class="ckh">📝 Impressioni generali · 🗣️ fluidità <small>(vanno nella nota e nel promemoria di MyClass)</small></div>
+<textarea id="t-note" rows="2" placeholder="Impressioni, note generali sull'alunno…" autocomplete="off"></textarea>
+<div class="cnts" id="t-flu"></div></div>
 <h2>Descrizione giusta · spunta quello che dice</h2>
-<div class="sub" style="margin:0 0 4px">Clic su un capo quando lo dice: ✓ giusto → 🎨 colore sbagliato → 🔤 articolo sbagliato (<i>a black shoes</i>, <i>a orange T-shirt</i>) → ↔️ colore dopo il nome (<i>a T-shirt red</i>) → ✗ parola sbagliata → di nuovo vuoto. Azione e <i>is wearing</i>: clic finché non c'è quello che ha detto.</div>
+<div class="sub" style="margin:0 0 4px">Clic su un capo quando lo dice: ✓ giusto → 🎨 colore sbagliato → 🔤 articolo sbagliato (<i>a black shoes</i>, <i>a orange T-shirt</i>) → ↔️ colore dopo il nome (<i>a T-shirt red</i>) → ✗ parola sbagliata → di nuovo vuoto. Azione e <i>is wearing</i>: clic finché non c'è quello che ha detto. <b>🔊</b> = pronuncia sbagliata in quella descrizione.</div>
 <div id="t-desc"></div>
 <h2>Domanda alla LIM</h2><div id="t-q"></div>
 <div class="cnts" id="t-cnts"></div>
-<h2>📋 Riepilogo di quello che hai spuntato</h2><div id="t-sum"></div>
-<h2>Valutazione · /16</h2>
-<div class="fields"><input id="t-name" placeholder="Nome dello studente" autocomplete="off"><input id="t-class" placeholder="Classe (es. 2B)" autocomplete="off"></div>
-<div id="t-rub"></div>
 <h2>🗒️ Note veloci · pronuncia ed errori</h2>
 <div class="ckh">🔊 Pronuncia <small>(un clic = annotato, di nuovo = ×2)</small></div><div class="chips" id="t-npr"></div>
 <div class="ckh">✏️ Errori</div><div class="chips" id="t-ner"></div>
 <div class="nin"><div class="nadd"><input id="t-inpr" placeholder="🔊 Altre parole pronunciate male (separate da virgola)" autocomplete="off"><button data-act="nadd" data-g="pr" title="Aggiungi (anche più di una, separate da virgola)">＋</button></div><div class="nadd"><input id="t-iner" placeholder="✏️ Altri errori sentiti (separati da virgola)" autocomplete="off"><button data-act="nadd" data-g="er" title="Aggiungi (anche più di uno, separati da virgola)">＋</button></div></div>
 <div class="sub" style="margin:0 0 4px">Clicca solo quello che sbaglia (diventa rosso): il resto vuol dire che è andato bene. Le voci che aggiungi diventano pulsanti e restano per i prossimi alunni, non segnate.</div>
 <div class="nl" id="t-nl"></div>
+<h2>📋 Riepilogo di quello che hai spuntato</h2><div id="t-sum"></div>
+<h2>Valutazione · /16</h2>
+<div class="fields"><input id="t-name" placeholder="Nome dello studente" autocomplete="off"><input id="t-class" placeholder="Classe (es. 2B)" autocomplete="off"></div>
+<div id="t-rub"></div>
 <div class="link" id="t-link">🔗 I punteggi vanno anche nella LIVE di MyClass, se è aperta su questo computer.</div>
 <div class="tot"><span class="v" id="t-voto">–</span><span class="p" id="t-pts">Scegli un punteggio per ogni voce</span></div>
-<input id="t-note" placeholder="Altra nota (facoltativa)" autocomplete="off">
-<div class="sub" style="margin:5px 0 0">Riepilogo, pronuncia, errori e nota vanno insieme nella nota del voto e nel promemoria della LIVE di MyClass.</div>
+<div class="sub" style="margin:5px 0 0">Riepilogo, descrizioni spuntate personaggio per personaggio, pronuncia, errori, fluidità e impressioni vanno insieme nella nota del voto e nel promemoria della LIVE di MyClass.</div>
 <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva e prossimo</button><button data-act="reset">↺ Azzera</button></div>
 <div class="msg" id="t-msg"></div>
 <h2>Voti salvati</h2>
@@ -2164,7 +2195,7 @@ function parseNote(note) {
   return { gn: Math.max(gnLine, gnNote), types: typ ? +typ[1] : null, typesAv: typ && typ[2] ? +typ[2] : 0, aOk, sOk: num(/^is wearing ✓(\d+)/),
     lo: { okN: typ ? okN : null, avail, types: typ ? +typ[1] : 0, typesAv: typ && typ[2] ? +typ[2] : 0, said: okN + k.col + k.word, vOk: aOk + k.form, vErr: k.aLex },
     ...errCounts(k, t => sum(er, [t])),
-    Hs: num(/^esitazioni ×(\d+)/), B: num(/^blocchi ×(\d+)/), P: sum(pr),
+    Hs: fluHs(num(/^esitazioni ×(\d+)/), FLU_TXT.indexOf((segs.find(t => t.startsWith('Fluidità: ')) || '').slice(10)) | 0), B: num(/^blocchi ×(\d+)/), P: sum(pr) + num(/^pronuncia ✗ in (\d+)/),
     any: !!(segs[0] && !/^(Pronuncia|Errori): /.test(segs[0])) || pr.length > 0 };
 }
 // Suggerimenti dalla nota: { lex, pc, pro } (null = la nota non dice niente su quella voce)

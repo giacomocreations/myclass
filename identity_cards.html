@@ -932,6 +932,8 @@ function storeGrades(g) { try { localStorage.setItem(GKEY, JSON.stringify(g)); }
 //  CHECKLIST DAL VIVO (finestra docente), per lo studente A e per il B
 //  Parte 1: i passaggi della chat (✓ / ~ con aiuto o impreciso / ✗ errore)
 //  Parte 2: le informazioni della carta, he/she, his/her, la reazione
+//  Accanto a ogni voce 🔊 = pronuncia sbagliata lì. In alto, per ciascuno:
+//  impressioni generali e fluidità. Tutto va, voce per voce, nella nota.
 //  I suggerimenti vanno in griglia; se scegli tu un punteggio, resta il tuo.
 // ══════════════════════════════════════════════════════════════════
 const P1_ITEMS = [
@@ -955,11 +957,20 @@ function p2Items(s) {
 const CY_LBL = ['', '✓ ', '~ ', '✗ '], CY_CLS = ['n', 'ok', 'bad', 'no'];
 const NOTE_PR = ['thirteen / thirty', 'favourite /ˈfeɪvərɪt/', 'th (three, thirteen)', 'eleven / twelve', 'nomi e paesi della carta', 'finali delle parole', 'meet / my friend', 'troppo veloce (recita)', 'pronuncia all\'italiana'];
 const NOTE_ER = ['I have eleven years', 'manca is (He from…)', 'he / she scambiati', 'his / her scambiati', 'He favourite… (manca his)', 'What is you favourite…?', 'domanda mal formata', 'parola in italiano', 'informazione sbagliata'];
-const ckNew = () => ({ p1: {}, p2: {}, p2card: null, n: { andYou: 0, skip: 0, guide: 0, pause: 0, block: 0 }, notes: { pr: [], er: [] } });
+// pr1 / pr2[id] = pronuncia sbagliata su quella voce · n.lvl = fluidità 1 fluido · 2 qualche pausa · 3 molte pause
+const ckNew = () => ({ p1: {}, p2: {}, pr1: {}, pr2: {}, p2card: null, n: { andYou: 0, skip: 0, guide: 0, pause: 0, block: 0, lvl: 0 }, notes: { pr: [], er: [] } });
+const FLU_TXT = ['', 'fluido', 'qualche pausa', 'molte pause'];
+const fluHs = (pause, lvl) => Math.max(pause, lvl === 3 ? 4 : lvl === 2 ? 2 : 0);
+const CY_TXT = ['', '✓', 'con aiuto / impreciso', '✗'];
 let ck = { A: ckNew(), B: ckNew() };
 const rubManual = { A: {}, B: {} }, rubAuto = { A: {}, B: {} };
 let lastHints = { A: {}, B: {} };
-const ckOf = s => { const k = ck[s], c = state.pair[s]; if (c && k.p2card !== c.n) { k.p2 = {}; k.p2card = c.n; } return k; };
+const ckOf = s => { const k = ck[s], c = state.pair[s]; if (c && k.p2card !== c.n) { k.p2 = {}; k.pr2 = {}; k.p2card = c.n; } return k; };
+// voce da spuntare + 🔊 pronuncia accanto
+const prOn = (k, part, id) => !!(k[part] && k[part][id]);
+const ckPill = (act, id, v, txt, title, k, part) => `<span class="pi">${cyBtn(act, id, v, txt, title)}<button class="cy pr ${prOn(k, part, id) ? 'no' : 'n'}" data-act="cpr" data-p="${part}" data-k="${id}" title="Pronuncia sbagliata qui? clic: sì / no">${prOn(k, part, id) ? '🔊✗' : '🔊'}</button></span>`;
+const prCount = k => Object.values(k.pr1 || {}).filter(Boolean).length + Object.values(k.pr2 || {}).filter(Boolean).length;
+const noEmoji = t => String(t).replace(/^[^A-Za-z(]+/, '');
 const cyBtn = (act, k, v, txt, title) => `<button class="cy ${CY_CLS[v]}" data-act="${act}" data-k="${k}" title="${title || 'Clic: ✓ giusto → ~ con aiuto / impreciso → ✗ errore → di nuovo vuoto'}">${CY_LBL[v]}${esc(txt)}</button>`;
 const cntBox = (k, lbl, v, title = '') => `<span class="cnt" title="${title}">${lbl} <b>${v}</b><button data-act="ckn" data-k="${k}" data-d="-1" title="Togli">−</button><button data-act="ckn" data-k="${k}" data-d="1" title="Aggiungi">+</button></span>`;
 const nN = (k, list) => k.notes.er.concat([]).filter(x => !list || list.includes(x.t)).reduce((t, x) => t + x.n, 0);
@@ -969,10 +980,10 @@ function renderCk() {
   if (!twOpen()) return;
   const s = cur, k = ckOf(s), c = state.pair[s];
   const p1 = `<div class="ckh">👋 Parte 1 · Chat <small>· clic su ogni passaggio quando ${esc(nameOf(s))} lo fa</small></div>
-    <div class="ck">${P1_ITEMS.map(([id, t]) => cyBtn('c1', id, k.p1[id] || 0, t)).join('')}</div>
+    <div class="ck">${P1_ITEMS.map(([id, t]) => ckPill('c1', id, k.p1[id] || 0, t, '', k, 'pr1')).join('')}</div>
     <div class="cnts">${cntBox('andYou', '↩️ And you?', k.n.andYou, 'Ogni volta che rilancia con And you?')}${cntBox('skip', 'salta / inverte un passaggio', k.n.skip)}${cntBox('guide', 'aiuto (prof o compagno)', k.n.guide)}</div>`;
   const p2 = c ? `<div class="ckh">🪪 Parte 2 · Mystery Guest: ${esc(c.name)} ${c.g === 'm' ? '👦' : '👧'} <small>· cosa dice della carta</small></div>
-    <div class="ck">${p2Items(s).map(([id, t, kind]) => cyBtn('c2', id, k.p2[id] || 0, t, kind === 'gr' ? 'Clic: ✓ sempre giusto → ~ una volta sbagliato → ✗ scambiato' : '')).join('')}</div>`
+    <div class="ck">${p2Items(s).map(([id, t, kind]) => ckPill('c2', id, k.p2[id] || 0, t, kind === 'gr' ? 'Clic: ✓ sempre giusto → ~ una volta sbagliato → ✗ scambiato' : '', k, 'pr2')).join('')}</div>`
     : `<div class="ckh">🪪 Parte 2 · Mystery Guest <small>· pesca le carte per vedere le spunte</small></div>`;
   tw('t-ck').innerHTML = state.part === 2 ? p2 + p1 : p1 + p2;
 }
@@ -991,20 +1002,35 @@ function ckLine(s) {
   const st = stats(s), k = st.k, parts = [];
   if (st.p1m || k.n.andYou || k.n.skip) parts.push(`P1: ${st.p1ok}/${P1_ITEMS.length} passaggi ✓${st.p1t ? ` · ~${st.p1t}` : ''}${st.p1x ? ` · ✗${st.p1x}` : ''} · domande fatte ${st.asked}/3 · And you? ×${k.n.andYou}${k.n.skip ? ` · passaggi saltati/invertiti ×${k.n.skip}` : ''}`);
   if (st.p2m) parts.push(`P2 (${st.card.name}): informazioni ${st.infoSaid}/${st.infoN}${st.p2x ? ` · ✗${st.p2x}` : ''}${st.p2t ? ` · ~${st.p2t}` : ''}` + ['hs', 'hh'].map(id => k.p2[id] === 3 ? ` · ${id === 'hs' ? 'he/she' : 'his/her'} scambiati` : k.p2[id] === 2 ? ` · ${id === 'hs' ? 'he/she' : 'his/her'} sbagliato una volta` : '').join(''));
+  if (prCount(k)) parts.push(`pronuncia ✗ su ${prCount(k)} ${prCount(k) === 1 ? 'voce' : 'voci'}`);
   if (k.n.guide) parts.push(`aiuti ×${k.n.guide}`);
   if (k.n.pause) parts.push(`esitazioni ×${k.n.pause}`);
   if (k.n.block) parts.push(`blocchi ×${k.n.block}`);
   return parts.join(' · ');
 }
+// voce per voce: com'è andata ogni cosa spuntata (e le informazioni della carta non dette)
+function ckDetail(s) {
+  const k = ckOf(s), out = [];
+  const one = (t, v, p) => `${noEmoji(t)}: ${[CY_TXT[v], p && 'pronuncia ✗'].filter(Boolean).join(', ')}`;
+  const p1 = P1_ITEMS.filter(([id]) => k.p1[id] || prOn(k, 'pr1', id)).map(([id, t]) => one(t, k.p1[id] || 0, prOn(k, 'pr1', id)));
+  if (p1.length) out.push('P1 voci: ' + p1.join('; '));
+  const items = p2Items(s);
+  const p2 = items.filter(([id]) => k.p2[id] || prOn(k, 'pr2', id)).map(([id, t]) => one(t, k.p2[id] || 0, prOn(k, 'pr2', id)));
+  if (p2.length) {
+    const miss = items.filter(([id, , kind]) => kind === 'info' && !k.p2[id] && !prOn(k, 'pr2', id)).map(([, t]) => noEmoji(t));
+    out.push(`P2 voci (${state.pair[s].name}): ${p2.join('; ')}${miss.length ? `; non dette: ${miss.join('; ')}` : ''}`);
+  }
+  return out.join(' | ');
+}
 const noteList = (k, g) => k.notes[g].map(x => x.t + (x.n > 1 ? ' ×' + x.n : '')).join(', ');
 function composeNote(s) {
   const k = ck[s];
-  return [ckLine(s), k.notes.pr.length && 'Pronuncia: ' + noteList(k, 'pr'), k.notes.er.length && 'Errori: ' + noteList(k, 'er'), notes[s].trim()].filter(Boolean).join(' | ');
+  return [ckLine(s), ckDetail(s), k.notes.pr.length && 'Pronuncia: ' + noteList(k, 'pr'), k.notes.er.length && 'Errori: ' + noteList(k, 'er'), k.n.lvl && 'Fluidità: ' + FLU_TXT[k.n.lvl], notes[s].trim() && 'Impressioni: ' + notes[s].trim()].filter(Boolean).join(' | ');
 }
 // Suggerimenti per le tre voci: { indice: { v, why } }
 function computeHints(s) {
   const st = stats(s), k = st.k, H = {}, n = k.n;
-  const anything = st.p1m || st.p2m || n.andYou || n.skip || n.guide || n.pause || n.block || prN(k) || nN(k);
+  const anything = st.p1m || st.p2m || n.andYou || n.skip || n.guide || n.pause || n.block || n.lvl || prN(k) || prCount(k) || nN(k);
   if (!anything) return H;
   // Interazione /5: ordine, ping-pong (domande + And you?), reazioni, schema del Mystery Guest
   if (st.p1m || st.p2m || n.andYou || n.skip || n.guide) {
@@ -1029,9 +1055,9 @@ function computeHints(s) {
     H[1] = { v, why: `errori ${E} (spunte ✗ ${st.p1x + st.p2x}, note ${errNotes}${st.p1t + st.p2t ? `, imprecisioni ${st.p1t + st.p2t}` : ''})${st.p2m ? ` · informazioni della carta ${st.infoSaid}/${st.infoN}` : ''}` };
   }
   // Pronuncia e fluenza /5: note di pronuncia, esitazioni, blocchi
-  const P = prN(k), Hs = n.pause, B = n.block;
+  const P = prN(k) + prCount(k), Hs = fluHs(n.pause, n.lvl), B = n.block;
   const v = B >= 3 ? 0 : B >= 2 ? 1 : Hs >= 5 || P >= 5 || B === 1 ? 2 : Hs >= 3 || P >= 3 ? 3 : Hs >= 1 || P >= 1 ? 4 : 5;
-  H[2] = { v, why: `${P} ${P === 1 ? 'errore' : 'errori'} di pronuncia · ${Hs} ${Hs === 1 ? 'esitazione' : 'esitazioni'} · ${B} ${B === 1 ? 'blocco' : 'blocchi'}${!P && !Hs && !B ? ' — se ne senti, segnali qui sotto' : ''}` };
+  H[2] = { v, why: `${P} ${P === 1 ? 'errore' : 'errori'} di pronuncia${prCount(k) ? ` (${prCount(k)} accanto alle voci)` : ''}${n.lvl ? ` · fluidità: ${FLU_TXT[n.lvl]}` : ''} · ${n.pause} ${n.pause === 1 ? 'esitazione' : 'esitazioni'} · ${B} ${B === 1 ? 'blocco' : 'blocchi'}${!P && !Hs && !B ? ' — se ne senti, segnali qui sotto' : ''}` };
   return H;
 }
 function applyHints() {
@@ -1047,17 +1073,19 @@ function applyHints() {
 }
 function renderSummary() {
   if (!twOpen()) return;
-  const s = cur, line = ckLine(s), H = lastHints[s], grey = t => ` <span class="gr">(${t})</span>`;
+  const s = cur, line = [ckLine(s), ckDetail(s)].filter(Boolean).join('\n'), H = lastHints[s], grey = t => ` <span class="gr">(${t})</span>`;
   const hints = GRID.aree.map((a, i) => H[i] ? `${SHORT[i]}: <span class="sg">${H[i].v}</span>${rubManual[s][i] && rub[s][i] !== H[i].v ? grey('in griglia hai messo ' + rub[s][i]) : ''}${grey(esc(H[i].why))}` : '').filter(Boolean);
   tw('t-sumh').textContent = `📋 Riepilogo · ${nameOf(s)}`;
-  tw('t-sum').innerHTML = (line || hints.length) ? `<div class="sum">${line ? `<div>${esc(line)}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori · già messi in griglia</span><br>${hints.join('<br>')}</div>` : ''}</div>` : `<div class="empty">Spunta mentre ${esc(nameOf(s))} parla: qui compare il riepilogo, che va anche nella nota.</div>`;
+  tw('t-sum').innerHTML = (line || hints.length) ? `<div class="sum">${line ? `<div>${esc(line).replace(/\n/g, '<br>')}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori · già messi in griglia</span><br>${hints.join('<br>')}</div>` : ''}</div>` : `<div class="empty">Spunta mentre ${esc(nameOf(s))} parla: qui compare il riepilogo, che va anche nella nota.</div>`;
 }
 function renderNotes() {
   if (!twOpen()) return;
   const k = ck[cur];
   const chip = (g, t) => { const x = k.notes[g].find(y => y.t === t); return `<button data-act="nt" data-g="${g}" data-t="${esc(t)}" class="${x ? 'on' : ''}">${esc(t)}${x && x.n > 1 ? ' ×' + x.n : ''}</button>`; };
   tw('t-nh').textContent = `🗒️ Note veloci · ${nameOf(cur)}`;
-  tw('t-flu').innerHTML = cntBox('pause', 'esitazioni / pause', k.n.pause, 'Pause lunghe, ripartenze, ehm…') + cntBox('block', 'si blocca', k.n.block, 'Si ferma e non riparte da solo');
+  const fl = (v, t, c) => `<button class="cy ${k.n.lvl === v ? c : 'n'}" data-act="fl" data-v="${v}" title="Fluidità generale di ${esc(nameOf(cur))} (clic di nuovo per togliere)">${t}</button>`;
+  tw('t-imph').innerHTML = `📝 Impressioni generali · 🗣️ fluidità di <b>${esc(nameOf(cur))}</b> <small>(vanno nella sua nota e nel promemoria di MyClass)</small>`;
+  tw('t-flu').innerHTML = `<span class="flv">${fl(1, '🟢 fluido', 'ok')}${fl(2, '🟡 qualche pausa', 'bad')}${fl(3, '🔴 molte pause', 'no')}</span>` + cntBox('pause', 'esitazioni / pause', k.n.pause, 'Pause lunghe, ripartenze, ehm…') + cntBox('block', 'si blocca', k.n.block, 'Si ferma e non riparte da solo');
   tw('t-npr').innerHTML = noteChips('pr', NOTE_PR, chip);
   tw('t-ner').innerHTML = noteChips('er', NOTE_ER, chip);
   tw('t-nl').innerHTML = ['pr', 'er'].flatMap(g => k.notes[g].map((x, i) => `<span class="${g}">${g === 'pr' ? '🔊' : '✏️'} ${esc(x.t)}${x.n > 1 ? ' ×' + x.n : ''}<button data-act="ntx" data-g="${g}" data-i="${i}" title="Togli uno">✕</button></span>`)).join('');
@@ -1103,6 +1131,8 @@ function onCkClick(act, b) {
   if (act === 'c1') k.p1[id] = ((k.p1[id] || 0) + 1) % 4;
   else if (act === 'c2') k.p2[id] = ((k.p2[id] || 0) + 1) % 4;
   else if (act === 'ckn') k.n[id] = Math.max(0, k.n[id] + +b.dataset.d);
+  else if (act === 'cpr') { const o = k[b.dataset.p] || (k[b.dataset.p] = {}); o[id] = !o[id]; }
+  else if (act === 'fl') { const v = +b.dataset.v; k.n.lvl = k.n.lvl === v ? 0 : v; }
   else if (act === 'nadd') { addTyped(b.dataset.g); return true; }
   else if (act === 'nedit') { NOTE_EDIT[b.dataset.g] = !NOTE_EDIT[b.dataset.g]; renderNotes(); return true; }
   else if (act === 'ntdel') { delMine(b.dataset.g, b.dataset.t); return true; }
@@ -1158,6 +1188,10 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
 .cy.ok{background:rgba(46,196,110,.25);color:#8ff3b8;border-color:transparent}.cy.bad{background:rgba(255,181,71,.25);color:#ffcf8a;border-color:transparent}
 .cy.no{background:rgba(255,77,109,.3);color:#ffb0c0;border-color:transparent}.cy.n{opacity:.7}
 .cnts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.pi{display:inline-flex;gap:2px;align-items:stretch}.pi .cy.pr{padding:5px 6px}
+textarea{width:100%;background:#182624;border:1px solid rgba(255,255,255,.12);color:#eef4f2;font-family:inherit;font-size:14px;padding:8px 10px;border-radius:9px;resize:vertical}textarea:focus{outline:none;border-color:#2ec46e}
+.imp{margin:8px 0 4px;padding:9px 11px;border-radius:12px;background:#142120;border:1px solid rgba(46,196,110,.4)}.imp .ckh{margin:0 0 5px}
+.flv{display:inline-flex;gap:4px;flex-wrap:wrap}.flv .cy{font-size:12.5px;padding:5px 9px}
 .cnt{display:inline-flex;align-items:center;gap:5px;background:#142120;border:1px solid rgba(255,255,255,.1);border-radius:9px;padding:3px 4px 3px 9px;font-size:12.5px}
 .cnt b{min-width:16px;text-align:center;color:#ffd166}.cnt button{padding:2px 8px;font-size:13px}
 .sum{background:#142120;border:1px solid rgba(255,209,102,.35);border-radius:10px;padding:8px 11px;font-size:13px;line-height:1.55}
@@ -1176,21 +1210,22 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
 <div id="t-part"></div>
 <h2>✅ Spunte e valutazione · scegli lo studente</h2>
 <div class="tabs"><button data-act="tab" data-s="A" id="tab-A"></button><button data-act="tab" data-s="B" id="tab-B"></button></div>
+<div class="imp"><div class="ckh" id="t-imph">📝 Impressioni generali · 🗣️ fluidità</div>
+<textarea id="t-note" rows="2" placeholder="Impressioni, note generali…" autocomplete="off"></textarea>
+<div class="cnts" id="t-flu"></div></div>
 <div id="t-ck"></div>
-<h2 id="t-sumh">📋 Riepilogo</h2><div id="t-sum"></div>
-<h2 id="t-vh">Valutazione · /15</h2>
-<div id="t-rub"></div>
 <h2 id="t-nh">🗒️ Note veloci · pronuncia ed errori</h2>
-<div class="cnts" id="t-flu" style="margin:0 0 4px"></div>
 <div class="ckh">🔊 Pronuncia <small>(un clic = annotato, di nuovo = ×2)</small></div><div class="chips" id="t-npr"></div>
 <div class="ckh">✏️ Errori</div><div class="chips" id="t-ner"></div>
 <div class="nin"><div class="nadd"><input id="t-inpr" placeholder="🔊 Altre parole pronunciate male (separate da virgola)" autocomplete="off"><button data-act="nadd" data-g="pr" title="Aggiungi (anche più di una, separate da virgola)">＋</button></div><div class="nadd"><input id="t-iner" placeholder="✏️ Altri errori sentiti (separati da virgola)" autocomplete="off"><button data-act="nadd" data-g="er" title="Aggiungi (anche più di uno, separati da virgola)">＋</button></div></div>
 <div class="sub" style="margin:0 0 4px">Clicca solo quello che sbaglia (diventa rosso): il resto vuol dire che è andato bene. Le voci che aggiungi diventano pulsanti e restano per i prossimi alunni, non segnate.</div>
 <div class="nl" id="t-nl"></div>
+<h2 id="t-sumh">📋 Riepilogo</h2><div id="t-sum"></div>
+<h2 id="t-vh">Valutazione · /15</h2>
+<div id="t-rub"></div>
 <div class="link" id="t-link">🔗 I punteggi vanno anche nella LIVE di MyClass, se è aperta su questo computer.</div>
 <div class="tot"><span class="v" id="t-voto">–</span><span class="p" id="t-pts">Scegli un punteggio per ogni area</span></div>
-<input id="t-note" placeholder="Nota (facoltativa)" autocomplete="off">
-<div class="sub" style="margin:5px 0 0">Riepilogo, pronuncia, errori e nota vanno nella nota del voto e nel promemoria della LIVE di MyClass, per ciascuno dei due.</div>
+<div class="sub" style="margin:5px 0 0">Riepilogo, voci spuntate una per una (con 🔊), pronuncia, errori, fluidità e impressioni vanno nella nota del voto e nel promemoria della LIVE di MyClass, per ciascuno dei due.</div>
 <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva la coppia e prossima</button><button data-act="reset">↺ Azzera</button></div>
 <div class="msg" id="t-msg"></div>
 <h2>Voti salvati</h2>
@@ -1284,7 +1319,7 @@ function renderTeacherRubric(fromCk) {
   tw('t-rub').innerHTML = GRID.aree.map((a, i) => `<div class="r"><div class="rh"><div class="rn">${esc(a.nome)} <small>/ ${a.max}</small>${tag(i)}</div><div class="pts">${a.descrittori.map(d => `<button class="${R[i] === d.pt ? 'on' : ''}" data-act="pt" data-r="${i}" data-v="${d.pt}" title="${esc(d.testo)}">${d.pt}</button>`).join('')}</div></div>${R[i] !== undefined ? `<div class="rd">${esc(a.descrittori.find(d => d.pt === R[i]).testo)}</div>` : ''}</div>`).join('');
   tw('t-voto').textContent = rubDone(cur) ? voto(rubTot(cur)) : '–';
   tw('t-pts').textContent = rubDone(cur) ? `${nameOf(cur)}: ${rubTot(cur)} / 15 punti` : `${nameOf(cur)}: scegli un punteggio per ogni area`;
-  tw('t-note').value = notes[cur]; tw('t-note').placeholder = `Nota per ${nameOf(cur)} (facoltativa)`;
+  tw('t-note').value = notes[cur]; tw('t-note').placeholder = `Impressioni, note generali su ${nameOf(cur)}…`;
 }
 function renderTeacherSaved() {
   if (!twOpen()) return;
