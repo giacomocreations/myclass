@@ -16,7 +16,7 @@
 //
 //  • Registrazione: solo in MyClass. La finestra docente non registra:
 //    scegliendo l'alunno dall'elenco lo si seleziona nella LIVE e lì
-//    (come scegliendolo direttamente nella LIVE) parte la registrazione.
+//    la registrazione si avvia solo con il pulsante ⏺ Registra della LIVE.
 //  • Rivedi / correggi (MyClassLive.review): elenco degli alunni valutati, nota
 //    e punteggi correggibili a mano, salvati anche nel promemoria di MyClass.
 //  • Rivalutazione: { type:'prom-list', gridId } → MyClass risponde con i
@@ -185,7 +185,7 @@
         + '<select data-pick-cls style="font:inherit;font-size:13px;padding:5px 8px;border-radius:8px;background:transparent;color:inherit;border:1px solid rgba(127,127,127,.4)">'
         + '<option value="">Scegli la classe…</option>' + classes.map(function (x) { return '<option value="' + esc(x.nome) + '"' + (x.nome === pick.cls ? ' selected' : '') + ' style="color:#000">' + esc(x.nome) + ' (' + x.studenti.length + ')</option>'; }).join('') + '</select>'
         + (c ? '<button data-pick-toggle style="' + btn + 'background:transparent;color:inherit">' + (pick.open ? '▴ nascondi' : '▾ mostra elenco') + '</button>' : '')
-        + '<span style="opacity:.7">' + (c ? 'clic sul nome: lo scrive qui e lo seleziona nella LIVE (se è chiusa la apro); la registrazione parte in MyClass' : '') + '</span></div>'
+        + '<span style="opacity:.7">' + (c ? 'clic sul nome: lo scrive qui e lo seleziona nella LIVE (se è chiusa la apro); per registrare premi ⏺ Registra in MyClass' : '') + '</span></div>'
         + list + '</div>';
     }
     function choose(d, name) {
@@ -197,12 +197,12 @@
       skip = '';
       renderPicker();
       var st = d.getElementById('t-live');
-      // MyClass non è aperta in questo browser: la apro io, con la LIVE e la registrazione per questo alunno
+      // MyClass non è aperta in questo browser: la apro io, con la LIVE e questo alunno selezionato
       if (state === null && pick.cls && opts.openMyClass !== false) {
         var url = new URL('MyClass_Analytics_v5.html', location.href);
         url.searchParams.set('apriLive', pick.cls); url.searchParams.set('alunno', name);
         var w = null; try { w = d.defaultView.open(url.href, 'myclass_main'); } catch (e) {}
-        if (st) { st.className = w ? 'link ok' : 'link err'; st.textContent = w ? '🚀 Apro MyClass con la LIVE della ' + pick.cls + ' e la registrazione per ' + name + ' (parte in MyClass: se chiede il microfono, consenti)…' : '⚠️ Il browser ha bloccato l\'apertura di MyClass: consenti i pop-up per questa pagina e riprova.'; }
+        if (st) { st.className = w ? 'link ok' : 'link err'; st.textContent = w ? '🚀 Apro MyClass con la LIVE della ' + pick.cls + ' con ' + name + ' selezionato (per registrare premi ⏺ Registra in MyClass)…' : '⚠️ Il browser ha bloccato l\'apertura di MyClass: consenti i pop-up per questa pagina e riprova.'; }
         state = undefined;
         return;
       }
@@ -210,7 +210,7 @@
         st = d.getElementById('t-live'); if (!st || !getDoc()) return;
         if (!r) { state = null; st.className = 'link'; st.textContent = '⚪ MyClass non risponde: ' + name + ' scelto solo qui. Clicca di nuovo sul nome per aprire MyClass con la LIVE.'; }
         else if (!r.ok) { st.className = 'link err'; st.textContent = '⚠️ MyClass: ' + r.msg; }
-        else if (r.opening) { st.className = 'link ok'; st.textContent = '🚀 Apro la LIVE della ' + (r.classe || pick.cls) + ' e la registrazione per ' + name + '…'; }
+        else if (r.opening) { st.className = 'link ok'; st.textContent = '🚀 Apro la LIVE della ' + (r.classe || pick.cls) + ' con ' + name + ' selezionato (per registrare premi ⏺ Registra in MyClass)…'; }
       });
     }
     function bind(d) {
@@ -234,8 +234,8 @@
       if (!bc) { el.className = 'link err'; el.textContent = '⚠️ Questo browser non permette il collegamento con MyClass.'; renderPicker(); return; }
       if (!m || m.closed) {
         el.textContent = m && m.closed
-          ? '⚪ LIVE di MyClass chiusa: scegli l\'alunno qui sotto e la apro io, con la registrazione.'
-          : m === null ? '⚪ MyClass non è aperta in questo browser: scegli l\'alunno qui sotto e la apro io, con la LIVE e la registrazione.'
+          ? '⚪ LIVE di MyClass chiusa: scegli l\'alunno qui sotto e la apro io.'
+          : m === null ? '⚪ MyClass non è aperta in questo browser: scegli l\'alunno qui sotto e la apro io, con la LIVE.'
           : '⚪ Nessuna LIVE di MyClass aperta: scegli l\'alunno qui sotto.';
         renderPicker(); return;
       }
