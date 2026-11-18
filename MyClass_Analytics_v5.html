@@ -12519,7 +12519,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
                         <button class="btn-swap" onclick="frecciaLezione('${slot.id}','next')" title="Scambia con lezione successiva (con più lezioni selezionate: sposta avanti tutte le selezionate)">↓</button>
                         <button class="btn-mark" onclick="markAsSvolta('${slot.id}')">✅ Svolta</button>
                         <button class="btn-reset" onclick="resetLessonCard('${slot.id}')">🗑️ Reset</button>
-                        ${(()=>{ const t=(activity.titolo||'').toLowerCase(); const tipo=_tipoArr(activity.tipo||[]); const isV=tipo.includes('verifica_scritta')||tipo.includes('verifica_orale')||/verifica|test|interroga/i.test(t); return isV?`<button data-publish="${slot.id}" onclick="publishFutureLesson('${slot.id}')" style="padding:4px 10px;border-radius:12px;border:1.5px solid #6c47ff;background:white;color:#6c47ff;cursor:pointer;font-size:12px;font-weight:700;" title="Pubblica questa verifica/interrogazione nella StudentApp">📡 Pubblica</button>`:''; })()}
+                        ${(()=>{ const t=(activity.titolo||'').toLowerCase(); const tipo=_tipoArr(activity.tipo||[]); const isV=tipo.includes('verifica_scritta')||tipo.includes('verifica_orale'); return isV?`<button data-publish="${slot.id}" onclick="publishFutureLesson('${slot.id}')" style="padding:4px 10px;border-radius:12px;border:1.5px solid #6c47ff;background:white;color:#6c47ff;cursor:pointer;font-size:12px;font-weight:700;" title="Pubblica questa verifica/interrogazione nella StudentApp">📡 Pubblica</button>`:''; })()}
                         <button class="btn-skip" onclick="skipDayShift('${slot.data}')" title="Segna come assenza o festività: le lezioni da questo giorno slittano di uno slot">🚫 Assenza/Festività</button>
                         ${lessonClipboard.length?`<button class="btn-paste" onclick="pasteFromSlot('${slot.id}')" title="Incolla ${lessonClipboard.length} lezioni qui">📌 Incolla</button>`:''}`:''}\n                    </div>
                     <input type="checkbox" class="lesson-checkbox" title="Seleziona per copiare" onchange="toggleCopySelect('${slot.id}',this.checked)" id="chk_${slot.id}">
@@ -22205,12 +22205,24 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
       const activity = (classe.pianificazione?.piano||[])
         .find(p => (p.data+(p.ora?'_'+p.ora:''))===data_iso || (!p.ora&&p.data===isoDate));
       if (!activity) { alert('Lezione non trovata.'); return; }
+      const tipo = _tipoArr(activity.tipo||[]);
+      // Sulla StudentApp vanno solo le lezioni con tipo verifica: le altre
+      // la sincronizzazione le toglierebbe subito dopo
+      if (!tipo.includes('verifica_scritta') && !tipo.includes('verifica_orale')) {
+        alert('Questa lezione non ha il tipo "Verifica scritta" o "Verifica orale": imposta il tipo per pubblicarla come verifica.');
+        return;
+      }
+      // Lezione non validata: agli alunni solo se lo decidi tu (come "🙈 Nascosta su StudentApp")
+      if (activity.bozza === true && activity.verificaVisibileStudent !== true) {
+        if (!confirm('La lezione è ancora in bozza (non validata): gli alunni di solito non la vedono.\n\nVuoi mostrare già questa verifica nella StudentApp?')) return;
+        activity.verificaVisibileStudent = true;
+        saveData();
+      }
 
       const classId = classe.nome.replace(/\s+/g,'_').toLowerCase();
       const lessonKey = _lessonPubKey(data_iso);
       const path = 'livelearn/lessons/'+classId+'/'+lessonKey;
-      const tipo = _tipoArr(activity.tipo||[]);
-      const isOrale = tipo.includes('verifica_orale') || /interroga/i.test(activity.titolo||'');
+      const isOrale = tipo.includes('verifica_orale') && !tipo.includes('verifica_scritta');
 
       const payload = {
         titolo:      (activity.titolo||'').trim() || (isOrale?'Interrogazione':'Verifica'),
@@ -22220,6 +22232,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         ora:         activity.ora != null ? String(activity.ora) : '',
         stato:       'pianificata',
         tipo:        isOrale ? 'interrogazione' : 'verifica',
+        auto:        true,   // la sincronizzazione la toglie se la verifica cambia
         pubblicataAt: Date.now()
       };
       Object.keys(payload).forEach(k=>{ if(payload[k]==='') delete payload[k]; });
@@ -22231,7 +22244,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         console.log('[Pubblica verifica]', path);
         await _cleanupLegacyLessonKey(db, classId, isoDate, lessonKey, payload.titolo);
         // Notifica bacheca
-        await db.ref('livelearn/board/'+classId).push({
+        await db.ref('livelearn/board/'+classId+'/verif_'+lessonKey).set({
           from:'teacher', type:'alert',
           text: '📅 '+payload.titolo+(payload.unit?' ('+payload.unit+')':'')+' — '+new Date(isoDate+'T12:00:00').toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'}),
           visibility:'class', ts:Date.now()
@@ -40535,17 +40548,50 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                          Object.keys(r).every(f => f === 'pubblicataAt' || f in pl);
             if (!same) upd[k] = { ...pl, pubblicataAt: (r && r.pubblicataAt) || Date.now() };
           });
+          // Via le verifiche non più da mostrare (tipo cambiato, lezione in
+          // bozza, spostata o eliminata). Oltre a quelle scritte da qui
+          // (auto:true) anche quelle pubblicate col pulsante "📡 Pubblica",
+          // che prima restavano per sempre: solo se future, le passate
+          // restano nello storico dell'alunno.
+          const tolte = [];
           Object.entries(remote).forEach(([k, r]) => {
-            if (r && r.auto === true && r.stato === 'pianificata' && !want[k]) upd[k] = null;
+            if (!r || r.stato !== 'pianificata' || want[k]) return;
+            const dr = String(r.data || k).slice(0, 10);
+            if (r.auto === true || dr >= oggi) { upd[k] = null; tolte.push([k, r]); }
           });
           if (Object.keys(upd).length) {
             await ref.update(upd);
+            if (tolte.length) await _togliAvvisiVerifica(db, classId, tolte);
             console.log('[Verifiche→StudentApp]', classId, Object.keys(upd).length, 'aggiornamenti');
           }
         }
       } catch (e) {
         console.warn('[Verifiche→StudentApp] sync fallita:', e.message);
       } finally { _verSyncRunning = false; }
+    }
+
+    // Avviso "📅 Verifica — data" messo in bacheca da "📡 Pubblica": quando la
+    // verifica esce dalla StudentApp esce anche l'avviso. Quelli nuovi hanno
+    // la chiave verif_<lezione>; i vecchi si riconoscono da testo e data.
+    async function _togliAvvisiVerifica(db, classId, tolte) {
+      try {
+        const bref = db.ref('livelearn/board/' + classId);
+        const board = (await bref.get()).val() || {};
+        const upd = {};
+        tolte.forEach(([k, r]) => {
+          if (board['verif_' + k]) upd['verif_' + k] = null;
+          const d = String(r.data || k).slice(0, 10);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+          const fmt = new Date(d + 'T12:00:00').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+          const tit = String(r.titolo || '').trim();
+          Object.entries(board).forEach(([bk, m]) => {
+            if (!m || m.from !== 'teacher' || m.type !== 'alert') return;
+            const t = String(m.text || '');
+            if (tit && t.startsWith('📅 ' + tit) && t.endsWith(' — ' + fmt)) upd[bk] = null;
+          });
+        });
+        if (Object.keys(upd).length) await bref.update(upd);
+      } catch (e) { console.warn('[Verifiche→StudentApp] avviso in bacheca non tolto:', e.message); }
     }
 
     function _autoPublishLesson(data_iso, classIdx) {
