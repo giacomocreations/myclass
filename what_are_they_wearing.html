@@ -1866,7 +1866,9 @@ function applyHints() {
 function renderSummary() {
   if (!twOpen()) return;
   applyHints();
-  const line = [wkLine(true), wkDetail(true)].filter(Boolean).join('<br>'), grey = t => ` <span style="color:#a49cbd">(${t})</span>`;
+  const free = tw('t-note').value.trim();
+  const l0 = [free && `📝 <b>Impressioni:</b> ${esc(free)}`, wk.lvl && `🗣️ <b>Fluidità:</b> ${FLU_TXT[wk.lvl]}`].filter(Boolean).join(' · ');
+  const line = [l0, wkLine(true), wkDetail(true)].filter(Boolean).join('<br>'), grey = t => ` <span style="color:#a49cbd">(${t})</span>`;
   const hints = RUBRIC.map(r => { const h = lastHints[r.id]; return h ? `${r.name.replace(/ \(.*\)$/, '')}: <span class="sg">${h.v}</span>${rubManual[r.id] && rub[r.id] !== h.v ? grey('in griglia hai messo ' + rub[r.id]) : ''}${grey(esc(h.why))}` : ''; }).filter(Boolean);
   tw('t-sum').innerHTML = (line || hints.length) ? `<div class="sum">${line ? `<div>${line}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori · già messi in griglia</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
 }
@@ -2063,6 +2065,8 @@ function openTeacherWin() {
   d.addEventListener('click', onTeacherClick);
   d.addEventListener('keydown', onTeacherKey);
   d.addEventListener('input', rivOnInput);
+  // impressioni: il riepilogo si aggiorna mentre scrivi
+  d.addEventListener('input', e => { if (e.target.id === 't-note') { clearTimeout(renderSummary.t); renderSummary.t = setTimeout(renderSummary, 300); } });
   d.addEventListener('change', e => { if (e.target.id === 't-name' || e.target.id === 't-class' || e.target.id === 't-note') pushLive(); });   // nome scritto dopo i punteggi
   updateTeacherWin(); renderTeacherRubric(); renderTeacherSaved(); renderTimer(); applyHelp(); renderNotes(); renderSummary();
   if (liveFollow) liveFollow.start();
