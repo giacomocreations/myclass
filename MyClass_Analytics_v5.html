@@ -9584,7 +9584,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
         window.mcGriglieEquivalenti = mcGriglieEquivalenti;
         // Griglie delle attività pubblicate sul sito (attivita/…json, con versione): MyClass le legge da sola
         // all'avvio e quando si apre Riscopri orale, così si aggiorna anche senza aprire la finestra docente.
-        const MC_GRIGLIE_ATTIVITA = ['attivita/griglia_myclass_present_continuous_clothes.json', 'attivita/griglia_myclass_rules_obligations.json'];
+        const MC_GRIGLIE_ATTIVITA = ['attivita/griglia_myclass_present_continuous_clothes.json', 'attivita/griglia_myclass_rules_obligations.json', 'attivita/griglia_myclass_identity_cards.json'];
         async function mcAggiornaGriglieDalSito() {
             if (!/^https?:$/.test(location.protocol) || window._tabBlocked) return [];
             const out = [];
@@ -9640,6 +9640,18 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             return true;
         }
         window.mcAggiornaGrigliaDaAttivita = mcAggiornaGrigliaDaAttivita;
+        // Griglia nuova di un'attività (es. Meet My Friend! /16) che MyClass non ha: la aggiunge,
+        // con descrittori, conversione e versione, così la LIVE la trova e la può usare subito
+        function mcAggiungiGrigliaAttivita(g) {
+            if (!g || !g.id || !g.nome || !Array.isArray(g.aree) || !g.aree.length || !g.aree.every(a => Array.isArray(a.descrittori) && a.descrittori.length)) return false;
+            if (mcGriglieEquivalenti(g).length) return false;
+            (data.griglie = data.griglie || []).push({ id: g.id, nome: g.nome,
+                aree: g.aree.map(a => ({ nome: a.nome, max: +a.max, descrittori: a.descrittori.map(d => ({ pt: +d.pt, testo: String(d.testo || '') })) })),
+                ...(g.conversione_voto ? { conversione_voto: { ...g.conversione_voto } } : {}), ...(+g.ver ? { ver: +g.ver } : {}), aggiunta: new Date().toISOString().slice(0, 10) });
+            saveData();
+            return true;
+        }
+        window.mcAggiungiGrigliaAttivita = mcAggiungiGrigliaAttivita;
         // Promemoria salvati con una griglia, in tutte le classi (per la rivalutazione nell'attività)
         function mcPromemoriaLista(gridId, grid) {
             const eq = mcGriglieEquivalenti(grid || { id: gridId });
@@ -9720,7 +9732,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 if ((m.type === 'prom-list' || m.type === 'prom-update' || m.type === 'grid') && m.reqId && !String(m.reqId).startsWith('mc')) {
                     if (window._tabBlocked) { bc.postMessage({ type: 'ack', reqId: m.reqId, ok: false, paused: true, msg: 'questa scheda di MyClass è in pausa (MyClass è aperta due volte).' }); return; }
                     let r; try {
-                        if (m.type === 'grid') r = { ok: true, updated: mcAggiornaGrigliaDaAttivita(m.grid) };
+                        if (m.type === 'grid') r = { ok: true, updated: mcAggiornaGrigliaDaAttivita(m.grid) || mcAggiungiGrigliaAttivita(m.grid) };
                         else if (m.type === 'prom-list') { if (m.grid) mcAggiornaGrigliaDaAttivita(m.grid); r = mcPromemoriaLista(m.gridId, m.grid); }
                         else r = mcPromemoriaAggiorna(m.grid, m.items || []);
                     }
@@ -19417,6 +19429,8 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 // Voci con nomi diversi: va bene la griglia scelta nella LIVE se ha la stessa forma
                 if (att && (att.aree||[]).length === aree.length && att.aree.every((a, k) => +a.max === +aree[k].max))
                     return { G: att, byName: false };
+                // griglia nuova dell'attività (con descrittori): si aggiunge e si usa
+                if (window.mcAggiungiGrigliaAttivita?.(g)) { const G = (data.griglie || []).find(x => x.id === g.id); if (G) return { G, byName: true }; }
                 return null;
             }
             function _lvTrovaAlunno(nome){
