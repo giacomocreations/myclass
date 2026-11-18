@@ -834,7 +834,8 @@ let CK_MINE = (() => { try { return (JSON.parse(localStorage.getItem(MINE_KEY)) 
 const saveMine = () => { try { localStorage.setItem(MINE_KEY, JSON.stringify(CK_MINE)); } catch (e) {} };
 const allChores = () => CK_BOOK.concat(CK_MORE, CK_MINE);
 const isBook = k => CK_BOOK.some(x => x[0] === k);
-const verbOpts = ok => ok.concat(['do', 'make'].filter(v => !ok.includes(v)));
+// verbi da scorrere col clic: prima quelli giusti, poi gli sbagliati tipici (clean the table, do/make scambiati)
+const verbOpts = ok => ok.concat(['clean', 'do', 'make'].filter(v => !ok.includes(v)));
 // regole di casa per mustn't / don't have to: [chiave, frase, modale proposto]
 const CK_RULES = [
   ['games', 'play video games after 10 p.m.', "mustn't"], ['late', 'come home late', "mustn't"], ['mess', 'leave my room in a mess', "mustn't"],
@@ -937,12 +938,6 @@ function p2Stats(c) {
     form: Object.values(st.form || {}).filter(Boolean).length, pr: Object.values(st.pr || {}).filter(Boolean).length, guide: st.guide, mean: st.mean || 0 };
 }
 const exSum = arr => { if (!arr.length) return ''; const c = v => arr.filter(x => x === v).length; return [c(1) && `✓${c(1)}`, c(2) && `~${c(2)}`, c(3) && `✗${c(3)}`].filter(Boolean).join(' '); };
-// suggerimento per Vocabolario (Parte 1) dai descrittori della griglia
-function vocabHint(s) {
-  const n = s.chores.length, e = s.wrong.length;
-  if (!n) return '';
-  return n >= 5 && !e ? 5 : (n >= 5 && e === 1) || (n === 4 && e <= 1) ? 4 : n >= 3 ? 3 : 2;
-}
 function p1Line(html) {
   const s = p1Stats();
   const pb = p1Bec();
@@ -1020,13 +1015,19 @@ function computeHints() {
   }
   // Vocabolario /5: faccende della Parte 1 (+ do/make) e prompt capiti nella Parte 2
   const mean = p2.reduce((t, x) => t + (x.mean || 0), 0);
-  if (s.chores.length || mean) {
+  // Le faccende contano tutte (del libro, «altre» e quelle scritte da te), una volta sola ciascuna,
+  // anche quelle col verbo sbagliato (il verbo sbagliato pesa a parte). Le regole di casa
+  // (mustn't…) non sono faccende: non contano qui.
+  // Frasi nella Parte 1 ma nessuna faccenda (dopo almeno 3 frasi) → 1 («non sa nominare faccende»).
+  const noChores = !s.chores.length && s.mods.length >= 3;
+  if (s.chores.length || mean || noChores) {
     const wrong = s.wrong.length + noteN('er', ['do / make scambiati']);
     const n = s.chores.length;
-    let v = !n ? 3 : n >= 5 && !wrong ? 5 : (n >= 5 && wrong === 1) || (n === 4 && wrong <= 1) ? 4 : n >= 3 ? 3 : 2;
+    let v = noChores ? 1 : !n ? 3 : n >= 5 && !wrong ? 5 : (n >= 5 && wrong === 1) || (n === 4 && wrong <= 1) ? 4 : n >= 3 ? 3 : 2;
     if (mean >= 1) v = Math.min(v, 3);
     if (mean >= 3) v = Math.min(v, 2);
-    H[1] = { v, why: `${pl(n, 'faccenda', 'faccende')} · ${pl(wrong, 'verbo sbagliato', 'verbi sbagliati')} (do/make…)${mean ? ` · chiede il significato ×${mean}` : ''}` };
+    const names = s.chores.map(([k, obj, ok]) => `${verbOpts(ok)[ck.p1[k].v]} ${obj}`);
+    H[1] = { v, why: `${noChores ? `nessuna faccenda in ${s.mods.length} frasi` : `${pl(n, 'faccenda', 'faccende')}${n ? ': ' + names.join(', ') : ''}`} · ${pl(wrong, 'verbo sbagliato', 'verbi sbagliati')}${s.wrong.length ? ` (${s.wrong.map(([k, obj, ok]) => verbOpts(ok)[ck.p1[k].v] + ' ' + obj + ' → ' + ok[0]).join(', ')})` : ''}${mean ? ` · chiede il significato ×${mean}` : ''}` };
   }
   // Comunicazione /5: autonomia, frasi per tipo, because, domande extra, pronuncia e fluenza
   const guide = ck.p1n.guide + p2.reduce((t, x) => t + x.guide, 0);
