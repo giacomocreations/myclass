@@ -1598,7 +1598,7 @@ function renderHome(){
   document.getElementById('kpi-ll').textContent = summary?.avgPct != null ? summary.avgPct+'%' : '—';
   document.getElementById('kpi-sc').textContent = mc?.mediaS != null ? mc.mediaS : '—';
   // Count pending HW
-  const pending = S.lessons.filter(l=>l.compiti && computeHwDate(l)).length;
+  const pending = S.lessons.filter(l=>computeHwDate(l)).length;
   document.getElementById('kpi-hw').textContent = pending + _assignedOpen().length;
 
   // Next upcoming events
@@ -1613,7 +1613,7 @@ function renderHome(){
   let html = '';
 
   // Urgente: scadenze entro 2 giorni
-  const urgent = upcoming.filter(e=>e.daysLeft!=null && e.daysLeft<=2);
+  const urgent = upcoming.filter(e=>e.type!=='lesson' && e.daysLeft!=null && e.daysLeft<=2);
   if(urgent.length){
     html += `<div style="background:#FCEBEB;border-radius:12px;padding:12px 14px;margin-bottom:12px;border:0.5px solid #F09595">
       <div class="sec-lbl" style="color:#501313;margin-bottom:6px">IN SCADENZA PRESTO</div>
@@ -1689,7 +1689,7 @@ function renderHome(){
 // Se il risultato è già passato, ri-ancora alla prossima lezione da ieri.
 // Restituisce una stringa ISO (>= oggi) oppure null se non trovata.
 function computeHwDate(l){
-  if(!l?.compiti) return null;
+  if(!_haCompiti(l)) return null;
   const today = new Date().toISOString().slice(0,10);
   const explicit = extractHwDate(l.compiti);
   const d = explicit || nextLessonDate(l.data);
@@ -1752,12 +1752,14 @@ function _findCurrentHwLesson(){
   const days = [];
   past.forEach(l => {
     const last = days[days.length-1];
-    if(last && last.data === l.data) { if(!last.compiti && l.compiti) days[days.length-1] = l; }
+    if(last && last.data === l.data) { if(!_haCompiti(last) && _haCompiti(l)) days[days.length-1] = l; }
     else days.push(l);
   });
   for(const l of days){
     if(sospesi.has(l.data) || saltati[l.data]) continue; // giorno saltato/sospeso → salta
-    if(l.compiti){
+    // Compiti = testo dei compiti oppure materiali allegati "per compito"
+    // (📚 o 🏫+📚 in MyClass), anche senza testo
+    if(_haCompiti(l)){
       // Priorità: data esplicita nel testo (es. "Assegnati per il 26/05/2026"),
       // poi nextLessonDate come fallback (richiede orario configurato).
       const due = extractHwDate(l.compiti) || nextLessonDate(l.data);
@@ -1799,6 +1801,11 @@ function getUpcomingEvents(n=10){
       if(!a.due){ llNoDate.push({type:'ll', title:a.title||'Attività LiveLearn', date:null, daysLeft:null, hasDeadline:false, ll:a}); return; }
       events.push({type:'ll', title:a.title||'Attività LiveLearn', date:a.due, daysLeft:daysUntil(a.due), hasDeadline:true, ll:a});
     }); }
+
+  // ── Lezioni svolte oggi: si aprono da qui, con i materiali usati ─────────
+  S.lessons.filter(l=>l.data===today && l.stato==='svolta' && !_isVerifica(l)).sort(_lessonCmpAsc).forEach(l=>{
+    events.push({type:'lesson', title:l.titolo, date:l.data, daysLeft:0, lesson:l});
+  });
 
   // ── Verifiche future ──────────────────────────────────────────────────────
   S.lessons.forEach(l=>{
@@ -1967,7 +1974,7 @@ function renderAgendaEvents(dateStr){
     const today = new Date().toISOString().slice(0,10);
     const sospesi = new Set(S.myclass?.giorniSospesi || []);
     const saltati = S.myclass?.giorniSaltati || {};
-    S.lessons.filter(l=>l.compiti && l.data && l.data <= today && !sospesi.has(l.data) && !saltati[l.data]).forEach(l=>{
+    S.lessons.filter(l=>_haCompiti(l) && l.data && l.data <= today && !sospesi.has(l.data) && !saltati[l.data]).forEach(l=>{
       const hwDate = extractHwDate(l.compiti) || nextLessonDate(l.data); // data esplicita > nextLesson
       if(hwDate === dateStr) events.push({type:'hw', lesson:l, hasDeadline:true, date:hwDate, daysLeft:daysUntil(hwDate)});
     });
@@ -2001,7 +2008,8 @@ function renderAgendaEvents(dateStr){
     const clickable = l && !isHwLike ? `onclick="openLesson('${_lk(l)}')"` : '';
     // Compiti: materiali "per compito" della lezione + attività LiveLearn collegate
     const extras = e.type==='hw' ? _hwExtrasHtml(_risorseHw(l), _llPerCompito(l, e.date, _allLL))
-                 : e.type==='ll' ? `<div style="margin-top:4px">${_llLinkHtml(e.ll)}</div>` : '';
+                 : e.type==='ll' ? `<div style="margin-top:4px">${_llLinkHtml(e.ll)}</div>`
+                 : e.type==='lesson' ? _lezMaterialiHtml(l) : '';
 
     // Data da mostrare sul card
     const evDate = e.date || (l?.data);
@@ -2177,8 +2185,11 @@ function openLesson(key){
   } else if(_risorseHw(l).length){
     // Materiali per compito senza testo dei compiti
     html += `<div class="card" style="border-color:#F59E0B;background:#FAEEDA;margin-bottom:12px">
-      <div class="sec-lbl" style="color:#854F0B;margin-bottom:0">COMPITI ASSEGNATI</div>
-      ${_hwExtrasHtml(_risorseHw(l), [])}
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="sec-lbl" style="color:#854F0B;margin-bottom:0">COMPITI ASSEGNATI</div>
+        ${hwDate?scadBadge(hwDate):''}
+      </div>
+      ${_hwExtrasHtml(_risorseHw(l), hwDate ? _llPerCompito(l, hwDate) : [])}
     </div>`;
   }
   // Materiali usati a lezione (quelli per compito stanno sopra, nei compiti)
@@ -2261,6 +2272,22 @@ function _assignedOpen(){ return _assignedAll().filter(a=>!a.done); }
 // compaiono tra i compiti (restano nel dettaglio della lezione).
 function _risorseHw(l){ return (l?.risorse||[]).filter(r=>r && r.url && r.compito===true); }
 // compito:true + lezione:true = usata a lezione E per compito: sta in entrambi
+// La lezione assegna compiti: testo dei compiti o materiali "per compito"
+function _haCompiti(l){ return !!(l && (l.compiti || _risorseHw(l).length)); }
+// Materiali usati a lezione, sotto la lezione di oggi in Agenda
+function _lezMaterialiHtml(l){
+  const ris = _risorseLez(l);
+  if(!ris.length) return '';
+  return `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #c4b5fd">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.5px;color:#6d28d9">📎 MATERIALI DELLA LEZIONE</div>
+    ${ris.map(r=>`<a href="${esc(ensureUrl(r.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()"
+      style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fff;border-radius:10px;margin-top:6px;text-decoration:none;border:1px solid #e9d5ff;">
+      <span style="font-size:16px;flex-shrink:0">${_TIPO_ICONS_RIS[r.tipo]||'🔗'}</span>
+      <span style="font-size:13px;font-weight:600;color:#5b21b6;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.titolo||r.url)}</span>
+      <span style="font-size:11px;color:#7c3aed;flex-shrink:0">Apri ↗</span>
+    </a>`).join('')}
+  </div>`;
+}
 function _risorseLez(l){ return (l?.risorse||[]).filter(r=>r && r.url && (r.compito!==true || r.lezione===true)); }
 // Attività LiveLearn che fanno parte dei compiti di una lezione: scadenza
 // uguale alla consegna dei compiti, oppure senza scadenza ma assegnate tra
