@@ -5067,6 +5067,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 .then(r => {
                     if (r === 'pubblicata')      mostra('✅ pubblicata sulla StudentApp', '#2e7d32');
                     else if (r === 'invariata')  mostra('📡 già pubblicata', '#2e7d32');
+                    else if (r === 'bozza')      mostra('📝 in bozza: non pubblicata', '#b45309');
                     else                          mostra('⚠️ pubblicazione non riuscita', '#c62828');
                 })
                 .catch(() => mostra('⚠️ pubblicazione non riuscita', '#c62828'));
@@ -40505,6 +40506,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
       if (_verSyncRunning || window._tabBlocked) return;
       if (typeof firebase === 'undefined' || !data || !Array.isArray(data.classi)) return;
       _verSyncRunning = true;
+      let pulite = false;
       try {
         const db = firebase.database();
         const oggi = new Date().toISOString().slice(0, 10);
@@ -40559,6 +40561,38 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             const dr = String(r.data || k).slice(0, 10);
             if (r.auto === true || dr >= oggi) { upd[k] = null; tolte.push([k, r]); }
           });
+          // Lezioni pubblicate come svolte che in MyClass non lo sono più:
+          // rimesse in bozza (non validate), tornate pianificate, o slot
+          // svuotato. Solo le ultime due settimane: lo storico non si tocca.
+          const piano = classe.pianificazione?.piano || [];
+          const limite = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10);
+          const svolteTolte = [];
+          Object.entries(remote).forEach(([k, r]) => {
+            if (!r || r.stato !== 'svolta' || r.auto === true) return;
+            const dr = String(r.data || k).slice(0, 10);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(dr) || dr < limite) return;
+            const ora = k.slice(11);
+            const cand = piano.filter(p => p && p.data === dr && (!ora || !p.ora || String(p.ora) === ora));
+            const valida = cand.some(p => p.stato === 'svolta' && p.bozza !== true);
+            if (valida) return;
+            if (!cand.length && dr < oggi) return;   // slot vuoto nel passato: non si sa, si lascia
+            upd[k] = null; svolteTolte.push(k);
+            cand.forEach(p => { if (p.pubblicataAt) { delete p.pubblicataAt; delete p.pubblicataHash; } });
+          });
+          if (svolteTolte.length) {
+            // anche i materiali della lezione copiati in Bacheca → Materiale
+            try {
+              const board = (await db.ref('livelearn/board/' + classId).get()).val() || {};
+              const bupd = {};
+              svolteTolte.forEach(k => {
+                const pre = 'lezmat_' + k + '_';
+                Object.keys(board).forEach(bk => { if (bk.startsWith(pre)) bupd[bk] = null; });
+              });
+              if (Object.keys(bupd).length) await db.ref('livelearn/board/' + classId).update(bupd);
+            } catch (e) { console.warn('[Lezioni→StudentApp] materiali in bacheca non tolti:', e.message); }
+            console.log('[Lezioni→StudentApp]', classId, 'tolte perché non più svolte/validate:', svolteTolte.join(', '));
+            pulite = true;
+          }
           if (Object.keys(upd).length) {
             await ref.update(upd);
             if (tolte.length) await _togliAvvisiVerifica(db, classId, tolte);
@@ -40567,7 +40601,12 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         }
       } catch (e) {
         console.warn('[Verifiche→StudentApp] sync fallita:', e.message);
-      } finally { _verSyncRunning = false; }
+      } finally {
+        _verSyncRunning = false;
+        // tolto il segno "pubblicata" dalle lezioni ritirate: si salva
+        // (la sincronizzazione che riparte non trova più niente da fare)
+        if (pulite) { try { saveData(); } catch (e) {} }
+      }
     }
 
     // Avviso "📅 Verifica — data" messo in bacheca da "📡 Pubblica": quando la
@@ -40636,6 +40675,12 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         .find(p => (p.data + (p.ora ? '_' + p.ora : '')) === data_iso || (!p.ora && p.data === isoDate));
 
       if (!activity) { if (!opts.silent) alert('Lezione non trovata.'); return 'errore'; }
+      // Lezione non validata (in bozza): agli alunni non va
+      if (activity.bozza === true) {
+        if (!opts.silent) alert('La lezione è ancora in bozza (non validata): validala prima di pubblicarla sulla StudentApp.');
+        if (btn) { btn.textContent = '📡 Pubblica'; btn.disabled = false; }
+        return 'bozza';
+      }
       // Già pubblicata e contenuto invariato: non ripubblicare (evita push doppi)
       if (opts.skipIfUnchanged && _lessonPubState(activity) === 'ok') {
         if (btn) { btn.disabled = false; }
