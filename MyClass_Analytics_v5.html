@@ -27030,13 +27030,13 @@ ${sectionInstr}`;
                     body = `
                         ${!task.griglia && task.status !== 'approved' ? _agentGrigliaPickerHtml(task, { note: 'Hai scelto la griglia dopo la valutazione: premi 🔄 Rigenera per rifare voto e feedback con questa griglia.' }) : ''}
                         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
-                          ${task.votoValue != null ? `<span style="font-size:15px;font-weight:700;color:#2e7d32;">🏆 Voto:</span>
+                          <span style="font-size:15px;font-weight:700;color:#2e7d32;">🏆 Voto:</span>
                           <input id="agentVotoEdit_${task.id}" type="number" step="0.5" min="1" max="10"
-                            value="${task.votoValue}"
+                            value="${task.votoValue != null ? task.votoValue : ''}" placeholder="—"
                             style="width:60px;font-size:14px;font-weight:700;padding:3px 6px;border:1.5px solid #a5d6a7;border-radius:6px;text-align:center;"
                             onchange="agentUpdateVoto('${_jq(task.id)}',this.value)"
                           >/10
-                          <span style="font-size:11px;color:#888;">(modifica → JSON aggiornato)</span>` : ''}
+                          <span style="font-size:11px;color:${task.votoValue != null ? '#888' : '#e65100'};">${task.votoValue != null ? '(modifica → JSON aggiornato)' : '⚠️ Voto non impostato — scrivilo a mano'}</span>
                         </div>
                         ${task.audioFileName ? _agentPlayerHtml(task) : ''}
                         ${_vdBloccoHtml(task, null)}
@@ -27281,6 +27281,7 @@ ${sectionInstr}`;
                 body = `<div style="color:#7f0000;font-size:13px;padding:8px 0;">⛔ Tentativi esauriti (${retries}/${AGENT_MAX_RETRY}) — ${(task.error||'').replace(/</g,'&lt;')}<br><small style="opacity:0.7">Rimuovi il task e risolvi il problema prima di riprovare manualmente.</small></div>
                     <div class="agent-task-actions">
                         <button class="agent-btn-edit" onclick="agentForceRetry('${_jq(task.id)}')">🔄 Forza riprova</button>
+                        ${_agentScriviTuBtn(task)}
                         <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                     </div>`;
             } else if (task.status === 'error') {
@@ -27291,6 +27292,7 @@ ${sectionInstr}`;
                 body = `<div style="color:#c62828;font-size:13px;padding:8px 0;">⚠️ ${(task.error||'').replace(/</g,'&lt;')}<br><small style="opacity:0.7">${handleLost ? '📁 Riseleziona la cartella audio nell\'agente e riesegui.' : `Tentativo ${retries}/${AGENT_MAX_RETRY}`}</small></div>
                     <div class="agent-task-actions">
                         ${!handleLost ? `<button class="agent-btn-edit" onclick="agentRegenerate('${_jq(task.id)}')">🔄 Riprova</button>` : ''}
+                        ${_agentScriviTuBtn(task)}
                         <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                     </div>`;
             } else if (task.status === 'awaiting_claude') {
@@ -27301,6 +27303,7 @@ ${sectionInstr}`;
                         <button class="agent-btn-approve" onclick="agentValExportForClaude()">📤 Esporta per Claude</button>
                         <button class="agent-btn-edit" onclick="agentValImportFromClaude()">📥 Importa da Claude</button>
                         <button class="agent-btn-edit" onclick="agentValGenerateNow('${_jq(task.id)}')" title="Genera subito con il generatore automatico (Gemini → Anthropic)">⚡ Genera con Gemini/Haiku</button>
+                        ${_agentScriviTuBtn(task)}
                         <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                     </div>`;
             } else if (task.status === 'awaiting_transcript') {
@@ -27331,6 +27334,7 @@ ${sectionInstr}`;
                     <button class="agent-btn-approve" onclick="agentSubmitManualTranscript('${_jq(task.id)}')">${toReview ? '✅ Approva trascrizione e genera valutazione' : '🤖 Genera valutazione'}</button>
                     ${_agentTranscriptSaveBtn(task)}
                     <button class="agent-btn-edit" onclick="agentClaudePrepara('${_jq(task.id)}')" title="Copia griglia, trascrizione e link dell'attività della lezione da incollare in Claude">🟣 Valuta con Claude</button>
+                    ${_agentScriviTuBtn(task)}
                     ${task.audioFileName ? _agentRitrascriviBtns(task) : ''}
                     ${(task.valDocente||'').trim() ? `<button class="agent-btn-edit" onclick="agentTornaAiRisultati('${_jq(task.id)}')" title="Riapri la valutazione già fatta, senza rigenerarla">↩ Torna alla valutazione già fatta</button>` : ''}
                     <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;padding:4px 8px;border-radius:6px;background:${task.hasSlides?'#e8f5e9':'#f5f5f5'};border:1px solid ${task.hasSlides?'#66bb6a':'#ddd'};color:${task.hasSlides?'#2e7d32':'#666'};" title="Le pause sono attese per le slide — non penalizzare"><input type="checkbox" style="margin:0;" ${task.hasSlides?'checked':''} onchange="agentToggleSlides('${_jq(task.id)}',this.checked)"> 🖼️ Con slide</label>
@@ -27431,6 +27435,7 @@ ${sectionInstr}`;
                         </div>
                         <div class="agent-task-actions">
                             <button class="agent-btn-approve" onclick="agentProcessValOrale('${_jq(task.id)}')">▶ Avvia ora</button>
+                            ${_agentScriviTuBtn(task)}
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                         </div>`;
                 } else if (task.type === 'audio_abbina') {
@@ -27476,6 +27481,7 @@ ${sectionInstr}`;
                 } else {
                     body = `<div style="color:#aaa;font-size:13px;padding:8px 0;">⏳ In attesa di elaborazione…</div>
                         <div class="agent-task-actions">
+                            ${_agentScriviTuBtn(task)}
                             <button class="agent-btn-reject" onclick="agentRemoveTask('${_jq(task.id)}')">🗑 Rimuovi</button>
                         </div>`;
                 }
@@ -30284,6 +30290,18 @@ ${AGENT_VS_DOC_INSTR}`;
 
         // Claude Code: niente chiamata AI, la consegna si esporta su file (📤) e il testo
         // torna con 📥 Importa. I dati per alunno restano nel task fino all'import.
+        // ✍️ Scrivo io: voti e dati calcolati, nessuna AI; i testi li scrive il docente nelle schede
+        if (task._manuale) {
+            delete task._manuale; delete task._viaClaude; delete task._forceAuto;
+            task.importData = results;
+            if (!task.studentAnalysis)  task.studentAnalysis = {};
+            if (!task.studentClassroom) task.studentClassroom = {};
+            if (!task.studentArgo)      task.studentArgo = {};
+            task.manuale = true;
+            task.status = 'ready';
+            task.generatedAt = new Date().toISOString();
+            return;
+        }
         const _viaClaude = task._forceAuto ? false
             : task._viaClaude ? true
             : (task.aiScelta && task.aiScelta !== 'auto') ? task.aiScelta === 'claude'
@@ -30659,6 +30677,40 @@ Il docente lo importa in MyClass con «🟣 Orali con Claude» → «📥 Import
     }
 
     // Prepara la consegna per Claude Code anche se il generatore impostato è l'automatico
+    // ✍️ Il docente scrive da solo la valutazione (orale o scritta), senza AI né Claude
+    function _agentScriviTuBtn(task) {
+        if (!task || !['valorale', 'valscritta'].includes(task.type)) return '';
+        if (['approved', 'processing', 'ready'].includes(task.status)) return '';
+        return `<button class="agent-btn-edit" onclick="agentScriviTu('${_jq(task.id)}')" style="background:#e8f5e9;color:#1b5e20;border-color:#81c784;" title="Niente AI: apri la scheda e scrivi tu voto e valutazione (testo docente e feedback all'alunno)">✍️ Scrivo io la valutazione</button>`;
+    }
+    async function agentScriviTu(taskId) {
+        const t = agentTasks.find(x => x.id === taskId);
+        if (!t || !['valorale', 'valscritta'].includes(t.type)) return;
+        if (t.type === 'valorale') {
+            t.valDocente = t.valDocente || '';
+            t.classroomText = t.classroomText || '';
+            t.manuale = true;
+            t.status = 'ready';
+            t.error = null;
+            t.generatedAt = new Date().toISOString();
+            t.jsonOrale = _buildJsonOrale(t);
+            agentSaveTasks(agentTasks);
+            agentRenderPanel();
+            if (typeof _mcToast === 'function') _mcToast('✍️ Scheda aperta: scrivi voto, valutazione e feedback, poi 📥 Importa');
+            return;
+        }
+        // valscritta: ricalcola i dati dei voti senza AI e apre le schede vuote
+        if (t.importData?.length) {
+            t.studentAnalysis = t.studentAnalysis || {};
+            t.studentClassroom = t.studentClassroom || {};
+            t.studentArgo = t.studentArgo || {};
+            t.manuale = true; t.status = 'ready'; t.generatedAt = new Date().toISOString();
+            agentSaveTasks(agentTasks); agentRenderPanel();
+            return;
+        }
+        t._manuale = true;
+        await agentRegenerate(taskId);
+    }
     async function agentValToClaude(taskId) {
         const t = agentTasks.find(x => x.id === taskId);
         if (!t) return;
@@ -32123,7 +32175,9 @@ ${base}`, task, true);
         // Aggiorna il campo voto nel JSON storico
         try {
             const j = JSON.parse(task.jsonOrale || '{}');
-            if (j.alunni?.[0]) {
+            if (!j.alunni?.[0]) {
+                task.jsonOrale = _buildJsonOrale(task);
+            } else {
                 j.alunni[0].voto = v;
                 task.jsonOrale = JSON.stringify(j, null, 2);
                 // Aggiorna il textarea del JSON se aperto
