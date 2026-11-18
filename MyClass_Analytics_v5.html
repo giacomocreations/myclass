@@ -9525,7 +9525,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
         // LIVE aperta dalle finestre docente delle attività (myclass-live-link.js)
         // Quando nella finestra docente si sceglie un alunno e la LIVE è chiusa,
         // MyClass apre la LIVE della lezione di oggi di quella classe, seleziona
-        // l'alunno e (come sempre alla selezione) parte la registrazione.
+        // l'alunno. La registrazione parte solo con il pulsante ⏺ Registra della LIVE.
         // • MyClass aperta: risponde sul canale anche a LIVE chiusa
         // • MyClass chiusa: l'attività la apre con ?apriLive=CLASSE&alunno=NOME
         // ════════════════════════════════════════════════════════════════
@@ -9559,7 +9559,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             window.currentClass = ci;
             apriLive(ci, _mcSlotOggi(ci));
             if (!document.getElementById('myclass-live-overlay')) return { ok: false, msg: 'la LIVE non si è aperta.' };
-            // la LIVE ha il suo canale: le passo la selezione (lì parte anche la registrazione)
+            // la LIVE ha il suo canale: le passo la selezione (la registrazione si avvia lì, col pulsante)
             setTimeout(() => { try { window._mcLiveBootBC?.postMessage({ type: 'select', reqId: 'mc' + Date.now().toString(36), student: alunno, cls: data.classi[ci].nome, norec: !!norec }); } catch(e) {} }, 500);
             return { ok: true, classe: data.classi[ci].nome };
         }
@@ -9703,7 +9703,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 if (p.voto10 !== undefined && !p.votoPrima && p.voto10 !== voto10) p.votoPrima = { voto10: p.voto10, tot: p.tot, totMax: p.totMax };
                 // agg = quando è stato riscritto: l'agente lo usa per accorgersi che il promemoria è cambiato
                 Object.assign(p, { punteggi, tot, totMax, voto10, ver: +g.ver || 0, rivalutato: new Date().toISOString().slice(0, 10), agg: Date.now() });
-                if (typeof it.nota === 'string' && it.nota.trim()) p.nota = it.nota.trim().slice(0, 1500);
+                if (typeof it.nota === 'string' && it.nota.trim()) p.nota = it.nota.trim().slice(0, 3000);
                 n++;
             });
             if (n) saveData();
@@ -17688,6 +17688,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
       <span id="lv-rec-label">REC</span>
       <button onclick="lvStopRec(true)" style="margin-left:4px;background:rgba(239,68,68,.3);border:1px solid #ef4444;color:#fca5a5;border-radius:10px;padding:1px 8px;font-size:calc(13px*var(--lv-z,1));font-weight:800;cursor:pointer;font-family:inherit;">⏹ Stop</button>
     </div>
+    <button id="lv-rec-start" class="lvbtn" onclick="lvRecStart()" title="Avvia la registrazione dell'alunno selezionato (con ⏹ Stop, o cambiando alunno, si ferma e si scarica il file)" style="display:none;background:rgba(239,68,68,.14);border:1.5px solid rgba(239,68,68,.7);color:#fca5a5;border-radius:20px;padding:4px 12px;font-size:calc(14px*var(--lv-z,1));font-weight:800;white-space:nowrap;">⏺ Registra</button>
     <div style="display:flex;align-items:center;gap:3px;background:rgba(255,255,255,.07);border-radius:18px;padding:2px 4px;">
       <button class="lvbtn" onclick="lvZoom(-1)" title="Riduci il testo" style="padding:4px 11px;border:none;background:transparent;font-size:calc(15px*var(--lv-z,1));">A−</button>
       <span id="lv-zoom-lbl" style="font-size:calc(12px*var(--lv-z,1));opacity:.55;min-width:42px;text-align:center;font-variant-numeric:tabular-nums;"></span>
@@ -18306,14 +18307,39 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 return buf;
             }
 
+            // ── Registrazione: parte SOLO con il pulsante ⏺ Registra (mai da sola alla selezione) ──
+            // Chi si registra: l'alunno selezionato, o gli alunni della coppia / del trio già scelti
+            function lvRecTarget(){
+                if(LV.coppiaMode){
+                    const idx=(LV.coppiaIdx||[]).slice(0,LV.coppiaMode).filter(i=>i!==null&&i!==undefined);
+                    return idx.length?idx.map(i=>studentiDati[i]).filter(Boolean).map(s=>s.cognome+'_'+s.nome):null;
+                }
+                const i=LV._selIdx, s=i!=null?studentiDati[i]:null;
+                return s&&q('lv-sd')?.style.display!=='none'?[s.cognome+'_'+s.nome]:null;
+            }
+            // Pulsante ⏺ Registra: visibile se non si sta registrando e c'è qualcuno da registrare
+            function lvRecUI(){
+                const b=q('lv-rec-start'); if(!b) return;
+                const t=!LV.recActive&&!LV._recStarting?lvRecTarget():null;
+                b.style.display=t?'inline-flex':'none';
+                if(t) b.textContent='⏺ Registra '+t.map(n=>n.split('_')[0]).join(' + ');
+            }
+            window.lvRecUI=lvRecUI;
+            window.lvRecStart=function(){
+                const t=lvRecTarget();
+                if(!t){ alert('Seleziona prima l\'alunno da registrare.'); return; }
+                lvStartRec(t);
+            };
             async function lvStartRec(studenti) {
-                // Ferma e salva (scarica) l'eventuale registrazione precedente: cambiando alunno
-                // non si perde quella di prima
+                // Ferma e salva (scarica) l'eventuale registrazione precedente: non si perde quella di prima
                 if (LV.recActive) lvStopRec(true);
+                if (LV._recStarting) return;
                 if (!navigator.mediaDevices?.getUserMedia) {
                     console.warn('[REC] MediaDevices non supportato in questo browser.');
+                    alert('Questo browser non permette di registrare.');
                     return;
                 }
+                LV._recStarting = true; lvRecUI();
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     const audioCtx   = new (window.AudioContext||window.webkitAudioContext)({ sampleRate: 16000 });
@@ -18339,7 +18365,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                     // UI
                     const ind = q('lv-rec-indicator');
                     const lbl = q('lv-rec-label');
-                    if (ind) ind.style.display = 'flex';
+                    if (ind) { ind.style.display = 'flex'; ind.style.background = 'rgba(239,68,68,.18)'; ind.style.borderColor = '#ef4444'; }
                     const shortNames = studenti.map(n=>n.split('_')[0]).join(' + ');
                     if (lbl) lbl.textContent = 'REC · ' + shortNames;
                 } catch(err) {
@@ -18348,7 +18374,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                     if (ind) { ind.style.display='flex'; ind.style.background='rgba(251,191,36,.18)'; ind.style.borderColor='#fbbf24'; }
                     const lbl = q('lv-rec-label');
                     if (lbl) lbl.textContent = '⚠️ Microfono non disponibile';
+                    setTimeout(() => { if (!LV.recActive && ind) ind.style.display = 'none'; }, 6000);
                 }
+                LV._recStarting = false; lvRecUI();
             }
 
             window.lvStopRec = function(save=true) {
@@ -18366,6 +18394,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 // UI
                 const ind = q('lv-rec-indicator');
                 if (ind) ind.style.display='none';
+                lvRecUI();
                 if (!save || pcmChunks.length === 0) return;
                 // Unisci chunk PCM
                 const totalLen = pcmChunks.reduce((a,b)=>a+b.length, 0);
@@ -18397,7 +18426,8 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 LV.coppiaMode = wasCoppia ? 0 : 2;
                 LV.coppiaIdx=[null,null,null];
                 LV.coppiaSlot=1;
-                lvStopRec(false);
+                lvStopRec(true);   // l'eventuale registrazione in corso si scarica, non si perde
+                lvRecUI();
                 const btnC=q('lv-btn-coppia');
                 const btnT=q('lv-btn-trio');
                 const tabs=q('lv-coppia-tabs');
@@ -18426,7 +18456,8 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 LV.coppiaMode = wasTrio ? 0 : 3;
                 LV.coppiaIdx=[null,null,null];
                 LV.coppiaSlot=1;
-                lvStopRec(false);
+                lvStopRec(true);   // l'eventuale registrazione in corso si scarica, non si perde
+                lvRecUI();
                 const btnC=q('lv-btn-coppia');
                 const btnT=q('lv-btn-trio');
                 const tabs=q('lv-coppia-tabs');
@@ -18523,15 +18554,9 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                     : [1,2].find(n=>LV.coppiaIdx[n-1]===null);
                 if(nextEmpty){
                     setTimeout(()=>lvSwitchCoppia(nextEmpty),300);
-                } else {
-                    // Tutti gli slot pieni → avvia registrazione
-                    const slotsCount = isTrio?3:2;
-                    const studentiRec = [0,1,2].slice(0,slotsCount)
-                        .map(k=>studentiDati[LV.coppiaIdx[k]])
-                        .filter(Boolean)
-                        .map(s=>s.cognome+'_'+s.nome);
-                    lvStartRec(studentiRec);
                 }
+                // Tutti gli slot pieni: la registrazione si avvia col pulsante ⏺ Registra
+                lvRecUI();
             };
 
             // Crea un task "dialogo" nell'agente con gli studenti selezionati in coppia
@@ -18552,21 +18577,15 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 qa('.lv-scard').forEach((c,j)=>c.classList.toggle('sel',j===i));
                 const s=studentiDati[i],el=q('lv-sd');if(!el)return;
                 el.style.display='block';
-                // ── Auto-avvio registrazione (solo modalità singolo) ────────
-                // Alunno scelto dalla finestra docente di un'attività che registra da sé (norec):
-                // qui non parte una seconda registrazione; quella di un altro alunno si ferma e si salva,
-                // quella dello stesso alunno (avviata prima qui) continua.
-                const noRec=!!LV._noRecOnce; LV._noRecOnce=false; LV._recKept=false;
+                // ── Registrazione: non parte mai da sola, solo con il pulsante ⏺ Registra ──
+                // Cambiando alunno quella dell'alunno di prima si ferma e si scarica.
+                LV._noRecOnce=false; LV._recKept=false;
                 if(!LV.coppiaMode){
                     const nomeRec=s.cognome+'_'+s.nome;
-                    if(noRec){
-                        if(LV.recActive&&LV.recStudenti[0]===nomeRec)LV._recKept=true;
-                        else if(LV.recActive)lvStopRec(true);
-                    }
-                    else if(!LV.recActive||(LV.recStudenti[0]!==nomeRec)){
-                        lvStartRec([nomeRec]);
-                    }
+                    if(LV.recActive&&LV.recStudenti[0]!==nomeRec)lvStopRec(true);
+                    else if(LV.recActive)LV._recKept=true;
                 }
+                lvRecUI();
                 const vv=s.ultimi3Orali;
                 let trendHTML='';
                 if(vv.length>=2){const diff=parseFloat((vv[vv.length-1].voto-vv[0].voto).toFixed(1));const col=diff>0?'#6ee7b7':diff<0?'#f87171':'#fbbf24';trendHTML=` <span style="font-size:calc(14px*var(--lv-z,1));color:${col};">${diff>0?'↗️ +':diff<0?'↘️ ':'➡️ '}${Math.abs(diff)}</span>`;}
@@ -19461,7 +19480,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 const st = studentiDati[si];
                 if (!n) { reply(false, `la griglia "${LV.grigliaAttiva.nome||''}" della LIVE ha voci diverse da quelle dell'attività: nessun punteggio inserito. Controlla la griglia scelta nella LIVE.`); return; }
                 // Note della finestra docente (pronuncia, errori, checklist): vanno nel promemoria
-                if (typeof m.note === 'string') { if (!window._lvNoteAtt) window._lvNoteAtt = {}; window._lvNoteAtt[si] = { gid: LV.grigliaAttiva.id, testo: m.note.trim().slice(0, 1500) }; }
+                if (typeof m.note === 'string') { if (!window._lvNoteAtt) window._lvNoteAtt = {}; window._lvNoteAtt[si] = { gid: LV.grigliaAttiva.id, testo: m.note.trim().slice(0, 3000) }; }
                 // "💾 Salva e prossimo" nella finestra docente: salva anche il promemoria
                 if (m.save) {
                     const r = lvGrigliaSalva(si, { silent: true, force: true }) || {};
@@ -19485,7 +19504,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 LV._recKept = false;
                 if (selNow !== r.idx || q('lv-sd')?.style.display === 'none') { LV._noRecOnce = !!m.norec; lvSelS(r.idx); }
                 else if (m.norec) LV._recKept = !!(LV.recActive && LV.recStudenti?.[0] === nomeRec);
-                // l'attività registra da sé, a meno che qui non si stesse già registrando questo alunno
+                // la registrazione non parte: si avvia qui col pulsante ⏺ Registra
                 reply(true, '', { student: `${st.cognome} ${st.nome}`, recMyClass: !!(m.norec && LV._recKept) });
             }
             // Stato della LIVE per le finestre docente (alunno selezionato, griglia)
