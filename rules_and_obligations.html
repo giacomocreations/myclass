@@ -37,6 +37,7 @@
   #mode-switch { position: fixed; top: 14px; right: 14px; z-index: 101; display: inline-flex; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 3px; backdrop-filter: blur(6px); }
   #mode-switch button { border: none; background: transparent; color: #aaa; font-family: inherit; font-size: 13px; font-weight: 500; padding: 6px 12px; border-radius: 7px; cursor: pointer; }
   #mode-switch button[aria-pressed="true"] { background: var(--gold); color: var(--bg); font-weight: 700; }
+  #mode-switch button.tw-top { background: #ff5d8f; color: #fff; font-weight: 700; margin: 0 2px; }
   body.mode-home .class-only, body.mode-class .home-only { display: none !important; }
   body:not(.teacher) .teacher-only { display: none !important; }
   #lock-btn { padding: 6px 9px; }
@@ -195,6 +196,7 @@
 <div id="mode-switch" role="group" aria-label="Modalità">
   <button type="button" data-mode="home" onclick="setMode('home')">🏠 At home</button>
   <button type="button" data-mode="class" class="teacher-only" onclick="setMode('class')">📺 Oral test</button>
+  <button type="button" class="class-only tw-top" onclick="openTeacherWin()" title="Apri la finestra docente (o portala davanti se è già aperta)">🖥️ Finestra docente</button>
   <button type="button" id="lock-btn" onclick="toggleLock()" title="Area docente">🔒</button>
 </div>
 
@@ -1073,10 +1075,12 @@ function applyHints() {
 function renderSummary() {
   if (!twOpen()) return;
   applyHints();
+  const free = tw('t-note').value.trim();
+  const l0 = [free && `📝 <b>Impressioni:</b> ${esc(free)}`, ck.flu.lvl && `🗣️ <b>Fluidità:</b> ${FLU_TXT[ck.flu.lvl]}`, ck.flu.pause && `esitazioni ×${ck.flu.pause}`, ck.flu.block && `blocchi ×${ck.flu.block}`].filter(Boolean).join(' · ');
   const l1 = [p1Line(true), p1Detail(true)].filter(Boolean).join('<br>'), l2 = [p2Line(true), p2Detail(true)].filter(Boolean).join('<br>');
   const hints = GRID.aree.map((a, i) => lastHints[i] ? `${SHORT[i]}: <span class="sg">${lastHints[i].v}</span>${rubManual[i] && rub[i] !== lastHints[i].v ? ' <span style="color:#97a3bd">(in griglia hai messo ' + rub[i] + ')</span>' : ''} <span style="color:#97a3bd">(${esc(lastHints[i].why)})</span>` : '').filter(Boolean);
-  const show = l1 || l2 || hints.length;
-  tw('t-sum').innerHTML = show ? `<div class="sum">${l1 ? `<div>${l1}</div>` : ''}${l2 ? `<div>${l2}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori · già messi in griglia</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
+  const show = l0 || l1 || l2 || hints.length;
+  tw('t-sum').innerHTML = show ? `<div class="sum">${l0 ? `<div>${l0}</div>` : ''}${l1 ? `<div>${l1}</div>` : ''}${l2 ? `<div>${l2}</div>` : ''}${hints.length ? `<div style="margin-top:4px"><span class="hd">Suggerimenti dai descrittori · già messi in griglia</span><br>${hints.join('<br>')}</div>` : ''}</div>` : '<div class="empty">Spunta durante l\'interrogazione: qui compare il riepilogo, che va anche nella nota.</div>';
 }
 function renderNotes() {
   if (!twOpen()) return;
@@ -1261,7 +1265,7 @@ textarea{width:100%;background:#1a2234;border:1px solid rgba(255,255,255,.12);co
 <div class="tmr"><span class="tv" id="t-timer">2:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia</button><button data-act="treset" title="Azzera">↺</button><span class="tl" id="t-tlbl"></span></div>
 <div class="bar"><button class="or" data-act="p1">🏠 Parte 1 · Chores</button><button class="pri" data-act="draw">🎴 Pesca a caso</button></div>
 <div class="bar" id="t-cards" style="margin-top:6px"></div>
-<div class="imp"><div class="ckh">📝 Impressioni generali · 🗣️ fluidità <small>(vale per tutta la prova; va nella nota e nel promemoria di MyClass)</small></div>
+<div class="imp" id="t-imp"><div class="ckh">📝 Impressioni generali · 🗣️ fluidità <small>(vale per tutta la prova; va nella nota e nel promemoria di MyClass)</small></div>
 <textarea id="t-note" rows="2" placeholder="Impressioni, note generali sull'alunno…" autocomplete="off"></textarea>
 <div class="cnts" id="t-flu"></div></div>
 <h2 id="t-h">Soluzioni</h2><div id="t-sol"></div>
@@ -1295,6 +1299,8 @@ function openTeacherWin() {
   d.addEventListener('click', onTeacherClick);
   if (review) review.bind();   // ♻️ Rivedi / correggi (myclass-live-link.js)
   d.addEventListener('keydown', onTeacherKey);
+  // impressioni: il riepilogo si aggiorna mentre scrivi
+  d.addEventListener('input', e => { if (e.target.id === 't-note') { clearTimeout(renderSummary.t); renderSummary.t = setTimeout(renderSummary, 300); } });
   d.addEventListener('change', e => {
     if (e.target.id === 't-cap') { swapCap = e.target.checked; if (swapCap && rub[0] > 3) rub[0] = 3; renderTeacherRubric(); renderSummary(); pushLive(); }
     else if (e.target.id === 't-name' || e.target.id === 't-class' || e.target.id === 't-note') pushLive();   // nome scritto dopo i punteggi
@@ -1320,18 +1326,27 @@ const liveFollow = window.MyClassLive && MyClassLive.follow && MyClassLive.follo
 // ♻️ Rivedi / correggi: valutazioni salvate qui e promemoria di MyClass, nota e punteggi correggibili
 const review = window.MyClassLive && MyClassLive.review && MyClassLive.review({ getDoc: () => twOpen() ? teacherWin.document : null, boxId: 't-riv', grid: GRID, loadGrades, storeGrades, voto: t => voto(t), onLocalSaved: () => renderTeacherSaved() });
 
+// Il riquadro Impressioni · fluidità è uno solo (il testo scritto non si perde): a ogni ridisegno
+// esce da t-sol e poi va al posto del segnaposto t-imp-slot (Parte 1: sotto Anti-recita)
+function setSol(html) {
+  const imp = tw('t-imp'), sol = tw('t-sol');
+  if (imp && sol.contains(imp)) sol.before(imp);
+  sol.innerHTML = html;
+  const slot = tw('t-imp-slot'); if (imp && slot) slot.replaceWith(imp);
+}
 function updateTeacherWin() {
   if (!twOpen()) return;
   const used = CARDS.filter(c => !state.deck.includes(c.id) && state.deck.length).map(c => c.id);
   tw('t-cards').innerHTML = CARDS.map(c => `<button data-act="card" data-id="${c.id}" class="${state.card.id === c.id ? 'on' : ''} ${used.includes(c.id) && state.card.id !== c.id ? 'used' : ''}" title="${esc(c.title)}">${c.n}. ${esc(c.short)}</button>`).join('');
   if (isChores()) {
     tw('t-h').textContent = 'Parte 1 · Household chores (circa 2 minuti, sempre per prima)';
-    tw('t-sol').innerHTML = `<div class="cur">🏠 Doing Household Chores · nessun prompt</div>
+    setSol(`<div class="cur">🏠 Doing Household Chores · nessun prompt</div>
       <ul><li><b>Atteso:</b> almeno 2 frasi per tipo su di sé (<i>I have to / I mustn't / I don't have to</i>) + <b>because</b>, senza domande guida.</li>
       <li><b>Mustn't a casa</b> = regole dei genitori (orari, videogiochi, camera in disordine): è la parte più difficile, se manca chiedila tu.</li>
       <li><b>Lessico da ascoltare:</b> collocazioni do / make corrette e varietà: per il 5 in Vocabolario 5–6 cose diverse, almeno 3 faccende + le altre espressioni delle regole di casa (play video games, come home late…: spuntale o scrivile sotto, contano anche loro).</li></ul>
       <div class="tip"><b>Anti-recita · 1–2 domande a sorpresa</b> <span style="color:#97a3bd">(clic: ✓ → con aiuto → ✗)</span>${SURPRISE.map((q, i) => `<div class="exq">${exBtn('s' + i)}<span>${esc(q)}</span></div>`).join('')}</div>
-      ${renderCkP1()}`;
+      <div id="t-imp-slot"></div>
+      ${renderCkP1()}`);
     renderSummary();
     return;
   }
@@ -1344,10 +1359,11 @@ function updateTeacherWin() {
     const cls = m ? { ok: 'ok', sw: 'sw', no: 'bad' }[p2Status(it, m)] : 'n';
     return `<div class="r2">${cyBtn('r2', `data-i="${i}"`, cls, m ? (cls === 'ok' ? '✔ ' : cls === 'sw' ? '⇄ ' : '✖ ') + esc(m) : '— modale detto?', 'Clic finché non c\'è il modale che ha detto · ancora = non detta')}${becBtn('b2', `data-i="${i}"`, st.bec[i])}${formBtn('f2', `data-i="${i}"`, st.form && st.form[i])}${prBtn('p2', `data-i="${i}"`, st.pr && st.pr[i])}</div>`;
   };
-  tw('t-sol').innerHTML = `<div class="cur">${c.n}. ${esc(c.title)}</div><table class="sol">${c.items.map((it, i) => `<tr class="${it.t}"><td>${promptHTML(it)}${it.it ? `<div class="md">(${esc(it.it)})</div>` : ''}</td><td><span class="k">${TYPE[it.t].sym} ${TYPE[it.t].mod.toUpperCase()}</span><div class="md">${esc(model(it, { both: true }))}</div>${rowCk(it, i)}</td></tr>`).join('')}</table>
+  setSol(`<div class="cur">${c.n}. ${esc(c.title)}</div><table class="sol">${c.items.map((it, i) => `<tr class="${it.t}"><td>${promptHTML(it)}${it.it ? `<div class="md">(${esc(it.it)})</div>` : ''}</td><td><span class="k">${TYPE[it.t].sym} ${TYPE[it.t].mod.toUpperCase()}</span><div class="md">${esc(model(it, { both: true }))}</div>${rowCk(it, i)}</td></tr>`).join('')}</table>
     <div class="cnts">${cntBox('g2', 'domande guida', st.guide)}${cntBox('m2', 'chiede il significato di una parola', st.mean || 0)}</div>
     <div class="tip">Per ✔ accetta sia <b>must</b> che <b>have to</b>. L'errore da sanzionare davvero è lo scambio <b>mustn't / don't have to</b> (⇄ in rosso: spunta da sola il limite a 3 in Grammatica).</div>
-    <div class="tip" style="background:rgba(62,198,255,.08);border-color:rgba(62,198,255,.3)"><b>Domande extra (per distinguere 8–10)</b> <span style="color:#97a3bd">(clic: ✓ → con aiuto → ✗)</span>${EXTRA_Q.map((x, i) => `<div class="exq">${exBtn('e' + i)}<span>${esc(x.q)} → <i>${esc(x.a)}</i> <span style="color:#97a3bd">(${esc(x.why)})</span></span></div>`).join('')}</div>`;
+    <div class="tip" style="background:rgba(62,198,255,.08);border-color:rgba(62,198,255,.3)"><b>Domande extra (per distinguere 8–10)</b> <span style="color:#97a3bd">(clic: ✓ → con aiuto → ✗)</span>${EXTRA_Q.map((x, i) => `<div class="exq">${exBtn('e' + i)}<span>${esc(x.q)} → <i>${esc(x.a)}</i> <span style="color:#97a3bd">(${esc(x.why)})</span></span></div>`).join('')}</div>
+    <div id="t-imp-slot"></div>`);
   renderSummary();
 }
 function renderTeacherRubric() {
