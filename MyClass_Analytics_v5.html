@@ -1984,7 +1984,8 @@
 
                 <div class="agent-section-title" style="display:flex;justify-content:space-between;align-items:center;padding-right:16px;">
                     <span>📋 Coda task</span>
-                    <div style="display:flex;gap:6px;">
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+                        <span id="agentCodaClear" style="display:contents;"></span>
                         <button onclick="agentCollapseAll()" class="agent-btn-edit" style="font-size:11px;padding:3px 12px;border-radius:10px;" title="Comprimi tutti i task">⬆ Comprimi tutti</button>
                         <button onclick="agentExpandAll()"   class="agent-btn-edit" style="font-size:11px;padding:3px 12px;border-radius:10px;" title="Espandi tutti i task">⬇ Espandi tutti</button>
                     </div>
@@ -26075,6 +26076,44 @@ ${sectionInstr}`;
         agentRun(); // avvia subito il retry
     }
 
+    // Svuota dalla coda solo una categoria di task approvati
+    const _AGENT_CLEAR_KINDS = {
+        valutazioni: { tipi: ['valscritta', 'valorale', 'valdialogo'], label: 'valutazioni approvate', icon: '✍️' },
+        piani:       { tipi: ['piano', 'pianoparallela'],              label: 'piani approvati',       icon: '📋' },
+    };
+    function _agentApprovatiDi(kind) {
+        const k = _AGENT_CLEAR_KINDS[kind];
+        return k ? agentTasks.filter(t => t.status === 'approved' && k.tipi.includes(t.type) && !t._restoredFromFirebase) : [];
+    }
+    // Pulsanti nell'intestazione della coda, solo se c'è qualcosa da togliere
+    function _agentCodaClearHtml() {
+        return Object.keys(_AGENT_CLEAR_KINDS).map(kind => {
+            const n = _agentApprovatiDi(kind).length;
+            if (!n) return '';
+            const k = _AGENT_CLEAR_KINDS[kind];
+            return `<button onclick="agentClearApproved('${kind}')" class="agent-btn-edit" style="font-size:11px;padding:3px 12px;border-radius:10px;background:#fff5f5;color:#b91c1c;border-color:#fca5a5;" title="Toglie dalla coda le ${k.label}: restano registrate e non vengono rigenerate">🗑 ${k.icon} Svuota ${k.label} (${n})</button>`;
+        }).join('');
+    }
+    function agentClearApproved(kind) {
+        const k = _AGENT_CLEAR_KINDS[kind];
+        const daTogliere = _agentApprovatiDi(kind);
+        if (!k || !daTogliere.length) return;
+        if (!confirm(`Togliere dalla coda ${daTogliere.length} ${k.label}?\n\nSono già approvate: voti, feedback e piani restano dove li hai mandati e l'agente non le rigenera.`)) return;
+        const ids = new Set(daTogliere.map(t => t.id));
+        // Come "Pulisci approvati": nascoste ('dismissed'), non cancellate, così
+        // l'agente non le ricrea dal calendario o dagli audio
+        agentTasks.forEach(t => {
+            if (!ids.has(t.id)) return;
+            t.status = 'dismissed';
+            t.dismissedAt = t.dismissedAt || new Date().toISOString();
+            if (t.type === 'valscritta') _agentSlimValscritta(t);
+        });
+        agentSaveTasks(agentTasks);
+        agentBadgeUpdate();
+        agentRenderPanel();
+        if (typeof _mcToast === 'function') _mcToast(`🗑 ${daTogliere.length} ${k.label} tolte dalla coda`);
+    }
+
     // Pulisci approvati
     function agentClearCompleted() {
         // I task cdc/glo/piano/valscritta approvati vengono marcati 'dismissed' invece di
@@ -26827,6 +26866,8 @@ ${sectionInstr}`;
         } catch(e) { _renderBriefingPanel(null); }
 
         // Render task list
+        const elClear = document.getElementById('agentCodaClear');
+        if (elClear) elClear.innerHTML = _agentCodaClearHtml();
         const list = document.getElementById('agentTaskList');
         if (!list) return;
 
