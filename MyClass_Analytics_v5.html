@@ -38354,6 +38354,16 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
         _ppRegenList(kind, classeNome, true).forEach(x => { if (checked) set.add(x.id); else set.delete(x.id); });
         renderPianoPersPanel();
     }
+    // 🗑 Elimina le bozze (o i testi orali) spuntate di una classe
+    function ppDiscardSelected(kind, classeEnc) {
+        const classeNome = decodeURIComponent(classeEnc);
+        const set = kind === 'orale' ? _ppOraleSel : _ppDraftSel;
+        const list = _ppRegenList(kind, classeNome, true).filter(x => set.has(x.id));
+        if (!list.length) return;
+        if (!confirm(`Eliminare ${list.length === 1 ? 'la bozza' : 'le ' + list.length + ' bozze'} selezionat${list.length === 1 ? 'a' : 'e'}?\n\n• ${list.map(x => x.studentName).join('\n• ')}\n\nNon verranno inviate agli alunni.`)) return;
+        list.forEach(x => kind === 'orale' ? ppRejectOrale(x.id) : _ppDiscardScrittoNow(x.id));
+        renderPianoPersPanel();
+    }
     // Elementi in attesa di una classe; selOnly = solo quelli spuntati (se ce ne sono)
     function _ppRegenList(kind, classeNome, all = false) {
         const list = kind === 'orale'
@@ -38494,14 +38504,18 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
     }
 
     function ppDiscardScritto(id) {
-        if (!confirm('Scartare questa bozza? L\'attività non verrà inviata all\'alunno.')) return;
+        const d0 = _ppDraftScritto.find(x => x.id === id);
+        if (!confirm(`Eliminare la bozza${d0 ? ' di ' + d0.studentName : ''}? L'attività non verrà inviata all'alunno.`)) return;
+        _ppDiscardScrittoNow(id);
+        renderPianoPersPanel();
+    }
+    function _ppDiscardScrittoNow(id) {
         const d = _ppDraftScritto.find(x => x.id === id);
         _ppDraftScritto = _ppDraftScritto.filter(x => x.id !== id);
         _ppDraftSel.delete(id);
         _ppSavDraftScritto();
         if (d && d.llEditAt) _ppLLStop(id);
         if (d) _ppDeferredDropFor(d.studentSafe, d.unit, d.prefix === 'APP' ? null : ['scritto']);
-        renderPianoPersPanel();
     }
 
     // Rigenera singola domanda nel draft scritto
@@ -38835,6 +38849,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
           <span style="display:flex;gap:6px;flex-wrap:wrap;">
           <button id="${regenId}" onclick="ppRegenClass('${kind}','${enc}')" title="${nSel ? 'Rigenera solo gli alunni selezionati' : 'Rigenera tutta la classe (spunta gli alunni per rigenerarne solo alcuni)'}: scegli Haiku 5.5, Automatico o Claude Code" style="background:#fff7ed;color:#c2410c;border:1.5px solid #fdba74;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">↺ ${nSel ? `Rigenera selezionati (${nSel})` : `Rigenera tutta la classe (${n})`}</button>
           ${`<button onclick="${kind === 'orale' ? 'ppExportClassOraliForClaude' : 'ppExportClassDraftsForClaude'}('${enc}')" title="Scarica il file per Claude Code con ${kind === 'orale' ? 'questi testi orali' : 'queste bozze'}: quando importi il file di Claude, vengono sostituiti" style="background:#fff;color:#7e22ce;border:1.5px solid #c084fc;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🟣 Rifai con Claude</button>`}
+          ${nSel ? `<button onclick="ppDiscardSelected('${kind}','${enc}')" title="Elimina le bozze spuntate: non verranno inviate" style="background:#fff;color:#DC2626;border:1.5px solid #FCA5A5;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🗑 Elimina selezionati (${nSel})</button>` : ''}
           <button id="${btnId}" onclick="${fn}('${enc}')" title="Approva e invia tutte le bozze di questa classe" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">✅ Approva tutte (${n})</button>
           </span>
         </div>`;
@@ -38847,6 +38862,11 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
         return groups;
     }
 
+    function ppRejectOraleAsk(id) {
+        const it = _ppOraleQueue.find(x => x.id === id);
+        if (!confirm(`Eliminare il testo orale${it ? ' di ' + it.studentName : ''}? Non verrà inviato all'alunno.`)) return;
+        ppRejectOrale(id);
+    }
     function ppRejectOrale(id) {
         const item = _ppOraleQueue.find(x => x.id === id);
         _ppOraleQueue = _ppOraleQueue.filter(x => x.id !== id);
@@ -40239,6 +40259,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                           <button onclick="event.stopPropagation();ppReviewEditLL('${d.id}')" title="Modifica nell'editor di LiveLearn, come un test: quando salvi lì, la bozza si aggiorna da sola" style="background:#fff;color:#6c47ff;border:1.5px solid #6c47ff;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">✏️ LiveLearn</button>
                           <button onclick="event.stopPropagation();ppOpenReview('${d.id}')" title="Rivedi a schermo intero con soluzioni e controlli" style="background:#6c47ff;color:#fff;border:none;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">🔍 Rivedi</button>
                           <button id="ppDraftRegenBtn_${d.id}" onclick="event.stopPropagation();ppRegenDraft('${d.id}')" title="Rigenera l'attività con Haiku, Automatico o Claude Code (in quel caso la bozza viene sostituita quando importi il file di Claude). Se ha svolto la verifica DSA / PEI / PEI 2 viene adattata alla sua versione" style="background:#fff7ed;color:#c2410c;border:1.5px solid #fdba74;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">↺ Rigenera</button>
+                          <button onclick="event.stopPropagation();ppDiscardScritto('${d.id}')" title="Elimina questa bozza: non verrà inviata all'alunno" style="background:#fff;color:#DC2626;border:1.5px solid #FCA5A5;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🗑 Elimina</button>
                         </div>
                       </div>
                       ${isCollapsed ? '' : `
@@ -40426,14 +40447,14 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                         ${item.source ? `<span title="Generato con ${_ppGenLabel(item.source)}" style="margin-left:6px;background:${item.source === 'claude' ? '#f3e8ff' : item.source === 'auto' ? '#f3f4f6' : '#dbeafe'};color:${item.source === 'claude' ? '#7e22ce' : item.source === 'auto' ? '#4b5563' : '#1e40af'};border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;">${item.source === 'claude' ? '🟣 Claude' : item.source === 'auto' ? '⚙️ Auto' : '🔵 Haiku 5.5'}</span>` : ''}</div>
                       <div style="font-size:11px;color:#B45309;">${item.unit||''} · voto ${item.voto} · ${new Date(item.createdAt).toLocaleString('it',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
                     </div>
-                    <span style="background:#FEF3C7;color:#92400E;border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;">⏳ Da approvare</span>
+                    <span style="display:flex;gap:6px;align-items:center;"><span style="background:#FEF3C7;color:#92400E;border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;">⏳ Da approvare</span><button onclick="event.stopPropagation();ppRejectOraleAsk('${item.id}')" title="Elimina questo testo orale: non verrà inviato" style="background:#fff;color:#DC2626;border:1.5px solid #FCA5A5;border-radius:8px;padding:3px 9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">🗑</button></span>
                   </div>
                   ${_open ? `<textarea id="ppOraleEdit_${item.id}" onchange="ppOraleTextEdit('${item.id}', this.value)" style="width:100%;min-height:80px;border:1px solid #FDE68A;border-radius:8px;padding:8px;font-size:13px;line-height:1.6;font-family:inherit;resize:vertical;box-sizing:border-box;">${item.text}</textarea>
                   ${_ppOraleSpkEditor(item)}
                   <div style="display:flex;gap:8px;margin-top:8px;">
                     <button id="ppOraleAppBtn_${item.id}" onclick="ppApproveOrale('${item.id}')" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">✅ Approva e invia</button>
                     <button id="ppOraleRegenBtn_${item.id}" onclick="ppRegenOrale('${item.id}')" title="Rigenera il testo con Haiku 5.5, Automatico o Claude Code" style="background:#fff7ed;color:#c2410c;border:1.5px solid #fdba74;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">↺ Rigenera</button>
-                    <button onclick="ppRejectOrale('${item.id}')" style="background:#fff;color:#DC2626;border:1.5px solid #FCA5A5;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🗑 Scarta</button>
+                    <button onclick="ppRejectOraleAsk('${item.id}')" style="background:#fff;color:#DC2626;border:1.5px solid #FCA5A5;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🗑 Scarta</button>
                   </div>` : ''}
                 </div>`;
               });
