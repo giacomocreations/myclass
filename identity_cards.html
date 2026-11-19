@@ -1312,7 +1312,11 @@ function openTeacherWin() {
     if (e.target.id === 't-nameA' || e.target.id === 't-nameB') { state.names.A = tw('t-nameA').value.trim(); state.names.B = tw('t-nameB').value.trim(); renderStage(); renderTabs(); updateTeacherWin(); }
     else if (e.target.id === 't-note') { notes[cur] = e.target.value; clearTimeout(renderSummary.t); renderSummary.t = setTimeout(renderSummary, 300); }
   });
-  d.addEventListener('change', e => { if (/^t-(nameA|nameB|class|note)$/.test(e.target.id)) pushLive(); });
+  d.addEventListener('focusin', e => { if (/^t-name[AB]$/.test(e.target.id)) nameFocus[e.target.id] = e.target.value.trim(); });
+  d.addEventListener('change', e => {
+    if (/^t-name[AB]$/.test(e.target.id)) onNameChanged(e.target);   // un'altra coppia: si salva quella di prima
+    if (/^t-(nameA|nameB|class|note)$/.test(e.target.id)) pushLive();
+  });
   d.addEventListener('keydown', e => {
     if (e.key !== 'Enter' || (e.target.id !== 't-inpr' && e.target.id !== 't-iner')) return;
     e.preventDefault(); addTyped(e.target.id === 't-inpr' ? 'pr' : 'er');
@@ -1336,7 +1340,7 @@ const twOpen = () => teacherWin && !teacherWin.closed && teacherWin.document.get
 const tw = id => teacherWin.document.getElementById(id);
 // Segue la LIVE di MyClass: stato del collegamento e alunno selezionato (myclass-live-link.js)
 const liveFollow = window.MyClassLive && MyClassLive.follow && MyClassLive.follow(() => twOpen() ? teacherWin.document : null, {
-  classId: 't-class', savedToday: () => loadGrades().filter(g => g.date === new Date().toLocaleDateString('it-IT')).map(g => g.name),
+  classId: 't-class', beforeChange: (prev, next) => switchPair(prev, next, false), savedToday: () => loadGrades().filter(g => g.date === new Date().toLocaleDateString('it-IT')).map(g => g.name),
   // clic su un alunno dell'elenco: va in A se è vuoto, poi in B; se sono pieni, nello studente della scheda aperta
   pickTarget: name => { const A = tw('t-nameA').value.trim(), B = tw('t-nameB').value.trim(); return A === name ? 't-nameA' : B === name ? 't-nameB' : !A ? 't-nameA' : !B ? 't-nameB' : (cur === 'B' ? 't-nameB' : 't-nameA'); }
 });
@@ -1421,9 +1425,11 @@ function resetRubric() {
   ck = { A: ckNew(), B: ckNew() };
   cur = 'A'; state.names.A = state.names.B = '';
   if (twOpen()) { tw('t-nameA').value = ''; tw('t-nameB').value = ''; }
+  for (const k in nameFocus) delete nameFocus[k];
   renderTeacherRubric(); renderStage();
 }
-function saveGrades() {
+// o.auto: salvataggio automatico al cambio di coppia (nei campi ci sono ancora i nomi di prima)
+function saveGrades(o = {}) {
   state.names.A = tw('t-nameA').value.trim(); state.names.B = tw('t-nameB').value.trim();
   if (!state.names.A) { twMsg('✏️ Scrivi il nome dello studente A'); tw('t-nameA').focus(); return; }
   const who = ['A', 'B'].filter(s => state.names[s]);
@@ -1440,8 +1446,8 @@ function saveGrades() {
   // promemoria anche nella LIVE di MyClass: prima A, poi B
   const saved = who.map(s => `${state.names[s]} → ${voto(rubTot(s))}`).join(' · ');
   const snapshot = who.map(s => ({ s, name: state.names[s], scores: GRID.aree.map((a, i) => rub[s][i]), note: composeNote(s) }));
-  sendSaved(snapshot, cls);
-  twMsg(`✅ Salvato: ${saved}`);
+  sendSaved(snapshot, cls, !!o.auto);
+  twMsg(o.auto ? `💾 Salvati in automatico: ${saved}` : `✅ Salvato qui: ${saved}`);
   Object.keys(partTimes).forEach(k => delete partTimes[k]);
   resetRubric(); renderTeacherSaved(); goPart(1);
   if (liveFollow) liveFollow.refresh();
@@ -1456,10 +1462,35 @@ function pushLive(save, s = cur, done) {
   MyClassLive.send({ grid: liveGrid(), scores, student: state.names[s] || '', cls: tw('t-class').value.trim(), save: !!save, note: composeNote(s) }, r => { showLive(r); done && done(); });
 }
 // al salvataggio la griglia si azzera subito: mandiamo una copia dei punteggi, uno studente dopo l'altro
-function sendSaved(list, cls) {
+// keepSel: salvataggio automatico al cambio di coppia, la LIVE non cambia alunno
+function sendSaved(list, cls, keepSel) {
   if (!window.MyClassLive || !list.length) return;
   const [first, ...rest] = list;
-  MyClassLive.send({ grid: liveGrid(), scores: first.scores, student: first.name, cls, save: true, note: first.note }, r => { showLive(r); sendSaved(rest, cls); });
+  MyClassLive.send({ grid: liveGrid(), scores: first.scores, student: first.name, cls, save: true, keepSel: !!keepSel, note: first.note }, r => {
+    showLive(r);
+    if (r && !r.ok && twOpen()) teacherWin.alert(`⚠️ ${first.name}: voto salvato solo qui, NON in MyClass.\nMyClass: ${r.msg || 'errore'}`);
+    sendSaved(rest, cls, keepSel);
+  });
+}
+// ── Cambio di coppia senza aver premuto Salva: si salva da sola quella di prima (myclass-live-link.js) ──
+// Un nome nuovo al posto di uno già scritto = un'altra coppia (un nome in un campo vuoto è il compagno).
+const pairAny = () => ['A', 'B'].some(s => rubAny(s) || composeNote(s));
+const pairDone = () => { const A = tw('t-nameA').value.trim(), B = tw('t-nameB').value.trim(); return !!A && (B ? rubDone('A') && rubDone('B') : rubDone('A') && !rubAny('B')); };
+const pairLabel = () => [tw('t-nameA').value.trim(), tw('t-nameB').value.trim()].filter(Boolean).join(' + ') || 'la coppia';
+const switchPair = window.MyClassLive && MyClassLive.switcher ? MyClassLive.switcher({ win: () => teacherWin, hasEval: pairAny, complete: pairDone, label: pairLabel,
+  save: () => saveGrades({ auto: true }),
+  discard: () => { Object.keys(partTimes).forEach(k => delete partTimes[k]); resetRubric(); goPart(1); if (liveFollow) liveFollow.refresh(); } }) : () => true;
+var nameFocus = {};   // per campo, quando ci si entra (var: lo azzera anche resetRubric)
+// nome scritto a mano al posto di un altro: nei campi si rimette per un attimo quello di prima, così si salva la coppia giusta
+function onNameChanged(el) {
+  const prev = nameFocus[el.id] || '', next = el.value.trim();
+  nameFocus[el.id] = next;
+  if (!prev || !next || prev === next) return;
+  el.value = prev;
+  const ok = switchPair(prev, next, true);
+  if (ok === false) { nameFocus[el.id] = prev; }
+  else el.value = next;
+  state.names.A = tw('t-nameA').value.trim(); state.names.B = tw('t-nameB').value.trim(); renderStage(); renderTabs(); updateTeacherWin();
 }
 function showLive(r) {
   if (!twOpen()) return;

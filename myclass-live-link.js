@@ -17,6 +17,9 @@
 //  • Registrazione: solo in MyClass. La finestra docente non registra:
 //    scegliendo l'alunno dall'elenco lo si seleziona nella LIVE e lì
 //    la registrazione si avvia solo con il pulsante ⏺ Registra della LIVE.
+//  • Cambio alunno (MyClassLive.switcher): se nella finestra docente si passa a
+//    un altro alunno (elenco, LIVE o nome scritto a mano) con una valutazione in
+//    corso, quella dell'alunno precedente si salva da sola, come con «Salva».
 //  • Rivedi / correggi (MyClassLive.review): elenco degli alunni valutati, nota
 //    e punteggi correggibili a mano, salvati anche nel promemoria di MyClass.
 //  • Rivalutazione: { type:'prom-list', gridId } → MyClass risponde con i
@@ -32,7 +35,9 @@
 //
 //  Messaggio:  { type:'scores', reqId, grid:{id,nome,aree:[{nome,max}]},
 //                scores:[punteggio|null per area], student (obbligatorio), cls, save,
-//                note: testo (pronuncia, errori, checklist) che va nel promemoria }
+//                note: testo (pronuncia, errori, checklist) che va nel promemoria,
+//                keepSel: true = salvataggio automatico dell'alunno precedente, la LIVE
+//                resta sull'alunno selezionato }
 //  Risposta:   { type:'ack', reqId, ok, msg, student, classe }
 //  Selezione:  { type:'select', reqId, student, cls }  →  'ack' come sopra
 //  Stato:      { type:'hello', reqId }  →  { type:'live', reqId, classe,
@@ -134,11 +139,13 @@
   //   getDoc(): documento della finestra docente, o null se è chiusa
   //   opts: { nameId:'t-name', classId:'t-class', onStudent(nome, classe),
   //           pickTarget(): id del campo da riempire col clic (default nameId),
-  //           savedToday(): nomi già salvati oggi in questa attività (✓) }
+  //           savedToday(): nomi già salvati oggi in questa attività (✓),
+  //           beforeChange(vecchio, nuovo): prima di sostituire un nome già scritto (clic
+  //             sull'elenco o alunno scelto nella LIVE); false = il nome resta quello }
   var PICK_KEY = 'myclass_teacher_pick';
   function follow(getDoc, opts) {
     opts = opts || {};
-    var auto = { name: '', cls: '' }, timer = null, last = '', skip = '', liveCls = '', boundDoc = null;
+    var auto = { name: '', cls: '' }, timer = null, last = '', skip = '', declined = '', liveCls = '', boundDoc = null;
     var state;   // ultima risposta: undefined = non ancora chiesto, null = MyClass non risponde
     var pick = { cls: '', open: true };
     try { var sv = JSON.parse(localStorage.getItem(PICK_KEY) || '{}'); pick.cls = sv.cls || ''; pick.open = sv.open !== false; } catch (e) {}
@@ -199,6 +206,14 @@
     function choose(d, name) {
       var target = opts.pickTarget ? opts.pickTarget(name) : opts.nameId;
       var el = target && d.getElementById(target);
+      // al posto di un altro alunno: prima si salva la sua valutazione (beforeChange), poi i campi
+      // sono vuoti e il nome va dove dice di nuovo pickTarget
+      var was = el ? el.value.trim() : '';
+      if (opts.beforeChange && was && norm(was) !== norm(name)) {
+        if (opts.beforeChange(was, name) === false) return;
+        target = opts.pickTarget ? opts.pickTarget(name) : opts.nameId; el = target && d.getElementById(target);
+      }
+      declined = '';
       if (el) { el.value = name; if (target === opts.nameId) auto.name = name; fire(el); }
       var ce = opts.classId && d.getElementById(opts.classId);
       if (ce && pick.cls && ce.value.trim() !== pick.cls) { ce.value = pick.cls; auto.cls = pick.cls; fire(ce); }
@@ -251,11 +266,16 @@
       el.className = 'link ok';
       el.textContent = '🟢 Collegata alla LIVE di MyClass (' + (m.classe || '?') + ')' + (m.student ? ' · alunno selezionato: ' + m.student : ' · seleziona un alunno nella LIVE o qui sotto') + (m.griglia ? '' : ' · ⚠️ nessuna griglia scelta nella LIVE');
       if (m.classe && m.classe !== liveCls) { liveCls = m.classe; if (classes.some(function (c) { return c.nome === liveCls; })) { pick.cls = liveCls; savePick(); } }
-      if (m.student !== last) { last = m.student || ''; if (last !== skip) skip = ''; }
-      if (m.student && opts.nameId && m.student !== skip) {
-        var changed = field(d, opts.nameId, m.student, 'name');
-        field(d, opts.classId, m.classe, 'cls');
-        if (changed && opts.onStudent) opts.onStudent(m.student, m.classe);
+      if (m.student !== last) { last = m.student || ''; if (last !== skip) skip = ''; if (last !== declined) declined = ''; }
+      if (m.student && opts.nameId && m.student !== skip && m.student !== declined) {
+        // nella LIVE un altro alunno mentre qui c'è quello di prima (scritto dalla LIVE): prima si salva
+        var el0 = d.getElementById(opts.nameId), was = el0 ? el0.value.trim() : '';
+        if (opts.beforeChange && was && was === auto.name && norm(was) !== norm(m.student) && opts.beforeChange(was, m.student) === false) declined = m.student;   // resta qui: non lo richiede a ogni controllo
+        else {
+          var changed = field(d, opts.nameId, m.student, 'name');
+          field(d, opts.classId, m.classe, 'cls');
+          if (changed && opts.onStudent) opts.onStudent(m.student, m.classe);
+        }
       }
       renderPicker();
     }
@@ -274,7 +294,7 @@
       },
       // dopo "Salva e prossimo": il prossimo alunno selezionato nella LIVE può riempire i campi
       // (finché nella LIVE resta selezionato l'alunno appena valutato, i campi restano vuoti)
-      reset: function () { auto = { name: '', cls: '' }; skip = last; renderPicker(); poll(); },
+      reset: function () { auto = { name: '', cls: '' }; skip = last === declined ? '' : last; declined = ''; renderPicker(); poll(); },
       refresh: function () { renderPicker(); }
     };
   }
@@ -417,5 +437,31 @@
     return { open: open, bind: bind };
   }
 
-  window.MyClassLive = { available: !!bc, send: send, select: select, hello: hello, request: request, follow: follow, roster: roster, review: review};
+  // ── Cambio alunno con una valutazione in corso: si salva quella del precedente ──
+  // Così, se ci si dimentica di premere «Salva», non si perde niente.
+  //   o: { win(): finestra docente, hasEval(): c'è qualcosa di valutato, complete(): griglia completa,
+  //        save(vecchio): salva come «Salva» (e azzera), discard(): azzera senza salvare,
+  //        label(vecchio): come chiamarlo negli avvisi (default il nome) }
+  //   → function (vecchio, nuovo, manual): true = si passa al nuovo (salvato, lasciato perdere o
+  //     niente da salvare), false = si resta sul vecchio. manual = nome scritto a mano: se i due nomi
+  //     non sono entrambi nell'elenco della classe può essere la correzione di un errore di battitura,
+  //     e lo si chiede.
+  function nrm(t) { return String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim(); }
+  function switcher(o) {
+    var known = function (n) { var k = nrm(n); return roster().some(function (c) { return c.studenti.some(function (s) { return nrm(s) === k; }); }); };
+    return function (prev, next, manual) {
+      prev = String(prev || '').trim(); next = String(next || '').trim();
+      if (!prev || !next || nrm(prev) === nrm(next) || !o.hasEval()) return true;
+      var w = o.win() || window, chi = o.label ? o.label(prev) : prev;
+      if (manual && !(known(prev) && known(next)) &&
+          !w.confirm('Nel nome c\'era ' + prev + ', ora ' + next + '.\n\nOK = è un altro alunno: salvo la valutazione di ' + chi + ' e passo a ' + next + '.\nAnnulla = ho solo corretto il nome: la valutazione continua.')) return true;
+      if (!o.complete()) {
+        if (!w.confirm(chi + ': la griglia non è completa, il voto NON si può salvare.\n\nOK = passo a ' + next + ' e lascio perdere questa valutazione.\nAnnulla = resto su ' + chi + ' per completarla (poi premi Salva).')) return false;
+        o.discard(); return true;
+      }
+      o.save(prev); return true;
+    };
+  }
+
+  window.MyClassLive = { available: !!bc, send: send, select: select, hello: hello, request: request, follow: follow, roster: roster, review: review, switcher: switcher };
 })();
