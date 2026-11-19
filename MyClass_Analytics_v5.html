@@ -25488,6 +25488,8 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
 
         agentRunning = false;
         agentAbortController = null;
+        // promemoria LIVE → schede orali anche se un passo prima (Firebase, scritte…) si è fermato con un errore
+        if (AGENT_DO_ORALI) { try { agentCheckPromemoriaOrali(); } catch (e) { console.warn('[Agente] promemoria orali:', e); } }
         try { agentSaveTasks(agentTasks); } catch(e) { console.error('[agentRun] Save finale fallita:', e.message); }
         agentBadgeUpdate();
         agentRenderPanel();
@@ -26395,7 +26397,7 @@ ${sectionInstr}`;
         const rimossi = agentTasks.filter(t => (t.type === 'valorale' || t.type === 'valdialogo') && t.status === 'dismissed')
             .sort((a, b) => String(b.dismissedAt || '').localeCompare(String(a.dismissedAt || '')));
         // Orali in coda già valutati con una griglia o un promemoria che poi sono cambiati
-        agentTasks.forEach(t => { try { _agentGrigliaSync(t); } catch (e) {} });
+        agentTasks.forEach(t => { try { _agentGrigliaSync(t); if (['valorale', 'valdialogo'].includes(t.type) && !['processing', 'dismissed'].includes(t.status)) _agentPrelimEnsure(t); } catch (e) {} });
         const daRifare = agentTasks.filter(t => (t.type === 'valorale' || t.type === 'valdialogo') && !['dismissed', 'processing'].includes(t.status) && !t.daRivalutare
             && (t.votoValue != null || (t.results || []).length)
             && (t.grigliaCambiata || _agentPrelimVoci(t).some(v => +v.p.agg > (Date.parse(t.generatedAt || 0) || 0))))
@@ -26529,7 +26531,7 @@ ${sectionInstr}`;
         const prima = new Set(agentTasks.map(t => t.id));
         if (m) { m.style.color = '#555'; m.textContent = '⏳ Cerco…'; }
         try { if (agentAudioDirHandle) await agentCheckAudioFolder(); agentCheckPromemoriaOrali(); } catch (e) { if (m) { m.style.color = '#c62828'; m.textContent = '⚠️ ' + e.message; } return; }
-        if (!agentAudioDirHandle && !agentTasks.some(t => !prima.has(t.id))) { if (m) { m.style.color = '#b35c00'; m.textContent = '⚠️ Nessun promemoria LIVE nuovo con verifica orale. Per cercare anche gli audio riapri la cartella audio nelle impostazioni dell\'agente.'; } return; }
+        if (!agentAudioDirHandle && !agentTasks.some(t => !prima.has(t.id))) { if (m) { m.style.color = '#b35c00'; m.textContent = '⚠️ Nessun promemoria LIVE nuovo con verifica orale.' + (_agentPromSaltatiTxt() ? ' Senza scheda: ' + _agentPromSaltatiTxt() + '.' : '') + ' Per cercare anche gli audio riapri la cartella audio nelle impostazioni dell\'agente.'; } return; }
         agentSaveTasks(agentTasks); agentRenderPanel();
         const nuovi = agentTasks.filter(t => !prima.has(t.id) && (t.type === 'valorale' || t.type === 'audio_abbina'));
         if (m) { m.style.color = '#1b5e20'; m.textContent = nuovi.length ? `✅ ${nuovi.length} schede ricreate: ${nuovi.map(t => t.studentName || t.audioFileName).join(', ')}` : 'Nessuna scheda nuova: gli audio hanno già una scheda o un voto orale per quella data.'; }
@@ -26955,7 +26957,7 @@ ${sectionInstr}`;
             t.status === 'dismissed' && t.isRecupero && t.dismissReason
         );
 
-        const parDiag = _agentParallelaDiagHtml();
+        const parDiag = _agentParallelaDiagHtml() + _agentPromSaltatiHtml();
         if (sorted.length === 0) {
             list.innerHTML = parDiag + `<div class="agent-empty-state">
                 <div class="agent-empty-icon">🤖</div>
@@ -27609,7 +27611,7 @@ ${sectionInstr}`;
                 <div class="agent-task-body">
                     ${meta ? `<div class="agent-task-meta" style="margin-bottom:8px;">${meta}</div>` : ''}
                     ${_agentAiPickerHtml(task)}
-                    ${task.grigliaCambiata && !task.daRivalutare && task.status !== 'dismissed' && (task.votoValue != null || (task.results || []).length) ? `<div style="background:#fff8e1;border:1.5px solid #ffb300;border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:12.5px;color:#6d4c00;">📐 <strong>Griglia aggiornata dopo questa valutazione</strong>${task.grigliaCambiata.ora ? ` (ora v${task.grigliaCambiata.ora}${task.grigliaCambiata.prima ? ', valutata con la v' + task.grigliaCambiata.prima : ''})` : ''}: la scheda usa già quella nuova. Rifai la valutazione (scegli l'AI e <b>🔄 Rigenera</b>)${task.status === 'approved' ? ', poi <b>🔄 Riscrivi storico</b>' : ', poi importa'}. Per più orali insieme: <b>🎙️ Riscopri orale</b> → «orali da rifare».</div>` : ''}
+                    ${task.grigliaCambiata && !task.daRivalutare && task.status !== 'dismissed' && (task.votoValue != null || (task.results || []).length) ? `<div style="background:#fff8e1;border:1.5px solid #ffb300;border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:12.5px;color:#6d4c00;">📐 <strong>Griglia aggiornata dopo questa valutazione</strong>${task.grigliaCambiata.nome ? ` (ora «${_escH(task.grigliaCambiata.nome)}»${task.grigliaCambiata.primaNome ? ', valutata con «' + _escH(task.grigliaCambiata.primaNome) + '»' : ''})` : ''}${task.grigliaCambiata.ora ? ` (ora v${task.grigliaCambiata.ora}${task.grigliaCambiata.prima ? ', valutata con la v' + task.grigliaCambiata.prima : ''})` : ''}: la scheda usa già quella nuova. Rifai la valutazione (scegli l'AI e <b>🔄 Rigenera</b>)${task.status === 'approved' ? ', poi <b>🔄 Riscrivi storico</b>' : ', poi importa'}. Per più orali insieme: <b>🎙️ Riscopri orale</b> → «orali da rifare».</div>` : ''}
                     ${_agentPrelimAggHtml(task)}
                     ${_agentPrelimPanelHtml(task)}
                     ${task.type === 'analisididattica' && task.status === 'approved' ? `<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;"><button class="agent-btn-edit" onclick="apriEditorAnalisi({taskId:'${_jq(task.id)}'})">✏️ Modifica e reinvia</button><button class="agent-btn-edit" onclick="agentReinviaAnalisi('${_jq(task.id)}')" title="Rimanda a StudentApp l'analisi salvata in MyClass">📤 Invia di nuovo a StudentApp</button></div>` : ''}
@@ -31442,26 +31444,35 @@ Il docente lo importa in MyClass con «🟣 Orali con Claude» → «📥 Import
         const ms = d => new Date(String(d || '').slice(0, 10)).getTime();
         const tOggi = ms(today), DAY = 86400000;
         const isOrale = lz => AGENT_ORALE_TIPI.some(t => String(lz.tipo || '').toLowerCase().includes(t));
-        const nuovi = [];
+        const nuovi = [], saltati = [];
         for (const classe of (data.classi || [])) {
             const piano = classe.pianificazione?.piano || [];
             for (const studente of (classe.studenti || [])) {
                 const safe = _toSafe(`${studente.cognome} ${studente.nome}`);
                 const visti = new Set();
+                const salta = (sd, motivo) => saltati.push({ nome: `${studente.cognome} ${studente.nome}`, classe: classe.nome, data: sd, motivo });
                 for (const p of (studente.votiPromemoria || [])) {
                     const sessionDate = String(p?.data || '').slice(0, 10);
                     const t = ms(sessionDate);
                     if (!sessionDate || isNaN(t) || t > tOggi || tOggi - t > 21 * DAY || !(Number(p.voto10) > 0) || visti.has(sessionDate)) continue;
                     visti.add(sessionDate);
                     // c'è una verifica orale quel giorno (o il giorno prima / dopo)?
-                    const lez = piano.filter(lz => isOrale(lz) && Math.abs(ms(lz.data) - t) <= DAY)
-                        .sort((a, b) => Math.abs(ms(a.data) - t) - Math.abs(ms(b.data) - t))[0];
-                    if (!lez) continue;
-                    if ((studente.orale || []).some(g => String(g.data || '').slice(0, 10) === sessionDate)) continue;
+                    const vicine = lz => Math.abs(ms(lz.data) - t) <= DAY;
+                    const perData = (a, b) => Math.abs(ms(a.data) - t) - Math.abs(ms(b.data) - t);
+                    let lez = piano.filter(lz => isOrale(lz) && vicine(lz)).sort(perData)[0];
+                    // Promemoria della finestra docente di un'attività (Meet My Friend!, Rules & Obligations,
+                    // What Are They Wearing?…: griglia con versione) o rimandato con ♻️ Rivedi: è una prova
+                    // orale anche se nel piano quel giorno la lezione non è segnata come verifica orale
+                    const Gp = (data.griglie || []).find(x => x.id === p.grigliaId);
+                    if (!lez && ((Gp && +Gp.ver > 0) || +p.ver > 0 || p.rivalutato))
+                        lez = piano.filter(vicine).sort(perData)[0] || { unit: '', titolo: (Gp && Gp.nome) || p.grigliaNome || 'Verifica orale' };
+                    if (!lez) { salta(sessionDate, 'nel piano non c\'è una verifica orale quel giorno (±1)'); continue; }
+                    if ((studente.orale || []).some(g => String(g.data || '').slice(0, 10) === sessionDate)) { salta(sessionDate, 'c\'è già un voto orale nello storico con quella data'); continue; }
                     const giaScheda = agentTasks.some(x => (x.type === 'valorale' && x.studentSafe === safe && x.classe === classe.nome
                             || x.type === 'valdialogo' && (x.studenti || []).some(z => z.studentSafe === safe))
                         && Math.abs(ms(x.sessionDate) - t) <= 2 * DAY);
-                    if (giaScheda) continue;
+                    if (giaScheda) { const x = agentTasks.find(y => (y.type === 'valorale' && y.studentSafe === safe && y.classe === classe.nome || y.type === 'valdialogo' && (y.studenti || []).some(z => z.studentSafe === safe)) && Math.abs(ms(y.sessionDate) - t) <= 2 * DAY);
+                        if (x && x.status === 'dismissed') salta(sessionDate, 'c\'è già una scheda, ma è tra quelle rimosse (🎙️ Riscopri orale → rimetti in lista)'); continue; }
                     const _gr = _agentTrovaGrigliaOrale(classe, sessionDate, [studente]);
                     const g = _gr.griglia;
                     const tid = `valorale_${_toSafe(classe.nome)}_${safe}_${sessionDate}`;
@@ -31488,6 +31499,8 @@ Il docente lo importa in MyClass con «🟣 Orali con Claude» → «📥 Import
                 }
             }
         }
+        window._agentPromSaltati = saltati;
+        if (saltati.length) console.info('[Agente] promemoria LIVE senza scheda:', saltati.map(x => `${x.nome} (${x.classe}, ${x.data}): ${x.motivo}`).join(' · '));
         if (nuovi.length) {
             console.log(`[Agente] ${nuovi.length} verifiche orali senza audio dai promemoria LIVE: ${nuovi.join(', ')}`);
             agentSaveTasks(agentTasks);
@@ -31496,6 +31509,19 @@ Il docente lo importa in MyClass con «🟣 Orali con Claude» → «📥 Import
         return nuovi;
     }
     window.agentCheckPromemoriaOrali = agentCheckPromemoriaOrali;
+    // Promemoria LIVE recenti per cui l'agente NON ha creato la scheda, con il motivo (dopo ▶ Esegui ora)
+    function _agentPromSaltatiTxt(max) {
+        const l = window._agentPromSaltati || [];
+        return l.slice(0, max || 12).map(x => `${x.nome} (${x.classe}, ${x.data}): ${x.motivo}`).join(' · ') + (l.length > (max || 12) ? ` · … e altri ${l.length - (max || 12)}` : '');
+    }
+    function _agentPromSaltatiHtml() {
+        const l = (window._agentPromSaltati || []).filter(x => !/storico/.test(x.motivo));
+        if (!l.length) return '';
+        const e = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        return `<details style="background:#fff8e1;border:1.5px solid #ffb300;border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:12.5px;color:#6d4c00;">
+            <summary style="cursor:pointer;font-weight:700;">⚠️ ${l.length} promemoria LIVE senza scheda dell'agente (clic per il motivo)</summary>
+            <div style="margin-top:6px;line-height:1.5;">${l.slice(0, 30).map(x => `• <b>${e(x.nome)}</b> (${e(x.classe)}, ${e(x.data)}): ${e(x.motivo)}`).join('<br>')}${l.length > 30 ? `<br>… e altri ${l.length - 30}` : ''}</div></details>`;
+    }
 
     async function agentCheckAudioFolder() {
         if (!agentAudioDirHandle) return;
@@ -32462,11 +32488,18 @@ ${base}`, task, true);
             (studente.studentName && _n(`${x.cognome} ${x.nome}`) === _n(studente.studentName)));
         const vp = (stObj || studente).votiPromemoria || [];
         const t0 = new Date(String(sessionDate).slice(0, 10)).getTime();
+        // stessa griglia della scheda o un'altra versione della stessa attività (es. /15 → /16): tra queste vince la più recente
+        const famT = gid ? _agentGrigliaFam((data.griglie || []).find(x => x.id === gid)) : '';
+        const inFam = p => !!gid && (p.grigliaId === gid || (!!famT && _agentGrigliaFam((data.griglie || []).find(x => x.id === p.grigliaId) || { nome: p.grigliaNome }) === famT));
         const cand = vp.map(p => ({ p, d: Math.abs(new Date(String(p.data).slice(0, 10)).getTime() - t0) }))
             .filter(x => !isNaN(x.d) && x.d <= 2 * 86400000)
-            .sort((a, b) => (a.d - b.d) || ((gid && b.p.grigliaId === gid) - (gid && a.p.grigliaId === gid)) || ((b.p.ts||0) - (a.p.ts||0)));
+            .sort((a, b) => (a.d - b.d) || (inFam(b.p) - inFam(a.p)) || ((b.p.ts||0) - (a.p.ts||0)));
         return cand.length ? cand[0].p : null;
     }
+    // «Famiglia» di una griglia: il nome senza il punteggio massimo, così la /16 di un'attività è
+    // la stessa attività della /15 (es. «Rules & Obligations … /16 — …» e «Rules & Obligations … — …»)
+    const _agentGrigliaFam = g => String(g && g.nome || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s*\/\s*\d+(?=\s|$)/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
     // Aggiorna il promemoria del task con quello più recente (es. salvato dopo la creazione del task)
     // Versione di un promemoria: riscritto (♻️ Rivedi nella finestra docente) → agg, se no ts
     const _agentPrelimVer = p => +(p && (p.agg || p.ts)) || 0;
@@ -32501,6 +32534,30 @@ ${base}`, task, true);
             if (!task.prelimLive) task.prelimLive = {};
             (task.studenti||[]).forEach(s => { const v = pick(task.prelimLive[s.studentSafe], s, s.studentSafe); if (v) task.prelimLive[s.studentSafe] = v; });
         }
+        try { if (_agentGrigliaDaPromemoria(task)) _agentGrigliaSyncDirty = true; } catch (e) { console.warn('[Agente] griglia dal promemoria:', e.message); }
+    }
+    // La griglia della scheda è quella del promemoria LIVE della prova. Serve quando la scheda è nata
+    // prima del promemoria (griglia presa dal piano) o con la versione vecchia della griglia
+    // dell'attività (es. Rules & Obligations /15, poi valutato con la /16): la scheda passa alla
+    // griglia del promemoria e, se era già valutata, si segna da rifare. Non tocca una griglia
+    // scelta a mano o da file, né una presa da un promemoria di un'altra attività.
+    function _agentGrigliaDaPromemoria(task) {
+        if (!task || !['valorale', 'valdialogo'].includes(task.type) || task.status === 'processing') return false;
+        if (/^(scelta a mano|da file JSON)/.test(task.grigliaFonte || '')) return false;
+        const ps = _agentPrelimVoci(task).map(v => v.p).filter(Boolean).sort((a, b) => _agentPrelimVer(b) - _agentPrelimVer(a));
+        if (!ps.length) return false;
+        const p = ps[0], G = (data.griglie || []).find(x => x.id === p.grigliaId);
+        if (!G || (task.griglia && task.griglia.id === G.id)) return false;
+        const prima = task.griglia;
+        const stessaAttivita = prima && _agentGrigliaFam(prima) && _agentGrigliaFam(prima) === _agentGrigliaFam(G);
+        if (prima && !stessaAttivita && /^usata in LIVE/.test(task.grigliaFonte || '')) return false;
+        task.griglia = { id: G.id, nome: G.nome, aree: G.aree, conversione_voto: G.conversione_voto || null, guida: G.guida || null, ...(G.ver ? { ver: +G.ver } : {}) };
+        task.grigliaFonte = `usata in LIVE (${String(p.data).slice(0, 10)})`;
+        delete task.grigliaCleared;
+        const fatto = task.votoValue != null || (task.results || []).length;
+        if (fatto) task.grigliaCambiata = { prima: null, ora: null, nome: G.nome, primaNome: prima ? prima.nome : '', il: new Date().toISOString().slice(0, 10) };
+        console.info(`[Agente] ${task.studentName || task.id}: griglia «${prima ? prima.nome : '—'}» → «${G.nome}» (quella del promemoria LIVE)`);
+        return true;
     }
     // Promemoria aggiornato DOPO la valutazione dell'agente: avviso con cosa fare
     function _agentPrelimAggHtml(task) {
