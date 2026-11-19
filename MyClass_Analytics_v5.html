@@ -4725,8 +4725,11 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                             const _gdU=_grigliaGuidaTesto(g.guida); if(_gdU) esistente.guida=_gdU; else delete esistente.guida;
                             n++; aggiornate++; return;
                         }
-                        const obj={id:'g_'+Date.now()+'_'+n,nome,aree};
+                        // id del file se in MyClass non c'è già: così i promemoria salvati con quella griglia
+                        // (finestre docente delle attività) e l'agente la ritrovano
+                        const obj={id:(g.id&&!data.griglie.some(x=>x.id===g.id))?String(g.id):'g_'+Date.now()+'_'+n,nome,aree};
                         if(g.conversione_voto) obj.conversione_voto=g.conversione_voto;
+                        if(+g.ver>0) obj.ver=+g.ver;
                         // Guida della verifica (struttura, chiave delle schede, regole): la usa l'agente per valutare
                         const _gd=_grigliaGuidaTesto(g.guida); if(_gd) obj.guida=_gd;
                         data.griglie.push(obj); n++;
@@ -9594,7 +9597,8 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                     if (!r.ok) continue;
                     const g = await r.json();
                     const eq = mcGriglieEquivalenti(g);
-                    const upd = mcAggiornaGrigliaDaAttivita(g);
+                    // griglia dell'attività che MyClass non ha (es. Rules & Obligations /16): la aggiunge
+                    const upd = mcAggiornaGrigliaDaAttivita(g) || (!eq.length && mcAggiungiGrigliaAttivita(g));
                     out.push({ nome: g.nome, ver: +g.ver || 0, trovata: eq.length > 0, aggiornata: upd, inMyClass: eq.map(x => +x.ver || 1) });
                 } catch (e) { console.warn('[MyClass] griglia dal sito', f, e.message); }
             }
