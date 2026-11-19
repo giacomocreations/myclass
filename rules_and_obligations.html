@@ -1351,7 +1351,44 @@ const liveFollow = window.MyClassLive && MyClassLive.follow && MyClassLive.follo
   onStudent: n => twMsg((autoMsg && Date.now() - autoMsg.t < 2000 ? autoMsg.s + ' · ' : '') + '👤 Dalla LIVE: ' + n),
   beforeChange: (prev, next) => switchStudent(prev, next, false), savedToday: () => loadGrades().filter(g => g.date === new Date().toLocaleDateString('it-IT')).map(g => g.name) });
 // ♻️ Rivedi / correggi: valutazioni salvate qui e promemoria di MyClass, nota e punteggi correggibili
-const review = window.MyClassLive && MyClassLive.review && MyClassLive.review({ getDoc: () => twOpen() ? teacherWin.document : null, boxId: 't-riv', grid: GRID, loadGrades, storeGrades, voto: t => voto(t), onLocalSaved: () => renderTeacherSaved() });
+const review = window.MyClassLive && MyClassLive.review && MyClassLive.review({ getDoc: () => twOpen() ? teacherWin.document : null, boxId: 't-riv', grid: GRID, loadGrades, storeGrades, voto: t => voto(t), onLocalSaved: () => renderTeacherSaved(), suggest: noteSuggest });
+// Punteggi proposti per un voto già dato, con le regole di adesso, letti dalla nota salvata.
+// Solo le due regole nuove, e solo per abbassare (il resto del punteggio l'avevi già deciso tu):
+//  • Comunicazione: because in tutte e due le parti (metà in ogni parte per il 5; una parte sotto la
+//    metà → 4; una parte di 3+ frasi senza because → 3; nessun because in tutta la prova → 2)
+//  • Vocabolario: because detti male (giallo) o senza senso (rosso) = errori di lessico, insieme ai
+//    verbi sbagliati: 1 → al massimo 4, 2 o più → al massimo 3
+function noteSuggest(note, old) {
+  note = String(note || ''); if (!note || old.length !== 3) return null;
+  const num = (re, t) => +((t.match(re) || [])[1] || 0);
+  const p1 = note.split(' | ').find(x => x.startsWith('P1: ')) || '';
+  // le righe della scheda: «P2 (5. Party): … · because 0/6 …» (anche più schede nella stessa riga)
+  const p2 = note.split(' | ').filter(x => /^P2 \(\d/.test(x)).join(' · ').split(/(?=P2 \(\d)/).filter(Boolean);
+  // Parte 1: frasi = «su N frasi» del because, se no la somma dei modali (have to 2, mustn't 1…)
+  const mb = p1.match(/because ×(\d+)(?: su (\d+) frasi)?(?: \((\d+) con errori di forma\))?/);
+  let n1 = mb && mb[2] ? +mb[2] : 0;
+  if (!n1) { const re = /(?:^|[·,] )(have to|must|mustn't|don't have to) (\d+)/g; let m; while ((m = re.exec(p1))) n1 += +m[2]; }
+  const b1 = mb ? +mb[1] : 0, fm1 = mb && mb[3] ? +mb[3] : 0, bad1 = num(/because senza senso ×(\d+)/, p1);
+  const parts = [{ n: n1, b: b1, nome: 'Parte 1' }];
+  let fm2 = 0, bad2 = 0;
+  p2.forEach(t => {
+    if (!/because \d+\/6/.test(t)) return;
+    parts.push({ n: 6 - num(/non dette (\d+)/, t), b: num(/because (\d+)\/6/, t), nome: 'scheda' });
+    fm2 += num(/because \d+\/6 \((\d+) con errori di forma\)/, t); bad2 += num(/because senza senso ×(\d+)/, t);
+  });
+  const P = parts.filter(x => x.n > 0), nTot = P.reduce((t, x) => t + x.n, 0), bTot = P.reduce((t, x) => t + x.b, 0);
+  const zero = P.filter(x => x.n >= 3 && !x.b), half = P.filter(x => x.n >= 2 && x.b < Math.ceil(x.n / 2));
+  const capC = nTot >= 4 && !bTot ? 2 : zero.length ? 3 : half.length ? 4 : 5;
+  const becLex = fm1 + bad1 + fm2 + bad2;
+  const errNote = (note.split(' | ').find(x => x.startsWith('Errori: ')) || '');
+  const lexTot = becLex + num(/verbo sbagliato (\d+)/, p1) + num(/do \/ make scambiati ×(\d+)/, errNote) + (/do \/ make scambiati(?! ×)/.test(errNote) ? 1 : 0);
+  const capV = !becLex ? 5 : lexTot >= 2 ? 3 : 4;
+  const scores = [old[0], Math.min(old[1], capV), Math.min(old[2], capC)];
+  const why = [];
+  if (scores[1] < old[1]) why.push(`Vocabolario ${old[1]} → ${scores[1]}: because detti male o senza senso ×${becLex}${lexTot > becLex ? ` + altri errori di lessico ×${lexTot - becLex}` : ''}`);
+  if (scores[2] < old[2]) why.push(`Comunicazione ${old[2]} → ${scores[2]}: because ${P.map(x => `${x.nome} ${x.b}/${x.n}`).join(', ')}${capC === 2 ? ' (nessun because)' : zero.length ? ` (nessun because nella ${zero.map(x => x.nome).join(' e nella ')})` : ' (meno di metà)'}`);
+  return why.length ? { scores, why: why.join(' · ') } : null;
+}
 
 // Il riquadro Impressioni · fluidità è uno solo (il testo scritto non si perde): a ogni ridisegno
 // esce da t-sol e poi va al posto del segnaposto t-imp-slot (Parte 1: sotto Anti-recita)
