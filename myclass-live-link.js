@@ -305,8 +305,9 @@
   // promemoria con la stessa data (il voto di prima resta annotato) e il voto salvato qui.
   //   opts: { getDoc(), boxId:'t-riv', grid:{id, aree:[{nome,max,descrittori}], conversione_voto},
   //           loadGrades(), storeGrades(g), voto(tot) → testo, onLocalSaved(),
-  //           suggest(nota, punteggi di allora) → { scores, why } | null  (facoltativo: punteggi
-  //           proposti con le regole di adesso, letti dalla nota; «usa» li mette nella riga) }
+  //           suggest(nota, punteggi di allora, risposta) → { scores, why, ask } | null  (facoltativo:
+  //           punteggi proposti con le regole di adesso, letti dalla nota; «usa» li mette nella riga;
+  //           ask = { text, options[], sel }: una domanda al docente, la risposta rifà la proposta) }
   //   voti salvati qui: { name, cls, date 'g/m/aaaa', det 'a-b-c', voto, punti, note }
   function review(opts) {
     var items = [], msg = '', boundDoc = null;
@@ -340,7 +341,8 @@
         else if (act === 'all' || act === 'none') { items.forEach(function (x) { x.sel = act === 'all'; }); render(); }
         else if (act === 'apply') apply();
         else if (act === 'sug') { it.neu = it.sug.scores.slice(); it.sel = true; render(); }
-        else if (act === 'sugall') { items.forEach(function (x) { if (x.sug) { x.neu = x.sug.scores.slice(); x.sel = true; } }); render(); }
+        else if (act === 'sugall') { items.forEach(function (x) { if (sugDiff(x)) { x.neu = x.sug.scores.slice(); x.sel = true; } }); render(); }
+        else if (act === 'ask') { it.askAns = +b.getAttribute('data-a'); sugOf(it); render(); }
       });
       d.addEventListener('input', function (e) {
         var t = e.target; if (!t.getAttribute) return;
@@ -365,8 +367,7 @@
         local.filter(function (o) { return !o.used; }).forEach(function (o) { items.push({ src: 'local', cls: o.g.cls, student: o.g.name, data: isoFromIt(o.g.date), old: String(o.g.det).split('-').map(Number), note: o.g.note || '', li: o.i, riv: o.g.riv }); });
         items.forEach(function (it) { it.neu = it.old.slice(); it.note0 = it.note; it.sel = false; it.open = false;
           // proposta con le regole di adesso (dall'attività), solo se cambia qualcosa
-          it.sug = null;
-          if (opts.suggest) { try { var sg = opts.suggest(it.note, it.old.slice()); if (sg && Array.isArray(sg.scores) && sg.scores.length === it.old.length && sg.scores.join('-') !== it.old.join('-')) it.sug = sg; } catch (e) {} }
+          it.sug = null; sugOf(it);
           // MyClass risponde ma non ha il promemoria (cancellato o mai arrivato): si crea salvando (ultimi 21 giorni)
           if (r && r.ok && it.src === 'local' && Date.now() - new Date(it.data).getTime() <= 21 * 864e5) { it.missingMc = true; it.sel = true; } });
         // Corretto qui ma MyClass ha ancora la versione di prima (era chiusa quando hai salvato): si rimanda
@@ -381,18 +382,29 @@
           : !r.ok ? '⚠️ MyClass: ' + esc(r.msg || 'errore') + ' — qui ci sono solo i voti salvati su questa pagina.'
           : '🔗 MyClass: ' + items.filter(function (x) { return x.src === 'mc'; }).length + ' promemoria di questa attività.'
             + (items.some(function (x) { return x.resend; }) ? ' ⚠️ ' + items.filter(function (x) { return x.resend; }).length + ' corretti qui ma non ancora in MyClass (già spuntati).' : '');
-        var nSug = items.filter(function (x) { return x.sug; }).length;
+        var nSug = items.filter(sugDiff).length, nAsk = items.filter(function (x) { return x.sug && x.sug.ask; }).length;
         if (nSug) msg += ' 💡 <b>' + nSug + (nSug === 1 ? ' proposta' : ' proposte') + '</b> con le regole di adesso (lette dalla nota): «usa» la mette nella riga, poi salvi.';
+        if (nAsk) msg += ' 💬 <b>' + nAsk + (nAsk === 1 ? ' domanda' : ' domande') + '</b> per te: rispondi e la proposta si aggiorna.';
         render();
       };
       request('prom-list', { gridId: opts.grid.id, grid: opts.grid.ver ? opts.grid : undefined }, build);
     }
-    // cella «Ora»: voto nuovo e, se c'è, la proposta con le regole di adesso
+    // proposta con le regole di adesso (dall'attività): si tiene se cambia i punteggi o se fa una domanda
+    function sugOf(it) {
+      it.sug = null;
+      if (!opts.suggest) return;
+      try { var sg = opts.suggest(it.note, it.old.slice(), it.askAns); if (sg && Array.isArray(sg.scores) && sg.scores.length === it.old.length && (sg.ask || sg.scores.join('-') !== it.old.join('-'))) it.sug = sg; } catch (e) {}
+    }
+    function sugDiff(it) { return !!(it.sug && it.sug.scores.join('-') !== it.old.join('-')); }
+    // cella «Ora»: voto nuovo e, se c'è, la proposta con le regole di adesso (e la domanda)
     function nvHTML(it, k) {
-      var ch = changed(it), sg = it.sug, on = sg && it.neu.join('-') === sg.scores.join('-');
+      var ch = changed(it), sg = it.sug, on = sugDiff(it) && it.neu.join('-') === sg.scores.join('-');
+      var bs = 'padding:2px 8px;font-size:12px';
       return '<b style="color:' + (ch ? '#ffb547' : 'inherit') + '">' + esc(votoTxt(it.neu)) + '</b> <small>(' + it.neu.join('-') + ')' + (it.note !== it.note0 ? '<br>nota corretta' : '') + '</small>'
-        + (!sg ? '' : on ? '<br><small style="color:#7cf0b0">💡 proposta applicata · ' + esc(sg.why) + '</small>'
-          : '<br><small style="color:#ffd166">💡 proposta: <b>' + esc(votoTxt(sg.scores)) + '</b> (' + sg.scores.join('-') + ') · ' + esc(sg.why) + '</small> <button data-rv="sug" data-k="' + k + '" style="padding:2px 8px;font-size:12px">usa</button>');
+        + (!sg ? '' : !sugDiff(it) ? (sg.why ? '<br><small style="opacity:.8">💡 ' + esc(sg.why) + '</small>' : '')
+          : on ? '<br><small style="color:#7cf0b0">💡 proposta applicata · ' + esc(sg.why) + '</small>'
+          : '<br><small style="color:#ffd166">💡 proposta: <b>' + esc(votoTxt(sg.scores)) + '</b> (' + sg.scores.join('-') + ') · ' + esc(sg.why) + '</small> <button data-rv="sug" data-k="' + k + '" style="' + bs + '">usa</button>')
+        + (sg && sg.ask ? '<br><small style="color:#8db6ff">💬 ' + esc(sg.ask.text) + '</small><br>' + sg.ask.options.map(function (o, a) { return '<button data-rv="ask" data-k="' + k + '" data-a="' + a + '" style="' + bs + ';margin:2px 3px 0 0' + (sg.ask.sel === a ? ';outline:2px solid #ffd166' : '') + '">' + esc(o) + '</button>'; }).join('') : '');
     }
     function changed(it) { return it.neu.join('-') !== it.old.join('-') || it.note !== it.note0; }
     function scores(it, k) {
@@ -421,7 +433,7 @@
       if (!items.length) { x.innerHTML = wrap(msg + '<br>Nessuna valutazione di questa attività da rivedere.<div class="bar" style="margin-top:8px"><button data-rv="close">Chiudi</button></div>'); return; }
       x.innerHTML = wrap('<b>♻️ Rivedi / correggi le valutazioni</b><div style="font-size:12.5px;opacity:.8;margin:4px 0">' + msg + ' Con ✏️ apri un alunno: correggi la nota e cambi i punteggi. Si salvano solo le righe spuntate (si spuntano da sole quando modifichi).</div>'
         + '<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px"><tr><th ' + td + '></th><th ' + td + '>Data</th><th ' + td + '>Cl.</th><th ' + td + '>Studente</th><th ' + td + '>Allora</th><th ' + td + '>Ora</th><th ' + td + '></th></tr>' + items.map(row).join('') + '</table>'
-        + '<div class="bar" style="margin-top:8px">' + (items.some(function (x) { return x.sug && x.neu.join('-') !== x.sug.scores.join('-'); }) ? '<button data-rv="sugall">💡 Usa tutte le proposte</button>' : '') + '<button class="pri" data-rv="apply">✅ Salva le righe spuntate</button><button data-rv="all">tutte</button><button data-rv="none">nessuna</button><button data-rv="close">Chiudi</button></div>');
+        + '<div class="bar" style="margin-top:8px">' + (items.some(function (x) { return sugDiff(x) && x.neu.join('-') !== x.sug.scores.join('-'); }) ? '<button data-rv="sugall">💡 Usa tutte le proposte</button>' : '') + '<button class="pri" data-rv="apply">✅ Salva le righe spuntate</button><button data-rv="all">tutte</button><button data-rv="none">nessuna</button><button data-rv="close">Chiudi</button></div>');
     }
     function refresh(k) {
       var d = doc(), it = items[k]; if (!d || !it) return;
