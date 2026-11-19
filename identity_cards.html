@@ -1297,7 +1297,8 @@ textarea{width:100%;background:#182624;border:1px solid rgba(255,255,255,.12);co
 <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva la coppia e prossima</button><button data-act="reset">↺ Azzera</button></div>
 <div class="msg" id="t-msg"></div>
 <h2>Voti salvati</h2>
-<div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-act="clear">🗑 Svuota</button></div>
+<div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-rv="open" title="Rivedi alunno per alunno le valutazioni di questa attività (anche i promemoria di MyClass): nota e punteggi correggibili; quelle non arrivate a MyClass si mandano da qui">♻️ Rivedi / correggi</button><button data-act="clear">🗑 Svuota</button></div>
+<div id="t-riv"></div>
 <div id="t-saved"></div>
 </body></html>`;
 
@@ -1308,6 +1309,7 @@ function openTeacherWin() {
   const d = teacherWin.document; d.open(); d.write(TEACHER_HTML); d.close();
   if (window.DrillZoom) DrillZoom.attach(d);   // A− / A+ anche nella finestra docente
   d.addEventListener('click', onTeacherClick);
+  if (review) review.bind();   // ♻️ Rivedi / correggi (myclass-live-link.js)
   d.addEventListener('input', e => {
     if (e.target.id === 't-nameA' || e.target.id === 't-nameB') { state.names.A = tw('t-nameA').value.trim(); state.names.B = tw('t-nameB').value.trim(); renderStage(); renderTabs(); updateTeacherWin(); }
     else if (e.target.id === 't-note') { notes[cur] = e.target.value; clearTimeout(renderSummary.t); renderSummary.t = setTimeout(renderSummary, 300); }
@@ -1344,6 +1346,10 @@ const liveFollow = window.MyClassLive && MyClassLive.follow && MyClassLive.follo
   // clic su un alunno dell'elenco: va in A se è vuoto, poi in B; se sono pieni, nello studente della scheda aperta
   pickTarget: name => { const A = tw('t-nameA').value.trim(), B = tw('t-nameB').value.trim(); return A === name ? 't-nameA' : B === name ? 't-nameB' : !A ? 't-nameA' : !B ? 't-nameB' : (cur === 'B' ? 't-nameB' : 't-nameA'); }
 });
+// ♻️ Rivedi / correggi: voti salvati qui e promemoria di MyClass, nota e punteggi correggibili.
+// I voti salvati qui che non sono arrivati a MyClass (LIVE chiusa, errore…) sono già spuntati: salvando si creano i promemoria.
+// Solo la griglia /16: i voti /15 (3 voci, altro id) restano com'erano.
+const review = window.MyClassLive && MyClassLive.review && MyClassLive.review({ getDoc: () => twOpen() ? teacherWin.document : null, boxId: 't-riv', grid: GRID, loadGrades, localOk: g => +g.max === RUB_MAX, storeGrades, voto: t => voto(t), onLocalSaved: () => renderTeacherSaved() });
 const nameOf = s => state.names[s] || (s === 'A' ? 'Studente A' : 'Studente B');
 
 function updateTeacherWin() {
@@ -1398,7 +1404,7 @@ function renderTeacherRubric(fromCk) {
 function renderTeacherSaved() {
   if (!twOpen()) return;
   const g = loadGrades();
-  tw('t-saved').innerHTML = g.length ? `<table class="sv"><tr><th>Data</th><th>Cl.</th><th>Studente</th><th>Voto</th><th>Punti</th><th>Carta</th><th>Tempo</th><th></th></tr>${g.map((x, i) => `<tr><td>${esc(x.date)}</td><td>${esc(x.cls)}</td><td>${esc(x.name)}${x.partner ? `<br><small>con ${esc(x.partner)}</small>` : ''}${x.note ? `<br><small>${esc(x.note)}</small>` : ''}</td><td class="v">${esc(x.voto)}</td><td>${esc(x.det)}${x.max ? ` <small>/${x.max}</small>` : ''}</td><td>${esc(x.card)}</td><td>${esc(x.tempo)}</td><td><button class="x" data-act="del" data-i="${i}" title="Elimina">✕</button></td></tr>`).reverse().join('')}</table>` : '<div class="empty">Nessun voto salvato.</div>';
+  tw('t-saved').innerHTML = g.length ? `<table class="sv"><tr><th>Data</th><th>Cl.</th><th>Studente</th><th>Voto</th><th>Punti</th><th>Carta</th><th>Tempo</th><th></th></tr>${g.map((x, i) => `<tr><td>${esc(x.date)}</td><td>${esc(x.cls)}</td><td>${esc(x.name)}${x.partner ? `<br><small>con ${esc(x.partner)}</small>` : ''}${x.note ? `<br><small>${esc(x.note)}</small>` : ''}</td><td class="v">${esc(x.voto)}${x.riv ? `<br><small title="Corretto il ${esc(x.riv)}${x.prima ? ' · prima ' + esc(x.prima) : ''}">♻️</small>` : ''}</td><td>${esc(x.det)}${x.max ? ` <small>/${x.max}</small>` : ''}</td><td>${esc(x.card)}</td><td>${esc(x.tempo)}</td><td><button class="x" data-act="del" data-i="${i}" title="Elimina">✕</button></td></tr>`).reverse().join('')}</table>` : '<div class="empty">Nessun voto salvato.</div>';
 }
 function twMsg(t) { if (!twOpen()) return; tw('t-msg').textContent = t; clearTimeout(twMsg.t); twMsg.t = setTimeout(() => { if (twOpen()) tw('t-msg').textContent = ''; }, 2800); }
 function onTeacherClick(e) {
@@ -1468,7 +1474,8 @@ function sendSaved(list, cls, keepSel) {
   const [first, ...rest] = list;
   MyClassLive.send({ grid: liveGrid(), scores: first.scores, student: first.name, cls, save: true, keepSel: !!keepSel, note: first.note }, r => {
     showLive(r);
-    if (r && !r.ok && twOpen()) teacherWin.alert(`⚠️ ${first.name}: voto salvato solo qui, NON in MyClass.\nMyClass: ${r.msg || 'errore'}`);
+    if (!r && twOpen()) { const el = tw('t-link'); el.className = 'link err'; el.textContent = `⚪ MyClass non risponde: ${first.name} salvato solo qui. Per mandarlo dopo: ♻️ Rivedi / correggi, con MyClass aperta in questo browser.`; }
+    if (r && !r.ok && twOpen()) teacherWin.alert(`⚠️ ${first.name}: voto salvato solo qui, NON in MyClass.\nMyClass: ${r.msg || 'errore'}\n\nPer mandarlo dopo: ♻️ Rivedi / correggi, con MyClass aperta in questo browser.`);
     sendSaved(rest, cls, keepSel);
   });
 }
