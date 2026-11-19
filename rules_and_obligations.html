@@ -1301,7 +1301,9 @@ function openTeacherWin() {
   d.addEventListener('keydown', onTeacherKey);
   // impressioni: il riepilogo si aggiorna mentre scrivi
   d.addEventListener('input', e => { if (e.target.id === 't-note') { clearTimeout(renderSummary.t); renderSummary.t = setTimeout(renderSummary, 300); } });
+  d.addEventListener('focusin', e => { if (e.target.id === 't-name') nameFocus = e.target.value.trim(); });
   d.addEventListener('change', e => {
+    if (e.target.id === 't-name') onNameChanged(e.target);   // un altro alunno: si salva quello di prima
     if (e.target.id === 't-cap') { swapCap = e.target.checked; if (swapCap && rub[0] > 3) rub[0] = 3; renderTeacherRubric(); renderSummary(); pushLive(); }
     else if (e.target.id === 't-name' || e.target.id === 't-class' || e.target.id === 't-note') pushLive();   // nome scritto dopo i punteggi
   });
@@ -1322,7 +1324,9 @@ async function moveTeacherWinToOtherScreen() {
 const twOpen = () => teacherWin && !teacherWin.closed && teacherWin.document.getElementById('t-sol');
 const tw = id => teacherWin.document.getElementById(id);
 // Segue la LIVE di MyClass: stato del collegamento e alunno selezionato (myclass-live-link.js)
-const liveFollow = window.MyClassLive && MyClassLive.follow && MyClassLive.follow(() => twOpen() ? teacherWin.document : null, { nameId: 't-name', classId: 't-class', onStudent: n => twMsg('👤 Dalla LIVE: ' + n), savedToday: () => loadGrades().filter(g => g.date === new Date().toLocaleDateString('it-IT')).map(g => g.name) });
+const liveFollow = window.MyClassLive && MyClassLive.follow && MyClassLive.follow(() => twOpen() ? teacherWin.document : null, { nameId: 't-name', classId: 't-class',
+  onStudent: n => twMsg((autoMsg && Date.now() - autoMsg.t < 2000 ? autoMsg.s + ' · ' : '') + '👤 Dalla LIVE: ' + n),
+  beforeChange: (prev, next) => switchStudent(prev, next, false), savedToday: () => loadGrades().filter(g => g.date === new Date().toLocaleDateString('it-IT')).map(g => g.name) });
 // ♻️ Rivedi / correggi: valutazioni salvate qui e promemoria di MyClass, nota e punteggi correggibili
 const review = window.MyClassLive && MyClassLive.review && MyClassLive.review({ getDoc: () => twOpen() ? teacherWin.document : null, boxId: 't-riv', grid: GRID, loadGrades, storeGrades, voto: t => voto(t), onLocalSaved: () => renderTeacherSaved() });
 
@@ -1396,9 +1400,10 @@ function onTeacherClick(e) {
   else if (act === 'clear') { if (teacherWin.confirm('Cancellare tutti i voti salvati su questo computer?')) { storeGrades([]); renderTeacherSaved(); } }
   else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
 }
-function resetRubric() { Object.keys(rub).forEach(k => delete rub[k]); [rubManual, rubAuto].forEach(o => Object.keys(o).forEach(k => delete o[k])); swapCap = false; ck = ckNew(); if (twOpen()) { tw('t-name').value = ''; tw('t-note').value = ''; } renderTeacherRubric(); updateTeacherWin(); renderNotes(); renderSummary(); }
-function saveGrade() {
-  const name = tw('t-name').value.trim();
+function resetRubric() { Object.keys(rub).forEach(k => delete rub[k]); [rubManual, rubAuto].forEach(o => Object.keys(o).forEach(k => delete o[k])); swapCap = false; ck = ckNew(); if (twOpen()) { tw('t-name').value = ''; tw('t-note').value = ''; } nameFocus = ''; renderTeacherRubric(); updateTeacherWin(); renderNotes(); renderSummary(); }
+// o.auto: salvataggio automatico al cambio alunno (o.name = l'alunno di prima)
+function saveGrade(o = {}) {
+  const name = o.name || tw('t-name').value.trim();
   if (!name) { twMsg('✏️ Scrivi il nome dello studente'); tw('t-name').focus(); return; }
   if (!rubDone()) { twMsg('✏️ Completa tutte le aree della griglia'); return; }
   savePartTime();
@@ -1407,19 +1412,39 @@ function saveGrade() {
   const g = loadGrades();
   g.push({ name, cls: tw('t-class').value.trim(), voto: voto(tot), punti: tot, det: GRID.aree.map((a, i) => rub[i]).join('-'), card: isChores() ? '–' : `${state.card.n}. ${state.card.title}`, tempo: `${t1} + ${t2}`, note: composeNote(), date: new Date().toLocaleDateString('it-IT') });
   storeGrades(g);
-  pushLive(true);   // salva il promemoria anche nella LIVE di MyClass
-  twMsg(`✅ Salvato: ${name} → ${voto(tot)}`);
+  pushLive(true, o.auto ? name : '');   // salva il promemoria anche nella LIVE di MyClass
+  autoMsg = o.auto ? { t: Date.now(), s: `💾 ${name} salvato in automatico → ${voto(tot)}` } : null;
+  twMsg(o.auto ? autoMsg.s : `✅ Salvato qui: ${name} → ${voto(tot)}`);
   Object.keys(partTimes).forEach(k => delete partTimes[k]);
   resetRubric(); renderTeacherSaved(); goPart1();
-  if (liveFollow) liveFollow.reset();
+  if (liveFollow && !o.auto) liveFollow.reset();
+}
+// ── Cambio alunno senza aver premuto Salva: si salva da solo quello di prima (myclass-live-link.js) ──
+let autoMsg = null;
+var nameFocus = '';   // nome nel campo quando ci si entra (var: lo azzera anche resetRubric)
+const hasEval = () => GRID.aree.some((a, i) => rub[i] !== undefined) || !!composeNote();
+const switchStudent = window.MyClassLive && MyClassLive.switcher ? MyClassLive.switcher({ win: () => teacherWin, hasEval, complete: rubDone,
+  save: n => saveGrade({ name: n, auto: true }),
+  discard: () => { Object.keys(partTimes).forEach(k => delete partTimes[k]); resetRubric(); goPart1(); } }) : () => true;
+function onNameChanged(el) {
+  const prev = nameFocus, next = el.value.trim();
+  nameFocus = next;
+  if (!prev || !next || prev === next) return;
+  if (switchStudent(prev, next, true) === false) { el.value = nameFocus = prev; return; }
+  if (el.value.trim() !== next) el.value = next;   // salvato o lasciato perdere: il campo era stato svuotato
 }
 // ── Punteggi anche nella griglia della LIVE di MyClass (myclass-live-link.js) ──
-function pushLive(save) {
+// who: salvataggio automatico dell'alunno di prima (nel campo c'è già il nuovo): la LIVE non cambia alunno
+function pushLive(save, who) {
   if (!window.MyClassLive || !twOpen()) return;
   const scores = GRID.aree.map((a, i) => rub[i] === undefined ? null : rub[i]);
   if (scores.every(v => v === null)) return;
+  const student = who || tw('t-name').value.trim();
   MyClassLive.send({ grid: { id: GRID.id, ver: GRID.ver, nome: GRID.nome, aree: GRID.aree.map(a => ({ nome: a.nome, max: a.max, descrittori: a.descrittori })), conversione_voto: GRID.conversione_voto },   // con la versione MyClass aggiorna i suoi descrittori
-    scores, student: tw('t-name').value.trim(), cls: tw('t-class').value.trim(), save: !!save, note: composeNote() }, showLive);
+    scores, student, cls: tw('t-class').value.trim(), save: !!save, keepSel: !!who, note: composeNote() }, r => {
+      showLive(r);
+      if (save && r && !r.ok && twOpen()) teacherWin.alert(`⚠️ ${student}: voto salvato solo qui, NON in MyClass.\nMyClass: ${r.msg || 'errore'}\n\nPer mandarlo dopo: ♻️ Rivedi / correggi, con MyClass aperta in questo browser.`);
+    });
 }
 function showLive(r) {
   if (!twOpen()) return;
