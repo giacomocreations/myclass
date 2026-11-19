@@ -31,7 +31,7 @@
 //  dove è stata aperta StudentApp il service worker lo tiene in cache.
 //
 //  Messaggio:  { type:'scores', reqId, grid:{id,nome,aree:[{nome,max}]},
-//                scores:[punteggio|null per area], student, cls, save,
+//                scores:[punteggio|null per area], student (obbligatorio), cls, save,
 //                note: testo (pronuncia, errori, checklist) che va nel promemoria }
 //  Risposta:   { type:'ack', reqId, ok, msg, student, classe }
 //  Selezione:  { type:'select', reqId, student, cls }  →  'ack' come sopra
@@ -86,7 +86,15 @@
     bc.postMessage(msg);
   }
   // payload: { grid, scores, student, cls, save, note } · cb(risposta | null se MyClass non risponde)
-  function send(payload, cb) { post('scores', payload, cb); }
+  // Senza nome MyClass userebbe l'alunno selezionato nella LIVE: dopo «Salva e prossimo» è ancora
+  // quello appena salvato, e i punteggi del compagno finirebbero (salvati al cambio alunno) sul suo promemoria
+  function send(payload, cb) {
+    if (!String(payload && payload.student || '').trim()) {
+      if (cb) cb({ ok: false, noName: true, msg: 'manca il nome dell\'alunno: scrivilo o sceglilo dall\'elenco (o selezionalo nella LIVE). Senza nome i punteggi non vanno a MyClass.' });
+      return;
+    }
+    post('scores', payload, cb);
+  }
   // Seleziona l'alunno nella LIVE · cb(risposta | null se la LIVE non è aperta)
   function select(student, cls, cb) { post('select', { student: student, cls: cls }, cb); }
   // Richiesta generica (rivalutazione dei promemoria…) · cb(risposta | null)
