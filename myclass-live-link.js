@@ -354,7 +354,8 @@
       bind();
       var x = box(); if (!x) return;
       x.innerHTML = wrap('⏳ Cerco in MyClass i promemoria di questa attività…');
-      var local = (opts.loadGrades() || []).map(function (g, i) { return { g: g, i: i }; }).filter(function (o) { return String(o.g.det).split('-').length === aree().length; });
+      // localOk(g): quali voti salvati qui entrano (es. solo quelli della griglia attuale)
+      var local = (opts.loadGrades() || []).map(function (g, i) { return { g: g, i: i }; }).filter(function (o) { return String(o.g.det).split('-').length === aree().length && (!opts.localOk || opts.localOk(o.g)); });
       var build = function (r) {
         items = [];
         if (r && r.ok && Array.isArray(r.items)) r.items.forEach(function (p) {
