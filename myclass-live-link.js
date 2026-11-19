@@ -459,7 +459,7 @@
         b2.innerHTML = wrap((mc.length ? (r && r.ok ? '💾 MyClass: ' + (r.n - (r.nuovi || 0)) + ' promemoria aggiornati' + (r.nuovi ? ', ' + r.nuovi + ' creati' : '') + ' (stessa data della prova; il voto di prima resta annotato)' + (r.miss && r.miss.length ? ' · ⚠️ non trovati in MyClass: ' + esc(r.miss.join(', ')) + ' (controlla nome e classe)' : '') + '.' : '⚠️ MyClass non ha aggiornato i promemoria' + (r && r.msg ? ': ' + esc(r.msg) : ' (non risponde)') + '. Riprova con MyClass aperta in questo browser.') : '')
           + (nLoc ? '<br>✅ ' + nLoc + ' voti aggiornati anche nell\'elenco qui sotto.' : '') + '<div class="bar" style="margin-top:8px"><button data-rv="open">♻️ Riapri l\'elenco</button><button data-rv="close">Chiudi</button></div>');
       };
-      if (mc.length) request('prom-update', { grid: { id: opts.grid.id, nome: opts.grid.nome, aree: aree().map(function (a) { return { nome: a.nome, max: a.max }; }), conversione_voto: opts.grid.conversione_voto },
+      if (mc.length) request('prom-update', { grid: opts.grid,   // con versione e descrittori: MyClass aggiunge la griglia se non ce l'ha
         items: mc.map(function (it) { return { cls: it.cls, student: it.student, ts: it.ts || null, data: it.data, scores: it.neu, nota: it.note }; }) }, done);
       else done(null);
     }
