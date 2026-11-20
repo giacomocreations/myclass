@@ -35461,6 +35461,7 @@ ${blocchiPerAlunno}`;
     function _ppClearDeferred(vista) {
         if (!confirm(`Svuotare la coda${vista ? ' dei piani ' + (vista === 'orale' ? 'orali' : 'scritti') : ''}? Le attività NON verranno generate.`)) return;
         if (vista) {
+            if (vista === 'orale') _ppDeferredQueue.filter(i => i.tipo === 'orale').forEach(i => _ppOraleIgnoraSegna(i.studentSafe, i.classeNome, i.unit));
             _ppDeferredQueue.filter(i => _ppInVista(i, vista)).forEach(i => _ppDeferredExcluded.delete(_ppDefKey(i)));
             _ppDeferredQueue = _ppDeferredQueue.filter(i => !_ppInVista(i, vista));
             _ppSavDeferred(); _ppSavExcluded();
@@ -35479,6 +35480,7 @@ ${blocchiPerAlunno}`;
         if (!item) return;
         const label = `${item.studentName} — ${item.tipo||'?'} (${item.unit||'?'})`;
         if (!confirm(`Rimuovere "${label}" dalla coda differita?`)) return;
+        if (item.tipo === 'orale') _ppOraleIgnoraSegna(item.studentSafe, item.classeNome, item.unit);
         _ppDeferredExcluded.delete(_ppDefKey(item));
         _ppDeferredQueue.splice(idx, 1);
         _ppSavDeferred();
@@ -37398,6 +37400,7 @@ FORMATO: solo un array JSON di 3 oggetti, nessun testo fuori.
         }
         const speaking = await _pianoGenerateSpeakingQuestions({ unit: item.unit, classeNome: item.classeNome, voto: item.voto, prefix: 'REC', focus: src.oraleDetails, orale: true });
         Object.assign(item, { text, speaking: speaking.length ? speaking : (item.speaking || []), source: _ppGenProvider, oraleDetails: src.oraleDetails, dataVerifica: src.dataVerifica, regenAt: Date.now() });
+        delete item.votoPrima;
         _ppSavOraleQueue();
         _ppOraleOpenId = id;
         renderPianoPersPanel();
@@ -39100,6 +39103,7 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
     }
     function _ppDiscardScrittoNow(id) {
         const d = _ppDraftScritto.find(x => x.id === id);
+        if (d && (_ppDraftOrale(d) || d.misto)) _ppOraleIgnoraSegna(d.studentSafe, d.classeNome, d.unit);
         _ppDraftScritto = _ppDraftScritto.filter(x => x.id !== id);
         _ppDraftSel.delete(id);
         _ppSavDraftScritto();
@@ -39458,6 +39462,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
     }
     function ppRejectOrale(id) {
         const item = _ppOraleQueue.find(x => x.id === id);
+        if (item) _ppOraleIgnoraSegna(item.studentSafe, item.classeNome, item.unit);   // «🔄 Aggiorna» non lo ripropone
         _ppOraleQueue = _ppOraleQueue.filter(x => x.id !== id);
         _ppOraleSel.delete(id);
         _ppSavOraleQueue();
@@ -40678,6 +40683,253 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
     }
 
     // Barra Claude Code (schede Scritto e Orale): import del file prodotto da Claude
+    // ═══════════════════════════════════════════════════════════════════════
+    //  🔄 AGGIORNA I PIANI ORALI DALLO STORICO (scheda 🗣️ Orale)
+    //  Rilegge i voti orali recenti e rimette in ordine coda, testi e bozze:
+    //  • orale mai visto (voto inserito a mano, trigger saltato…) → in coda;
+    //  • voto orale cambiato → testo / voce in coda aggiornati;
+    //  • voto orale cancellato → testo / voce in coda tolti;
+    //  • bozza nata da uno scritto che nello storico non c'è più (messo per
+    //    errore) → tolta, e l'orale di quell'alunno torna in coda;
+    //  • voci saltate o in errore → si rivalutano (es. tolta dal calendario una
+    //    verifica scritta messa per errore: il piano unico non aspetta più lo scritto).
+    //  Quello che il docente ha scartato non torna, finché quel voto non cambia.
+    // ═══════════════════════════════════════════════════════════════════════
+    const _PP_AGG_GIORNI = 30;
+    const _PP_ORALE_IGN_KEY = 'pp_orale_ignora';
+    function _ppOraleIgnora() { try { return JSON.parse(localStorage.getItem(_PP_ORALE_IGN_KEY) || '{}'); } catch { return {}; } }
+    function _ppUnitKey(u) {
+        const s = String(u || '').toLowerCase().trim();
+        const m = s.match(/\b(?:unit|unità|unita|u)\s*\.?\s*(\d+)/);
+        return m ? 'unit' + m[1] : s;
+    }
+    function _ppVotoSig(g) { return g ? `${String(g.data || '').slice(0, 10)}|${g.voto}` : ''; }
+    // Il docente ha scartato il piano orale di questo voto: non va riproposto (finché il voto non cambia)
+    function _ppOraleIgnoraSegna(studentSafe, classeNome, unit) {
+        try {
+            const stu = _ppFindStudent(classeNome, studentSafe);
+            const g = stu ? _ppLatestGrade(stu, 'orale', unit) : null;
+            if (!g) return;
+            const all = _ppOraleIgnora();
+            all[`${studentSafe}|${_ppUnitKey(unit)}`] = _ppVotoSig(g);
+            localStorage.setItem(_PP_ORALE_IGN_KEY, JSON.stringify(all));
+        } catch (e) {}
+    }
+    // Che piano produrrebbe questo voto orale, oggi (stesse regole di _pianoCheckTrigger)
+    function _ppOraleAtteso(stu, classeNome, unit, g) {
+        const prev = _ppPlannedTests(classeNome, unit);
+        const gS = _ppLatestGrade(stu, 'scritto', unit);
+        if (prev.scritto && prev.orale) return gS ? { ok: true, cosa: 'piano unico scritto + orale' }
+            : { ok: false, reason: 'nel calendario c\'è anche la verifica scritta: il piano unico aspetta il voto dello scritto' };
+        if (prev.orale && Number(g.voto) >= 6) return { ok: true, cosa: 'speaking' };
+        if (Number(g.voto) < 6) return { ok: true, cosa: 'recupero orale' };
+        return gS ? { ok: true, cosa: 'approfondimento' }
+            : { ok: false, reason: `voto ${g.voto}: senza verifica orale nel calendario e senza voto scritto non c'è un piano da fare` };
+    }
+    // Toglie un piano inviato (StudentApp) senza chiedere conferma
+    async function _ppRemoveActivityNow(code) {
+        const item = _ppActiveScritto[code];
+        if (!item) return;
+        delete _ppActiveScritto[code];
+        _ppSavActive();
+        try {
+            const k = item.stuCode || item.studentSafe;
+            await firebase.database().ref().update({
+                [`livelearn/recovery_sessions/${k}/${code}`]: null,
+                [`livelearn/recovery_lookup/${code}`]: null,
+                [`studentapp/personal_plan/${k}/${code}`]: null,
+                [`livelearn/history_priv/${k}/sessions/${code}`]: null
+            });
+        } catch (e) { console.warn('[Piano] Rimozione Firebase parziale:', e.message); }
+    }
+
+    async function ppAggiornaOrali() {
+        if (_ppDeferredRunning) { alert('Elaborazione dei piani in corso: aspetta che finisca, poi aggiorna.'); return; }
+        const lim = Date.now() - _PP_AGG_GIORNI * 864e5;
+        const ign = _ppOraleIgnora();
+        const nomeU = (n, u) => `${n}${u ? ' (' + u + ')' : ''}`;
+        const p = { nuovi: [], aggiornati: [], tolti: [], bozzeStale: [], rivalutati: [], attesa: [], ignorati: [], inviatiStale: [] };
+        const studenteDi = (classeNome, safe) => _ppFindStudent(classeNome, safe);
+        const ultimoOrale = (stu, unit) => stu ? _ppLatestGrade(stu, 'orale', unit) : null;
+        const ultimoScritto = (stu, unit) => stu ? _ppLatestGrade(stu, 'scritto', unit) : null;
+
+        // 1. Bozze (non inviate) nate da voti che nello storico non ci sono più
+        const bozzeVia = new Set();
+        for (const d of _ppDraftScritto) {
+            const stu = studenteDi(d.classeNome, d.studentSafe);
+            if (!stu) continue;
+            const gS = ultimoScritto(stu, d.unit), gO = ultimoOrale(stu, d.unit);
+            let motivo = '';
+            if (d.misto) {
+                if (!gS) motivo = 'piano unico, ma il voto scritto non c\'è più';
+                else if (!gO) motivo = 'piano unico, ma il voto orale non c\'è più';
+                else if (Number(gS.voto) !== Number(d.misto.votoScritto) || Number(gO.voto) !== Number(d.misto.votoOrale)) motivo = `piano unico fatto con voti diversi (ora scritto ${gS.voto}, orale ${gO.voto})`;
+            } else if (d.soloOrale) {
+                if (!gO) motivo = 'speaking, ma il voto orale non c\'è più';
+                else if (_ppFascia(gO.voto) !== d.prefix) motivo = `speaking ${_PP_FASCIA_LBL[d.prefix] || d.prefix}, ma ora il voto orale è ${gO.voto}`;
+            } else if (!gS) {
+                motivo = 'piano scritto, ma il voto scritto non c\'è più (messo per errore?)';
+            }
+            if (motivo) { bozzeVia.add(d.id); p.bozzeStale.push({ d, motivo }); }
+        }
+
+        // 2. Piani già inviati nati da uno scritto che non c'è più (si tolgono solo se il docente conferma)
+        for (const [code, a] of Object.entries(_ppActiveScritto)) {
+            if (!a || a.orale || a.status === 'expired') continue;
+            const stu = studenteDi(a.classeNome, a.studentSafe);
+            if (!stu || ultimoScritto(stu, a.unit) || !ultimoOrale(stu, a.unit)) continue;
+            const svolto = (a.attemptCount || 0) > 0 || a.lastScore != null || a.status === 'completed';
+            p.inviatiStale.push({ code, a, svolto });
+        }
+
+        // 3. Testi orali in attesa: voto cambiato o cancellato
+        const testiVia = new Set(), testiAgg = [];
+        for (const it of _ppOraleQueue) {
+            if (it.status === 'approved') continue;
+            const stu = studenteDi(it.classeNome, it.studentSafe);
+            if (!stu) continue;
+            const g = ultimoOrale(stu, it.unit);
+            if (!g) { testiVia.add(it.id); p.tolti.push(`${nomeU(it.studentName, it.unit)}: testo di recupero orale, ma il voto orale non c'è più`); continue; }
+            if (Number(g.voto) === Number(it.voto)) continue;
+            if (Number(g.voto) >= 6) { testiVia.add(it.id); p.tolti.push(`${nomeU(it.studentName, it.unit)}: testo di recupero per il ${it.voto}, ma ora il voto è ${g.voto} → torna in coda per il piano giusto`); }
+            else { testiAgg.push({ it, g }); p.aggiornati.push(`${nomeU(it.studentName, it.unit)}: testo di recupero, voto ${it.voto} → ${g.voto} (premi ↺ Rigenera se vuoi riscriverlo)`); }
+        }
+
+        // 4. Voci orali in coda: voto aggiornato, voce tolta se il voto non c'è più, saltate/errori rivalutati
+        const codaVia = new Set(), codaAgg = [];
+        _ppDeferredQueue.forEach((q, i) => {
+            if (q.tipo !== 'orale' || q.ppStatus === 'processing' || q.ppStatus === 'exported') return;
+            const stu = studenteDi(q.classeNome, q.studentSafe);
+            if (!stu) return;
+            const g = ultimoOrale(stu, q.unit);
+            if (!g) { codaVia.add(i); p.tolti.push(`${nomeU(q.studentName, q.unit)}: in coda, ma il voto orale non c'è più`); return; }
+            const cambiato = Number(g.voto) !== Number(q.voto);
+            const daRivedere = q.ppStatus === 'skipped' || q.ppStatus === 'error';
+            if (!cambiato && !daRivedere) return;
+            const att = _ppOraleAtteso(stu, q.classeNome, q.unit, g);
+            codaAgg.push({ q, g, att });
+            if (cambiato) p.aggiornati.push(`${nomeU(q.studentName, q.unit)}: in coda, voto ${q.voto} → ${g.voto}`);
+            else if (att.ok) p.rivalutati.push(`${nomeU(q.studentName, q.unit)}: era ${q.ppStatus === 'error' ? 'in errore' : 'saltato'} («${q.ppReason || ''}») → ${att.cosa}`);
+            if (!att.ok) p.attesa.push(`${nomeU(q.studentName, q.unit)}: ${att.reason}`);
+        });
+
+        // 5. Orali recenti senza nessun piano (né in coda, né in attesa, né inviato)
+        const nuovi = [];
+        const haGia = (safe, unit) =>
+            _ppDeferredQueue.some((q, i) => !codaVia.has(i) && q.tipo === 'orale' && q.studentSafe === safe && _ppUnitEq(q.unit, unit))
+            || _ppOraleQueue.some(o => !testiVia.has(o.id) && o.studentSafe === safe && _ppUnitEq(o.unit, unit))
+            || _ppDraftScritto.some(d => !bozzeVia.has(d.id) && d.studentSafe === safe && _ppUnitEq(d.unit, unit))
+            || Object.values(_ppActiveScritto).some(a => a && a.studentSafe === safe && _ppUnitEq(a.unit, unit) && a.status !== 'expired');
+        for (const cls of (data.classi || [])) {
+            for (const stu of (cls.studenti || [])) {
+                const safe = _mcToSafe(`${stu.cognome} ${stu.nome}`);
+                const name = `${stu.cognome} ${stu.nome}`.trim();
+                const visti = new Set();
+                const voti = [...(stu.orale || [])].filter(g => g && g.voto != null && (g.unit || g.titolo))
+                    .sort((a, b) => new Date(b.data) - new Date(a.data));
+                for (const g0 of voti) {
+                    const unit = g0.unit || g0.titolo;
+                    const uk = _ppUnitKey(unit);
+                    if (visti.has(uk)) continue;
+                    visti.add(uk);
+                    const g = _ppLatestGrade(stu, 'orale', unit) || g0;
+                    const td = new Date(g.data || 0).getTime() || 0;
+                    if (Math.max(td, Number(g.inseritoIl) || 0) < lim) continue;
+                    if (haGia(safe, unit)) continue;
+                    if (ign[`${safe}|${uk}`] === _ppVotoSig(g)) { p.ignorati.push(nomeU(name, unit)); continue; }
+                    const att = _ppOraleAtteso(stu, cls.nome, unit, g);
+                    if (!att.ok) { p.attesa.push(`${nomeU(name, unit)}: ${att.reason}`); continue; }
+                    nuovi.push({ stu, cls, unit, g, att });
+                    p.nuovi.push(`${nomeU(name, unit)} · voto ${g.voto} → ${att.cosa}`);
+                }
+            }
+        }
+        // Gli orali degli alunni con una bozza / un testo tolti tornano in coda (se non già presenti)
+        const rientro = [...p.bozzeStale.map(x => x.d), ..._ppOraleQueue.filter(o => testiVia.has(o.id))];
+        for (const x of rientro) {
+            const stu = studenteDi(x.classeNome, x.studentSafe);
+            const g = ultimoOrale(stu, x.unit);
+            if (!stu || !g || nuovi.some(n => n.stu === stu && _ppUnitEq(n.unit, x.unit))) continue;
+            if (_ppDeferredQueue.some((q, i) => !codaVia.has(i) && q.tipo === 'orale' && q.studentSafe === x.studentSafe && _ppUnitEq(q.unit, x.unit))) continue;
+            const cls = (data.classi || []).find(c => c.nome === x.classeNome);
+            const att = _ppOraleAtteso(stu, x.classeNome, x.unit, g);
+            if (!cls || !att.ok) { if (!att.ok) p.attesa.push(`${nomeU(x.studentName, x.unit)}: ${att.reason}`); continue; }
+            nuovi.push({ stu, cls, unit: x.unit, g, att });
+            p.nuovi.push(`${nomeU(x.studentName, x.unit)} · voto ${g.voto} → ${att.cosa}`);
+        }
+
+        // ── Riepilogo e conferma ──
+        const sez = (t, l) => l.length ? `\n\n${t}\n• ${l.join('\n• ')}` : '';
+        const nCambi = nuovi.length + testiVia.size + testiAgg.length + codaVia.size + codaAgg.length + bozzeVia.size;
+        const inviatiTogli = p.inviatiStale.filter(x => !x.svolto);
+        const riepilogo =
+            sez('➕ Orali da mettere in coda:', p.nuovi) +
+            sez('✏️ Aggiornati:', p.aggiornati) +
+            sez('♻️ Da rivalutare:', p.rivalutati) +
+            sez('🗑 Bozze da togliere (non inviate):', p.bozzeStale.map(x => `${nomeU(x.d.studentName, x.d.unit)}: ${x.motivo}`)) +
+            sez('🗑 Da togliere:', p.tolti) +
+            sez('⏸️ Ancora in attesa (niente da generare per ora):', p.attesa) +
+            sez('🚫 Scartati da te (non li ripropongo finché il voto non cambia):', p.ignorati) +
+            sez('📋 Piani già inviati nati da uno scritto che non c\'è più:', p.inviatiStale.map(x => `${nomeU(x.a.studentName, x.a.unit)} — ${x.code}${x.svolto ? ' (già svolto: resta)' : ''}`));
+        if (!nCambi && !inviatiTogli.length) {
+            alert(`🔄 Piani orali già in ordine (orali degli ultimi ${_PP_AGG_GIORNI} giorni).` + riepilogo);
+            return;
+        }
+        if (!confirm(`🔄 Aggiornamento dei piani orali dallo storico (orali degli ultimi ${_PP_AGG_GIORNI} giorni):` + riepilogo + '\n\nApplico le modifiche?')) return;
+        const togliInviati = inviatiTogli.length && confirm(`Togliere da StudentApp ${inviatiTogli.length === 1 ? 'il piano già inviato' : 'i ' + inviatiTogli.length + ' piani già inviati'} (non ancora svolt${inviatiTogli.length === 1 ? 'o' : 'i'}) nat${inviatiTogli.length === 1 ? 'o' : 'i'} da uno scritto che nello storico non c'è più?\n\n• ${inviatiTogli.map(x => `${x.a.studentName} — ${x.code} (${x.a.unit || ''})`).join('\n• ')}\n\nCosì l'agente può fare il piano orale al loro posto.`);
+
+        // ── Applica ──
+        if (togliInviati) {
+            for (const x of inviatiTogli) {
+                await _ppRemoveActivityNow(x.code);
+                const stu = studenteDi(x.a.classeNome, x.a.studentSafe), g = ultimoOrale(stu, x.a.unit);
+                const cls = (data.classi || []).find(c => c.nome === x.a.classeNome);
+                if (stu && g && cls && !nuovi.some(n => n.stu === stu && _ppUnitEq(n.unit, x.a.unit))) {
+                    const att = _ppOraleAtteso(stu, cls.nome, x.a.unit, g);
+                    if (att.ok) nuovi.push({ stu, cls, unit: x.a.unit, g, att });
+                }
+            }
+        }
+        _ppDraftScritto.filter(d => bozzeVia.has(d.id)).forEach(d => { if (d.llEditAt) _ppLLStop(d.id); _ppDraftSel.delete(d.id); });
+        _ppDraftScritto = _ppDraftScritto.filter(d => !bozzeVia.has(d.id));
+        _ppOraleQueue.filter(o => testiVia.has(o.id)).forEach(o => _ppOraleSel.delete(o.id));
+        _ppOraleQueue = _ppOraleQueue.filter(o => !testiVia.has(o.id));
+        for (const { it, g } of testiAgg) {
+            Object.assign(it, { voto: g.voto, votoPrima: it.votoPrima ?? it.voto, oraleDetails: _ppOralNotes(g), dataVerifica: g.data || '' });
+        }
+        const daElaborare = [];
+        for (const { q, g, att } of codaAgg) {
+            Object.assign(q, { voto: g.voto, errorDetails: q.errorDetails || _ppOralNotes(g) });
+            if (!att.ok) { q.ppStatus = 'skipped'; q.ppReason = att.reason; continue; }
+            _ppDeferredExcluded.delete(_ppDefKey(q));
+            delete q.ppStatus; delete q.ppReason;
+            daElaborare.push(q);
+        }
+        _ppDeferredQueue = _ppDeferredQueue.filter((q, i) => !codaVia.has(i));
+        // Le voci scritte di bozze tolte perché lo scritto non c'è più escono dalla coda
+        const viaScritte = new Set(p.bozzeStale.map(x => `${x.d.studentSafe}|${_ppUnitKey(x.d.unit)}`));
+        _ppDeferredQueue = _ppDeferredQueue.filter(q => !(q.tipo === 'scritto' && viaScritte.has(`${q.studentSafe}|${_ppUnitKey(q.unit)}`)
+            && !_ppLatestGrade(_ppFindStudent(q.classeNome, q.studentSafe), 'scritto', q.unit)));
+        for (const n of nuovi) {
+            const item = {
+                studentSafe: _mcToSafe(`${n.stu.cognome} ${n.stu.nome}`), studentName: `${n.stu.cognome} ${n.stu.nome}`.trim(),
+                cognome: n.stu.cognome, nome: n.stu.nome, classeNome: n.cls.nome, unit: n.unit, tipo: 'orale',
+                voto: n.g.voto, errorDetails: _ppOralNotes(n.g), tagBreakdown: {}, queuedAt: Date.now() + daElaborare.length
+            };
+            _ppDeferredQueue.push(item);
+            daElaborare.push(item);
+        }
+        _ppSavDraftScritto(); _ppSavOraleQueue(); _ppSavDeferred();
+        renderPianoPersPanel();
+        const pronti = daElaborare.filter(q => {
+            const stu = _ppFindStudent(q.classeNome, q.studentSafe), g = ultimoOrale(stu, q.unit);
+            return stu && g && _ppOraleAtteso(stu, q.classeNome, q.unit, g).ok;
+        });
+        if (pronti.length && confirm(`✅ Fatto. ${pronti.length === 1 ? '1 piano orale è' : pronti.length + ' piani orali sono'} in coda.\n\nLi genero adesso? (scegli il generatore classe per classe; altrimenti li trovi nella coda qui sotto con «⚡ Elabora selezionati»)`)) {
+            await _ppRunQueue(pronti);
+        }
+    }
+
     function _ppClaudeBarHtml() {
         return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;">
                 <span style="font-size:12px;color:#6b21a8;">Generatore usato l'ultima volta: <strong>${_ppGenLabel(localStorage.getItem('pp_gen_last_choice') || _ppGenProvider)}</strong> · prima di ogni generazione lo scegli, anche classe per classe</span>
@@ -41011,6 +41263,10 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             if (!el) return;
             const pending = _ppOraleQueue.filter(x => x.status !== 'approved');
             const approved = _ppOraleQueue.filter(x => x.status === 'approved');
+            const aggBar = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;">
+                <span style="font-size:12px;color:#065f46;flex:1;min-width:200px;">Manca qualcuno, un voto è cambiato o c'era uno scritto messo per errore? <b>Aggiorna</b> rilegge gli orali dello storico e sistema coda, testi e bozze.</span>
+                <button onclick="ppAggiornaOrali()" title="Rilegge i voti orali degli ultimi ${_PP_AGG_GIORNI} giorni: mette in coda gli orali senza piano, aggiorna i voti cambiati, toglie testi e bozze di voti che non ci sono più (anche gli scritti messi per errore) e rivaluta le voci saltate" style="background:#059669;color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🔄 Aggiorna dallo storico</button>
+              </div>`;
             const _plOrali = () => {
                 if (!_ppDraftScritto.some(_ppDraftOrale) && !_ppDeferredQueue.some(q => _ppInVista(q, 'orale'))) return;
                 const box = document.createElement('div');
@@ -41018,11 +41274,11 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 _renderBozzeCoda(box, 'orale');
             };
             if (!_ppOraleQueue.length) {
-                el.innerHTML = _ppClaudeBarHtml() + '<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">Nessun testo orale in attesa.<br><span style="font-size:11px;">Vengono generati automaticamente per voti < 6 nella finestra 14:30–07:00.</span></div>';
+                el.innerHTML = _ppClaudeBarHtml() + aggBar + '<div style="text-align:center;padding:20px;color:#aaa;font-size:13px;">Nessun testo orale in attesa.<br><span style="font-size:11px;">Vengono generati automaticamente per voti < 6 nella finestra 14:30–07:00.</span></div>';
                 _plOrali();
                 return;
             }
-            let html = _ppClaudeBarHtml();
+            let html = _ppClaudeBarHtml() + aggBar;
             if (pending.length) html += `<div style="font-size:11px;font-weight:700;color:#B45309;letter-spacing:.3px;margin-bottom:6px;">⏳ DA APPROVARE (${pending.length}) <span style="font-weight:400;color:#92400e;">— clicca su un alunno per aprire il suo testo</span></div>`;
             const _byClass = _ppGroupByClass(pending);
             _byClass.forEach((list, classeNome) => {
@@ -41035,6 +41291,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                       <div style="font-size:13px;font-weight:700;color:#78350F;"><input type="checkbox" ${_ppOraleSel.has(item.id) ? 'checked' : ''} onclick="event.stopPropagation()" onchange="ppToggleSel('orale','${item.id}',this.checked)" title="Seleziona per ↺ Rigenera selezionati" style="width:14px;height:14px;cursor:pointer;margin-right:6px;vertical-align:middle;"><span style="font-size:14px;color:#B45309;margin-right:6px;">${_open?'▼':'▶'}</span>${item.studentName}
                         ${item.source ? `<span title="Generato con ${_ppGenLabel(item.source)}" style="margin-left:6px;background:${item.source === 'claude' ? '#f3e8ff' : item.source === 'auto' ? '#f3f4f6' : '#dbeafe'};color:${item.source === 'claude' ? '#7e22ce' : item.source === 'auto' ? '#4b5563' : '#1e40af'};border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;">${item.source === 'claude' ? '🟣 Claude' : item.source === 'auto' ? '⚙️ Auto' : '🔵 Haiku 5.5'}</span>` : ''}</div>
                       <div style="font-size:11px;color:#B45309;">${item.unit||''} · voto ${item.voto} · ${new Date(item.createdAt).toLocaleString('it',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+                      ${item.votoPrima != null && Number(item.votoPrima) !== Number(item.voto) ? `<div style="font-size:11px;font-weight:700;color:#b91c1c;">✏️ Voto cambiato nello storico (prima ${item.votoPrima}): il testo è di prima, premi ↺ Rigenera se vuoi riscriverlo</div>` : ''}
                     </div>
                     <span style="display:flex;gap:6px;align-items:center;"><span style="background:#FEF3C7;color:#92400E;border-radius:8px;padding:3px 10px;font-size:11px;font-weight:700;">⏳ Da approvare</span><button onclick="event.stopPropagation();ppRejectOraleAsk('${item.id}')" title="Elimina questo testo orale: non verrà inviato" style="background:#fff;color:#DC2626;border:1.5px solid #FCA5A5;border-radius:8px;padding:3px 9px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">🗑</button></span>
                   </div>
