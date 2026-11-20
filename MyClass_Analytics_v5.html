@@ -1546,6 +1546,8 @@
         .agent-status-pill.ready      { background:#e8f5e9; color:#2e7d32; }
         .agent-status-pill.approved   { background:#ede7f6; color:#4527a0; }
         .agent-status-pill.error      { background:#ffebee; color:#c62828; }
+        .agent-status-pill.proposta   { background:#fff8e1; color:#b26a00; }
+        .agent-status-pill.awaiting_claude { background:#f5f3ff; color:#6d28d9; }
         .agent-settings-box {
             background: #f8f9fa; border-radius: 12px;
             border: 1px solid #e0e4ff; padding: 16px; margin-top: 16px;
@@ -5919,12 +5921,14 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                         titolo: r.verifica || '',
                         unit: unit,
                         nota: nota,
-                        recupero: r.recupero || ''
+                        recupero: r.recupero || '',
+                        inseritoIl: Date.now()
                     });
 
                     saveData();
                     renderStudentDetail();
                     switchStudentTab('tab-storico');
+                    if (typeof _fbsDopoVoto === 'function') _fbsDopoVoto();
 
                     alert(`✅ Voto ${tipo} ${r.voto_finale}/10 inserito per ${studente.nome} ${studente.cognome}\n${r.verifica ? 'Verifica: ' + r.verifica : ''}`);
 
@@ -6072,6 +6076,13 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                                 ${Object.entries(g.tags||{}).map(([k,v])=>`<span style="background:#f0f0ff;color:#3949ab;border-radius:6px;padding:2px 7px;font-size:10px;">${k}: ${v}%</span>`).join('')}
                             </div>` : ''}
                             ${g.nota ? `<div class="note">${g.nota}</div>` : '<div style="font-size: 12px; color: #999; margin-top: 5px; font-style: italic;">Nessuna nota discorsiva</div>'}
+                            ${(() => {
+                                // Feedback all'alunno di un voto scritto a mano (l'agente lo propone)
+                                if (g.fbStorico?.stato === 'inviato') return '<div style="margin-top:5px;font-size:11px;font-weight:700;color:#00695c;">💬 Feedback inviato all\'alunno</div>';
+                                const _ft = g.gid && typeof agentTasks !== 'undefined' && Array.isArray(agentTasks) ? agentTasks.find(t => t.id === 'fbstorico_' + g.gid) : null;
+                                if (_ft && _ft.status !== 'approved') return '<div style="margin-top:5px;font-size:11px;font-weight:700;color:#b26a00;">💬 Feedback all\'alunno da creare: vedi Agente</div>';
+                                return '';
+                            })()}
                         </div>
                         <div style="display: flex; gap: 5px; flex-shrink: 0;">
                             <button class="btn-primary" onclick="editGrade(${realIndex}, '${tipo.toLowerCase()}')" 
@@ -7537,7 +7548,8 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                             titolo: entry.titolo || entry.unit || '',
                             unit: entry.unit || '',
                             nota: entry.valutazione_docente || entry.nota || entry.note || '',
-                            ...(entry.recupero ? { recupero: entry.recupero } : {})
+                            ...(entry.recupero ? { recupero: entry.recupero } : {}),
+                            inseritoIl: Date.now()
                         };
 
                         studente[tipo].push(grade);
@@ -7563,6 +7575,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
 
                     // Refresh view if student is open
                     if (currentStudent !== null) renderStudentDetail();
+                    if (imported && typeof _fbsDopoVoto === 'function') _fbsDopoVoto();
 
                 } catch(err) {
                     resultBox.innerHTML = '<div class="warning-box">❌ Errore: ' + err.message + '</div>';
@@ -8404,12 +8417,14 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                 titolo: title,
                 ...(unit ? { unit } : {}),
                 nota: note,
-                ...(recuperoMode ? { recupero: recuperoMode } : {})
+                ...(recuperoMode ? { recupero: recuperoMode } : {}),
+                inseritoIl: Date.now()      // l'agente propone il feedback all'alunno per i voti appena scritti
             };
             
             data.classi[currentClass].studenti[currentStudent][competence].push(grade);
             saveData();
             _autoSyncStudentMyClass(data.classi[currentClass].studenti[currentStudent], data.classi[currentClass].nome);
+            if (typeof _fbsDopoVoto === 'function') _fbsDopoVoto();
             
             // Reset form
             document.getElementById('newGradeVote').value = '';
@@ -8465,6 +8480,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             saveData();
             _autoSyncStudentMyClass(studente, data.classi[currentClass].nome);
             renderStudentDetail();
+            if (typeof _fbsDopoVoto === 'function') _fbsDopoVoto();
         }
         
         // ── Voti con +/- ─────────────────────────────────────────────────
@@ -8576,7 +8592,9 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             if (dateVal) grade.data = new Date(dateVal + 'T12:00:00').toISOString();
             grade.titolo = document.getElementById('editGradeTitle').value.trim();
             grade.unit   = document.getElementById('editGradeUnit').value.trim() || undefined;
+            const _notaPrima = grade.nota || '';
             grade.nota   = document.getElementById('editGradeNote').value.trim();
+            if (grade.nota !== _notaPrima) grade.inseritoIl = Date.now();   // valutazione scritta ora → l'agente può proporre il feedback
             const recVal = document.getElementById('editGradeRecupero').value;
             if (recVal) grade.recupero = recVal;
             else delete grade.recupero;
@@ -8589,6 +8607,7 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
             }
             closeEditGradeModal();
             renderStudentDetail();
+            if (typeof _fbsDopoVoto === 'function') _fbsDopoVoto();
         }
         
         function deleteCurrentClass() {
@@ -22533,7 +22552,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         const el = document.getElementById('agentTabTaskBadge');
         if (!el) return;
         const n = (typeof agentTasks !== 'undefined' && Array.isArray(agentTasks))
-            ? agentTasks.filter(t => t.status === 'ready').length : 0;
+            ? agentTasks.filter(t => t.status === 'ready' || t.status === 'proposta').length : 0;
         el.textContent = n;
         el.style.display = n ? '' : 'none';
     };
@@ -22647,7 +22666,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         // i loro dati sono già su Firebase (responses + marker agentDone).
         // awaiting_transcript / awaiting_speakers: trascrizioni (anche corrette dal docente)
         // che esistono solo qui, non su Firebase → vanno sempre conservate.
-        const ACTIVE = new Set(['pending','processing','ready','error','awaiting_claude','awaiting_transcript','awaiting_speakers']);
+        const ACTIVE = new Set(['pending','processing','ready','error','awaiting_claude','awaiting_transcript','awaiting_speakers','proposta']);
         const isActive = t =>
             ACTIVE.has(t.status) &&
             !(t.status === 'error' && (t.retryCount || 0) >= AGENT_MAX_RETRY);
@@ -23149,13 +23168,14 @@ Ogni scheda minimo 12-14 righe (18-22 per chi ha fatto il recupero). NON aggiung
         if (GEMINI_API_KEY) o.push({ v: 'gemini', t: 'Gemini' });
         if (AGENT_ANTHROPIC_KEY) { o.push({ v: 'haiku', t: 'Claude Haiku (API)' }); o.push({ v: 'sonnet', t: 'Claude Sonnet (API)' }); }
         o.push({ v: 'locale', t: `Locale · Ollama (${loc})` });
-        if (task.type === 'valscritta') o.push({ v: 'claude', t: 'Claude Code (📤 file da esportare)' });
+        if (task.type === 'valscritta' || task.type === 'fbstorico') o.push({ v: 'claude', t: 'Claude Code (📤 file da esportare)' });
         if (task.type === 'valorale' || task.type === 'valdialogo') o.push({ v: 'claude', t: 'Claude (🟣 copia e incolla)' });
         return o;
     }
     function _agentAiPickerHtml(task) {
-        if (!['valorale', 'valdialogo', 'valscritta', 'analisididattica'].includes(task.type)) return '';
+        if (!['valorale', 'valdialogo', 'valscritta', 'analisididattica', 'fbstorico'].includes(task.type)) return '';
         if (task.status === 'approved' || task.status === 'processing') return '';
+        if (task.type === 'fbstorico' && task.status === 'awaiting_claude') return '';
         const cur = task.aiScelta || 'auto';
         const opts = _agentAiOpzioni(task);
         if (!opts.some(o => o.v === cur)) opts.push({ v: cur, t: cur + ' (non disponibile)' });
@@ -25396,6 +25416,9 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
                 try { agentCheckPromemoriaOrali(); } catch (e) { console.warn('[Agente] promemoria orali:', e); }
             }
 
+            // ── 4b. Voti scritti a mano nello storico senza feedback all'alunno → proposta ──
+            try { await agentCheckFeedbackStorico(); } catch (e) { console.warn('[Agente] feedback da storico:', e.message); }
+
             // ── 5. Analisi didattiche richieste da StudentApp ──────────────────
             if (!_fbSkip) try {
                 const dbFire = firebase.database();
@@ -25583,6 +25606,9 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
         } else if (task.type === 'valdialogo') {
             await agentApproveValDialogo(task);
 
+        } else if (task.type === 'fbstorico') {
+            if (!(await agentApproveFbStorico(task))) { agentSaveTasks(agentTasks); agentRenderPanel(); return; }
+
         } else if (task.type === 'analisididattica') {
             // aiReport è già stato scritto al momento della generazione (agentTaskAnalisDidattica).
             // Qui aggiorniamo per sicurezza (es. testo editato prima di approvare)
@@ -25698,6 +25724,7 @@ Non ripetere meccanicamente tutti i dati: sintetizza e dai priorità a ciò che 
                 await agentTranscribeDialogo(task);
         }
         if (task.type === 'analisididattica')  await agentTaskAnalisDidattica(task);
+        if (task.type === 'fbstorico')         await agentTaskFbStorico(task);
         agentSaveTasks(agentTasks);
         agentBadgeUpdate();
         agentRenderPanel();
@@ -26059,6 +26086,8 @@ ${sectionInstr}`;
     function agentRemoveTask(taskId) {
         const task = agentTasks.find(t => t.id === taskId);
         if (!task) return;
+        // Feedback da storico: togliere la scheda = "non serve" (il voto non si ripropone)
+        if (task.type === 'fbstorico') { if (task.status === 'approved') { agentTasks = agentTasks.filter(t => t.id !== taskId); agentSaveTasks(agentTasks); agentRenderPanel(); } else agentFbsNo(taskId); return; }
 
         // Per le analisi didattiche: aggiorna Firebase così l'agente non riprocessa
         if (task.type === 'analisididattica' && task.status !== 'approved') {
@@ -26121,7 +26150,7 @@ ${sectionInstr}`;
 
     // Svuota dalla coda solo una categoria di task approvati
     const _AGENT_CLEAR_KINDS = {
-        valutazioni: { tipi: ['valscritta', 'valorale', 'valdialogo'], label: 'valutazioni approvate', icon: '✍️' },
+        valutazioni: { tipi: ['valscritta', 'valorale', 'valdialogo', 'fbstorico'], label: 'valutazioni approvate', icon: '✍️' },
         piani:       { tipi: ['piano', 'pianoparallela'],              label: 'piani approvati',       icon: '📋' },
     };
     function _agentApprovatiDi(kind) {
@@ -26686,7 +26715,7 @@ ${sectionInstr}`;
     // Badge header
     function agentBadgeUpdate() {
         const badge   = document.getElementById('agenteBadge');
-        const pending = agentTasks.filter(t => t.status === 'ready').length;
+        const pending = agentTasks.filter(t => t.status === 'ready' || t.status === 'proposta').length;
         if (!badge) return;
         if (pending > 0) { badge.textContent = pending; badge.style.display = 'block'; }
         else             { badge.style.display = 'none'; }
@@ -26924,6 +26953,7 @@ ${sectionInstr}`;
             valdialogo:       { icon: '🗣️', label: 'Valutazione Dialogo (coppia/trio)' },
             analisididattica: { icon: '🧑‍🏫', label: 'Analisi Didattica Studente' },
             audio_abbina:     { icon: '🔗', label: 'Audio non abbinato — identifica studente' },
+            fbstorico:        { icon: '💬', label: 'Feedback all\'alunno dallo storico' },
         };
         const statusLabels = {
             pending:              '⏳ In attesa',
@@ -26934,6 +26964,7 @@ ${sectionInstr}`;
             awaiting_transcript:  '✍️ Trascrizione richiesta',
             awaiting_speakers:    '👥 Associa parlanti',
             awaiting_claude:      '🟣 In attesa di Claude Code',
+            proposta:             '💬 Feedback da creare?',
         };
         const aiLabels = {
             gemini:    '<span class="agent-ai-badge gemini">🟢 Gemini</span>',
@@ -26950,7 +26981,7 @@ ${sectionInstr}`;
         // Ordina: ready → processing → awaiting_transcript → pending → error → approved
         // I task 'dismissed' normali sono invisibili (guardia anti-regen);
         // i recuperi dismessi automaticamente per voto già sufficiente mostrano una nota.
-        const order = { ready:0, processing:1, awaiting_claude:2, awaiting_speakers:2, awaiting_transcript:2, pending:3, error:4, approved:5 };
+        const order = { ready:0, processing:1, proposta:2, awaiting_claude:2, awaiting_speakers:2, awaiting_transcript:2, pending:3, error:4, approved:5 };
         const sorted = [...agentTasks]
             .filter(t => t.status !== 'dismissed')
             // Task ripristinati come scheletro da Firebase (approved ma senza dati):
@@ -27030,6 +27061,10 @@ ${sectionInstr}`;
                 if (task.unit)        subtitleParts.push(task.unit);
             } else if (task.type === 'audio_abbina') {
                 if (task.audioFileName) subtitleParts.push(task.audioFileName);
+            } else if (task.type === 'fbstorico') {
+                if (task.studentName) subtitleParts.push(task.studentName);
+                subtitleParts.push(task.tipo === 'orale' ? 'orale' : 'scritto');
+                if (task.unit || task.titolo) subtitleParts.push(task.unit || task.titolo);
             } else {
                 if (task.eventTitle)  subtitleParts.push(task.eventTitle);
                 else if (task.lessonTitle) subtitleParts.push(task.lessonTitle);
@@ -27055,7 +27090,9 @@ ${sectionInstr}`;
             const collapsedClass = isCollapsed ? ' collapsed' : '';
 
             let body = '';
-            if (task.status === 'ready' || task.status === 'approved') {
+            if (task.type === 'fbstorico') {
+                body = _fbsBodyHtml(task);
+            } else if (task.status === 'ready' || task.status === 'approved') {
                 if (task.type === 'pianoparallela') {
                     body = _agentParallelaBody(task);
                 } else if (task.type === 'valdialogo') {
@@ -27591,7 +27628,7 @@ ${sectionInstr}`;
                 const e = x => String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/</g,'&lt;');
                 const nome = task.type === 'valdialogo'
                     ? (task.studenti||[]).map(st => st.studentName).filter(Boolean).join(' + ')
-                    : (['valorale','analisididattica'].includes(task.type) ? (task.studentName || '') : '');
+                    : (['valorale','analisididattica','fbstorico'].includes(task.type) ? (task.studentName || '') : '');
                 if (!nome) return `<span class="agent-task-title-block">
                         <span class="agent-task-title">${tl.label}</span>
                         ${subtitle ? `<span class="agent-task-subtitle">${subtitle}</span>` : ''}
@@ -27624,12 +27661,18 @@ ${sectionInstr}`;
             </div>`;
         }).join('')
             + (() => {
-                const nC = agentTasks.filter(t => t.status === 'awaiting_claude').length;
-                return nC ? `<div style="margin-top:10px;padding:10px 12px;background:#f5f3ff;border:1.5px solid #c4b5fd;border-radius:10px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                const nF = agentTasks.filter(t => t.type === 'fbstorico' && t.status === 'awaiting_claude').length;
+                const barF = nF ? `<div style="margin-top:10px;padding:10px 12px;background:#f5f3ff;border:1.5px solid #c4b5fd;border-radius:10px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <strong style="color:#6d28d9;flex:1;min-width:200px;">🟣 ${nF} feedback dallo storico in attesa di Claude Code</strong>
+                    <button class="agent-btn-approve" onclick="agentFbsExportForClaude()">📤 Esporta per Claude</button>
+                    <button class="agent-btn-edit" onclick="agentValImportFromClaude()">📥 Importa da Claude</button>
+                </div>` : '';
+                const nC = agentTasks.filter(t => t.type === 'valscritta' && t.status === 'awaiting_claude').length;
+                return barF + (nC ? `<div style="margin-top:10px;padding:10px 12px;background:#f5f3ff;border:1.5px solid #c4b5fd;border-radius:10px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                     <strong style="color:#6d28d9;flex:1;min-width:200px;">🟣 ${nC} valutazion${nC === 1 ? 'e' : 'i'} in attesa di Claude Code</strong>
                     <button class="agent-btn-approve" onclick="agentValExportForClaude()">📤 Esporta per Claude</button>
                     <button class="agent-btn-edit" onclick="agentValImportFromClaude()">📥 Importa da Claude</button>
-                </div>` : '';
+                </div>` : '');
             })()
             + (dismissedRecuperi.length
                 ? `<div style="margin-top:12px;padding:10px 12px;background:#fff8e1;border:1.5px solid #ffe082;border-radius:10px;font-size:12px;">
@@ -28289,6 +28332,8 @@ ${sectionInstr}`;
         agentBadgeUpdate();
         agentZoomApply();
         agentSwitchTab(AGENT_TAB);
+        // Valutazioni scritte nello storico senza feedback all'alunno (non serve la finestra attiva)
+        setTimeout(() => { agentCheckFeedbackStorico().catch(() => {}); }, 5000);
         agentSchedule();
         // Prova a ripristinare l'handle della cartella audio senza chiedere permessi
         agentTryRestoreDirHandle().then(() => agentRenderPanel());
@@ -30521,7 +30566,12 @@ Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente):
         inp.onchange = async () => {
             const f = inp.files && inp.files[0];
             if (!f) return;
-            try { _agentValApplyImport(JSON.parse(await f.text())); }
+            try {
+                const fd = JSON.parse(await f.text());
+                // Feedback dallo storico (feedback_da_claude.json) o valutazioni scritte
+                if (fd && (fd.formato === 'myclass-feedback-import' || fd.formato === 'myclass-feedback-export' || (Array.isArray(fd.feedback) && !Array.isArray(fd.valutazioni)))) _agentFbsApplyImport(fd);
+                else _agentValApplyImport(fd);
+            }
             catch(e) { alert('❌ Import non riuscito: ' + e.message); }
         };
         inp.click();
@@ -30822,6 +30872,466 @@ Il docente lo importa in MyClass con «🟣 Orali con Claude» → «📥 Import
         t._forceAuto = true;
         delete t.claudePrompt;
         await agentRegenerate(taskId);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  FEEDBACK ALL'ALUNNO DA UNA VALUTAZIONE SCRITTA NELLO STORICO
+    //  Il docente scrive voto e valutazione direttamente nello storico (✏️ Inserisci,
+    //  ✏️ Modifica, import JSON): l'agente vede che all'alunno non è arrivato nessun
+    //  feedback e propone di crearlo, con i soliti modi (🤖 AI, 🟣 Claude Code,
+    //  ✍️ Scrivo io). Il voto resta un dato dello storico: si legge, non si cambia.
+    //  Sul voto: fbStorico = { stato: 'inviato' | 'no' | 'esistente', ts, fbKey }
+    //  → non viene più riproposto (vale su tutti i dispositivi).
+    // ═══════════════════════════════════════════════════════════════════════
+    const AGENT_FBS_GIORNI = 30;     // si propongono i voti scritti o datati negli ultimi 30 giorni
+    let _fbsChecking = false;
+
+    function _fbsData10(d) { return String(d || '').slice(0, 10); }
+    function _fbsDataIt(d) { const s = _fbsData10(d); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s.slice(8,10)}/${s.slice(5,7)}/${s.slice(0,4)}` : s; }
+    function _fbsTipoLbl(tipo) { return tipo === 'orale' ? 'orale' : 'scritta'; }
+    function _fbsVotoTxt(v) {
+        const n = Number(v);
+        if (!isFinite(n)) return String(v == null ? '' : v);
+        const lab = String(_votoLabelIt(n, true));
+        return /[+-]$/.test(lab) ? lab : lab.replace('.', ',') + '/10';
+    }
+    function _fbsAttivita(t) { return String(t.unit || t.titolo || '').trim(); }
+
+    // Voto dello storico senza feedback: inserito a mano (non dall'agente), con una
+    // valutazione scritta, recente e mai gestito prima.
+    function _fbsCandidato(g, lim) {
+        if (!g || g.source === 'agent' || g.fbStorico) return false;
+        if (!String(g.nota || '').trim()) return false;
+        const v = Number(g.voto);
+        if (!(v >= 1 && v <= 10)) return false;
+        const td = new Date(g.data || 0).getTime() || 0;
+        if (td > Date.now() + 2 * 864e5) return false;
+        return Math.max(td, Number(g.inseritoIl) || 0) >= lim;
+    }
+
+    function _fbsTrovaVoto(task) {
+        const classe = (data.classi || []).find(c => c.nome === task.classe);
+        const studente = classe?.studenti?.find(s => _toSafe(`${s.cognome} ${s.nome}`) === task.studentSafe);
+        const grade = (studente?.[task.tipo] || []).find(g => g && g.gid === task.gid);
+        return grade ? { classe, studente, grade } : null;
+    }
+
+    // Istantanea del voto nella scheda (aggiornata finché il feedback non è inviato)
+    function _fbsSnapshot(task, g) {
+        task.voto = Number(g.voto);
+        task.sessionDate = _fbsData10(g.data);
+        task.titolo = g.titolo || '';
+        task.unit = g.unit || '';
+        task.nota = g.nota || '';
+        task.pct = g.pct ?? null;
+        task.tags = g.tags || {};
+        task.recupero = g.recupero || '';
+    }
+
+    // Esiste già un feedback di quel giorno su StudentApp? true / false;
+    // null = non si sa (Firebase non raggiungibile o alunno senza codice personale)
+    async function _fbsEsisteFeedback(safe, date10, tipo) {
+        try {
+            const db = firebase.database();
+            const base = await _mcHistBase(safe);
+            if (!base) return null;
+            const fb = (await db.ref(`${base}/feedback`).get()).val() || {};
+            return Object.values(fb).some(f => {
+                if (!f || _fbsData10(f.date) !== date10) return false;
+                const tit = String(f.title || '');
+                if (tipo === 'orale' && /scritt/i.test(tit)) return false;
+                if (tipo === 'scritto' && /oral/i.test(tit)) return false;
+                return true;
+            });
+        } catch (e) { return null; }
+    }
+
+    // Scansione dello storico: crea le proposte e toglie quelle non più valide
+    async function agentCheckFeedbackStorico() {
+        if (_fbsChecking || !data || !Array.isArray(data.classi)) return 0;
+        _fbsChecking = true;
+        let nuovi = 0, tasksDirty = false, dataDirty = false;
+        try {
+            const lim = Date.now() - AGENT_FBS_GIORNI * 864e5;
+            // 1. Schede non ancora inviate il cui voto non c'è più o è già stato gestito altrove
+            const prima = agentTasks.length;
+            agentTasks = agentTasks.filter(t => {
+                if (t.type !== 'fbstorico' || t.status === 'approved' || t.status === 'processing') return true;
+                const ctx = _fbsTrovaVoto(t);
+                if (!ctx || ctx.grade.source === 'agent') return false;
+                if (ctx.grade.fbStorico && !t.fbKey) return false;   // gestito altrove (altro dispositivo, "non serve")
+                if (t.status === 'proposta') _fbsSnapshot(t, ctx.grade);
+                return true;
+            });
+            if (agentTasks.length !== prima) tasksDirty = true;
+            // 2. Voti nuovi senza feedback
+            for (const classe of data.classi) {
+                for (const s of (classe.studenti || [])) {
+                    for (const tipo of ['orale', 'scritto']) {
+                        for (const g of (s[tipo] || [])) {
+                            if (!_fbsCandidato(g, lim)) continue;
+                            if (!g.gid) { g.gid = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); dataDirty = true; }
+                            const tid = `fbstorico_${g.gid}`;
+                            if (agentTasks.some(t => t.id === tid)) continue;
+                            const safe = _toSafe(`${s.cognome} ${s.nome}`);
+                            const esiste = await _fbsEsisteFeedback(safe, _fbsData10(g.data), tipo);
+                            if (esiste === true) { g.fbStorico = { stato: 'esistente', ts: Date.now() }; dataDirty = true; continue; }
+                            if (esiste === null) { console.log(`[Agente] 💬 ${s.cognome} ${s.nome} (${classe.nome}): feedback da storico non proponibile ora (StudentApp non raggiungibile o alunno senza codice)`); continue; }
+                            const task = {
+                                id: tid, type: 'fbstorico', status: 'proposta',
+                                classe: classe.nome, studentName: `${s.cognome} ${s.nome}`.trim(),
+                                studentNome: s.nome || '', studentSafe: safe, tipo, gid: g.gid,
+                                createdAt: new Date().toISOString()
+                            };
+                            _fbsSnapshot(task, g);
+                            agentTasks.push(task);
+                            nuovi++; tasksDirty = true;
+                        }
+                    }
+                }
+            }
+            if (nuovi) console.log(`[Agente] 💬 ${nuovi} valutazion${nuovi === 1 ? 'e' : 'i'} nello storico senza feedback all'alunno → proposta in coda`);
+        } catch (e) {
+            console.warn('[Agente] feedback da storico:', e.message);
+        } finally {
+            _fbsChecking = false;
+        }
+        if (dataDirty) saveData();
+        if (tasksDirty) { agentSaveTasks(agentTasks); agentBadgeUpdate(); agentRenderPanel(); }
+        return nuovi;
+    }
+    // Dopo un voto inserito / modificato / cancellato nello storico
+    function _fbsDopoVoto() {
+        if (typeof agentCheckFeedbackStorico !== 'function') return;
+        setTimeout(() => { agentCheckFeedbackStorico().catch(() => {}); }, 600);
+    }
+
+    // Consegna: per Claude Code (pseudo) l'alunno è [A1] / [NOME_A1]
+    function _fbsPrompt(task, pseudo) {
+        const ctx = _fbsTrovaVoto(task);
+        const s = ctx?.studente;
+        const nomeVis = pseudo ? '[NOME_A1]' : (task.studentNome || task.studentName);
+        const chi = pseudo ? '[A1]' : task.studentName;
+        const tipoLbl = _fbsTipoLbl(task.tipo);
+        const att = _fbsAttivita(task);
+        let nota = String(task.nota || '').trim();
+        if (pseudo && s) {
+            const varianti = [...new Set([`${s.cognome} ${s.nome}`, `${s.nome} ${s.cognome}`, s.nome, s.cognome]
+                .map(x => String(x || '').trim()).filter(x => x.length > 2))];
+            nota = _agentValPseudo(nota, [{ code: 'A1', varianti }]).replace(/\[A1\]/g, '[NOME_A1]');
+        }
+        const aree = Object.entries(task.tags || {}).map(([k, v]) => `${k} ${v}%`).join(', ');
+        const prec = (s?.[task.tipo] || [])
+            .filter(g => g && g.gid !== task.gid && _fbsData10(g.data) < task.sessionDate && Number(g.voto) >= 1)
+            .sort((a, b) => _fbsData10(b.data).localeCompare(_fbsData10(a.data)))
+            .slice(0, 3)
+            .map(g => `${_fbsDataIt(g.data)}: ${_votoLabelIt(g.voto, true)}${g.titolo || g.unit ? ' (' + (g.unit || g.titolo) + ')' : ''}`);
+        const semplice = s && ['PEI', 'PDP_DSA'].includes(s.supporto);
+        const rec = task.recupero ? 'Era una prova di RECUPERO: dillo nell\'apertura ("la tua prova di recupero") e valorizza i progressi se la valutazione li indica.\n' : '';
+        return `FEEDBACK ALL'ALUNNO DA UNA VALUTAZIONE DELLO STORICO
+Il docente ha valutato una verifica ${tipoLbl} e ha scritto voto e valutazione nello storico di MyClass, ma all'alunno non è ancora arrivato nessun feedback. Scrivi il feedback personale per l'alunno partendo SOLO da questa valutazione.
+
+ALUNNO: ${chi} — classe ${task.classe}
+VERIFICA: ${tipoLbl} del ${_fbsDataIt(task.sessionDate)}${att ? ' — ' + att : ''}
+VOTO: ${_votoLabelIt(task.voto, true)} (${task.voto})
+${task.pct != null ? `ACCURATEZZA: ${task.pct}%${aree ? ' · per area: ' + aree : ''}\n` : ''}${rec}VALUTAZIONE SCRITTA DAL DOCENTE NELLO STORICO:
+"""
+${nota}
+"""
+${prec.length ? `VOTI PRECEDENTI (${tipoLbl === 'orale' ? 'orali' : 'scritti'}, dal più recente): ${prec.join(' | ')}
+Puoi accennare a un miglioramento o a un calo solo se è evidente; non elencare gli altri voti.
+` : ''}${semplice ? 'Usa un linguaggio molto semplice: frasi brevi e parole comuni (non dire perché e non nominare piani o certificazioni).\n' : ''}
+REGOLE:
+- Usa solo quello che c'è nella valutazione del docente: non inventare errori, esempi, frasi dette, risposte o punteggi. Se la valutazione cita errori o esempi, riportali con la forma corretta e una spiegazione semplice.
+- Se la valutazione riporta punteggi per area (es. "Pronuncia 3/4"), riportali subito dopo la riga del voto, una riga per area ("Area: X/Y"), con gli stessi numeri.
+- Riformula per un ragazzo di scuola media, rivolgendoti a lui o a lei con il "tu": niente linguaggio tecnico da registro.
+- NON dare esercizi, compiti, consigli di studio o percorsi di recupero: sono nel piano personalizzato.
+
+Genera SOLO questo blocco, con il marcatore esatto:
+=== CLASSROOM ===
+Ciao ${nomeVis}, ecco il feedback della tua verifica ${tipoLbl}${att ? ' di ' + att : ''}.
+Il tuo voto: ${_fbsVotoTxt(task.voto)}
+Cosa è andato bene: 2-4 cose concrete che ha fatto bene, prese dalla valutazione.
+Cosa puoi migliorare: 2-3 aspetti concreti presi dalla valutazione (se la valutazione non indica niente da migliorare, un solo aspetto su cui continuare a lavorare).
+Una sola frase breve di incoraggiamento.
+Ogni parte su una riga a sé (le etichette "Il tuo voto:", "Cosa è andato bene:" e "Cosa puoi migliorare:" all'inizio della loro riga), con una riga vuota tra le parti. 100-180 parole in tutto. Testo scorrevole: niente elenchi puntati, niente grassetti, niente emoji.`;
+    }
+
+    // Risposta dell'AI → testo del feedback (solo il blocco CLASSROOM)
+    function _fbsPulisci(raw, task) {
+        let t = String(raw || '');
+        const m = t.match(/===\s*CLASSROOM\s*===/i);
+        if (m) t = t.slice(m.index + m[0].length);
+        const fine = t.search(/\n\s*===\s*[A-ZÀ-Ú ]+\s*===/);
+        if (fine >= 0) t = t.slice(0, fine);
+        t = t.replace(/\*\*/g, '').replace(/^\s*#+\s*/gm, '').trim();
+        return _fbsSetVoto(t, task.voto);
+    }
+    function _fbsSetVoto(testo, v) {
+        if (!testo || v == null) return testo;
+        return String(testo).replace(/(Il tuo voto\s*:\s*)[^\n]*/i, (m, a) => a + _fbsVotoTxt(v));
+    }
+    function _fbsBozza(task) {
+        const att = _fbsAttivita(task);
+        return `Ciao ${task.studentNome || task.studentName}, ecco il feedback della tua verifica ${_fbsTipoLbl(task.tipo)}${att ? ' di ' + att : ''}.\nIl tuo voto: ${_fbsVotoTxt(task.voto)}\n\nCosa è andato bene: \n\nCosa puoi migliorare: \n`;
+    }
+
+    // Genera (o prepara) il feedback secondo il modo scelto
+    async function agentTaskFbStorico(task) {
+        const ctx = _fbsTrovaVoto(task);
+        if (!ctx) { task.status = 'error'; task.error = 'Il voto non è più nello storico.'; return; }
+        _fbsSnapshot(task, ctx.grade);
+        task.error = null;
+        if (task._manuale) {
+            delete task._manuale; delete task._viaClaude; delete task._forceAuto;
+            if (!String(task.classroomText || '').trim()) task.classroomText = _fbsBozza(task);
+            task.manuale = true;
+            task.status = 'ready';
+            task.generatedAt = new Date().toISOString();
+            return;
+        }
+        const viaClaude = task._forceAuto ? false : task._viaClaude ? true : task.aiScelta === 'claude';
+        delete task._viaClaude; delete task._forceAuto;
+        if (viaClaude) {
+            task.claudePrompt = _fbsPrompt(task, true);
+            task.status = 'awaiting_claude';
+            task.awaitingAt = new Date().toISOString();
+            return;
+        }
+        task.status = 'processing';
+        agentRenderPanel();
+        try {
+            const raw = await agentCallAI(_fbsPrompt(task, false), task, true);
+            const testo = _fbsPulisci(raw, task);
+            if (!testo) throw new Error('risposta vuota');
+            task.classroomText = testo;
+            delete task.manuale; delete task.claudePrompt;
+            task.status = 'ready';
+            task.generatedAt = new Date().toISOString();
+        } catch (e) {
+            task.status = 'error';
+            task.error = e.name === 'AbortError' ? 'Generazione interrotta.' : 'Generazione AI: ' + e.message;
+        }
+    }
+    async function _fbsEsegui(taskId, flag) {
+        const t = agentTasks.find(x => x.id === taskId && x.type === 'fbstorico');
+        if (!t || t.status === 'processing') return;
+        delete t._manuale; delete t._viaClaude; delete t._forceAuto;
+        if (flag) t[flag] = true;
+        await agentTaskFbStorico(t);
+        agentSaveTasks(agentTasks); agentBadgeUpdate(); agentRenderPanel();
+    }
+    function agentFbsGenera(taskId)   { return _fbsEsegui(taskId, '_forceAuto'); }
+    function agentFbsAuto(taskId)     { return _fbsEsegui(taskId, null); }      // rispetta il menu AI della scheda
+    function agentFbsClaude(taskId)   { return _fbsEsegui(taskId, '_viaClaude'); }
+    function agentFbsScriviTu(taskId) { return _fbsEsegui(taskId, '_manuale'); }
+    function agentFbsTesto(taskId, val) {
+        const t = agentTasks.find(x => x.id === taskId);
+        if (!t) return;
+        t.classroomText = val;
+        agentSaveTasks(agentTasks);
+    }
+    // "No, non serve": il voto non viene più riproposto
+    function agentFbsNo(taskId, chiedi = true) {
+        const t = agentTasks.find(x => x.id === taskId && x.type === 'fbstorico');
+        if (!t) return;
+        if (chiedi && !confirm(`Niente feedback a ${t.studentName} per questo voto?\n\nL'agente non lo riproporrà più.`)) return;
+        const ctx = _fbsTrovaVoto(t);
+        if (ctx) { ctx.grade.fbStorico = { stato: 'no', ts: Date.now() }; saveData(); }
+        agentTasks = agentTasks.filter(x => x.id !== taskId);
+        agentSaveTasks(agentTasks); agentBadgeUpdate(); agentRenderPanel();
+    }
+    // Feedback già inviato: si riapre per modificarlo (l'invio sostituisce quello di prima)
+    function agentFbsRiapri(taskId) {
+        const t = agentTasks.find(x => x.id === taskId && x.type === 'fbstorico');
+        if (!t) return;
+        t.status = 'ready';
+        agentSaveTasks(agentTasks); agentBadgeUpdate(); agentRenderPanel();
+    }
+
+    // Invio a StudentApp (stesso ramo dei feedback delle verifiche) + notifica
+    async function agentApproveFbStorico(task) {
+        const ta = document.getElementById(`agentFbsText_${task.id}`);
+        if (ta) task.classroomText = ta.value;
+        const ctx = _fbsTrovaVoto(task);
+        if (!ctx) { alert('Questo voto non è più nello storico: feedback non inviato.'); return false; }
+        _fbsSnapshot(task, ctx.grade);
+        const testo = _fbsSetVoto(String(task.classroomText || '').trim(), task.voto);
+        if (!testo || /Cosa è andato bene:\s*\n\s*\nCosa puoi migliorare:\s*$/.test(testo)) { alert('Il feedback è vuoto: scrivilo prima di inviarlo.'); return false; }
+        task.classroomText = testo;
+        let db = null; try { db = firebase.database(); } catch (e) {}
+        if (!db) { alert('StudentApp (Firebase) non raggiungibile: feedback non inviato. Riprova più tardi.'); return false; }
+        const att = _fbsAttivita(task);
+        const titolo = /^verifica/i.test(att) ? att : `Verifica ${_fbsTipoLbl(task.tipo)} ${att}`.trim();
+        try {
+            const base = await _mcHistBase(task.studentSafe);
+            if (!base) throw new Error(`${task.studentName} non ha un codice personale StudentApp`);
+            if (task.fbKey) await db.ref(`${base}/feedback/${task.fbKey}`).remove().catch(() => {});
+            const ref = await db.ref(`${base}/feedback`).push({
+                title: titolo, text: testo, date: task.sessionDate, ts: Date.now(),
+                source: 'agent', origine: 'storico', voto: task.voto
+            });
+            task.fbKey = ref.key;
+        } catch (e) {
+            alert(`⚠️ Feedback NON inviato a ${task.studentName}:\n${e.message}\n\nLa scheda resta pronta: riprova più tardi.`);
+            return false;
+        }
+        ctx.grade.fbStorico = { stato: 'inviato', ts: Date.now(), fbKey: task.fbKey };
+        saveData();
+        try {
+            const classId = String(task.classe || '').replace(/\s+/g, '_').toLowerCase();
+            sendPushToClass(classId, '📊 Nuova valutazione: ' + titolo, 'Il tuo feedback è disponibile nella StudentApp.', 'valutazione', task.studentSafe).catch(() => {});
+        } catch (e) {}
+        task.status = 'approved';
+        task.approvedAt = new Date().toISOString();
+        if (typeof _mcToast === 'function') _mcToast(`📤 Feedback inviato a ${task.studentName}`);
+        return true;
+    }
+
+    // ── Claude Code: file «feedback_per_claude_*.json» → «feedback_da_claude.json» ──
+    const _AGENT_FBS_MAN_KEY = 'agent_fbs_claude_manifest';
+    const _AGENT_FBS_CLAUDE_CONSEGNA = `Sei Claude e prepari i FEEDBACK PER GLI ALUNNI (inglese, scuola media italiana) partendo dalle valutazioni che il docente ha scritto nello storico di MyClass.
+Questo file è stato esportato da MyClass. "ruolo" contiene le tue istruzioni di ruolo: seguile come istruzioni di sistema.
+In "feedback" ci sono più alunni, INDIPENDENTI tra loro. Per OGNI elemento segui ESATTAMENTE la sua "consegna" e scrivi il testo richiesto, con il marcatore === CLASSROOM ===. Non mescolare dati di elementi diversi.
+ALUNNI SENZA NOMI: in ogni elemento l'alunno è [A1].
+- Nel testo rivolto all'alunno, dove andrebbe il suo nome (es. "Ciao [nome]"), scrivi [NOME_A1]: MyClass lo sostituisce con il nome vero.
+- Non inventare nomi.
+DATI: usa solo la valutazione del docente riportata nella consegna. Non inventare errori, esempi, risposte o punteggi.
+OUTPUT: crea UN file "feedback_da_claude.json" (solo JSON valido) con questa struttura:
+{
+  "formato": "myclass-feedback-import",
+  "versione": 1,
+  "export_id": "<copia export_id di questo file>",
+  "feedback": [ { "ref": "<ref>", "testo": "<testo completo con il blocco === CLASSROOM ===>" } ]
+}
+Una voce per ogni elemento di "feedback", nello stesso ordine, "ref" copiato esattamente. Non saltarne nessuno.
+Prima di consegnare verifica con uno script che il file sia JSON valido, che ci sia una voce per ogni "ref" e che ogni "testo" contenga "=== CLASSROOM ===" e "Il tuo voto:".
+Il docente lo importa in MyClass con "📥 Importa da Claude" (pannello Agente): lì controlla e invia come sempre.`;
+    function _agentFbsManifest() { try { return JSON.parse(localStorage.getItem(_AGENT_FBS_MAN_KEY) || '{}'); } catch { return {}; } }
+    function _agentFbsManifestSave(exportId, entries) {
+        const all = _agentFbsManifest();
+        all[exportId] = { at: Date.now(), entries };
+        Object.keys(all).sort((a, b) => all[b].at - all[a].at).slice(10).forEach(k => delete all[k]);
+        try { localStorage.setItem(_AGENT_FBS_MAN_KEY, JSON.stringify(all)); } catch (e) { console.warn('[Agente] manifest feedback Claude non salvato:', e.message); }
+    }
+    function agentFbsExportForClaude() {
+        const list = agentTasks.filter(t => t.type === 'fbstorico' && t.status === 'awaiting_claude' && t.claudePrompt);
+        if (!list.length) { alert('Nessun feedback in attesa di Claude Code.'); return; }
+        const exportId = (Date.now().toString(36) + Math.random().toString(36).slice(2, 5)).toUpperCase().slice(-7);
+        const manifest = {};
+        const feedback = list.map((t, i) => {
+            const ref = `${exportId}-${i + 1}`;
+            manifest[ref] = { taskId: t.id, codes: [{ code: 'A1', nome: t.studentName, primo: t.studentNome || t.studentName }] };
+            return { ref, classe: t.classe || '', data: t.sessionDate || '', tipo: t.tipo, attivita: _fbsAttivita(t), alunni: ['[A1]'], consegna: t.claudePrompt };
+        });
+        _agentFbsManifestSave(exportId, manifest);
+        const fileObj = {
+            formato: 'myclass-feedback-export', versione: 1, export_id: exportId,
+            creato: new Date().toISOString(),
+            consegna_generale: _AGENT_FBS_CLAUDE_CONSEGNA,
+            ruolo: AGENT_SYSTEM,
+            feedback
+        };
+        const blob = new Blob([JSON.stringify(fileObj, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+        a.href = URL.createObjectURL(blob);
+        a.download = `feedback_per_claude_${ts}.json`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        alert(`🟣 File per Claude Code scaricato: ${list.length} feedback.\n\n` +
+              `1. Apri una sessione di Claude Code e allega il file "${a.download}".\n` +
+              `2. Scrivi: "Scrivi i feedback seguendo la consegna nel file".\n` +
+              `3. Scarica il file "feedback_da_claude.json" che Claude crea.\n` +
+              `4. Qui premi "📥 Importa da Claude": i feedback diventano pronti, li controlli e li invii.\n\n` +
+              `Nel file non ci sono nomi: gli alunni sono [A1] e solo questo browser sa ricollegarli, quindi importa da questo stesso computer.`);
+    }
+    function _agentFbsApplyImport(fd) {
+        if (fd?.formato === 'myclass-feedback-export') throw new Error('questo è il file ESPORTATO da MyClass: serve quello creato da Claude ("feedback_da_claude.json").');
+        if (!fd || !Array.isArray(fd.feedback)) throw new Error('manca l\'elenco "feedback".');
+        const all = _agentFbsManifest();
+        const findLocal = ref => { for (const m of Object.values(all)) if (m?.entries?.[ref]) return m.entries[ref]; return null; };
+        const ok = [], problemi = [];
+        for (const v of fd.feedback) {
+            const L = v && findLocal(v.ref);
+            const task = L && agentTasks.find(t => t.id === L.taskId);
+            if (!L || !task) { problemi.push(`${v?.ref || '?'}: feedback sconosciuto in questo browser`); continue; }
+            let testo = String(v.testo || '').trim();
+            if (!testo) { problemi.push(`${task.studentName}: testo vuoto`); continue; }
+            const c = (L.codes || [])[0] || {};
+            testo = testo.replace(/\[NOME_A1\]/g, c.primo || task.studentNome || task.studentName).replace(/\[A1\]/g, c.nome || task.studentName);
+            task.classroomText = _fbsPulisci(testo, task);
+            if (!task.classroomText) { problemi.push(`${task.studentName}: testo vuoto`); continue; }
+            if (task.status === 'approved') problemi.push(`${task.studentName}: era già stato inviato, premi di nuovo «📤 Invia all'alunno» per sostituirlo`);
+            task.status = 'ready';
+            task.aiProvider = 'claude';
+            task.generatedAt = new Date().toISOString();
+            delete task.claudePrompt; delete task.error; delete task.manuale;
+            ok.push(task.studentName);
+        }
+        agentSaveTasks(agentTasks); agentBadgeUpdate(); agentRenderPanel();
+        alert(`📥 Import da Claude: ${ok.length} feedback pront${ok.length === 1 ? 'o' : 'i'} da controllare e inviare.` +
+              (problemi.length ? `\n\n⚠️ Da controllare:\n• ${problemi.join('\n• ')}` : ''));
+    }
+
+    // Corpo della scheda nel pannello dell'agente
+    function _fbsBodyHtml(task) {
+        const e = _escH, id = _jq(task.id);
+        const nome = e(task.studentNome || task.studentName);
+        const storico = `<div style="background:#f8f9ff;border:1px solid #c5cae9;border-radius:8px;padding:8px 12px;font-size:12.5px;margin-bottom:8px;">
+                📈 <b>Nello storico</b> · verifica ${_fbsTipoLbl(task.tipo)} del ${e(_fbsDataIt(task.sessionDate))} · voto <b>${e(_votoLabelIt(task.voto))}</b>${_fbsAttivita(task) ? ' · ' + e(_fbsAttivita(task)) : ''}${task.pct != null ? ' · ' + e(task.pct) + '%' : ''}
+                <div style="white-space:pre-wrap;margin-top:5px;color:#444;max-height:170px;overflow:auto;">${e(task.nota)}</div>
+            </div>`;
+        const btnClaude = `<button class="agent-btn-edit" onclick="agentFbsClaude('${id}')" title="Prepara la consegna per Claude Code: 📤 esporti il file, Claude scrive il feedback, 📥 lo importi" style="background:#f5f3ff;color:#6d28d9;border-color:#c4b5fd;">🟣 Con Claude Code</button>`;
+        const btnScrivo = `<button class="agent-btn-edit" onclick="agentFbsScriviTu('${id}')" style="background:#e8f5e9;color:#1b5e20;border-color:#81c784;" title="Niente AI: scrivi tu il feedback (si parte da una traccia con voto e sezioni)">✍️ Scrivo io</button>`;
+        const btnNo = lbl => `<button class="agent-btn-reject" onclick="agentFbsNo('${id}')" title="Nessun feedback per questo voto: l'agente non lo ripropone">${lbl}</button>`;
+        if (task.status === 'proposta') {
+            return storico + `<div style="background:#fff8e1;border:1.5px solid #ffcc80;border-radius:10px;padding:9px 12px;margin-bottom:8px;font-size:13px;color:#6d4c00;">
+                    💬 Hai scritto questa valutazione nello storico, ma a <b>${nome}</b> non è arrivato nessun feedback. <b>Vuoi crearlo</b> partendo da quello che hai scritto?
+                </div>
+                <div class="agent-task-actions">
+                    <button class="agent-btn-approve" onclick="agentFbsAuto('${id}')" title="Usa l'AI scelta nel menu qui sopra (Automatico: Gemini, poi riserva)">🤖 Sì, genera il feedback</button>
+                    ${btnClaude}${btnScrivo}${btnNo('🚫 No, non serve')}
+                </div>`;
+        }
+        if (task.status === 'processing' || task.status === 'pending') {
+            return storico + `<div style="color:#888;font-size:13px;padding:6px 0;"><span class="agent-spinner"></span> Scrivo il feedback…</div>`;
+        }
+        if (task.status === 'awaiting_claude') {
+            return storico + `<div style="background:#f5f3ff;border:1px solid #c4b5fd;border-radius:8px;padding:8px 12px;font-size:13px;color:#5b21b6;">
+                    🟣 Consegna pronta per Claude Code. Esporta il file (insieme agli altri feedback in attesa), fallo elaborare a Claude Code e importa il file che crea: il feedback diventa pronto da controllare e inviare.
+                </div>
+                <div class="agent-task-actions">
+                    <button class="agent-btn-approve" onclick="agentFbsExportForClaude()">📤 Esporta per Claude</button>
+                    <button class="agent-btn-edit" onclick="agentValImportFromClaude()">📥 Importa da Claude</button>
+                    <button class="agent-btn-edit" onclick="agentFbsGenera('${id}')" title="Genera subito con il generatore automatico (Gemini → Anthropic)">⚡ Genera con Gemini/Haiku</button>
+                    ${btnScrivo}${btnNo('🚫 Non serve')}
+                </div>`;
+        }
+        if (task.status === 'error' || task.status === 'failed') {
+            return storico + `<div style="color:#c62828;font-size:13px;padding:6px 0;">⚠️ ${e(task.error || 'Errore')}</div>
+                <div class="agent-task-actions">
+                    <button class="agent-btn-edit" onclick="agentFbsAuto('${id}')">🔄 Riprova</button>
+                    ${btnClaude}${btnScrivo}${btnNo('🗑 Rimuovi')}
+                </div>`;
+        }
+        if (task.status === 'approved') {
+            return storico + `<div style="font-size:12px;font-weight:800;color:#00695c;margin-bottom:4px;">💬 Feedback inviato all'alunno${task.approvedAt ? ' il ' + e(new Date(task.approvedAt).toLocaleString('it')) : ''} (StudentApp)</div>
+                <div class="agent-task-preview" style="white-space:pre-wrap;">${e(task.classroomText)}</div>
+                <div class="agent-task-actions">
+                    <button class="agent-btn-edit" onclick="agentFbsRiapri('${id}')" title="Riapre il testo: quando lo invii di nuovo sostituisce quello di prima">✏️ Modifica e reinvia</button>
+                </div>`;
+        }
+        // ready
+        return storico + `<div style="font-size:12px;font-weight:800;color:#00695c;margin-bottom:4px;">💬 Feedback all'alunno (StudentApp) ${task.manuale ? '· ✍️ scritto da te' : ''}</div>
+            <textarea id="agentFbsText_${e(task.id)}" onchange="agentFbsTesto('${id}',this.value)"
+                style="width:100%;min-height:230px;padding:10px;font-size:13px;line-height:1.5;border:1.5px solid #80cbc4;border-radius:8px;resize:vertical;box-sizing:border-box;font-family:inherit;">${e(task.classroomText)}</textarea>
+            <div class="agent-task-actions">
+                <button class="agent-btn-approve" onclick="agentApprove('${id}')">📤 Invia all'alunno</button>
+                <button class="agent-btn-edit" onclick="agentFbsAuto('${id}')" title="Riscrive il feedback con l'AI scelta qui sopra">🔄 Rigenera</button>
+                ${btnClaude.replace('🟣 Con Claude Code', '🟣 Rifai con Claude Code')}
+                ${btnNo('🗑 Non inviare')}
+            </div>`;
     }
 
         // Approva valutazioni scritte: 3 file + voti MyClass + Firebase
