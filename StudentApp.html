@@ -2378,24 +2378,73 @@ async function _loadAssignInfo(code, refresh){
 // recovery_sessions/<codice>: non passano dal nodo di raccolta, quindi in
 // history_priv non arrivano e nel tab Test non comparivano. Qui diventano
 // voci "Assegnato" tra i completati, con l'ultimo tentativo.
+// Tutti i tentativi tranne quelli allo 0%: non contano, come se non ci fossero
+// (es. aperto e consegnato in un minuto senza fare niente).
 function _pianoAttempts(rs){
   const a = rs && rs.attempts;
-  return (Array.isArray(a) ? a : Object.values(a||{})).filter(Boolean)
+  return (Array.isArray(a) ? a : Object.values(a||{})).filter(x => x && x.pct !== 0)
     .sort((x,y)=>(x.n||0)-(y.n||0));
 }
-// Conta il tentativo migliore (a parità il più recente); la percentuale dei
-// tentativi la riallinea LiveLearn quando il docente corregge
+// ── Tentativo concluso o da concludere ──
+// Un piano è svolto solo se l'alunno ha risposto ad almeno il 90% delle domande.
+// Le domande a voce svolte senza microfono e quelle escluse dal docente contano
+// come fatte. Senza le risposte salvate (tentativi vecchi) non si può sapere: vale.
+const PIANO_MIN_RISPOSTE = 0.9;
+function _pianoHaRisposta(v){
+  if(v==null) return false;
+  if(typeof v==='string') return v.trim()!=='';
+  if(typeof v==='number' || typeof v==='boolean') return true;
+  if(Array.isArray(v)) return v.some(_pianoHaRisposta);
+  if(typeof v==='object') return Object.values(v).some(_pianoHaRisposta);
+  return false;
+}
+function _pianoRisposte(rs, att){
+  const qs = _llFbArr(rs && rs.activity && rs.activity.questions);
+  const n = qs.length;
+  if(!n || !att || !att.answers) return null;
+  const ans = _llFbArr(att.answers), qmo = att.questionMaxOverrides||{}, ex = att.excludedQuestions||{};
+  let fatte = 0;
+  for(let i=0;i<n;i++){
+    if(_pianoHaRisposta(ans[i]) || Number(qmo[i])===0 || ex[i]) fatte++;
+  }
+  return { fatte, tot: n };
+}
+function _pianoAttConcluso(rs, att){
+  const r = _pianoRisposte(rs, att);
+  return !r || r.fatte >= Math.ceil(r.tot * PIANO_MIN_RISPOSTE);
+}
+// Tentativi che contano come "svolto" (non 0%, almeno il 90% delle domande)
+function _pianoAttValidi(rs){ return _pianoAttempts(rs).filter(a => _pianoAttConcluso(rs, a)); }
+// Tentativo migliore tra quelli conclusi (a parità il più recente); la percentuale
+// dei tentativi la riallinea LiveLearn quando il docente corregge
 function _pianoBest(rs){
   let best = null;
-  _pianoAttempts(rs).forEach(a=>{ if(typeof a.pct==='number' && (!best || a.pct>=best.pct)) best = a; });
+  _pianoAttValidi(rs).forEach(a=>{ if(typeof a.pct==='number' && (!best || a.pct>=best.pct)) best = a; });
   return best;
 }
+// Tentativi salvati per esteso? (i piani vecchi hanno solo punteggio e conteggio)
+function _pianoHaDettaglio(rs){ const a = rs && rs.attempts; return !!a && (Array.isArray(a) ? a.length : Object.keys(a).length) > 0; }
 function _pianoPct(rs, item){
   const b = _pianoBest(rs);
   if(b) return b.pct;
-  if(rs && rs.bestScore!=null) return rs.bestScore;
-  if(rs && rs.lastScore!=null) return rs.lastScore;
-  return item ? (item.bestScore!=null ? item.bestScore : item.lastScore) : null;
+  if(_pianoHaDettaglio(rs)) return null;
+  const v = (rs && rs.bestScore!=null) ? rs.bestScore : (rs && rs.lastScore!=null) ? rs.lastScore
+    : item ? (item.bestScore!=null ? item.bestScore : item.lastScore) : null;
+  return v === 0 ? null : v;
+}
+// Piano iniziato ma non concluso: l'ultimo tentativo non 0% con meno del 90% di risposte
+function _pianoDaConcludere(code){
+  const rs = (S.recoverySessions||{})[code] || {};
+  if(_pianiSvolti().some(x=>x.sessionCode===code)) return null;
+  const incompleti = _pianoAttempts(rs).filter(a => !_pianoAttConcluso(rs, a));
+  if(!incompleti.length) return null;
+  const a = incompleti[incompleti.length-1];
+  return Object.assign({ pct: a.pct }, _pianoRisposte(rs, a));
+}
+// Svolto davvero (per i pulsanti: «🔁 Rifai» invece di «▶ Inizia»)
+function _pianoSvolto(code){
+  const safe = String(code||'').replace(/[^A-Za-z0-9_-]/g,'');
+  return !!safe && _pianiSvolti().some(x=>x.sessionCode===safe);
 }
 // Correzioni del docente in LiveLearn (punteggi, massimi, esclusioni) di un tentativo
 function _pianoEntry(att){
@@ -2417,11 +2466,13 @@ function _pianiSvolti(){
     const item = S.personalPlan.find(p=>(p.code||p._key)===code) || {};
     // Recupero orale: solo i nuovi, che sono attività LiveLearn con codice
     if(item.type==='recovery_orale' && !item.code) return;
-    const attempts = rs.attemptCount || item.attemptCount || 0;
+    // Con i tentativi salvati contano solo quelli conclusi (non 0%, almeno il 90% delle domande)
+    const validi = _pianoAttValidi(rs);
+    const attempts = _pianoHaDettaglio(rs) ? validi.length : (rs.attemptCount || item.attemptCount || 0);
     const pct = _pianoPct(rs, item);
     // pct null con tentativi = svolto tutto a voce senza microfono
-    if(!attempts || (pct==null && !_pianoAttempts(rs).some(a=>a.noMic))) return;
-    const last = _pianoBest(rs) || _pianoAttempts(rs).pop() || {};
+    if(!attempts || (pct==null && !validi.some(a=>a.noMic))) return;
+    const last = _pianoBest(rs) || validi[validi.length-1] || {};
     const type = item.type || (rs.prefix==='REC'?'recovery_scritto':rs.prefix==='CON'?'consolidamento':rs.prefix==='APP'?'approfondimento':'');
     out.push({
       sessionCode: code, _piano: true, _pianoType: type, mode: 'assigned',
@@ -2460,7 +2511,7 @@ function openPianoResult(code, back){
   if(!sess){ alert('Risultato non disponibile.'); return; }
   S._pdfBack = back || 'scr-compiti';
   const rs = S.recoverySessions[code] || {};
-  const attempts = _pianoAttempts(rs);
+  const attempts = _pianoAttValidi(rs);
   const last = _pianoBest(rs) || attempts[attempts.length-1] || {};
   const p = sess.pct||0;
   document.getElementById('pdf-title').textContent = sess.activityTitle||'Risultati';
@@ -2862,20 +2913,19 @@ function renderPianoCard(){
 
   // Utility: render una singola riga attività scritta
   const renderActivityRow = (item) => {
-    const rs = S.recoverySessions[item.code]||{};
-    const attempts = rs.attemptCount||0;
-    const status = rs.status||item.status||'pending';
     const c = _pianoColor(item.type);
+    const daConcl = _pianoDaConcludere(String(item.code||item._key||'').replace(/[^A-Za-z0-9_-]/g,''));
 
-    // I piani non scadono: anche quelli inviati con una data restano sempre svolgibili
+    // I piani non scadono: anche quelli inviati con una data restano sempre svolgibili.
+    // Svolto = almeno un tentativo non allo 0% e con almeno il 90% delle domande risposte.
     let actionHtml = '';
-    if(status==='completed'){
+    if(_pianoSvolto(item.code||item._key)){
       // Si può rifare quante volte si vuole: resta il risultato e c'è il pulsante per ripeterla
       actionHtml = `<button onclick="openRecoveryActivity('${item.code||''}')" style="background:#fff;color:${c.title};border:1.5px solid ${c.title};border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0;">🔁 Rifai</button>`;
     } else {
       // Cliccabile
       const nonSvolto = !_pianiSvolti().some(x=>x.sessionCode===String(item.code||item._key||'').replace(/[^A-Za-z0-9_-]/g,''));
-      actionHtml = `<button class="${nonSvolto?'pp-blink':''}" onclick="openRecoveryActivity('${item.code||''}')" style="--pp:${c.title};background:${c.title};color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">${attempts>0?'🔄 Riprova':'▶ Inizia'}</button>`;
+      actionHtml = `<button class="${nonSvolto?'pp-blink':''}" onclick="openRecoveryActivity('${item.code||''}')" style="--pp:${c.title};background:${c.title};color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">${daConcl?'🔄 Rifai e concludi':'▶ Inizia'}</button>`;
     }
 
     return `<div data-piano-code="${item._key||item.code||''}" style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:0.5px solid ${c.border};">
@@ -3093,6 +3143,9 @@ function renderValutazioni(){
 function _pianoEsitoHtml(code){
   const safe = String(code||'').replace(/[^A-Za-z0-9_-]/g,'');
   const sess = safe ? _pianiSvolti().find(x=>x.sessionCode===safe) : null;
+  const daConcl = !sess && safe ? _pianoDaConcludere(safe) : null;
+  if(daConcl) return `<span class="hw-blink-t" style="display:inline-block;background:#FEF3C7;color:#92400E;border-radius:20px;padding:6px 14px;font-size:15px;font-weight:700;">⏸️ Da concludere${daConcl.tot?` · hai risposto a ${daConcl.fatte} domande su ${daConcl.tot}`:''}</span>
+    <div style="font-size:12px;color:#92400E;margin-top:4px;">Per essere svolto devi rispondere ad almeno il 90% delle domande: rifallo fino alla fine.</div>`;
   if(!sess) return `<span class="hw-blink-t" style="display:inline-block;background:#F3F4F6;color:#6B7280;border-radius:20px;padding:6px 14px;font-size:15px;font-weight:700;">⏳ Non ancora svolto</span>`;
   const p = sess.pct||0;
   const col = sess.pct==null ? '#92400e' : pctColor(p);
@@ -3449,8 +3502,7 @@ function _qtAgendaHtml(){
 // Miss Grace ha consegnato alla Town School, finite con almeno il 60%:
 // 50 ⭐ al 60%, fino a 200 ⭐ al 100% (pianoStelle in english-town).
 function _qtPianoAperto(){
-  return (S.personalPlan||[]).some(p=>p.code && p.type!=='recovery_orale'
-    && ((S.recoverySessions||{})[p.code]?.status || p.status || 'pending')!=='completed');
+  return (S.personalPlan||[]).some(p=>p.code && p.type!=='recovery_orale' && !_pianoSvolto(p.code));
 }
 // L'ultima verifica (non i piani) con i punteggi per abilità: serve a
 // consigliare Mr. Oakley a chi è andato male negli ascolti, l'indovinello a
