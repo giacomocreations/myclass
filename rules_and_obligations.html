@@ -1343,8 +1343,8 @@ textarea{width:100%;background:#1a2234;border:1px solid rgba(255,255,255,.12);co
 <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva e prossimo</button><button data-act="reset">↺ Azzera</button></div>
 <div class="msg" id="t-msg"></div>
 <h2>Voti salvati</h2>
-<div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-rv="open" title="Rivedi alunno per alunno le valutazioni di questa attività (anche i promemoria di MyClass): nota e punteggi correggibili">♻️ Rivedi / correggi</button><button data-act="clear">🗑 Svuota</button></div>
-<div id="t-riv"></div>
+<div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-rv="open" title="Rivedi alunno per alunno le valutazioni di questa attività (anche i promemoria di MyClass): nota e punteggi correggibili">♻️ Rivedi / correggi</button><button data-nt2="open" title="I voti salvati prima che si potessero riaprire hanno solo la nota: da lì ricostruisco le spunte. Scegli tu chi convertire">🔄 Note → spunte</button><button data-act="clear">🗑 Svuota</button></div>
+<div id="t-riv"></div><div id="t-nt2"></div>
 <div id="t-saved"></div>
 </body></html>`;
 
@@ -1356,6 +1356,7 @@ function openTeacherWin() {
   if (window.DrillZoom) DrillZoom.attach(d);   // A− / A+ anche nella finestra docente
   d.addEventListener('click', onTeacherClick);
   if (review) review.bind();   // ♻️ Rivedi / correggi (myclass-live-link.js)
+  if (notesTicks) notesTicks.bind();   // 🔄 Note → spunte (myclass-live-link.js)
   d.addEventListener('keydown', onTeacherKey);
   // impressioni: il riepilogo si aggiorna mentre scrivi
   d.addEventListener('input', e => { if (e.target.id === 't-note') { clearTimeout(renderSummary.t); renderSummary.t = setTimeout(renderSummary, 300); } });
@@ -1480,6 +1481,7 @@ function onTeacherClick(e) {
   else if (act === 'clear') { if (teacherWin.confirm('Cancellare tutti i voti salvati su questo computer?')) { storeGrades([]); renderTeacherSaved(); } }
   else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
   else if (act === 'reopen') reopenGrade(+b.dataset.i);
+  else if (act === 'conv1') { const g = loadGrades(), i = editing ? g.findIndex(y => y.id === editing.id) : -1; if (i >= 0 && notesTicks && notesTicks.one(i)) { editing = null; reopenGrade(i, true); twMsg('🔄 Nota convertita in spunte'); } else twMsg('⚠️ Nella nota non ho trovato voci da convertire'); }
   else if (act === 'editstop') { resetRubric(); goPart1(); renderTeacherSaved(); twMsg('Modifica annullata: la valutazione salvata resta com\'era'); }
 }
 function resetRubric() { editing = null; renderEditBanner(); Object.keys(rub).forEach(k => delete rub[k]); [rubManual, rubAuto].forEach(o => Object.keys(o).forEach(k => delete o[k])); swapCap = false; ck = ckNew(); if (twOpen()) { tw('t-name').value = ''; tw('t-note').value = ''; } nameFocus = ''; renderTeacherRubric(); updateTeacherWin(); renderNotes(); renderSummary(); }
@@ -1575,11 +1577,12 @@ function renderEditBanner() {
   if (!twOpen()) return;
   const el = tw('t-edit'); el.hidden = !editing; if (!editing) { el.innerHTML = ''; return; }
   el.innerHTML = `✏️ Stai modificando <b>${esc(editing.name)}</b> del ${esc(editing.date)}, come dal vivo. <b>💾 Salva</b> aggiorna questa valutazione (stessa data, anche il promemoria in MyClass), non ne crea una nuova.<button data-act="editstop">Annulla modifica</button>`
-    + (editing.legacy ? `<br><small>Salvato prima che si potesse riaprire: si riaprono solo i punteggi. Nota di allora (resta): ${esc(editing.legacy)}</small>` : '');
+    + (editing.conv ? `<br><small>Spunte ricostruite dalla nota${editing.legacy ? `; non riconosciuto (resta nella nota): ${esc(editing.legacy)}` : ''}.</small>`
+      : editing.legacy ? `<br><small>Salvato prima che si potesse riaprire: si riaprono solo i punteggi. Nota di allora (resta): ${esc(editing.legacy)}</small>${editing.noSt ? '<button data-act="conv1" title="Dalla nota ricostruisco spunte, because, 🔊, note veloci, fluidità e impressioni">🔄 Converti la nota in spunte</button>' : ''}` : '');
 }
-function reopenGrade(i) {
+function reopenGrade(i, force) {
   const g = loadGrades(), x = g[i]; if (!x || !twOpen()) return;
-  if (hasEval() && !teacherWin.confirm('C\'è una valutazione in corso: la lascio perdere e riapro ' + x.name + '?')) return;
+  if (!force && hasEval() && !teacherWin.confirm('C\'è una valutazione in corso: la lascio perdere e riapro ' + x.name + '?')) return;
   if (!x.id) { x.id = 'v' + i + '-' + Date.now().toString(36); storeGrades(g); }
   Object.keys(partTimes).forEach(k => delete partTimes[k]);
   resetRubric();
@@ -1589,12 +1592,90 @@ function reopenGrade(i) {
   if (st) { ck = clone(st.ck); Object.assign(rub, st.rub); Object.assign(rubManual, st.man); Object.assign(rubAuto, st.auto); swapCap = !!st.swapCap; tw('t-note').value = st.free || ''; }
   // punteggi corretti dopo (♻️ Rivedi) o salvati senza fotografia: valgono quelli del voto
   if (det.length === GRID.aree.length && det.every(v => !isNaN(v)) && GRID.aree.map((a, k) => rub[k]).join('-') !== det.join('-')) det.forEach((v, k) => { rub[k] = v; rubManual[k] = true; rubAuto[k] = false; });
-  editing = { id: x.id, date: x.date, name: x.name, legacy: st ? '' : (x.note || '') };
+  editing = { id: x.id, date: x.date, name: x.name, legacy: st ? (x.convRest || '') : (x.note || ''), conv: !!x.conv, noSt: !st };
   tw('t-name').value = x.name; tw('t-class').value = x.cls || ''; nameFocus = x.name;
   renderTeacherRubric(); updateTeacherWin(); renderNotes(); renderSummary(); renderEditBanner(); renderTeacherSaved();
   teacherWin.scrollTo({ top: 0, behavior: 'smooth' });
   twMsg(`✏️ Riaperto: ${x.name}`);
 }
+// ── 🔄 Note → spunte: per i voti salvati senza fotografia, dalla nota (formato di p1Line / p1Detail /
+// p2Line / p2Detail / composeNote) si ricostruiscono faccende e regole con verbo, modale e segni, frasi
+// della scheda, contatori, domande, note veloci, fluidità e impressioni. I punteggi restano quelli del
+// voto. Si controlla rifacendo la nota: quello che non torna resta nella nota.
+function noteConvert(x) {
+  const note = String(x.note || ''); if (!note.trim()) return null;
+  const k = ckNew();
+  let free = '', swap = false, curCard = null, seq = 0;
+  const MODS_L = MODS.slice().sort((a, b) => b.length - a.length);
+  const splitM = t => { const m = MODS_L.find(mm => t.startsWith(mm + ' ')); return m ? { m, rest: t.slice(m.length + 1) } : null; };
+  const marks = t => { const a = t ? t.split(', ') : []; return { w: a.includes('modale sbagliato per il significato'), b: Math.max(0, ...a.map(y => BEC_TXT.indexOf(y))), f: a.includes('forma del modale ✗'), p: a.includes('pronuncia ✗') }; };
+  const list = t => t.split(', ').map(y => { const m = y.match(/^(.*?)(?: ×(\d+))?$/); return { t: m[1], n: +(m[2] || 1) }; }).filter(y => y.t);
+  const exSet = (pre, t) => { let i = 0; [['✓', 1], ['~', 2], ['✗', 3]].forEach(([sym, v]) => { const m = t.match(new RegExp(sym + '(\\d+)')); for (let j = 0; m && j < +m[1]; j++) k.ex[pre + i++] = v; }); };
+  let p1bec = 0;
+  note.split(' | ').forEach(seg => {
+    if (seg.startsWith('Impressioni: ')) { free = seg.slice(13); return; }
+    if (seg.startsWith('Fluidità: ')) { k.flu.lvl = Math.max(0, FLU_TXT.indexOf(seg.slice(10))); return; }
+    if (seg.startsWith('Pronuncia: ')) { k.notes.pr = list(seg.slice(11)); return; }
+    if (seg.startsWith('Errori: ')) { k.notes.er = list(seg.slice(8)); return; }
+    if (seg === "scambio mustn't/don't have to") { swap = true; return; }
+    if (seg.startsWith('P1 frasi: ')) {
+      seg.slice(10).split('; ').forEach(t => {
+        const m = t.match(/^\d+\) (.*?)(?: \[(.*)\])?$/); if (!m) return;
+        const sm = splitM(m[1]); if (!sm) return;
+        const mk = marks(m[2]), o = ++seq, base = { m: sm.m, b: mk.b, f: mk.f, p: mk.p, w: mk.w, o };
+        const ch = allChores().find(([kk, obj, ok]) => verbOpts(ok).some(v => `${v} ${obj}` === sm.rest));
+        if (ch) { const [kk, obj, ok] = ch; k.p1[kk] = { ...base, v: verbOpts(ok).findIndex(v => `${v} ${obj}` === sm.rest) }; return; }
+        const ru = CK_RULES.find(([, txt]) => txt === sm.rest);
+        if (ru) { k.p1[ru[0]] = base; return; }
+        k.p1x.push({ t: sm.rest, ...base });
+      });
+      return;
+    }
+    const mf = seg.match(/^P2 frasi \((\d+)\. [^)]*\): (.*)$/);
+    if (mf) {
+      const c = CARDS.find(cc => cc.n === +mf[1]); if (!c) return;
+      const st = k.p2[c.id] || (k.p2[c.id] = { rows: {}, bec: {}, form: {}, pr: {}, guide: 0, mean: 0 });
+      mf[2].split('; ').forEach(t => {
+        const m = t.match(/^(\d+)\) (.*?)(?: \[(.*)\])?$/); if (!m) return;
+        const i = +m[1] - 1, it = c.items[i]; if (!it) return;
+        const sm = m[2].startsWith('(modale non detto)') ? null : splitM(m[2]), mk = marks(m[3]);
+        if (sm) { const r = p2Order(it.t).indexOf(sm.m); if (r >= 0) st.rows[i] = r; }
+        if (mk.b) st.bec[i] = mk.b; if (mk.f) st.form[i] = true; if (mk.p) st.pr[i] = true;
+      });
+      return;
+    }
+    // righe di riepilogo: contatori e domande
+    const isP1 = seg.startsWith('P1: ');
+    seg.split(' · ').forEach(a => {
+      const mc = a.match(/^P2 \((\d+)\. /); if (mc) { curCard = CARDS.find(cc => cc.n === +mc[1]) || null; return; }
+      let m;
+      if ((m = a.match(/^because ×(\d+)/)) && isP1) p1bec = +m[1];
+      else if ((m = a.match(/^domande guida ×(\d+)$/))) { if (isP1) k.p1n.guide = +m[1]; else if (curCard) (k.p2[curCard.id] || (k.p2[curCard.id] = { rows: {}, bec: {}, form: {}, pr: {}, guide: 0, mean: 0 })).guide = +m[1]; }
+      else if ((m = a.match(/^chiede il significato ×(\d+)$/)) && curCard) (k.p2[curCard.id] || (k.p2[curCard.id] = { rows: {}, bec: {}, form: {}, pr: {}, guide: 0, mean: 0 })).mean = +m[1];
+      else if (a.startsWith('domande a sorpresa ')) exSet('s', a);
+      else if (a.startsWith('domande extra ')) exSet('e', a);
+      else if ((m = a.match(/^esitazioni ×(\d+)$/))) k.flu.pause = +m[1];
+      else if ((m = a.match(/^blocchi ×(\d+)$/))) k.flu.block = +m[1];
+    });
+  });
+  k.seq = seq;
+  // because della Parte 1 detti in frasi fuori elenco: il contatore
+  const bRows = Object.values(k.p1).concat(k.p1x).filter(y => y.b === 1 || y.b === 2).length;
+  k.p1n.bec = Math.max(0, p1bec - bRows);
+  const m0 = String(x.card || '').match(/^(\d+)\./), card = m0 ? CARDS.find(c => c.n === +m0[1]) : null;
+  const det = String(x.det).split('-').map(Number), R = {}, M = {};
+  if (det.length === GRID.aree.length) det.forEach((v, i) => { R[i] = v; M[i] = true; });
+  const st = { ck: k, rub: R, man: M, auto: {}, swapCap: swap, free, card: card ? card.id : 'chores', part: card ? 2 : 1 };
+  // controllo: rifaccio la nota con le spunte ricostruite, poi rimetto tutto com'era
+  const keep = { ck, swapCap, free: twOpen() ? tw('t-note').value : null };
+  let again = '';
+  try { ck = k; swapCap = swap; if (twOpen()) tw('t-note').value = free; again = composeNote(); }
+  finally { ck = keep.ck; swapCap = keep.swapCap; if (keep.free !== null) tw('t-note').value = keep.free; }
+  const R2 = MyClassLive.noteRest(note, again, [/^P1: /, /^(have to|must|mustn't|don't have to) \d/, /^because ×\d/, /^because senza senso ×/, /^modale sbagliato per il significato ×/, /^forma del modale sbagliata ×/, /^pronuncia sbagliata in /, /^P2 \(\d+\. /, /^scambio mustn't\/don't have to ×/, /^altro modale sbagliato ×/, /^non dette \d/, /^because \d+\/6/, /^verbo sbagliato /]);
+  const real = Object.keys(k.p1).length + k.p1x.length + Object.keys(k.p2).length + Object.keys(k.ex).length + k.notes.pr.length + k.notes.er.length + k.flu.lvl + k.flu.pause + k.flu.block + k.p1n.guide;
+  return { st, rest: R2.rest.join(' · '), n: real ? R2.n : 0 };
+}
+const notesTicks = window.MyClassLive && MyClassLive.notesToTicks && MyClassLive.notesToTicks({ getDoc: () => twOpen() ? teacherWin.document : null, boxId: 't-nt2', loadGrades, storeGrades, onDone: () => renderTeacherSaved(), convert: noteConvert });
 function copyGrades() {
   const g = loadGrades();
   if (!g.length) { twMsg('Nessun voto da copiare'); return; }

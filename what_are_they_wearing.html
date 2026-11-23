@@ -2061,8 +2061,8 @@ textarea{width:100%;background:#231d36;border:1px solid rgba(255,255,255,.12);co
 <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva e prossimo</button><button data-act="reset">↺ Azzera</button></div>
 <div class="msg" id="t-msg"></div>
 <h2>Voti salvati</h2>
-<div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-act="riv" title="Rivedi alunno per alunno le valutazioni di questa attività (anche in MyClass): ricalcolo con la griglia nuova, nota e punteggi correggibili">♻️ Rivedi / rivaluta</button><button data-act="clear">🗑 Svuota</button></div>
-<div id="t-riv"></div>
+<div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-act="riv" title="Rivedi alunno per alunno le valutazioni di questa attività (anche in MyClass): ricalcolo con la griglia nuova, nota e punteggi correggibili">♻️ Rivedi / rivaluta</button><button data-nt2="open" title="I voti salvati prima che si potessero riaprire hanno solo la nota: da lì ricostruisco le spunte. Scegli tu chi convertire">🔄 Note → spunte</button><button data-act="clear">🗑 Svuota</button></div>
+<div id="t-riv"></div><div id="t-nt2"></div>
 <div id="t-saved"></div>
 </body></html>`;
 
@@ -2074,6 +2074,7 @@ function openTeacherWin() {
   d.open(); d.write(TEACHER_HTML); d.close();
   if (window.DrillZoom) DrillZoom.attach(d);   // A− / A+ anche nella finestra docente
   d.addEventListener('click', onTeacherClick);
+  if (notesTicks) notesTicks.bind();   // 🔄 Note → spunte (myclass-live-link.js)
   d.addEventListener('keydown', onTeacherKey);
   d.addEventListener('input', rivOnInput);
   // impressioni: il riepilogo si aggiorna mentre scrivi
@@ -2150,6 +2151,7 @@ function onTeacherClick(e) {
   else if (act === 'clear') { if (teacherWin.confirm('Cancellare tutti i voti salvati su questo computer?')) { storeGrades([]); renderTeacherSaved(); } }
   else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
   else if (act === 'reopen') reopenGrade(+b.dataset.i);
+  else if (act === 'conv1') { const g = loadGrades(), i = editing ? g.findIndex(y => y.id === editing.id) : -1; if (i >= 0 && notesTicks && notesTicks.one(i)) { editing = null; reopenGrade(i, true); twMsg('🔄 Nota convertita in spunte'); } else twMsg('⚠️ Nella nota non ho trovato voci da convertire'); }
   else if (act === 'editstop') { resetRubric(); timerReset(); renderTeacherSaved(); newPicture(); twMsg('Modifica annullata: la valutazione salvata resta com\'era'); }
 }
 function resetRubric() {
@@ -2249,11 +2251,12 @@ function renderEditBanner() {
   if (!twOpen()) return;
   const el = tw('t-edit'); el.hidden = !editing; if (!editing) { el.innerHTML = ''; return; }
   el.innerHTML = `✏️ Stai modificando <b>${esc(editing.name)}</b> del ${esc(editing.date)}, come dal vivo. <b>💾 Salva</b> aggiorna questa valutazione (stessa data, anche il promemoria in MyClass), non ne crea una nuova.<button data-act="editstop">Annulla modifica</button>`
-    + (editing.legacy ? `<br><small>Salvato prima che si potesse riaprire: si riaprono solo i punteggi. Nota di allora (resta): ${esc(editing.legacy)}</small>` : '');
+    + (editing.conv ? `<br><small>Spunte ricostruite dalla nota: i personaggi di allora sono nel conteggio e nel riepilogo, la scena alla LIM è nuova${editing.legacy ? `; non riconosciuto (resta nella nota): ${esc(editing.legacy)}` : ''}.</small>`
+      : editing.legacy ? `<br><small>Salvato prima che si potesse riaprire: si riaprono solo i punteggi. Nota di allora (resta): ${esc(editing.legacy)}</small>${editing.noSt ? '<button data-act="conv1" title="Dalla nota ricostruisco capi, azioni, is wearing, domande, 🔊, note veloci, fluidità e impressioni">🔄 Converti la nota in spunte</button>' : ''}` : '');
 }
-function reopenGrade(i) {
+function reopenGrade(i, force) {
   const g = loadGrades(), x = g[i]; if (!x || !twOpen()) return;
-  if (hasEval() && !teacherWin.confirm('C\'è una valutazione in corso: la lascio perdere e riapro ' + x.name + '?')) return;
+  if (!force && hasEval() && !teacherWin.confirm('C\'è una valutazione in corso: la lascio perdere e riapro ' + x.name + '?')) return;
   if (!x.id) { x.id = 'v' + i + '-' + Date.now().toString(36); storeGrades(g); }
   resetRubric(); timerReset();
   const st = x.st, det = String(x.det).split('-').map(Number);
@@ -2262,17 +2265,88 @@ function reopenGrade(i) {
     state.scene = lastScene = st.scene; state.chars = clone(st.chars); state.count = state.chars.length; state.sel = Math.min(st.sel || 0, state.chars.length - 1); state.modelOpen = false;
     resetAfterChange(); state.q = st.q || null;
     if (state.q) document.getElementById('q-text').textContent = state.q.q;
+  }
+  if (st) {
+    // ricostruita dalla nota (senza scena): i personaggi descritti sono già nel conteggio, la scena è nuova
+    if (!(st.chars && st.chars.length)) newPicture();
     wk = clone(st.wk); Object.assign(rub, st.rub); Object.assign(rubManual, st.man); Object.assign(rubAuto, st.auto); tw('t-note').value = st.free || '';
     render('all');
   }
   // punteggi corretti dopo (♻️ Rivedi) o salvati senza fotografia: valgono quelli del voto
   if (det.length === RUBRIC.length && det.every(v => !isNaN(v)) && RUBRIC.map(r => rub[r.id]).join('-') !== det.join('-')) RUBRIC.forEach((r, k) => { rub[r.id] = det[k]; rubManual[r.id] = true; rubAuto[r.id] = false; });
-  editing = { id: x.id, date: x.date, name: x.name, legacy: st ? '' : (x.note || '') };
+  editing = { id: x.id, date: x.date, name: x.name, legacy: st ? (x.convRest || '') : (x.note || ''), conv: !!x.conv, noSt: !st };
   tw('t-name').value = x.name; tw('t-class').value = x.cls || ''; nameFocus = x.name;
   renderTeacherRubric(); updateTeacherWin(); renderNotes(); renderSummary(); renderEditBanner(); renderTeacherSaved();
   teacherWin.scrollTo({ top: 0, behavior: 'smooth' });
   twMsg(`✏️ Riaperto: ${x.name}`);
 }
+// ── 🔄 Note → spunte: per i voti salvati senza fotografia, dalla nota (wkLine / wkDetail / composeNote)
+// si ricostruiscono i personaggi descritti (capi con colore e segno, azione, is wearing, 🔊) come già
+// contati, i capi a disposizione, le domande, i contatori, le note veloci, fluidità e impressioni.
+// La scena di allora non si può rifare: si riapre con una scena nuova. I punteggi restano quelli del voto.
+function noteConvert(x) {
+  let note = String(x.note || ''); if (!note.trim()) return null;
+  const W = wkNew();
+  let free = '';
+  const ii = note.startsWith('Impressioni: ') ? 0 : note.indexOf(' | Impressioni: ');
+  if (ii >= 0) { free = note.slice(ii + (ii ? 16 : 13)); note = note.slice(0, ii); }
+  const list = t => t.split(', ').map(y => { const m = y.match(/^(.*?)(?: ×(\d+))?$/); return { t: m[1], n: +(m[2] || 1) }; }).filter(y => y.t);
+  const types = Object.keys(ITEMS).sort((a, b) => ITEMS[b].word.length - ITEMS[a].word.length);
+  const suf = (t, arr) => arr.filter(Boolean).sort((a, b) => b.length - a.length).find(z => t.endsWith(' ' + z));
+  let avail = 0, availT = 0;
+  (note ? note.split(' | ') : []).forEach(seg => {
+    if (seg.startsWith('Pronuncia: ')) { W.notes.pr = list(seg.slice(11)); return; }
+    if (seg.startsWith('Errori: ')) { W.notes.er = list(seg.slice(8)); return; }
+    if (seg.startsWith('Fluidità: ')) { W.lvl = Math.max(0, FLU_TXT.indexOf(seg.slice(10))); return; }
+    if (seg.startsWith('Descrizioni: ')) {
+      seg.slice(13).split('; ').forEach(chTxt => {
+        const j = chTxt.indexOf(': '); if (j < 0) return;
+        const e = { name: chTxt.slice(0, j), act: '', items: [], a: 0, s: 0, p: false, tot: 0 };
+        chTxt.slice(j + 2).split(', ').forEach(part => {
+          let t = part, pr = false;
+          if (t.endsWith(' (pronuncia ✗)')) { pr = true; t = t.slice(0, -14); }
+          if (t.startsWith('is wearing ')) { const z = t.slice(11); e.s = z === '✓' ? 1 : Math.max(0, WS_LBL.indexOf(z)); return; }
+          if (t.startsWith('azione ')) {
+            const z = suf(t, ['✓', ...WA_LBL.slice(2), 'detta']); if (!z) return;
+            e.act = t.slice(7, t.length - z.length - 1); e.a = z === '✓' ? 1 : z === 'detta' ? 0 : WA_LBL.indexOf(z); e.p = pr; return;
+          }
+          const z = suf(t, [...WI_TXT.slice(1), 'detto']); if (!z) return;
+          const cw = t.slice(0, t.length - z.length - 1), ty = types.find(k => cw.endsWith(' ' + ITEMS[k].word)); if (!ty) return;
+          const color = cw.slice(0, cw.length - ITEMS[ty].word.length - 1); if (!COLORS[color]) return;
+          e.items.push({ type: ty, color, v: z === 'detto' ? 0 : WI_TXT.indexOf(z), p: pr });
+        });
+        e.tot = e.items.length;
+        if (e.items.length || e.a || e.s || e.p) W.done.push(e);
+      });
+      return;
+    }
+    // riga di riepilogo: capi a disposizione, domande, contatori
+    seg.split(' · ').forEach(a => {
+      let m;
+      if ((m = a.match(/^capi con colore giusti \d+(?: su (\d+))? \(\d+ diversi(?: su (\d+))?\)/))) { avail = +(m[1] || 0); availT = +(m[2] || 0); }
+      else if (a.startsWith('domande ') && !a.startsWith('domande guida')) [['✓', 1], ['~', 2], ['✗', 3]].forEach(([sym, v]) => { const mm = a.match(new RegExp(sym + '(\\d+)')); for (let i = 0; mm && i < +mm[1]; i++) W.qDone.push(v); });
+      else if ((m = a.match(/^domande guida ×(\d+)$/))) W.guide = +m[1];
+      else if ((m = a.match(/^esitazioni ×(\d+)$/))) W.pause = +m[1];
+      else if ((m = a.match(/^blocchi ×(\d+)$/))) W.block = +m[1];
+    });
+  });
+  // capi a disposizione nelle scene di allora: un segnaposto con il totale e i tipi diversi
+  const said = W.done.reduce((t, e) => t + e.items.length, 0);
+  if (W.done.length && avail > said) W.done[0].tot += avail - said;
+  if (avail) W.av = { nota: { tot: avail, types: Array.from({ length: availT || 1 }, (_, i) => 't' + i) } };
+  const det = String(x.det).split('-').map(Number), R = {}, M = {};
+  if (det.length === RUBRIC.length) RUBRIC.forEach((r, i) => { R[r.id] = det[i]; M[r.id] = true; });
+  const st = { wk: W, rub: R, man: M, auto: {}, free, scene: null, chars: [], sel: 0, q: null };
+  // controllo: rifaccio la nota con le spunte ricostruite, poi rimetto tutto com'era
+  const keep = { wk, cur: null, free: twOpen() ? tw('t-note').value : null, help: help.class };
+  let again = '';
+  try { wk = W; help.class = /(^| \| )💡 con esempi( \| |$)/.test(String(x.note)); if (twOpen()) tw('t-note').value = free; again = composeNote(); }
+  finally { wk = keep.wk; help.class = keep.help; if (keep.free !== null) tw('t-note').value = keep.free; }
+  const R2 = MyClassLive.noteRest(String(x.note), again, [/^capi con colore giusti/, /^colore sbagliato ×/, /^articolo sbagliato ×/, /^colore dopo il nome ×/, /^parola sbagliata ×/, /^azioni ✓/, /^forma ✗/, /^lessico ✗/, /^lessico\+forma ✗/, /^is wearing( ✓| ✗)/, /^pronuncia ✗ ×/, /^💡 con esempi$/]);
+  const real = W.done.length + W.qDone.length + W.notes.pr.length + W.notes.er.length + W.lvl + W.guide + W.pause + W.block;
+  return { st, rest: R2.rest.join(' · '), n: real ? R2.n : 0 };
+}
+const notesTicks = window.MyClassLive && MyClassLive.notesToTicks && MyClassLive.notesToTicks({ getDoc: () => twOpen() ? teacherWin.document : null, boxId: 't-nt2', loadGrades, storeGrades, onDone: () => renderTeacherSaved(), convert: noteConvert });
 function showLive(r) {
   if (!twOpen()) return;
   const el = tw('t-link');

@@ -991,9 +991,11 @@ const P1_ITEMS = [
   ['fromA', "🌍 I'm from …"], ['favQ', "❓ What's your favourite …?"], ['favA', '❤️ My favourite … is …'],
 ];
 const P1_Q = ['ageQ', 'fromQ', 'favQ'];
-function p2Items(s) {
-  const c = state.pair[s]; if (!c) return [];
-  const x = pr(c), o = state.pair[s === 'A' ? 'B' : 'A'];
+function p2Items(s) { return p2ItemsFor(state.pair[s], state.pair[s === 'A' ? 'B' : 'A']); }
+// le voci della Parte 2 per la carta c (o = la carta del compagno)
+function p2ItemsFor(c, o) {
+  if (!c) return [];
+  const x = pr(c);
   const favW = c.fk === 'sport' ? 'sport' : 'subject';
   return [
     ['meet', `👋 Meet… / This is ${c.name}`, 'sch'], ['friend', `🤝 ${x.S} is my friend`, 'sch'],
@@ -1338,8 +1340,8 @@ textarea{width:100%;background:#182624;border:1px solid rgba(255,255,255,.12);co
 <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva la coppia e prossima</button><button data-act="reset">↺ Azzera</button></div>
 <div class="msg" id="t-msg"></div>
 <h2>Voti salvati</h2>
-<div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-rv="open" title="Rivedi alunno per alunno le valutazioni di questa attività (anche i promemoria di MyClass): nota e punteggi correggibili; quelle non arrivate a MyClass si mandano da qui">♻️ Rivedi / correggi</button><button data-act="clear">🗑 Svuota</button></div>
-<div id="t-riv"></div>
+<div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-rv="open" title="Rivedi alunno per alunno le valutazioni di questa attività (anche i promemoria di MyClass): nota e punteggi correggibili; quelle non arrivate a MyClass si mandano da qui">♻️ Rivedi / correggi</button><button data-nt2="open" title="I voti salvati prima che si potessero riaprire hanno solo la nota: da lì ricostruisco le spunte. Scegli tu chi convertire">🔄 Note → spunte</button><button data-act="clear">🗑 Svuota</button></div>
+<div id="t-riv"></div><div id="t-nt2"></div>
 <div id="t-saved"></div>
 </body></html>`;
 
@@ -1351,6 +1353,7 @@ function openTeacherWin() {
   if (window.DrillZoom) DrillZoom.attach(d);   // A− / A+ anche nella finestra docente
   d.addEventListener('click', onTeacherClick);
   if (review) review.bind();   // ♻️ Rivedi / correggi (myclass-live-link.js)
+  if (notesTicks) notesTicks.bind();   // 🔄 Note → spunte (myclass-live-link.js)
   d.addEventListener('input', e => {
     if (e.target.id === 't-nameA' || e.target.id === 't-nameB') { state.names.A = tw('t-nameA').value.trim(); state.names.B = tw('t-nameB').value.trim(); renderStage(); renderTabs(); updateTeacherWin(); }
     else if (e.target.id === 't-note') { notes[cur] = e.target.value; clearTimeout(renderSummary.t); renderSummary.t = setTimeout(renderSummary, 300); }
@@ -1467,6 +1470,7 @@ function onTeacherClick(e) {
   else if (act === 'clear') { if (teacherWin.confirm('Cancellare tutti i voti salvati su questo computer?')) { storeGrades([]); renderTeacherSaved(); } }
   else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
   else if (act === 'reopen') reopenGrade(+b.dataset.i);
+  else if (act === 'conv1') { const e = editing && editing[b.dataset.s], g = loadGrades(), i = e ? g.findIndex(y => y.id === e.id) : -1; if (i >= 0 && notesTicks && notesTicks.one(i)) { editing = null; reopenGrade(i, true); twMsg('🔄 Nota convertita in spunte'); } else twMsg('⚠️ Nella nota non ho trovato voci da convertire'); }
   else if (act === 'editstop') { resetRubric(); goPart(1); renderTeacherSaved(); twMsg('Modifica annullata: la valutazione salvata resta com\'era'); }
 }
 function resetRubric() {
@@ -1587,13 +1591,14 @@ function renderEditBanner() {
   if (!twOpen()) return;
   const el = tw('t-edit'), E = editing && ['A', 'B'].filter(s => editing[s]);
   el.hidden = !E || !E.length; if (el.hidden) { el.innerHTML = ''; return; }
-  const legacy = E.filter(s => editing[s].legacy);
+  const legacy = E.filter(s => editing[s].legacy && !editing[s].conv), conv = E.filter(s => editing[s].conv), noSt = legacy.filter(s => loadGrades().some((y, k) => y.id === editing[s].id && !y.st));
   el.innerHTML = `✏️ Stai modificando ${E.map(s => `<b>${esc(editing[s].name)}</b>`).join(' e ')} del ${esc(editing[E[0]].date)}, come dal vivo. <b>💾 Salva</b> aggiorna questa valutazione (stessa data, anche il promemoria in MyClass), non ne crea una nuova.<button data-act="editstop">Annulla modifica</button>`
-    + legacy.map(s => `<br><small>${esc(editing[s].name)}: salvato prima che si potesse riaprire, si riaprono solo i punteggi. Nota di allora (resta): ${esc(editing[s].legacy)}</small>`).join('');
+    + legacy.map(s => `<br><small>${esc(editing[s].name)}: salvato prima che si potesse riaprire, si riaprono solo i punteggi. Nota di allora (resta): ${esc(editing[s].legacy)}</small>${noSt.includes(s) ? `<button data-act="conv1" data-s="${s}" title="Dalla nota ricostruisco spunte, 🔊, note veloci, fluidità e impressioni">🔄 Converti la nota in spunte</button>` : ''}`).join('')
+    + conv.map(s => `<br><small>${esc(editing[s].name)}: spunte ricostruite dalla nota${editing[s].legacy ? `; non riconosciuto (resta nella nota): ${esc(editing[s].legacy)}` : ''}.</small>`).join('');
 }
-function reopenGrade(i) {
+function reopenGrade(i, force) {
   const g = loadGrades(), x = g[i]; if (!x || !twOpen()) return;
-  if (pairAny() && !teacherWin.confirm('C\'è una valutazione in corso: la lascio perdere e riapro ' + x.name + '?')) return;
+  if (!force && pairAny() && !teacherWin.confirm('C\'è una valutazione in corso: la lascio perdere e riapro ' + x.name + '?')) return;
   // id per i voti salvati prima (la coppia: stesso compagno, stessa data, salvati uno dopo l'altro)
   let ch = false;
   g.forEach((y, k) => { if (!y.id) { y.id = 'v' + k + '-' + Date.now().toString(36); ch = true; } });
@@ -1610,13 +1615,18 @@ function reopenGrade(i) {
     if (st) {
       ck[s] = clone(st.ck); rub[s] = { ...st.rub }; rubManual[s] = { ...st.man }; rubAuto[s] = { ...st.auto }; notes[s] = st.notes || '';
       if (st.cards) ['A', 'B'].forEach(k => { if (st.cards[k]) state.pair[k] = CARDS.find(c => c.n === st.cards[k]) || state.pair[k]; });
+      else {   // ricostruita dalla nota: la carta è di chi parla, mateCard quella del compagno
+        const o = s === 'A' ? 'B' : 'A';
+        if (st.card) state.pair[s] = CARDS.find(c => c.n === st.card) || state.pair[s];
+        if (st.mateCard) state.pair[o] = CARDS.find(c => c.n === st.mateCard) || state.pair[o];
+      }
       state.part = st.part || (st.cards && (st.cards.A || st.cards.B) ? 2 : 1);
     } else { const m = String(y.card || '').match(/^(\d+)\./); if (m) { state.pair[s] = CARDS.find(c => c.n === +m[1]) || state.pair[s]; state.part = 2; } }
     // punteggi corretti dopo (♻️ Rivedi) o salvati senza fotografia: valgono quelli del voto
     const cur0 = GRID.aree.map((a, k) => rub[s][k]).join('-');
     if (det.length === GRID.aree.length && det.every(v => !isNaN(v)) && cur0 !== det.join('-')) det.forEach((v, k) => { rub[s][k] = v; rubManual[s][k] = true; rubAuto[s][k] = false; });
     state.names[s] = y.name;
-    ed[s] = { id: y.id, date: y.date, name: y.name, legacy: st ? '' : (y.note || '') };
+    ed[s] = { id: y.id, date: y.date, name: y.name, legacy: st ? (y.convRest || '') : (y.note || ''), conv: !!y.conv, i: g.indexOf(y) };
   });
   editing = ed; cur = sx;
   tw('t-nameA').value = state.names.A || ''; tw('t-nameB').value = state.names.B || ''; tw('t-class').value = x.cls || '';
@@ -1626,6 +1636,76 @@ function reopenGrade(i) {
   teacherWin.scrollTo({ top: 0, behavior: 'smooth' });
   twMsg(`✏️ Riaperto: ${Object.values(ed).map(e => e.name).join(' e ')}`);
 }
+// ── 🔄 Note → spunte: per i voti salvati senza fotografia, dalla nota (formato di ckLine / ckDetail /
+// composeNote) si ricostruiscono spunte, 🔊, preferiti, contatori, note veloci, fluidità e impressioni.
+// I punteggi restano quelli del voto. Si controlla rifacendo la nota: quello che non torna resta nella nota.
+function noteConvert(x) {
+  let note = String(x.note || ''); if (!note.trim()) return null;
+  const k = ckNew();
+  let free = '';
+  const ii = note.startsWith('Impressioni: ') ? 0 : note.indexOf(' | Impressioni: ');
+  if (ii >= 0) { free = note.slice(ii + (ii ? 16 : 13)); note = note.slice(0, ii); }
+  const segs = note ? note.split(' | ') : [];
+  const m0 = String(x.card || '').match(/^(\d+)\./);
+  let card = m0 ? CARDS.find(c => c.n === +m0[1]) : null, mate = null;
+  const stVal = (id, t) => { t = t.trim(); if (!t) return 0; if (FIVE.has(id)) { const i = CY5_TXT.indexOf(t); return i > 0 ? i : null; } return t === '✓' ? 1 : t === 'con aiuto / impreciso' ? 2 : /^✗/.test(t) ? 3 : null; };
+  const item = txt => { const j = txt.lastIndexOf(': '); if (j < 0) return null; const ps = txt.slice(j + 2).split(', '); return { label: txt.slice(0, j), st: ps.filter(p => p !== 'pronuncia ✗')[0] || '', pron: ps.includes('pronuncia ✗') }; };
+  const list = t => t.split(', ').map(y => { const m = y.match(/^(.*?)(?: ×(\d+))?$/); return { t: m[1], n: +(m[2] || 1) }; }).filter(y => y.t);
+  segs.forEach(seg => {
+    if (seg.startsWith('P1 voci: ')) seg.slice(9).split('; ').forEach(t => {
+      const it = item(t); if (!it) return;
+      P1_ITEMS.forEach(([id, lab]) => {
+        const base = noEmoji(lab);
+        let ok = it.label === base;
+        if (!ok && (id === 'favQ' || id === 'favA')) {
+          const q = base.indexOf('…'), pre = base.slice(0, q), suf = base.slice(q + 1);
+          if (it.label.startsWith(pre) && it.label.endsWith(suf) && it.label.length > pre.length + suf.length) {
+            ok = true; it.label.slice(pre.length, it.label.length - suf.length).split(' / ').filter(f => FAV_T.includes(f)).forEach(f => { k.fav[id][f] = true; });
+          }
+        }
+        if (!ok) return;
+        const v = stVal(id, it.st); if (v) k.p1[id] = v; if (it.pron) k.pr1[id] = true;
+      });
+    });
+    const m2 = seg.match(/^P2 voci \((.+?)\): (.*)$/);
+    if (m2) {
+      card = CARDS.find(c => c.name === m2[1]) || card;
+      const rows = m2[2].split('; '), stop = rows.findIndex(t => t.startsWith('non dette: '));
+      const hm = m2[2].match(/Hello (\S+?)!/); if (hm) mate = CARDS.find(c => c.name === hm[1] && c !== card) || null;
+      const its = p2ItemsFor(card, mate), old = { from: `${pr(card).S} is from ${card.city}` };
+      (stop >= 0 ? rows.slice(0, stop) : rows).forEach(t => {
+        const it = item(t); if (!it) return;
+        const f = its.find(([id, lab]) => noEmoji(lab) === it.label || old[id] === it.label); if (!f) return;
+        const v = stVal(f[0], it.st); if (v) k.p2[f[0]] = v; if (it.pron) k.pr2[f[0]] = true;
+      });
+    }
+    if (seg.startsWith('Pronuncia: ')) k.notes.pr = list(seg.slice(11));
+    if (seg.startsWith('Errori: ')) k.notes.er = list(seg.slice(8));
+    if (seg.startsWith('Fluidità: ')) k.n.lvl = Math.max(0, FLU_TXT.indexOf(seg.slice(10)));
+    // contatori (nella riga di riepilogo)
+    seg.split(' · ').forEach(a => {
+      const c = (re, key) => { const m = a.match(re); if (m) k.n[key] = +m[1]; };
+      c(/^(?:P1: .*)?And you\? ×(\d+)$/, 'andYou'); c(/And you\? ×(\d+)$/, 'andYou'); c(/^non risponde \/ fuori tema ×(\d+)$/, 'noAns'); c(/^passaggi saltati\/invertiti ×(\d+)$/, 'skip');
+      c(/^aiuti ×(\d+)$/, 'guide'); c(/^esitazioni ×(\d+)$/, 'pause'); c(/^blocchi ×(\d+)$/, 'block');
+    });
+  });
+  if (card) k.p2card = card.n;
+  const det = String(x.det).split('-').map(Number), R = {}, M = {};
+  if (det.length === GRID.aree.length) det.forEach((v, i) => { R[i] = v; M[i] = true; });
+  const st = { ck: k, rub: R, man: M, auto: {}, notes: free, card: card ? card.n : null, mateCard: mate ? mate.n : null, part: card ? 2 : 1 };
+  // controllo: rifaccio la nota con le spunte ricostruite (nello slot A, poi rimetto tutto com'era)
+  const keep = { ck: ck.A, pA: state.pair.A, pB: state.pair.B, nt: notes.A };
+  let again = '';
+  try { ck.A = k; state.pair.A = card || null; if (mate) state.pair.B = mate; notes.A = free; again = composeNote('A'); }
+  finally { ck.A = keep.ck; state.pair.A = keep.pA; state.pair.B = keep.pB; notes.A = keep.nt; }
+  let orig = String(x.note || '').replace(/; non dette: .*?(?= \| |$)/g, '');
+  if (card) orig = orig.split(`${pr(card).S} is from ${card.city}:`).join(`${pr(card).S}'s from ${card.city}:`);
+  const R2 = MyClassLive.noteRest(orig, again, [/^P1: /, /^~\d+$/, /^✗\d+$/, /^domande fatte /, /^errori nelle spunte/, /^P2 \(.*\): informazioni/, /^pronuncia ✗ su /, /^(he\/she|his\/her) /]);
+  // voci vere ritrovate (non solo le impressioni)
+  const real = Object.keys(k.p1).length + Object.keys(k.p2).length + Object.keys(k.pr1).length + Object.keys(k.pr2).length + k.notes.pr.length + k.notes.er.length + Object.values(k.n).filter(Boolean).length;
+  return { st, rest: R2.rest.join(' · '), n: real ? R2.n : 0 };
+}
+const notesTicks = window.MyClassLive && MyClassLive.notesToTicks && MyClassLive.notesToTicks({ getDoc: () => twOpen() ? teacherWin.document : null, boxId: 't-nt2', loadGrades, storeGrades, onDone: () => renderTeacherSaved(), convert: noteConvert });
 function copyGrades() {
   const g = loadGrades();
   if (!g.length) { twMsg('Nessun voto da copiare'); return; }

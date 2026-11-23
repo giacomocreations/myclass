@@ -492,5 +492,100 @@
     };
   }
 
-  window.MyClassLive = { available: !!bc, send: send, select: select, hello: hello, request: request, follow: follow, roster: roster, review: review, switcher: switcher };
+  // ── Note → spunte (finestra docente) ──
+  // I voti salvati prima che la finestra docente tenesse la fotografia delle spunte hanno solo la nota.
+  // Questo pannello li elenca: per ognuno l'attività legge la nota e ricostruisce spunte, 🔊, note
+  // veloci, fluidità e impressioni (convert); il docente sceglie chi convertire. Dopo, clic sul nome
+  // in «Voti salvati» e si riapre come dal vivo. Quello che la lettura non riconosce resta nella nota.
+  //   opts: { getDoc(), boxId, loadGrades(), storeGrades(g), onDone(),
+  //           convert(voto salvato) → { st: fotografia, rest: testo non riconosciuto, n: voci riconosciute } | null }
+  //   Il voto convertito prende st, conv (data) e convRest (il non riconosciuto).
+  function notesToTicks(opts) {
+    var items = [], msg = '';
+    var esc = function (t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+    var box = function () { var d = opts.getDoc(); return d && d.getElementById(opts.boxId); };
+    var wrap = function (h) { return '<div style="background:rgba(127,127,127,.08);border:1px solid rgba(124,240,176,.45);border-radius:12px;padding:10px 12px;margin-top:10px">' + h + '</div>'; };
+    var td = 'style="text-align:left;padding:5px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top"';
+    function open() {
+      var g = opts.loadGrades() || [];
+      items = []; msg = '';
+      g.forEach(function (x, i) {
+        if (!x || x.st || !String(x.note || '').trim()) return;
+        var r = null; try { r = opts.convert(x); } catch (e) { r = null; }
+        items.push({ i: i, x: x, r: r, sel: !!(r && r.n) });
+      });
+      render();
+    }
+    function render() {
+      var b = box(); if (!b) return;
+      if (!items.length) { b.innerHTML = wrap((msg ? msg + '<br>' : '') + 'Nessun voto da convertire: quelli salvati hanno già le spunte (o non hanno una nota).<div class="bar" style="margin-top:8px"><button data-nt2="close">Chiudi</button></div>'); return; }
+      b.innerHTML = wrap('<b>🔄 Note → spunte</b><div style="font-size:12.5px;opacity:.8;margin:4px 0">' + (msg ? msg + ' ' : '') + 'Voti salvati prima che si potessero riaprire: dalla nota ricostruisco spunte, 🔊, note veloci, fluidità e impressioni. Scegli chi convertire; poi clic sul nome in «Voti salvati» per riaprirlo come dal vivo. I punteggi restano quelli dati; quello che non riconosco resta nella nota.</div>'
+        + '<table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px"><tr><th ' + td + '></th><th ' + td + '>Data</th><th ' + td + '>Studente</th><th ' + td + '>Voto</th><th ' + td + '>Dalla nota</th></tr>'
+        + items.map(function (it, k) {
+          var r = it.r, ok = r && r.n;
+          return '<tr><td ' + td + '><input type="checkbox" data-nt2sel="' + k + '"' + (it.sel ? ' checked' : '') + (ok ? '' : ' disabled') + '></td><td ' + td + '>' + esc(it.x.date) + '</td><td ' + td + '>' + esc(it.x.name) + (it.x.cls ? ' <small>(' + esc(it.x.cls) + ')</small>' : '') + '</td><td ' + td + '>' + esc(it.x.voto) + '</td><td ' + td + '>'
+            + (!ok ? '<small style="opacity:.7">niente da convertire: la nota non ha le voci una per una (voto di una versione più vecchia)</small>'
+              : '✅ ' + r.n + (r.n === 1 ? ' voce riconosciuta' : ' voci riconosciute') + (r.rest ? '<br><small style="color:#ffb547">non riconosciuto (resta nella nota): ' + esc(r.rest) + '</small>' : '<br><small style="color:#7cf0b0">tutta la nota</small>'))
+            + '</td></tr>';
+        }).join('') + '</table>'
+        + '<div class="bar" style="margin-top:8px"><button class="pri" data-nt2="apply">🔄 Converti gli spuntati</button><button data-nt2="all">tutti</button><button data-nt2="none">nessuno</button><button data-nt2="close">Chiudi</button></div>');
+    }
+    function apply() {
+      var sel = items.filter(function (it) { return it.sel && it.r && it.r.n; });
+      if (!sel.length) { msg = '⚠️ Nessuno spuntato.'; render(); return; }
+      var g = opts.loadGrades() || [], today = new Date().toLocaleDateString('it-IT'), n = 0;
+      sel.forEach(function (it) {
+        var y = g[it.i]; if (!y || y.st || y.name !== it.x.name || y.date !== it.x.date) return;
+        y.st = it.r.st; y.conv = today; y.convRest = it.r.rest || ''; n++;
+      });
+      opts.storeGrades(g); if (opts.onDone) opts.onDone();
+      items = items.filter(function (it) { return sel.indexOf(it) < 0; });
+      msg = '✅ ' + n + (n === 1 ? ' voto convertito' : ' voti convertiti') + ': clic sul nome in «Voti salvati» per riaprirlo come dal vivo.';
+      render();
+    }
+    // un voto solo (dal riquadro «Stai modificando»): true se convertito
+    function one(i) {
+      var g = opts.loadGrades() || [], y = g[i]; if (!y || y.st) return false;
+      var r = null; try { r = opts.convert(y); } catch (e) { r = null; }
+      if (!r || !r.n) return false;
+      y.st = r.st; y.conv = new Date().toLocaleDateString('it-IT'); y.convRest = r.rest || '';
+      opts.storeGrades(g); if (opts.onDone) opts.onDone();
+      return true;
+    }
+    var bound = null;
+    function bind() {
+      var d = opts.getDoc(); if (!d || bound === d) return; bound = d;
+      d.addEventListener('click', function (e) {
+        var b = e.target.closest && e.target.closest('[data-nt2]'); if (!b) return;
+        var a = b.getAttribute('data-nt2');
+        if (a === 'open') open();
+        else if (a === 'close') { var x = box(); if (x) x.innerHTML = ''; items = []; }
+        else if (a === 'apply') apply();
+        else if (a === 'all' || a === 'none') { items.forEach(function (it) { if (it.r && it.r.n) it.sel = a === 'all'; }); render(); }
+      });
+      d.addEventListener('change', function (e) {
+        var k = e.target.getAttribute && e.target.getAttribute('data-nt2sel'); if (k === null || k === undefined) return;
+        if (items[+k]) items[+k].sel = e.target.checked;
+      });
+    }
+    return { open: open, bind: bind, one: one };
+  }
+  // Pezzi di una nota (separati da « | », « · », « ; ») che non compaiono nella nota rifatta dalle spunte
+  // ricostruite. skip: i conteggi di riepilogo (si rifanno da soli, anche con regole cambiate).
+  function noteRest(orig, again, skip) {
+    var nrm = function (t) { return String(t || '').replace(/\s+/g, ' ').trim(); };
+    var A = nrm(again), out = [], n = 0;
+    String(orig || '').split(' | ').forEach(function (seg) {
+      seg.split(' · ').forEach(function (p) {
+        p.split('; ').forEach(function (a) {
+          a = nrm(a); if (!a) return;
+          if (skip && skip.some(function (re) { return re.test(a); })) return;
+          if (A.indexOf(a) < 0) out.push(a); else n++;
+        });
+      });
+    });
+    return { rest: out, n: n };   // n = pezzi ritrovati
+  }
+
+  window.MyClassLive = { available: !!bc, send: send, select: select, hello: hello, request: request, follow: follow, roster: roster, review: review, switcher: switcher, notesToTicks: notesToTicks, noteRest: noteRest };
 })();
