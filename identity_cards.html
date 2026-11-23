@@ -1167,9 +1167,12 @@ function computeHints(s) {
 function applyHints() {
   ['A', 'B'].forEach(s => {
     lastHints[s] = computeHints(s);
+    const F = editing && editing[s] && editing[s].orig;
     GRID.aree.forEach((a, i) => {
       if (rubManual[s][i]) return;
       const h = lastHints[s][i];
+      // voto riaperto: si parte dal punteggio salvato e le spunte lo spostano di quanto spostano il suggerimento
+      if (F) { const v = followEdit(F[i], editing[s].base[i], h, a.max); rub[s][i] = v; rubAuto[s][i] = v !== F[i]; return; }
       if (h) { rub[s][i] = h.v; rubAuto[s][i] = true; }
       else if (rubAuto[s][i]) { delete rub[s][i]; rubAuto[s][i] = false; }
     });
@@ -1438,7 +1441,8 @@ function renderTeacherRubric(fromCk) {
   if (!fromCk) { applyHints(); renderCk(); renderSummary(); renderNotes(); }
   renderTabs();
   const R = rub[cur], H = lastHints[cur];
-  const tag = i => rubAuto[cur][i] && !rubManual[cur][i] && R[i] !== undefined ? ' <span class="auto">✨ suggerito</span>' : rubManual[cur][i] && H[i] && H[i].v !== R[i] ? ` <button class="auto" data-act="auto" data-r="${i}" title="Rimetti il punteggio suggerito dalle spunte">↺ suggerito ${H[i].v}</button>` : '';
+  const F = editing && editing[cur] && editing[cur].orig;
+  const tag = i => F && rubAuto[cur][i] && !rubManual[cur][i] ? ` <span class="auto">✨ cambiato dalle spunte (era ${F[i]})</span>` : rubAuto[cur][i] && !rubManual[cur][i] && R[i] !== undefined ? ' <span class="auto">✨ suggerito</span>' : rubManual[cur][i] && H[i] && H[i].v !== R[i] ? ` <button class="auto" data-act="auto" data-r="${i}" title="Rimetti il punteggio suggerito dalle spunte">↺ suggerito ${H[i].v}</button>` : '';
   tw('t-vh').textContent = `Valutazione di ${nameOf(cur)} · /${RUB_MAX}`;
   tw('t-rub').innerHTML = GRID.aree.map((a, i) => `<div class="r"><div class="rh"><div class="rn">${esc(a.nome)} <small>/ ${a.max}</small>${tag(i)}</div><div class="pts">${a.descrittori.map(d => `<button class="${R[i] === d.pt ? 'on' : ''}" data-act="pt" data-r="${i}" data-v="${d.pt}" title="${esc(d.testo)}">${d.pt}</button>`).join('')}</div></div>${R[i] !== undefined ? `<div class="rd">${esc(a.descrittori.find(d => d.pt === R[i]).testo)}</div>` : ''}</div>`).join('');
   tw('t-voto').textContent = rubDone(cur) ? voto(rubTot(cur)) : '–';
@@ -1571,6 +1575,9 @@ function showLive(r) {
 //  MyClass, invece di crearne uno nuovo. I voti salvati prima di questa funzione riaprono solo i
 //  punteggi: la nota di allora resta e le spunte nuove le si aggiungono.
 // ══════════════════════════════════════════════════════════════════
+// Voto riaperto: punteggio salvato o + quanto si è spostato il suggerimento dalle spunte (base → h), tra 0 e max.
+// Se alla riapertura non c'era un suggerimento (niente spunte per quella voce), quello nuovo può solo abbassare.
+const followEdit = (o, b, h, max) => o === undefined ? (h ? h.v : undefined) : !h ? o : b === undefined ? Math.min(o, h.v) : Math.max(0, Math.min(max, o + h.v - b));
 var editing = null;   // (var: lo azzera anche resetRubric, che può girare prima) { A: { id, date, name, legacy }, B: … }
 const clone = o => JSON.parse(JSON.stringify(o));
 const editingIds = () => editing ? Object.values(editing).filter(Boolean).map(x => x.id) : [];
@@ -1629,6 +1636,8 @@ function reopenGrade(i, force) {
     ed[s] = { id: y.id, date: y.date, name: y.name, legacy: st ? (y.convRest || '') : (y.note || ''), conv: !!y.conv, i: g.indexOf(y) };
   });
   editing = ed; cur = sx;
+  // punteggi che seguono le spunte: si parte da quelli salvati (orig) e dal suggerimento di adesso (base)
+  Object.keys(ed).forEach(s => { rubManual[s] = {}; rubAuto[s] = {}; ed[s].orig = { ...rub[s] }; const H = computeHints(s); ed[s].base = {}; GRID.aree.forEach((a, i) => { ed[s].base[i] = H[i] ? H[i].v : undefined; }); });
   tw('t-nameA').value = state.names.A || ''; tw('t-nameB').value = state.names.B || ''; tw('t-class').value = x.cls || '';
   nameFocus['t-nameA'] = state.names.A || ''; nameFocus['t-nameB'] = state.names.B || '';
   goPart(state.part === 2 && state.pair.A ? 2 : 1);
