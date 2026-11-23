@@ -278,7 +278,7 @@
         <div class="lbl">Schema fisso</div>
         <ul class="schema">
           <li><span class="k">Intro</span> <button type="button" class="say" data-say="Meet Mark!">Meet [Name]!</button> / <button type="button" class="say" data-say="This is Mark.">This is [Name].</button></li>
-          <li><span class="k">Friend</span> <button type="button" class="say" data-say="He is my friend.">He is my friend.</button> <button type="button" class="say" data-say="She is my friend.">She is my friend.</button></li>
+          <li><span class="k">Friend ⭐</span> <button type="button" class="say" data-say="He is my friend.">He is my friend.</button> <button type="button" class="say" data-say="She is my friend.">She is my friend.</button> <small>(facoltativo: un plus)</small></li>
           <li><span class="k">From</span> <button type="button" class="say" data-say="He's from London.">He's / She's from… <small>(city)</small></button></li>
           <li><span class="k">Country</span> <button type="button" class="say" data-say="He's from the UK.">He's / She's from… <small>(country)</small></button></li>
           <li><span class="k">Nationality</span> <button type="button" class="say" data-say="He's British.">He's / She's + nationality</button></li>
@@ -773,18 +773,17 @@ function toggleGuestMic() {
 }
 function checkGuestTyped() { const v = document.getElementById('guest-input').value.trim(); if (v) checkGuest(v); }
 
-// voci con ✅: intro, friend, città, paese, nazionalità, età, preferiti, he / she, his / her
-const GUEST_MAX = 9;
+// voci con ✅: intro, città, paese, nazionalità, età, preferiti, he / she, his / her (He is my friend è un ⭐ extra)
+const GUEST_MAX = 8;
 function guestChecks(raw, c) {
   const t = norm(raw), x = pr(c), S = x.s, rows = [];
   const BE = `${S}('s| is)`;
   // 1 · Intro
   const intro = /\b(meet|this is)\b/.test(t);
   rows.push(intro ? OK(`Intro: Meet ${c.name}! / This is ${c.name}.`) : KO(`Inizia con: <b>Meet ${c.name}!</b> (oppure This is ${c.name}.)`));
-  // 2 · Friend
-  if (new RegExp(`\\b${BE} my (best |good )?friend\\b`).test(t)) rows.push(OK(`${x.S} is my friend.`));
-  else if (/\bmy (best |good )?friend\b/.test(t)) rows.push(HALF(`Hai detto “my friend”: la frase è <b>${x.S} is my friend.</b>`));
-  else rows.push(KO(`Manca: <b>${x.S} is my friend.</b>`));
+  // 2 · Friend: è un plus (il Mystery Guest non è davvero un amico): se c'è è un ⭐, se manca non toglie
+  const friendOk = new RegExp(`\\b${BE} my (best |good )?friend\\b`).test(t);
+  if (!friendOk && /\bmy (best |good )?friend\b/.test(t)) rows.push(HALF(`Hai detto “my friend”: la frase è <b>${x.S} is my friend.</b> (è un plus)`));
   // 3 · From: città, paese (country) e nazionalità (nationality)
   const FROM = `(${BE}|${S} comes|${S} lives) (from|in)`;
   const fromS = new RegExp(`\\b${FROM}\\b`).test(t), city = new RegExp(`\\b(${CITY_W[c.flag]})\\b`).test(t);
@@ -840,6 +839,7 @@ function guestChecks(raw, c) {
   else rows.push(HALF(`Non ho sentito <b>${x.P} favourite…</b>`));
   // extra
   const extras = [];
+  if (friendOk) extras.push(`${x.S} is my friend (plus)`);
   if (/\byears old\b/.test(t)) extras.push('years old');
   if (!c.nameRe.test(t)) rows.push(HALF(`Non ho sentito il nome <b>${c.name}</b>: dillo chiaramente (a volte il microfono non capisce i nomi).`));
   return { rows, extras, score: Math.min(GUEST_MAX, rows.filter(r => r.s === 'ok').length) };
@@ -961,7 +961,7 @@ function renderTimer() {
 //  GRIGLIA (la stessa di attivita/griglia_myclass_identity_cards.json) · 16 punti, 4 voci da 4
 //  8/16 = 6, ogni punto mezzo voto (come What Are They Wearing?). Nuovo id: i voti /15 restano com'erano.
 // ══════════════════════════════════════════════════════════════════
-const GRID = {"id":"g_1795219200000_0","ver":2,"nome":"Oral test · Meet My Friend! /16 — greetings, personal info, he/she, his/her (1ª)","aree":[{"nome":"Interazione e comunicazione — So fare una conversazione","max":4,"descrittori":[{"pt":4,"testo":"Conversazione completa e nell'ordine giusto (saluto → presentazione → età → provenienza → preferiti → amico: città, paese e nazionalità). Fa il ping-pong alla pari: risponde e rilancia con And you?, reagisce al compagno (Nice to meet you too, Hello John!). Risponde sempre in modo pertinente. Nel Mystery Guest segue lo schema (Meet… / He is my friend)."},{"pt":3,"testo":"Ordine quasi sempre rispettato. Fa domande ma a volte lascia guidare il compagno o dimentica And you?. Risposte pertinenti ma a volte brevissime."},{"pt":2,"testo":"Salta o inverte passaggi, fa poche domande. Risposte spesso a monosillabi, a volte fuori tema o solo dopo che la domanda è stata ripetuta. Schema del Mystery Guest incompleto."},{"pt":1,"testo":"Quasi non fa domande; spesso non capisce o non risponde; va avanti solo con l'aiuto."},{"pt":0,"testo":"Non interagisce."}]},{"nome":"Grammatica — Dico le frasi nel modo giusto","max":4,"descrittori":[{"pt":4,"testo":"Verbo be sempre giusto (I'm eleven, I'm from…, He/She is…; He's from the UK con from, He's British senza); he/she e his/her sempre giusti rispetto alla carta; domande ben formate (How old are you? Where are you from? What's your favourite…?)."},{"pt":3,"testo":"Uno o due errori isolati che non cambiano il significato, oppure che corregge da solo."},{"pt":2,"testo":"Errori ripetuti (I have eleven years, He favourite…, What is you favourite…?, manca is, He's from British), ma il messaggio passa."},{"pt":1,"testo":"Struttura quasi sempre errata: manca il verbo be, he/she confusi in modo sistematico."},{"pt":0,"testo":"Nessuna struttura riconoscibile."}]},{"nome":"Lessico e contenuti — Uso le parole giuste e dico tutto","max":4,"descrittori":[{"pt":4,"testo":"Numeri, paesi e nazionalità (dalla città della carta: London → the UK → British), colori e preferiti (pet, sport, food, subject…) sicuri e vari. Nel Mystery Guest riporta tutte le informazioni della carta."},{"pt":3,"testo":"Qualche incertezza (una parola o un numero), oppure manca una sola informazione della carta (anche solo il paese o la nazionalità)."},{"pt":2,"testo":"Lessico limitato o con più errori (numeri sbagliati, parole in italiano, paese e nazionalità confusi), oppure mancano due informazioni della carta."},{"pt":1,"testo":"Poche parole pertinenti; riporta solo una o due informazioni della carta."},{"pt":0,"testo":"Nessun lessico pertinente."}]},{"nome":"Pronuncia e fluenza — Mi faccio capire","max":4,"descrittori":[{"pt":4,"testo":"Chiaro, con un ritmo naturale e senza pause lunghe. Pronuncia bene numeri (thirteen / thirty), favourite, nomi, paesi e nazionalità della carta."},{"pt":3,"testo":"Chiaro con qualche imprecisione di pronuncia o qualche pausa; si capisce tutto."},{"pt":2,"testo":"Molte pause e ripartenze, oppure corre come se recitasse; più errori di pronuncia (thirteen / thirty, th, finali delle parole)."},{"pt":1,"testo":"Si capisce a fatica; si blocca più volte."},{"pt":0,"testo":"Incomprensibile, oppure si blocca del tutto."}]}],"conversione_voto":{"0":4,"1":4,"2":4,"3":4,"4":4,"5":4.5,"6":5,"7":5.5,"8":6,"9":6.5,"10":7,"11":7.5,"12":8,"13":8.5,"14":9,"15":9.5,"16":10}};
+const GRID = {"id":"g_1795219200000_0","ver":3,"nome":"Oral test · Meet My Friend! /16 — greetings, personal info, he/she, his/her (1ª)","aree":[{"nome":"Interazione e comunicazione — So fare una conversazione","max":4,"descrittori":[{"pt":4,"testo":"Conversazione completa e nell'ordine giusto (saluto → presentazione → età → provenienza → preferiti → amico: città, paese e nazionalità). Fa il ping-pong alla pari: risponde e rilancia con And you? (se rilancia spesso con And you?, una domanda non fatta non conta: nella conversazione è naturale), reagisce al compagno (Nice to meet you too, Hello John!). Risponde sempre in modo pertinente. Nel Mystery Guest presenta l'amico (Meet… / This is…); He / She is my friend è un plus, se manca non toglie."},{"pt":3,"testo":"Ordine quasi sempre rispettato. Fa domande ma a volte lascia guidare il compagno o dimentica And you?. Risposte pertinenti ma a volte brevissime."},{"pt":2,"testo":"Salta o inverte passaggi, fa poche domande. Risposte spesso a monosillabi, a volte fuori tema o solo dopo che la domanda è stata ripetuta. Schema del Mystery Guest incompleto."},{"pt":1,"testo":"Quasi non fa domande; spesso non capisce o non risponde; va avanti solo con l'aiuto."},{"pt":0,"testo":"Non interagisce."}]},{"nome":"Grammatica — Dico le frasi nel modo giusto","max":4,"descrittori":[{"pt":4,"testo":"Verbo be sempre giusto (I'm eleven, I'm from…, He/She is…; He's from the UK con from, He's British senza); he/she e his/her sempre giusti rispetto alla carta; domande ben formate (How old are you? Where are you from? What's your favourite…?)."},{"pt":3,"testo":"Uno o due errori isolati che non cambiano il significato, oppure che corregge da solo."},{"pt":2,"testo":"Errori ripetuti (I have eleven years, He favourite…, What is you favourite…?, manca is, He's from British), ma il messaggio passa."},{"pt":1,"testo":"Struttura quasi sempre errata: manca il verbo be, he/she confusi in modo sistematico."},{"pt":0,"testo":"Nessuna struttura riconoscibile."}]},{"nome":"Lessico e contenuti — Uso le parole giuste e dico tutto","max":4,"descrittori":[{"pt":4,"testo":"Numeri, paesi e nazionalità (dalla città della carta: London → the UK → British), colori e preferiti (pet, sport, food, subject…) sicuri e vari. Nel Mystery Guest riporta tutte le informazioni della carta."},{"pt":3,"testo":"Qualche incertezza (una parola o un numero), oppure manca una sola informazione della carta (anche solo il paese o la nazionalità)."},{"pt":2,"testo":"Lessico limitato o con più errori (numeri sbagliati, parole in italiano, paese e nazionalità confusi), oppure mancano due informazioni della carta."},{"pt":1,"testo":"Poche parole pertinenti; riporta solo una o due informazioni della carta."},{"pt":0,"testo":"Nessun lessico pertinente."}]},{"nome":"Pronuncia e fluenza — Mi faccio capire","max":4,"descrittori":[{"pt":4,"testo":"Chiaro, con un ritmo naturale e senza pause lunghe. Pronuncia bene numeri (thirteen / thirty), favourite, nomi, paesi e nazionalità della carta."},{"pt":3,"testo":"Chiaro con qualche imprecisione di pronuncia o qualche pausa; si capisce tutto."},{"pt":2,"testo":"Molte pause e ripartenze, oppure corre come se recitasse; più errori di pronuncia (thirteen / thirty, th, finali delle parole)."},{"pt":1,"testo":"Si capisce a fatica; si blocca più volte."},{"pt":0,"testo":"Incomprensibile, oppure si blocca del tutto."}]}],"conversione_voto":{"0":4,"1":4,"2":4,"3":4,"4":4,"5":4.5,"6":5,"7":5.5,"8":6,"9":6.5,"10":7,"11":7.5,"12":8,"13":8.5,"14":9,"15":9.5,"16":10}};
 const SHORT = ['Interazione', 'Grammatica', 'Lessico', 'Pronuncia'];
 const RUB_MAX = GRID.aree.reduce((t, a) => t + a.max, 0);
 const rub = { A: {}, B: {} }, notes = { A: '', B: '' };
@@ -998,7 +998,7 @@ function p2ItemsFor(c, o) {
   const x = pr(c);
   const favW = c.fk === 'sport' ? 'sport' : 'subject';
   return [
-    ['meet', `👋 Meet… / This is ${c.name}`, 'sch'], ['friend', `🤝 ${x.S} is my friend`, 'sch'],
+    ['meet', `👋 Meet… / This is ${c.name}`, 'sch'], ['friend', `🤝 ${x.S} is my friend (plus)`, 'plus'],
     ['from', `🏙️ ${x.S}'s from ${c.city}`, 'info'], ['ctry', `🌍 Country: ${x.S}'s from ${c.country}`, 'info'], ['nat', `🏳️ Nationality: ${x.S}'s ${c.nat}`, 'info'], ['age', `🎂 ${x.S} is ${NUM_W[c.age] || c.age}`, 'info'],
     ['col', `🎨 ${x.P} favourite colour is ${c.colour}`, 'info'], ['fav', `❤️ ${x.P} favourite ${favW} is ${c.fav}`, 'info'], ['pet', `🐾 ${x.P} favourite pet is ${c.pet}`, 'info'],
     ['hs', `he / she giusto (${x.s})`, 'gr'], ['hh', `his / her giusto (${x.p})`, 'gr'],
@@ -1082,7 +1082,7 @@ function stats(s) {
   return { k, p1m, asked, p1ok: p1v.filter(v => v === 1).length, p1x: p1n.filter(v => v >= 3).length, p1t: p1v.filter(v => v === 2).length, ...E,
     p2m, infoN: info.length, infoSaid: info.filter(x => x.v >= 1 && x.v <= 3).length, infoMiss: p2m ? info.filter(x => !x.v || x.v >= 4).length : 0,
     p2x: p2v.filter(x => x.v >= 3).length, p2t: p2v.filter(x => x.v === 2).length,
-    sch: p2v.filter(x => x.kind === 'sch' && x.id !== 'react'), react: p2v.find(x => x.id === 'react'), card: state.pair[s] };
+    sch: p2v.filter(x => x.kind === 'sch' && x.id !== 'react'), react: p2v.find(x => x.id === 'react'), friend: p2v.find(x => x.id === 'friend'), card: state.pair[s] };
 }
 function ckLine(s) {
   const st = stats(s), k = st.k, parts = [];
@@ -1102,13 +1102,17 @@ function ckDetail(s) {
   const stTxt = (id, v) => FIVE.has(id) ? CY5_TXT[v] : v === 3 ? `✗ (${CAT_TXT[CAT[id]] || 'grammatica'})` : CY_TXT[v];
   const one = (t, v, p, id) => `${noEmoji(t)}: ${[stTxt(id, v), p && 'pronuncia ✗'].filter(Boolean).join(', ')}`;
   const lbl = (id, t) => { const f = (id === 'favQ' || id === 'favA') ? favList(k, id) : []; return f.length ? t.replace('…', f.join(' / ')) : t; };
-  const p1 = P1_ITEMS.filter(([id]) => k.p1[id] || prOn(k, 'pr1', id) || ((id === 'favQ' || id === 'favA') && favList(k, id).length)).map(([id, t]) => one(lbl(id, t), k.p1[id] || 0, prOn(k, 'pr1', id), id));
-  if (p1.length) out.push('P1 voci: ' + p1.join('; '));
+  // passaggi fatti (con com'è andata) e, se la parte è stata valutata, quelli mancanti
+  const done1 = ([id]) => k.p1[id] || prOn(k, 'pr1', id) || ((id === 'favQ' || id === 'favA') && favList(k, id).length);
+  const p1 = P1_ITEMS.filter(done1).map(([id, t]) => one(lbl(id, t), k.p1[id] || 0, prOn(k, 'pr1', id), id));
+  const miss1 = p1.length || k.n.andYou || k.n.noAns || k.n.skip ? P1_ITEMS.filter(x => !done1(x)).map(([, t]) => noEmoji(t)) : [];
+  if (p1.length || miss1.length) out.push('P1 voci: ' + p1.concat(miss1.length ? ['mancanti: ' + miss1.join('; ')] : []).join('; '));
   const items = p2Items(s);
   const p2 = items.filter(([id]) => k.p2[id] || prOn(k, 'pr2', id)).map(([id, t]) => one(t, k.p2[id] || 0, prOn(k, 'pr2', id), id));
   if (p2.length) {
-    const miss = items.filter(([id, , kind]) => kind === 'info' && !k.p2[id] && !prOn(k, 'pr2', id)).map(([, t]) => noEmoji(t));
-    out.push(`P2 voci (${state.pair[s].name}): ${p2.join('; ')}${miss.length ? `; non dette: ${miss.join('; ')}` : ''}`);
+    // tutti i passaggi non detti (he / she e his / her non sono passaggi: si spuntano solo se sbagliati o giusti)
+    const miss = items.filter(([id, , kind]) => kind !== 'gr' && !k.p2[id] && !prOn(k, 'pr2', id)).map(([, t]) => noEmoji(t));
+    out.push(`P2 voci (${state.pair[s].name}): ${p2.join('; ')}${miss.length ? `; mancanti: ${miss.join('; ')}` : ''}`);
   }
   return out.join(' | ');
 }
@@ -1128,12 +1132,16 @@ function computeHints(s) {
     const p1 = st.p1m > 0;
     const reactMiss = (p1 && k.p1.nice !== 1 ? 1 : 0) + (st.react && st.p2m && st.react.v !== 1 ? 1 : 0);
     // schema non seguito = passaggio non detto o detto con aiuto (la forma sbagliata pesa sulla Grammatica)
-    const schBad = st.sch.filter(x => st.p2m && (!x.v || x.v === 2)).length, schNone = st.p2m && st.sch.every(x => !x.v);
+    // (He / She is my friend è un plus: il Mystery Guest non è davvero un loro amico, se manca non toglie niente)
+    const schBad = st.sch.filter(x => st.p2m && (!x.v || x.v === 2)).length;
+    // ping-pong: con molti And you? (2 o più) una domanda non fatta è naturale nella conversazione e non toglie
+    const cover = p1 && st.asked < 3 && n.andYou >= 2 ? 1 : 0, asked = st.asked + cover;
     let v = 4;
-    if ((p1 && !n.andYou) || reactMiss >= 1 || schBad >= 1 || n.guide >= 1 || n.noAns >= 1 || (p1 && st.asked === 2)) v = 3;
-    if (n.skip >= 1 || (p1 && st.asked <= 1) || n.guide >= 2 || n.noAns >= 2 || schNone) v = 2;
+    if ((p1 && !n.andYou) || reactMiss >= 1 || schBad >= 1 || n.guide >= 1 || n.noAns >= 1 || (p1 && asked === 2)) v = 3;
+    if (n.skip >= 1 || (p1 && asked <= 1) || n.guide >= 2 || n.noAns >= 2) v = 2;
     if ((p1 && st.asked === 0 && (n.noAns >= 2 || n.guide >= 2)) || n.noAns >= 4 || n.guide >= 4 || n.block >= 2) v = 1;
-    H[0] = { v, why: `${p1 ? `domande fatte ${st.asked}/3 · And you? ×${n.andYou} · ` : ''}non risponde / fuori tema ×${n.noAns}${n.skip ? ` · passaggi saltati ×${n.skip}` : ''} · aiuti ×${n.guide}${st.p2m ? ` · schema Mystery Guest ${st.sch.length - schBad}/${st.sch.length}` : ''}${reactMiss ? ` · reazioni mancanti ${reactMiss}` : ''}` };
+    const plus = st.friend && st.p2m && (st.friend.v === 1 || st.friend.v === 2);
+    H[0] = { v, why: `${p1 ? `domande fatte ${st.asked}/3${cover ? ' (una mancante coperta dagli And you?)' : ''} · And you? ×${n.andYou} · ` : ''}non risponde / fuori tema ×${n.noAns}${n.skip ? ` · passaggi saltati ×${n.skip}` : ''} · aiuti ×${n.guide}${st.p2m ? ` · presentazione Mystery Guest ${st.sch.length - schBad}/${st.sch.length}` : ''}${plus ? ' · ⭐ my friend (plus)' : ''}${reactMiss ? ` · reazioni mancanti ${reactMiss}` : ''}` };
   }
   // Grammatica: ✗ di forma nelle spunte + note di errore di grammatica (2 ~ = 1 errore)
   // 0 → 4 · 1–2 → 3 · 3–5 → 2 · 6 o più → 1
@@ -1426,7 +1434,7 @@ function updateTeacherWin() {
     ${sel('A')}${sel('B')}
     <div class="bar" style="margin:8px 0"><button data-act="hideall">🙈 Copri tutte e due</button></div>
     <div class="cards2">${box('A')}${box('B')}</div>
-    <div class="tip b">Schema atteso: <b>Meet… / This is…</b> → <b>He/She is my friend</b> → from (città) → <b>country</b> (<i>He's from the UK</i>) → <b>nationality</b> (<i>He's British</i>) → age → <b>His/Her favourite…</b> (colour, sport / subject, <b>pet</b>: <i>His favourite pet is a dog</i>). Il compagno reagisce: <i>Hello John!</i></div>`;
+    <div class="tip b">Schema atteso: <b>Meet… / This is…</b> → <i>He/She is my friend</i> <small>(plus, se manca non toglie)</small> → from (città) → <b>country</b> (<i>He's from the UK</i>) → <b>nationality</b> (<i>He's British</i>) → age → <b>His/Her favourite…</b> (colour, sport / subject, <b>pet</b>: <i>His favourite pet is a dog</i>). Il compagno reagisce: <i>Hello John!</i></div>`;
 }
 function renderTabs() {
   if (!twOpen()) return;
@@ -1661,7 +1669,8 @@ function noteConvert(x) {
   const item = txt => { const j = txt.lastIndexOf(': '); if (j < 0) return null; const ps = txt.slice(j + 2).split(', '); return { label: txt.slice(0, j), st: ps.filter(p => p !== 'pronuncia ✗')[0] || '', pron: ps.includes('pronuncia ✗') }; };
   const list = t => t.split(', ').map(y => { const m = y.match(/^(.*?)(?: ×(\d+))?$/); return { t: m[1], n: +(m[2] || 1) }; }).filter(y => y.t);
   segs.forEach(seg => {
-    if (seg.startsWith('P1 voci: ')) seg.slice(9).split('; ').forEach(t => {
+    if (seg.startsWith('P1 voci: ')) seg.slice(9).split('; ').some((t, i, a) => {
+      if (t.startsWith('mancanti: ')) return true;   // da qui in poi i passaggi non fatti
       const it = item(t); if (!it) return;
       P1_ITEMS.forEach(([id, lab]) => {
         const base = noEmoji(lab);
@@ -1679,9 +1688,9 @@ function noteConvert(x) {
     const m2 = seg.match(/^P2 voci \((.+?)\): (.*)$/);
     if (m2) {
       card = CARDS.find(c => c.name === m2[1]) || card;
-      const rows = m2[2].split('; '), stop = rows.findIndex(t => t.startsWith('non dette: '));
+      const rows = m2[2].split('; '), stop = rows.findIndex(t => t.startsWith('non dette: ') || t.startsWith('mancanti: '));
       const hm = m2[2].match(/Hello (\S+?)!/); if (hm) mate = CARDS.find(c => c.name === hm[1] && c !== card) || null;
-      const its = p2ItemsFor(card, mate), old = { from: `${pr(card).S} is from ${card.city}` };
+      const its = p2ItemsFor(card, mate), old = { from: `${pr(card).S} is from ${card.city}`, friend: `${pr(card).S} is my friend` };
       (stop >= 0 ? rows.slice(0, stop) : rows).forEach(t => {
         const it = item(t); if (!it) return;
         const f = its.find(([id, lab]) => noEmoji(lab) === it.label || old[id] === it.label); if (!f) return;
@@ -1707,8 +1716,8 @@ function noteConvert(x) {
   let again = '';
   try { ck.A = k; state.pair.A = card || null; if (mate) state.pair.B = mate; notes.A = free; again = composeNote('A'); }
   finally { ck.A = keep.ck; state.pair.A = keep.pA; state.pair.B = keep.pB; notes.A = keep.nt; }
-  let orig = String(x.note || '').replace(/; non dette: .*?(?= \| |$)/g, '');
-  if (card) orig = orig.split(`${pr(card).S} is from ${card.city}:`).join(`${pr(card).S}'s from ${card.city}:`);
+  let orig = String(x.note || '').replace(/(; |: )(?:non dette|mancanti): .*?(?= \| |$)/g, '$1');
+  if (card) orig = orig.split(`${pr(card).S} is from ${card.city}:`).join(`${pr(card).S}'s from ${card.city}:`).split(`${pr(card).S} is my friend:`).join(`${pr(card).S} is my friend (plus):`);
   const R2 = MyClassLive.noteRest(orig, again, [/^P1: /, /^~\d+$/, /^✗\d+$/, /^domande fatte /, /^errori nelle spunte/, /^P2 \(.*\): informazioni/, /^pronuncia ✗ su /, /^(he\/she|his\/her) /]);
   // voci vere ritrovate (non solo le impressioni)
   const real = Object.keys(k.p1).length + Object.keys(k.p2).length + Object.keys(k.pr1).length + Object.keys(k.pr2).length + k.notes.pr.length + k.notes.er.length + Object.values(k.n).filter(Boolean).length;
