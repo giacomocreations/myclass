@@ -5081,15 +5081,11 @@ function _pdfqBody(q, type, a) {
 
   if (type === 'multiple-choice') {
     const opts = Array.isArray(q.options) ? q.options : (_pdfqArr(q.options) || []);
-    let sel = null;
-    if (typeof a === 'number') sel = a;
-    else if (typeof a === 'string' && a.trim() !== '' && /^\d+$/.test(a.trim())) sel = Number(a.trim());
-    else if (typeof a === 'string' && a.trim() !== '') {
-      const f = opts.findIndex(o => _pdfqNorm(o) === _pdfqNorm(a));
-      if (f >= 0) sel = f;
-    }
+    // Stessa lettura della correzione (come LiveLearn): numero, "1", lettera o
+    // testo dell'opzione, sia per la scelta dell'alunno sia per quella giusta
+    const sel = typeof a === 'object' ? null : _saMcIndexOf(q, a);
     const poll = _qIsPoll(q);
-    const corr = !poll && q.correct != null && q.correct !== '' ? Number(q.correct) : null;
+    const corr = poll ? null : _saMcIndexOf(q, q.correct);
     const rows = opts.map((o, oi) => {
       const isSel = sel === oi, isCorr = corr === oi;
       if (poll) return '<div class="pq-opt"><span class="pq-letter">' + (L[oi] || (oi + 1)) + '</span><span class="pq-otext">' + _pdfqEsc(o) + '</span>' +
