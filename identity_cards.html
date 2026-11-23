@@ -1284,6 +1284,8 @@ input{width:100%;background:#182624;border:1px solid rgba(255,255,255,.12);color
 .tot{display:flex;align-items:baseline;gap:12px;margin:12px 0 8px}.tot .v{font-size:40px;font-weight:900;color:#ffd166;line-height:1}.tot .p{color:#94a8a3}
 .msg{min-height:18px;font-weight:700;color:#06d6a0;margin-top:6px}
 .link{min-height:16px;font-size:12.5px;color:#94a8a3;margin:2px 0 4px}.link.ok{color:#06d6a0}.link.err{color:#ffb547}
+.edit{background:rgba(255,181,71,.12);border:1px solid rgba(255,181,71,.55);border-radius:10px;padding:8px 11px;margin-top:8px;font-size:13px;line-height:1.45}.edit button{padding:3px 10px;font-size:12.5px;margin-left:6px}.edit small{color:#94a8a3}
+button.lnk{background:none;border:none;padding:0;color:inherit;font:inherit;font-weight:700;text-align:left;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}tr.ed td{background:rgba(255,181,71,.1)}
 table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}table.sv td,table.sv th{text-align:left;padding:5px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}table.sv th{color:#94a8a3;font-size:11px;text-transform:uppercase}td.v{font-weight:800;color:#ffd166}
 .x{background:none;border:none;color:#94a8a3;padding:0 4px}.empty{color:#94a8a3;font-style:italic}
 @media (max-width:560px){.cards2{grid-template-columns:1fr}.fields{grid-template-columns:1fr 1fr}}
@@ -1311,6 +1313,7 @@ textarea{width:100%;background:#182624;border:1px solid rgba(255,255,255,.12);co
 <h1>🖥️ Finestra docente · Meet My Friend!</h1>
 <div class="sub">Tienila sul tuo schermo: alla LIM si vedono solo la traccia dei 3 step e le carte.</div>
 <div class="fields"><input id="t-nameA" placeholder="Studente A" autocomplete="off"><input id="t-nameB" placeholder="Studente B (vuoto se è da solo)" autocomplete="off"><input id="t-class" placeholder="Classe (1C)" autocomplete="off"></div>
+<div id="t-edit" class="edit" hidden></div>
 <div class="tmr" style="margin-top:10px"><span class="tv" id="t-timer">2:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia</button><button data-act="treset" title="Azzera">↺</button><span class="tl" id="t-tlbl"></span></div>
 <div class="bar"><button class="pri" data-act="p1">👋 Parte 1 · Chat</button><button class="or" data-act="draw">🎴 Parte 2 · Pesca 2 carte</button></div>
 <div id="t-part"></div>
@@ -1442,7 +1445,7 @@ function renderTeacherRubric(fromCk) {
 function renderTeacherSaved() {
   if (!twOpen()) return;
   const g = loadGrades();
-  tw('t-saved').innerHTML = g.length ? `<table class="sv"><tr><th>Data</th><th>Cl.</th><th>Studente</th><th>Voto</th><th>Punti</th><th>Carta</th><th>Tempo</th><th></th></tr>${g.map((x, i) => `<tr><td>${esc(x.date)}</td><td>${esc(x.cls)}</td><td>${esc(x.name)}${x.partner ? `<br><small>con ${esc(x.partner)}</small>` : ''}${x.note ? `<br><small>${esc(x.note)}</small>` : ''}</td><td class="v">${esc(x.voto)}${x.riv ? `<br><small title="Corretto il ${esc(x.riv)}${x.prima ? ' · prima ' + esc(x.prima) : ''}">♻️</small>` : ''}</td><td>${esc(x.det)}${x.max ? ` <small>/${x.max}</small>` : ''}</td><td>${esc(x.card)}</td><td>${esc(x.tempo)}</td><td><button class="x" data-act="del" data-i="${i}" title="Elimina">✕</button></td></tr>`).reverse().join('')}</table>` : '<div class="empty">Nessun voto salvato.</div>';
+  tw('t-saved').innerHTML = g.length ? `<table class="sv"><tr><th>Data</th><th>Cl.</th><th>Studente</th><th>Voto</th><th>Punti</th><th>Carta</th><th>Tempo</th><th></th></tr>${g.map((x, i) => `<tr class="${editingIds().includes(x.id) ? 'ed' : ''}"><td>${esc(x.date)}</td><td>${esc(x.cls)}</td><td><button class="lnk" data-act="reopen" data-i="${i}" title="Riapri ${esc(x.name)} come dal vivo: spunte, note e punteggi, da modificare">✏️ ${esc(x.name)}</button>${x.partner ? `<br><small>con ${esc(x.partner)}</small>` : ''}${x.note ? `<br><small>${esc(x.note)}</small>` : ''}</td><td class="v">${esc(x.voto)}${x.riv ? `<br><small title="Corretto il ${esc(x.riv)}${x.prima ? ' · prima ' + esc(x.prima) : ''}">♻️</small>` : ''}</td><td>${esc(x.det)}${x.max ? ` <small>/${x.max}</small>` : ''}</td><td>${esc(x.card)}</td><td>${esc(x.tempo)}</td><td><button class="x" data-act="del" data-i="${i}" title="Elimina">✕</button></td></tr>`).reverse().join('')}</table>` : '<div class="empty">Nessun voto salvato.</div>';
 }
 function twMsg(t) { if (!twOpen()) return; tw('t-msg').textContent = t; clearTimeout(twMsg.t); twMsg.t = setTimeout(() => { if (twOpen()) tw('t-msg').textContent = ''; }, 2800); }
 function onTeacherClick(e) {
@@ -1463,8 +1466,11 @@ function onTeacherClick(e) {
   else if (act === 'copy') copyGrades();
   else if (act === 'clear') { if (teacherWin.confirm('Cancellare tutti i voti salvati su questo computer?')) { storeGrades([]); renderTeacherSaved(); } }
   else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
+  else if (act === 'reopen') reopenGrade(+b.dataset.i);
+  else if (act === 'editstop') { resetRubric(); goPart(1); renderTeacherSaved(); twMsg('Modifica annullata: la valutazione salvata resta com\'era'); }
 }
 function resetRubric() {
+  editing = null; renderEditBanner();
   ['A', 'B'].forEach(s => { rub[s] = {}; notes[s] = ''; rubManual[s] = {}; rubAuto[s] = {}; });
   ck = { A: ckNew(), B: ckNew() };
   cur = 'A'; state.names.A = state.names.B = '';
@@ -1482,16 +1488,25 @@ function saveGrades(o = {}) {
   savePartTime();
   const t1 = partTimes[1] ? fmtTime(partTimes[1]) : '–', t2 = partTimes[2] ? fmtTime(partTimes[2]) : '–';
   const g = loadGrades(), date = new Date().toLocaleDateString('it-IT'), cls = tw('t-class').value.trim();
+  const pid = Date.now().toString(36), upd = [], fresh = [];
   who.forEach(s => {
     const c = state.pair[s], other = s === 'A' ? 'B' : 'A';
-    g.push({ name: state.names[s], partner: state.names[other] || '', cls, voto: voto(rubTot(s)), punti: rubTot(s), det: GRID.aree.map((a, i) => rub[s][i]).join('-'), max: RUB_MAX, card: c ? `${c.n}. ${c.name}` : '–', tempo: `${t1} + ${t2}`, note: composeNote(s), date });
+    const e = { name: state.names[s], partner: state.names[other] || '', cls, voto: voto(rubTot(s)), punti: rubTot(s), det: GRID.aree.map((a, i) => rub[s][i]).join('-'), max: RUB_MAX, card: c ? `${c.n}. ${c.name}` : '–', note: noteFor(s), st: snapOf(s) };
+    // riaperta da «Voti salvati»: si aggiorna quella (stessa data, anche in MyClass), non se ne crea un'altra
+    const ed = editing && editing[s], y = ed && g.find(z => z.id === ed.id);
+    if (y) {
+      const changed = y.det !== e.det || y.note !== e.note || y.name !== e.name || y.cls !== e.cls;
+      if (!y.prima && y.det !== e.det) y.prima = y.voto + ' (' + y.det + ')';
+      Object.assign(y, e, { pid: y.pid || pid }, changed ? { riv: date } : {}); if (changed) upd.push({ s, y });
+    } else { g.push({ ...e, id: pid + s, pid, tempo: `${t1} + ${t2}`, date }); fresh.push(s); }
   });
   storeGrades(g);
   // promemoria anche nella LIVE di MyClass: prima A, poi B
   const saved = who.map(s => `${state.names[s]} → ${voto(rubTot(s))}`).join(' · ');
-  const snapshot = who.map(s => ({ s, name: state.names[s], scores: GRID.aree.map((a, i) => rub[s][i]), note: composeNote(s) }));
+  const snapshot = fresh.map(s => ({ s, name: state.names[s], scores: GRID.aree.map((a, i) => rub[s][i]), note: noteFor(s) }));
   sendSaved(snapshot, cls, !!o.auto);
-  twMsg(o.auto ? `💾 Salvati in automatico: ${saved}` : `✅ Salvato qui: ${saved}`);
+  if (upd.length) updateMyClass(upd.map(({ s, y }) => ({ cls: y.cls, student: y.name, data: isoIt(y.date), scores: GRID.aree.map((a, i) => rub[s][i]), nota: y.note })));
+  twMsg(upd.length ? `✏️ Valutazione aggiornata: ${saved}` : o.auto ? `💾 Salvati in automatico: ${saved}` : `✅ Salvato qui: ${saved}`);
   Object.keys(partTimes).forEach(k => delete partTimes[k]);
   resetRubric(); renderTeacherSaved(); goPart(1);
   if (liveFollow) liveFollow.refresh();
@@ -1500,7 +1515,7 @@ function saveGrades(o = {}) {
 // con descrittori e versione: se MyClass non ha ancora questa griglia la aggiunge da sola
 const liveGrid = () => ({ id: GRID.id, ver: GRID.ver, nome: GRID.nome, aree: GRID.aree.map(a => ({ nome: a.nome, max: a.max, descrittori: a.descrittori })), conversione_voto: GRID.conversione_voto });
 function pushLive(save, s = cur, done) {
-  if (!window.MyClassLive || !twOpen()) return;
+  if (!window.MyClassLive || !twOpen() || editing) return;   // valutazione riaperta: si aggiorna il promemoria al salvataggio
   const scores = GRID.aree.map((a, i) => rub[s][i] === undefined ? null : rub[s][i]);
   if (scores.every(v => v === null)) return;
   MyClassLive.send({ grid: liveGrid(), scores, student: state.names[s] || '', cls: tw('t-class').value.trim(), save: !!save, note: composeNote(s) }, r => { showLive(r); done && done(); });
@@ -1543,6 +1558,73 @@ function showLive(r) {
   if (!r) { el.className = 'link'; el.textContent = '⚪ LIVE di MyClass non aperta: i punteggi restano solo qui.'; return; }
   el.className = 'link ' + (r.ok ? 'ok' : 'err');
   el.textContent = r.ok ? (r.saved ? `💾 Salvato in MyClass (${r.classe}): ${r.student} — promemoria ${String(r.voto10).replace('.', ',')}/10` : `🔗 Nella LIVE di MyClass (${r.classe}): ${r.student}`) : '⚠️ MyClass: ' + r.msg;
+}
+// ══════════════════════════════════════════════════════════════════
+//  RIAPRI UNA VALUTAZIONE SALVATA, COME DAL VIVO
+//  Ogni voto salvato tiene la fotografia della finestra docente (spunte, 🔊, note veloci, fluidità,
+//  impressioni, carte, punteggi). Clic sul nome in «Voti salvati»: si riapre la coppia com'era, si
+//  modifica come durante la prova e «Salva» aggiorna quel voto (stessa data) e il suo promemoria in
+//  MyClass, invece di crearne uno nuovo. I voti salvati prima di questa funzione riaprono solo i
+//  punteggi: la nota di allora resta e le spunte nuove le si aggiungono.
+// ══════════════════════════════════════════════════════════════════
+var editing = null;   // (var: lo azzera anche resetRubric, che può girare prima) { A: { id, date, name, legacy }, B: … }
+const clone = o => JSON.parse(JSON.stringify(o));
+const editingIds = () => editing ? Object.values(editing).filter(Boolean).map(x => x.id) : [];
+const snapOf = s => ({ s, ck: clone(ck[s]), rub: { ...rub[s] }, man: { ...rubManual[s] }, auto: { ...rubAuto[s] }, notes: notes[s], cards: { A: state.pair.A ? state.pair.A.n : null, B: state.pair.B ? state.pair.B.n : null }, part: state.part });
+// nota: quella di adesso; per un voto salvato senza fotografia, la nota di allora + le spunte nuove
+const noteFor = s => { const n = composeNote(s), L = editing && editing[s] && editing[s].legacy; return L ? [L, n].filter(Boolean).join(' | ') : n; };
+const isoIt = d => { const m = String(d || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : ''; };
+function updateMyClass(items) {
+  if (!window.MyClassLive || !MyClassLive.request || !items.length) return;
+  MyClassLive.request('prom-update', { grid: liveGrid(), items }, r => {
+    if (!twOpen()) return;
+    const el = tw('t-link');
+    if (r && r.ok) { el.className = 'link ok'; el.textContent = `💾 MyClass: ${items.map(x => x.student).join(', ')} — promemoria aggiornato (stessa data della prova)${r.miss && r.miss.length ? ` · ⚠️ non trovati: ${r.miss.join(', ')}` : ''}`; }
+    else { el.className = 'link err'; el.textContent = `⚠️ MyClass non ha aggiornato il promemoria${r && r.msg ? ': ' + r.msg : ' (non è aperta in questo browser)'}. Corretto solo qui: per mandarlo usa ♻️ Rivedi / correggi con MyClass aperta.`; }
+  });
+}
+function renderEditBanner() {
+  if (!twOpen()) return;
+  const el = tw('t-edit'), E = editing && ['A', 'B'].filter(s => editing[s]);
+  el.hidden = !E || !E.length; if (el.hidden) { el.innerHTML = ''; return; }
+  const legacy = E.filter(s => editing[s].legacy);
+  el.innerHTML = `✏️ Stai modificando ${E.map(s => `<b>${esc(editing[s].name)}</b>`).join(' e ')} del ${esc(editing[E[0]].date)}, come dal vivo. <b>💾 Salva</b> aggiorna questa valutazione (stessa data, anche il promemoria in MyClass), non ne crea una nuova.<button data-act="editstop">Annulla modifica</button>`
+    + legacy.map(s => `<br><small>${esc(editing[s].name)}: salvato prima che si potesse riaprire, si riaprono solo i punteggi. Nota di allora (resta): ${esc(editing[s].legacy)}</small>`).join('');
+}
+function reopenGrade(i) {
+  const g = loadGrades(), x = g[i]; if (!x || !twOpen()) return;
+  if (pairAny() && !teacherWin.confirm('C\'è una valutazione in corso: la lascio perdere e riapro ' + x.name + '?')) return;
+  // id per i voti salvati prima (la coppia: stesso compagno, stessa data, salvati uno dopo l'altro)
+  let ch = false;
+  g.forEach((y, k) => { if (!y.id) { y.id = 'v' + k + '-' + Date.now().toString(36); ch = true; } });
+  if (ch) storeGrades(g);
+  const mate = x.partner ? (x.pid ? g.find(y => y !== x && y.pid === x.pid) : g.find(y => y !== x && y.name === x.partner && y.partner === x.name && y.date === x.date)) : null;
+  Object.keys(partTimes).forEach(k => delete partTimes[k]);
+  resetRubric();
+  const ed = {}, slotOf = y => y.st && y.st.s || (y === x ? 'A' : 'B');
+  let sx = slotOf(x), sm = mate ? slotOf(mate) : null;
+  if (mate && sm === sx) sm = sx === 'A' ? 'B' : 'A';
+  [[x, sx], [mate, sm]].forEach(([y, s]) => {
+    if (!y) return;
+    const st = y.st, det = String(y.det).split('-').map(Number);
+    if (st) {
+      ck[s] = clone(st.ck); rub[s] = { ...st.rub }; rubManual[s] = { ...st.man }; rubAuto[s] = { ...st.auto }; notes[s] = st.notes || '';
+      if (st.cards) ['A', 'B'].forEach(k => { if (st.cards[k]) state.pair[k] = CARDS.find(c => c.n === st.cards[k]) || state.pair[k]; });
+      state.part = st.part || (st.cards && (st.cards.A || st.cards.B) ? 2 : 1);
+    } else { const m = String(y.card || '').match(/^(\d+)\./); if (m) { state.pair[s] = CARDS.find(c => c.n === +m[1]) || state.pair[s]; state.part = 2; } }
+    // punteggi corretti dopo (♻️ Rivedi) o salvati senza fotografia: valgono quelli del voto
+    const cur0 = GRID.aree.map((a, k) => rub[s][k]).join('-');
+    if (det.length === GRID.aree.length && det.every(v => !isNaN(v)) && cur0 !== det.join('-')) det.forEach((v, k) => { rub[s][k] = v; rubManual[s][k] = true; rubAuto[s][k] = false; });
+    state.names[s] = y.name;
+    ed[s] = { id: y.id, date: y.date, name: y.name, legacy: st ? '' : (y.note || '') };
+  });
+  editing = ed; cur = sx;
+  tw('t-nameA').value = state.names.A || ''; tw('t-nameB').value = state.names.B || ''; tw('t-class').value = x.cls || '';
+  nameFocus['t-nameA'] = state.names.A || ''; nameFocus['t-nameB'] = state.names.B || '';
+  goPart(state.part === 2 && state.pair.A ? 2 : 1);
+  ckRefresh(); renderTeacherRubric(); renderEditBanner(); renderTeacherSaved();
+  teacherWin.scrollTo({ top: 0, behavior: 'smooth' });
+  twMsg(`✏️ Riaperto: ${Object.values(ed).map(e => e.name).join(' e ')}`);
 }
 function copyGrades() {
   const g = loadGrades();

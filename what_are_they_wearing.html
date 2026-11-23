@@ -1998,6 +1998,8 @@ input:focus{outline:none;border-color:#3ec6ff}
 .tot .p{color:#a49cbd}
 .msg{min-height:18px;font-weight:700;color:#06d6a0;margin-top:6px}
 .link{min-height:16px;font-size:12.5px;color:#97a3bd;margin:2px 0 4px}.link.ok{color:#06d6a0}.link.err{color:#ffb547}
+.edit{background:rgba(255,181,71,.12);border:1px solid rgba(255,181,71,.55);border-radius:10px;padding:8px 11px;margin-top:8px;font-size:13px;line-height:1.45}.edit button{padding:3px 10px;font-size:12.5px;margin-left:6px}.edit small{opacity:.7}
+button.lnk{background:none;border:none;padding:0;color:inherit;font:inherit;font-weight:700;text-align:left;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}tr.ed td{background:rgba(255,181,71,.1)}
 table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
 td,th{text-align:left;padding:5px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}
 th{color:#a49cbd;font-size:11px;text-transform:uppercase}
@@ -2031,6 +2033,7 @@ textarea{width:100%;background:#231d36;border:1px solid rgba(255,255,255,.12);co
 </style></head><body>
 <h1>🖥️ Finestra docente</h1>
 <div class="sub">Tienila sul tuo schermo: alla LIM si vedono solo i personaggi e la domanda.</div>
+<div id="t-edit" class="edit" hidden></div>
 <div class="tmr"><span class="tv" id="t-timer">3:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia 3:00</button><button data-act="treset" title="Azzera il timer">↺</button><span class="tl" id="t-tlbl">Tempo per l'interrogazione</span></div>
 <div class="bar"><button class="pri" data-act="new">🎲 Nuova scena</button><button data-act="q">❓ Nuova domanda</button></div>
 <div class="bar" style="margin-top:8px;align-items:center"><button id="t-help" data-act="help">💡 Mostra gli esempi alla LIM</button><span class="tl" id="t-help-st"></span></div>
@@ -2121,7 +2124,7 @@ function renderTeacherRubric() {
 function renderTeacherSaved() {
   if (!twOpen()) return;
   const g = loadGrades();
-  tw('t-saved').innerHTML = g.length ? `<table><tr><th>Data</th><th>Cl.</th><th>Studente</th><th>Voto</th><th>Punti</th><th>C-L-PC-P</th><th>Tempo</th><th></th></tr>${g.map((x, i) => `<tr><td>${esc(x.date)}</td><td>${esc(x.cls)}</td><td>${esc(x.name)}${x.note ? `<br><small>${esc(x.note)}</small>` : ''}</td><td class="v">${esc(x.voto)}</td><td>${esc(x.punti)}/${x.max || 15}${x.ver === RUB_VER ? '' : x.max ? '' : '<br><small title="Griglia vecchia (pronuncia /3): usa ♻️ Rivedi / rivaluta">vecchia</small>'}${x.riv ? '<br><small title="Rivalutato con la griglia nuova">♻️ ' + esc(x.riv) + '</small>' : ''}</td><td>${esc(x.det)}</td><td>${esc(x.tempo || '')}</td><td><button class="x" data-act="del" data-i="${i}" title="Elimina">✕</button></td></tr>`).reverse().join('')}</table>` : '<div class="empty">Nessun voto salvato.</div>';
+  tw('t-saved').innerHTML = g.length ? `<table><tr><th>Data</th><th>Cl.</th><th>Studente</th><th>Voto</th><th>Punti</th><th>C-L-PC-P</th><th>Tempo</th><th></th></tr>${g.map((x, i) => `<tr class="${editing && editing.id === x.id ? 'ed' : ''}"><td>${esc(x.date)}</td><td>${esc(x.cls)}</td><td><button class="lnk" data-act="reopen" data-i="${i}" title="Riapri ${esc(x.name)} come dal vivo: spunte, note e punteggi, da modificare">✏️ ${esc(x.name)}</button>${x.note ? `<br><small>${esc(x.note)}</small>` : ''}</td><td class="v">${esc(x.voto)}</td><td>${esc(x.punti)}/${x.max || 15}${x.ver === RUB_VER ? '' : x.max ? '' : '<br><small title="Griglia vecchia (pronuncia /3): usa ♻️ Rivedi / rivaluta">vecchia</small>'}${x.riv ? '<br><small title="Rivalutato con la griglia nuova">♻️ ' + esc(x.riv) + '</small>' : ''}</td><td>${esc(x.det)}</td><td>${esc(x.tempo || '')}</td><td><button class="x" data-act="del" data-i="${i}" title="Elimina">✕</button></td></tr>`).reverse().join('')}</table>` : '<div class="empty">Nessun voto salvato.</div>';
 }
 function twMsg(t) { if (!twOpen()) return; tw('t-msg').textContent = t; clearTimeout(twMsg.t); twMsg.t = setTimeout(() => { if (twOpen()) tw('t-msg').textContent = ''; }, 2500); }
 
@@ -2146,8 +2149,11 @@ function onTeacherClick(e) {
   else if (/^riv(edit|pt|auto|undo|rep|copy)$/.test(act)) rivClick(act, b);
   else if (act === 'clear') { if (teacherWin.confirm('Cancellare tutti i voti salvati su questo computer?')) { storeGrades([]); renderTeacherSaved(); } }
   else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
+  else if (act === 'reopen') reopenGrade(+b.dataset.i);
+  else if (act === 'editstop') { resetRubric(); timerReset(); renderTeacherSaved(); newPicture(); twMsg('Modifica annullata: la valutazione salvata resta com\'era'); }
 }
 function resetRubric() {
+  editing = null; renderEditBanner();
   RUBRIC.forEach(r => { delete rub[r.id]; delete rubManual[r.id]; delete rubAuto[r.id]; });
   wk = wkNew();
   if (twOpen()) { tw('t-name').value = ''; tw('t-note').value = ''; }
@@ -2161,8 +2167,22 @@ function saveGrade(o = {}) {
   if (!rubDone()) { twMsg('✏️ Completa tutte le voci della griglia'); return; }
   const tot = rubTot();
   const g = loadGrades();
-  const nota = composeNote();
-  g.push({ name, cls: tw('t-class').value.trim(), voto: voto(tot), punti: tot, det: RUBRIC.map(r => rub[r.id]).join('-'), max: RUB_MAX, ver: RUB_VER, note: nota, date: new Date().toLocaleDateString('it-IT'), tempo: timerElapsed() ? fmtTime(timerElapsed()) : '' });
+  const nota = noteFor();
+  const e = { name, cls: tw('t-class').value.trim(), voto: voto(tot), punti: tot, det: RUBRIC.map(r => rub[r.id]).join('-'), max: RUB_MAX, ver: RUB_VER, note: nota, st: snap() };
+  // riaperta da «Voti salvati»: si aggiorna quella (stessa data, anche in MyClass), non se ne crea un'altra
+  const y = editing && g.find(z => z.id === editing.id);
+  if (y) {
+    const changed = y.det !== e.det || y.note !== e.note || y.name !== e.name || y.cls !== e.cls;
+    if (!y.prima && y.det !== e.det) y.prima = y.voto + ' (' + y.det + ')';
+    Object.assign(y, e, changed ? { riv: new Date().toLocaleDateString('it-IT') } : {});
+    storeGrades(g);
+    if (changed) updateMyClass([{ cls: y.cls, student: y.name, data: isoIt(y.date), scores: RUBRIC.map(r => rub[r.id]), nota: y.note }]);
+    twMsg(`✏️ Valutazione aggiornata: ${name} → ${voto(tot)}`);
+    help.class = false; applyHelp();
+    resetRubric(); timerReset(); renderTeacherSaved(); newPicture();
+    return;
+  }
+  g.push({ ...e, id: Date.now().toString(36), date: new Date().toLocaleDateString('it-IT'), tempo: timerElapsed() ? fmtTime(timerElapsed()) : '' });
   storeGrades(g);
   pushLive(true, o.auto ? name : '');   // salva il promemoria anche nella LIVE di MyClass
   autoMsg = o.auto ? { t: Date.now(), s: `💾 ${name} salvato in automatico → ${voto(tot)}` } : null;
@@ -2192,7 +2212,7 @@ function onNameChanged(el) {
 // descrittori MyClass aggiorna la sua copia della griglia (pronuncia da /3 a /4, nuova conversione).
 // who: salvataggio automatico dell'alunno di prima (nel campo c'è già il nuovo): la LIVE non cambia alunno
 function pushLive(save, who) {
-  if (!window.MyClassLive || !twOpen()) return;
+  if (!window.MyClassLive || !twOpen() || editing) return;   // valutazione riaperta: si aggiorna il promemoria al salvataggio
   const scores = RUBRIC.map(r => rub[r.id] === undefined ? null : rub[r.id]);
   if (scores.every(v => v === null)) return;
   const student = who || tw('t-name').value.trim();
@@ -2202,6 +2222,56 @@ function pushLive(save, who) {
       // «Salva e prossimo» con MyClass aperta che però non salva (LIVE chiusa, altra classe…): avviso che non si perde
       if (save && r && !r.ok && twOpen()) teacherWin.alert(`⚠️ ${student}: voto salvato solo qui, NON in MyClass.\nMyClass: ${r.msg || 'errore'}\n\nPer mandarlo dopo: ♻️ Rivedi / rivaluta, con MyClass aperta in questo browser.`);
     });
+}
+// ══════════════════════════════════════════════════════════════════
+//  RIAPRI UNA VALUTAZIONE SALVATA, COME DAL VIVO
+//  Ogni voto salvato tiene la fotografia della finestra docente (scena e personaggi, spunte di capi,
+//  azioni e is wearing, 🔊, note veloci, fluidità, impressioni, punteggi). Clic sul nome in «Voti
+//  salvati»: si riapre com'era (anche la scena alla LIM), si modifica come durante la prova e
+//  «Salva» aggiorna quel voto (stessa data) e il suo promemoria in MyClass, invece di crearne uno
+//  nuovo. I voti salvati prima di questa funzione riaprono solo i punteggi: la nota di allora resta.
+// ══════════════════════════════════════════════════════════════════
+var editing = null;   // { id, date, name, legacy } (var: lo azzera anche resetRubric, che può girare prima)
+const clone = o => JSON.parse(JSON.stringify(o));
+const snap = () => ({ wk: clone(wk), rub: { ...rub }, man: { ...rubManual }, auto: { ...rubAuto }, free: twOpen() ? tw('t-note').value : '', scene: state.scene, chars: clone(state.chars), sel: state.sel, q: state.q ? { ...state.q } : null });
+const noteFor = () => { const n = composeNote(), L = editing && editing.legacy; return L ? [L, n].filter(Boolean).join(' | ') : n; };
+const isoIt = d => { const m = String(d || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : ''; };
+function updateMyClass(items) {
+  if (!window.MyClassLive || !MyClassLive.request || !items.length) return;
+  MyClassLive.request('prom-update', { grid: LIVE_GRID(), items }, r => {
+    if (!twOpen()) return;
+    const el = tw('t-link');
+    if (r && r.ok) { el.className = 'link ok'; el.textContent = `💾 MyClass: ${items.map(x => x.student).join(', ')} — promemoria aggiornato (stessa data della prova)${r.miss && r.miss.length ? ` · ⚠️ non trovati: ${r.miss.join(', ')}` : ''}`; }
+    else { el.className = 'link err'; el.textContent = `⚠️ MyClass non ha aggiornato il promemoria${r && r.msg ? ': ' + r.msg : ' (non è aperta in questo browser)'}. Corretto solo qui: per mandarlo usa ♻️ Rivedi / rivaluta con MyClass aperta.`; }
+  });
+}
+function renderEditBanner() {
+  if (!twOpen()) return;
+  const el = tw('t-edit'); el.hidden = !editing; if (!editing) { el.innerHTML = ''; return; }
+  el.innerHTML = `✏️ Stai modificando <b>${esc(editing.name)}</b> del ${esc(editing.date)}, come dal vivo. <b>💾 Salva</b> aggiorna questa valutazione (stessa data, anche il promemoria in MyClass), non ne crea una nuova.<button data-act="editstop">Annulla modifica</button>`
+    + (editing.legacy ? `<br><small>Salvato prima che si potesse riaprire: si riaprono solo i punteggi. Nota di allora (resta): ${esc(editing.legacy)}</small>` : '');
+}
+function reopenGrade(i) {
+  const g = loadGrades(), x = g[i]; if (!x || !twOpen()) return;
+  if (hasEval() && !teacherWin.confirm('C\'è una valutazione in corso: la lascio perdere e riapro ' + x.name + '?')) return;
+  if (!x.id) { x.id = 'v' + i + '-' + Date.now().toString(36); storeGrades(g); }
+  resetRubric(); timerReset();
+  const st = x.st, det = String(x.det).split('-').map(Number);
+  if (st && st.chars && st.chars.length) {
+    // la scena di allora, anche alla LIM
+    state.scene = lastScene = st.scene; state.chars = clone(st.chars); state.count = state.chars.length; state.sel = Math.min(st.sel || 0, state.chars.length - 1); state.modelOpen = false;
+    resetAfterChange(); state.q = st.q || null;
+    if (state.q) document.getElementById('q-text').textContent = state.q.q;
+    wk = clone(st.wk); Object.assign(rub, st.rub); Object.assign(rubManual, st.man); Object.assign(rubAuto, st.auto); tw('t-note').value = st.free || '';
+    render('all');
+  }
+  // punteggi corretti dopo (♻️ Rivedi) o salvati senza fotografia: valgono quelli del voto
+  if (det.length === RUBRIC.length && det.every(v => !isNaN(v)) && RUBRIC.map(r => rub[r.id]).join('-') !== det.join('-')) RUBRIC.forEach((r, k) => { rub[r.id] = det[k]; rubManual[r.id] = true; rubAuto[r.id] = false; });
+  editing = { id: x.id, date: x.date, name: x.name, legacy: st ? '' : (x.note || '') };
+  tw('t-name').value = x.name; tw('t-class').value = x.cls || ''; nameFocus = x.name;
+  renderTeacherRubric(); updateTeacherWin(); renderNotes(); renderSummary(); renderEditBanner(); renderTeacherSaved();
+  teacherWin.scrollTo({ top: 0, behavior: 'smooth' });
+  twMsg(`✏️ Riaperto: ${x.name}`);
 }
 function showLive(r) {
   if (!twOpen()) return;
