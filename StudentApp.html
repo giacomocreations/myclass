@@ -4621,45 +4621,132 @@ function _noListeningFilter(sessData, baseQuestions, versions) {
 // - priorità 2: session.studentVersions[studentKey]  (assegnazione del docente)
 // - fallback: baseQuestions (versione originale)
 function _resolveStudentQuestions(studentName, entry, baseQuestions, versions, studentVersions) {
+  versions = versions || {}; studentVersions = studentVersions || {};
+  const hasVer = k => k && k !== 'originale' && Array.isArray(versions[k]) && versions[k].length;
+  const qsOf = k => hasVer(k) ? versions[k] : baseQuestions;
+
   // Priorità assoluta: la versione registrata nella risposta stessa
-  const storedVer = entry.studentVersion;
-  if (storedVer && storedVer !== 'originale') {
-    const vQs = versions[storedVer];
-    if (Array.isArray(vQs) && vQs.length) return vQs;
+  let ver = hasVer(entry.studentVersion) ? entry.studentVersion : null;
+
+  if (!ver && Object.keys(studentVersions).length && Object.keys(versions).length) {
+    // Normalizzazione robusta (uguale a LiveLearn)
+    const _norm = s => String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+    const _safify = s => (s||'').replace(/[.#$[\]\/]/g,'_');
+    let found = null;
+    const tryLookup = nameStr => {
+      if (found || !nameStr) return;
+      const safe = _safify(nameStr);
+      if (studentVersions[safe]) { found = studentVersions[safe]; return; }
+      const lower = safe.toLowerCase();
+      const k = Object.keys(studentVersions).find(k => k.toLowerCase() === lower);
+      if (k) { found = studentVersions[k]; return; }
+      const norm = _norm(nameStr);
+      const k2 = Object.keys(studentVersions).find(k => _norm(k) === norm);
+      if (k2) found = studentVersions[k2];
+    };
+    tryLookup(studentName);
+    tryLookup(entry.aliasOf);   // alunni regolarizzati
+    if (hasVer(found)) ver = found;
   }
+  ver = ver || 'originale';
 
-  if (!Object.keys(studentVersions).length || !Object.keys(versions).length) return baseQuestions;
+  // Come _studentVersionKey di LiveLearn: se le risposte non hanno la forma
+  // delle domande di quella versione (versione registrata o assegnata
+  // sbagliata, alunno spostato di fila…) si usa la versione con cui
+  // combaciano. Senza questo controllo le risposte della FILA giusta venivano
+  // corrette con le domande di un'altra: LiveLearn dava 83%, qui 20%.
+  const ans = _llFbArr(entry.answers);
+  if (!ans.some(a => a !== null && a !== undefined && a !== '')) return qsOf(ver);
+  const base = _saAnswersFit(qsOf(ver), ans);
+  if (!base.bad) return qsOf(ver);
+  let best = { key: ver, fit: base };
+  ['originale'].concat(Object.keys(versions).filter(hasVer)).forEach(k => {
+    if (k === ver) return;
+    const f = _saAnswersFit(qsOf(k), ans);
+    if (f.bad < best.fit.bad || (f.bad === best.fit.bad && f.good > best.fit.good) ||
+        (f.bad === best.fit.bad && f.good === best.fit.good && f.earned > best.fit.earned)) best = { key: k, fit: f };
+  });
+  return qsOf(best.key !== ver && best.fit.bad < base.bad ? best.key : ver);
+}
 
-  // Normalizzazione robusta (uguale a LiveLearn)
-  const _norm = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
-
-  const _safify = s => (s||'').replace(/[.#$[\]\/]/g,'_');
-  const safeKey = _safify(studentName);
-  const nameLower = safeKey.toLowerCase();
-
-  let ver = studentVersions[safeKey];
-  if (!ver) {
-    const k = Object.keys(studentVersions).find(k => k.toLowerCase() === nameLower);
-    if (k) ver = studentVersions[k];
+// Forma della risposta rispetto alla domanda (copia di _qKind/_answerFit/_answersFit di LiveLearn)
+function _saQKind(q) {
+  if (!q || q.type !== 'listening') return { kind: q && q.type, inner: q };
+  const inner = q.question || {};
+  let sub = q.subtype || inner.type;
+  if (!sub) {
+    if (inner.correct !== undefined) sub = 'multiple-choice';
+    else if (Array.isArray(inner.answers) && inner.answers.length) sub = 'cloze';
+    else if (Array.isArray(inner.left) && inner.left.length) sub = 'matching';
+    else sub = 'free-response';
   }
-  if (!ver) {
-    const normTarget = _norm(studentName);
-    const k = Object.keys(studentVersions).find(k => _norm(k) === normTarget);
-    if (k) ver = studentVersions[k];
+  return { kind: sub, inner };
+}
+function _saAnswerFit(q, a) {
+  if (!q || a === null || a === undefined || a === '') return 0;
+  const { kind, inner } = _saQKind(q);
+  const isObj = typeof a === 'object';
+  const arr = isObj ? _llFbArr(a) : null;
+  const lenOk = n => !n || arr.length <= n;
+  const allOf = t => arr.every(v => v === null || v === undefined || v === '' || typeof v === t ||
+    (t === 'number' && typeof v === 'string' && /^\d+$/.test(v.trim())));
+  switch (kind) {
+    case 'multiple-choice':
+      return !isObj && _saMcIndexOf(inner, a) != null ? 1 : -1;
+    case 'free-response': case 'free':
+      return typeof a === 'string' ? 1 : -1;
+    case 'speaking':
+      return typeof a === 'string' || !!(a && typeof a === 'object' && a.noMic) ? 1 : -1;
+    case 'cloze': case 'fill-blanks':
+      if (!isObj) return typeof a === 'string' ? 1 : -1;
+      return allOf('string') && lenOk((inner.answers || []).length) ? 1 : -1;
+    case 'matching':
+      if (!isObj) return -1;
+      return lenOk((_llFbArr(inner.left) || []).length) && arr.every(v => v === null || v === undefined || typeof v === 'number' || typeof v === 'string') ? 1 : -1;
+    case 'reorder':
+      return isObj && allOf('string') && lenOk((_llFbArr(inner.sentences) || []).length) ? 1 : -1;
+    case 'drag-drop':
+      return isObj && allOf('string') && lenOk((_llFbArr(inner.answers) || []).length) ? 1 : -1;
+    case 'categorization':
+      return isObj && allOf('number') && lenOk((_llFbArr(inner.items) || []).length) ? 1 : -1;
   }
-  // Prova anche tramite entry.aliasOf
-  if (!ver && entry.aliasOf) {
-    const aliasKey = _safify(entry.aliasOf);
-    ver = studentVersions[aliasKey];
-    if (!ver) {
-      const k = Object.keys(studentVersions).find(k => k.toLowerCase() === aliasKey.toLowerCase());
-      if (k) ver = studentVersions[k];
+  return 0;
+}
+function _saAnswersFit(qs, ans) {
+  const out = { good: 0, bad: 0, earned: 0 };
+  ans.forEach((a, i) => {
+    if (a === null || a === undefined || a === '') return;
+    const q = qs[i];
+    if (!q) { out.bad++; return; }        // risposta oltre l'ultima domanda
+    const f = _saAnswerFit(q, a);
+    if (f > 0) out.good++; else if (f < 0) out.bad++;
+    if (f > 0) {
+      try {
+        const r = _llEvaluate(q, a);
+        const e = !r || !r.scorable ? 0 : typeof r.earnedPoints === 'number' ? r.earnedPoints : r.correct ? (r.points || 0) : 0;
+        out.earned += e / (q.points || 1);
+      } catch(e) {}
     }
-  }
-
-  if (!ver || ver === 'originale') return baseQuestions;
-  const verQs = versions[ver];
-  return (Array.isArray(verQs) && verQs.length) ? verQs : baseQuestions;
+  });
+  return out;
+}
+// Indice dell'opzione scelta (come _mcIndexOf di LiveLearn): accetta numeri,
+// "1", la lettera "B" o il testo dell'opzione.
+function _saMcIndexOf(q, v) {
+  if (typeof v === 'number') return Number.isInteger(v) ? v : null;
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (/^\d+$/.test(s)) return Number(s);
+  const opts = Array.isArray(q && q.options) ? q.options : (_llFbArr(q && q.options) || []);
+  const f = opts.findIndex(o => _llNormCloze(o) === _llNormCloze(s));
+  if (f >= 0) return f;
+  if (/^[A-Ja-j]$/.test(s) && s.toUpperCase().charCodeAt(0) - 65 < opts.length) return s.toUpperCase().charCodeAt(0) - 65;
+  return null;
+}
+function _saEvalMC(q, a, pts) {
+  const ci = _saMcIndexOf(q, q && q.correct), ai = _saMcIndexOf(q, a);
+  return { scorable: true, correct: ai != null && ai === ci, points: pts };
 }
 
 // Converte oggetto Firebase {"0":"a","1":"b"} → array ["a","b"]
@@ -4869,7 +4956,7 @@ function _llEvaluate(q, a) {
   if (_qIsPoll(q)) return { scorable: false, correct: false, points: 0, poll: true };
   const pts = q.points || 1;
   const t = q.type;
-  if (t === 'multiple-choice') return { scorable: true, correct: a === q.correct, points: pts };
+  if (t === 'multiple-choice') return _saEvalMC(q, a, pts);
   if (t === 'cloze' || t === 'fill-blanks') return _llEvalCloze(q.answers || [], a, pts);
   if (t === 'drag-drop')      return _llEvalDragDrop(q.answers || [], a, pts, q.sentences, q.unordered);
   if (t === 'reorder')        return _llEvalReorder(q.sentences || [], a, pts);
@@ -4891,7 +4978,7 @@ function _llEvaluate(q, a) {
       else if (Array.isArray(inner.left) && inner.left.length > 0) sub = 'matching';
       else sub = 'free-response';
     }
-    if (sub === 'multiple-choice') return { scorable: true, correct: a === inner.correct, points: pts };
+    if (sub === 'multiple-choice') return _saEvalMC(inner, a, pts);
     if (sub === 'cloze' || sub === 'fill-blanks') return _llEvalCloze(inner.answers || [], a, pts);
     if (sub === 'drag-drop')      return _llEvalDragDrop(inner.answers || [], a, pts, inner.sentences, inner.unordered);
     if (sub === 'reorder')        return _llEvalReorder(inner.sentences || [], a, pts);
@@ -5316,7 +5403,7 @@ function _prevAttempts(entry, baseQuestions, versions, studentVersions) {
     };
     let questions = [];
     if (e.answers.length) {
-      try { questions = _resolveStudentQuestions(S.studentName, { studentVersion: ver, aliasOf: entry.aliasOf }, baseQuestions, versions || {}, studentVersions || {}) || []; } catch(_) {}
+      try { questions = _resolveStudentQuestions(S.studentName, { studentVersion: ver, aliasOf: entry.aliasOf, answers: e.answers }, baseQuestions, versions || {}, studentVersions || {}) || []; } catch(_) {}
     }
     let score = t.score != null ? Number(t.score) : null, maxPts = t.maxScore != null ? Number(t.maxScore) : null;
     if (questions.length) {
