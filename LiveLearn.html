@@ -1245,6 +1245,7 @@ const CONFIG = {
       <span id="ll-model-badge-live" style="display:inline-flex;align-items:center;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:#f0fdf4;color:#065f46;border:1.5px solid #86efac;cursor:pointer;" onclick="openApiKeyModal()" title="Modello AI attivo — clicca per cambiare">🤖 —</span>
       <button class="btn btn-sm" onclick="openApiKeyModal()" title="Cambia chiave API Gemini">🔑 API Key</button>
       <button class="btn btn-sm" id="btn-relay-toggle" onclick="toggleTeacherRelay()" title="Relay AI Locale: quando attivo, le richieste AI degli STUDENTI vengono inoltrate via Firebase al tuo Ollama locale. Non influenza le tue generazioni di versioni (sempre dirette)." style="transition:all 0.2s;">🤖 AI Locale</button>
+      <button class="btn btn-sm" id="btn-spk-ai" onclick="openSpeakingAI()" style="display:none;" title="Correggi con l'AI (locale, Gemini o Claude) le risposte Speaking: tutte le domande o solo quelle che scegli">🎤🤖 Speaking con AI</button>
       <button class="btn btn-sm" id="btn-sess-excl" onclick="editSessionExclusions()" style="display:none;" title="Togli una o più domande dalla valutazione di tutti gli alunni di questa sessione">🚫 Escludi domande</button>
       <button class="btn btn-danger btn-sm" id="btn-close-session" onclick="closeSession()" style="display:none;">Chiudi sessione</button>
       <button class="btn btn-sm" id="btn-convert-to-exercise" onclick="convertSessionToExercise(S.liveCode)" style="display:none;" title="Converte questa sessione in Esercitazione: gli studenti la vedranno nella tab Esercitazioni, l'agente non genererà una valutazione formale">🎮 Converti in Esercitazione</button>
@@ -1629,6 +1630,16 @@ const CONFIG = {
       <button class="btn btn-ghost btn-sm" onclick="closePollResults()">✕</button>
     </div>
     <div id="poll-results-body"></div>
+  </div>
+</div>
+
+<div id="modal-spk-ai" class="modal-overlay hidden" onclick="if(event.target===this)closeSpeakingAI()">
+  <div class="modal-box" style="max-width:580px;max-height:90vh;overflow:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <h3 style="font-size:16px;font-weight:700;margin:0;">🎤🤖 Correzione Speaking con l'AI</h3>
+      <button class="btn btn-ghost btn-sm" onclick="closeSpeakingAI()">✕</button>
+    </div>
+    <div id="spk-ai-body"></div>
   </div>
 </div>
 
@@ -10979,7 +10990,7 @@ function renderStudentResultsTeacher(name, response) {
   const excludedRST = response.excludedQuestions || {};
   const canExcludeRST = !!submitted && !response.aiScoringPending;
   // (le domande delle altre coppie del torneo non si mostrano: hide)
-  const cardsHtml = questions.map((q, i) => (excludedRST[i] && excludedRST[i].hide) ? '' : renderAnswerCard(q, i, answers[i], questionTimes[i], manualScoresRST[i], aiScoresRST[i], aiFeedbacksRST[i], qMaxOverridesRST[i] != null ? Number(qMaxOverridesRST[i]) : null, { excluded: !!excludedRST[i], excludedNote: (excludedRST[i] && excludedRST[i].nota) || '', canExclude: canExcludeRST })).join('');
+  const cardsHtml = questions.map((q, i) => (excludedRST[i] && excludedRST[i].hide) ? '' : renderAnswerCard(q, i, answers[i], questionTimes[i], manualScoresRST[i], aiScoresRST[i], aiFeedbacksRST[i], qMaxOverridesRST[i] != null ? Number(qMaxOverridesRST[i]) : null, { excluded: !!excludedRST[i], excludedNote: (excludedRST[i] && excludedRST[i].nota) || '', canExclude: canExcludeRST, canAI: canExcludeRST, aiSpk: (response.aiSpk || {})[i] })).join('');
 
   // Recovery panel
   const recStatus = response.status || '';
@@ -11437,6 +11448,21 @@ function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedbac
     ? '<button id="ai-score-btn-' + i + '" class="btn btn-sm" style="font-size:11px;padding:3px 10px;background:#ede9ff;color:#6c47ff;border-color:#c4b5fd;font-weight:800;" onclick="teacherAIScoreQuestion(' + i + ', ' + qPointsEff + ')" title="Valuta questa risposta con AI">🤖 AI</button>'
     : '';
 
+  // Speaking: il docente può far correggere questa risposta all'AI (dopo la consegna)
+  const _spkAns = q.type === 'speaking' && typeof answer === 'string' && answer.trim();
+  const spkAIBtn = (_spkAns && opts && opts.canAI && manualScore == null)
+    ? '<button id="spk-ai-btn-' + i + '" class="btn btn-sm" style="font-size:11px;padding:3px 10px;background:#ede9ff;color:#6c47ff;border-color:#c4b5fd;font-weight:800;" onclick="openSpeakingAI(' + i + ')" title="Correggi questa risposta Speaking con l\'AI (locale, Gemini o Claude): conta la comunicazione, non le parole sentite male dal microfono">🤖 ' + (aiScore != null ? 'Ricorreggi' : 'AI') + '</button>'
+    : '';
+  const spkInfo = opts && opts.aiSpk;
+  const spkAITag = (_spkAns && spkInfo && aiScore != null)
+    ? '<div style="flex-basis:100%;font-size:11px;color:#4c1d95;background:#f5f3ff;border-radius:6px;padding:4px 8px;">👂 L\'AI ha capito: <em>“' + esc(String(spkInfo.inteso || '').substring(0, 200)) + '”</em>' +
+      (spkInfo.fascia ? ' · fascia ' + esc(spkInfo.fascia) : '') + (spkInfo.prov ? ' · ' + esc(_spkAIProvLabel(spkInfo.prov).split(' (')[0]) : '') + '</div>'
+    : '';
+  if (_spkAns && aiScore != null && manualScore == null) {
+    const _sp = qPointsEff > 0 ? Math.round(Number(aiScore) / qPointsEff * currentMax * 100) / 100 : Number(aiScore);
+    scoreTag = '<span style="font-size:11px;font-weight:800;color:#6c47ff;background:#ede9ff;padding:2px 8px;border-radius:10px;">🤖 ' + _sp + '/' + currentMax + ' pt</span>';
+  }
+
   const excludeBtn = canExclude
     ? '<button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 10px;" onclick="toggleExcludeQuestion(' + i + ')" title="Togli questo esercizio dalla valutazione dell\'alunno (non conta né nel punteggio né nel massimo)">🚫 Escludi</button>'
     : '';
@@ -11454,10 +11480,10 @@ function renderAnswerCard(q, i, answer, timeSec, manualScore, aiScore, aiFeedbac
         '</div>' +
       '</div>'
     : '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
-      aiTag + feedbackTag +
+      aiTag + feedbackTag + spkAITag +
       '<div style="display:flex;align-items:center;gap:5px;margin-left:auto;flex-wrap:wrap;">' +
         excludeBtn +
-        aiQBtn +
+        aiQBtn + spkAIBtn +
         '<span style="font-size:11px;color:var(--muted);">Punteggio:</span>' +
         '<input type="number" id="score-override-' + i + '" min="0" max="' + currentMax + '" step="0.5" value="' + effectivePts + '" data-raw-orig="' + rawOrig + '" style="width:52px;padding:2px 5px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-weight:700;">' +
         '<span style="font-size:11px;color:var(--muted);">/</span>' +
@@ -18089,7 +18115,7 @@ function _pvRenderMain() {
         fb = a.aiFeedbacks || {}, qmo = a.questionMaxOverrides || {}, exc = a.excludedQuestions || {};
   const cards = a.answers
     ? qs.map((q, i) => q ? renderAnswerCard(q, i, ans[i], times[i], ms[i], ai[i], fb[i], qmo[i] != null ? Number(qmo[i]) : null,
-        { excluded: !!exc[i], excludedNote: (exc[i] && exc[i].nota) || '', canExclude: true }) : '').join('')
+        { excluded: !!exc[i], excludedNote: (exc[i] && exc[i].nota) || '', canExclude: true, canAI: true, aiSpk: (a.aiSpk || {})[i] }) : '').join('')
     : '<div class="empty-state"><p>Di questo tentativo c\'è solo il punteggio.</p></div>';
   const answered = ans.filter(x => x != null && x !== '').length;
   main.innerHTML =
@@ -19401,6 +19427,358 @@ function _aiAllBtnUpdate() {
   const has = (S.liveActivity?.questions || []).some(q => q.type === 'free-response' ||
     (q.type === 'listening' && (q.subtype || q.question?.type) === 'free-response'));
   b.style.display = has ? 'inline-block' : 'none';
+  _spkAIBtnUpdate();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SPEAKING — correzione con l'AI (solo docente)
+// Di norma lo Speaking si corregge da solo con gli obiettivi (_spkEval).
+// Il docente può far correggere con l'AI tutte le domande Speaking della
+// sessione o solo quelle che sceglie (anche una sola), con l'AI locale
+// (Ollama), Gemini o Claude. L'AI legge la consegna e sa che il testo è una
+// trascrizione automatica del microfono: le parole sentite male non sono
+// errori dell'alunno, conta la comunicazione. Il risultato va in aiScores /
+// aiFeedbacks (come le risposte libere) e in aiSpk/{i} = { inteso, fascia,
+// prov, at }; il punteggio messo a mano dal docente non si tocca mai.
+// L'alunno non chiama mai l'AI per lo Speaking.
+// ═══════════════════════════════════════════════════════════════
+const _SPK_AI_BANDS = {
+  A: { pct: 1.00, desc: 'consegna svolta del tutto, messaggio chiaro; al massimo qualche piccola svista' },
+  B: { pct: 0.85, desc: 'consegna svolta e messaggio chiaro, ma con alcuni errori di lingua dell\'alunno che NON impediscono di capire' },
+  C: { pct: 0.70, desc: 'il messaggio si capisce, ma manca una parte della consegna (o è molto più breve del richiesto) OPPURE gli errori sono tanti e bisogna sforzarsi per capire' },
+  D: { pct: 0.50, desc: 'consegna svolta a metà, oppure il messaggio si capisce solo in parte' },
+  E: { pct: 0.30, desc: 'tentativo pertinente ma molto incompleto o poco comprensibile: solo qualche parola o frase giusta' },
+  F: { pct: 0.10, desc: 'quasi tutto fuori tema o incomprensibile, ma c\'è un tentativo in inglese legato alla consegna' },
+  Z: { pct: 0.00, desc: 'vuota, solo in italiano o del tutto fuori tema' }
+};
+// Punti della fascia, al mezzo punto (come il campo punteggio del docente)
+function _spkAIBandPts(band, maxPts) { return Math.round(_SPK_AI_BANDS[band].pct * maxPts * 2) / 2; }
+const _SPK_AI_PROVS = ['local', 'gemini', 'claude'];
+function _spkAIProv() {
+  let p = null;
+  try { p = localStorage.getItem('spk_ai_provider'); } catch(e) {}
+  if (_SPK_AI_PROVS.includes(p)) return p;
+  return _AI_PROVIDER === 'gemini' ? 'gemini' : String(_AI_PROVIDER).startsWith('claude') ? 'claude' : 'local';
+}
+function _spkAILocalModel() {
+  return _AI_PROVIDER === 'llama' ? _OLLAMA_LLAMA_MODEL : _AI_PROVIDER === 'qwen' ? _OLLAMA_QWEN_MODEL : _OLLAMA_GEMMA_MODEL;
+}
+function _spkAIClaudeModel() { return localStorage.getItem('anthropic_score_model') || 'claude-haiku-4-5-20251001'; }
+function _spkAIProvLabel(p) {
+  return p === 'gemini' ? '☁️ Gemini (' + (_GEMINI_MODEL || 'gemini-2.5-flash') + ')'
+    : p === 'claude' ? '🟤 Claude (' + _spkAIClaudeModel() + ')'
+    : '🖥️ AI locale (' + _spkAILocalModel() + ')';
+}
+
+function _buildSpeakingPrompt(q, transcript) {
+  const maxPts = _qPts(q) || 1;
+  const targets = _spkArr(q.targets).map(t => {
+    const alts = String(Array.isArray(t.say) ? t.say.join('|') : (t.say || '')).split('|').map(x => x.trim()).filter(Boolean);
+    const lbl = String(t.label || alts[0] || '').trim();
+    return '- ' + lbl + (alts.length && alts.join(' / ') !== lbl ? ' (es. ' + alts.join(' / ') + ')' : '') +
+      ((Number(t.min) || 1) > 1 ? ' — almeno ' + Number(t.min) + ' volte' : '');
+  }).join('\n');
+  const bands = Object.entries(_SPK_AI_BANDS)
+    .map(([k, b]) => `${k} (${_spkAIBandPts(k, maxPts)}/${maxPts} punti): ${b.desc}`).join('\n');
+  const consegna = String(q.text || '').replace(/\*\*/g, '');
+  return `Sei un insegnante di inglese di scuola media italiana (livello A1-A2). Valuti un esercizio di SPEAKING: l'alunno ha parlato al microfono e il computer o lo smartphone ha trascritto quello che ha sentito con il riconoscimento vocale automatico (inglese).
+
+Consegna: "${consegna}"
+${q.hint ? 'Indicazioni del docente: "' + q.hint + '"\n' : ''}${q.model ? 'Frase d\'esempio del docente (una risposta possibile, non l\'unica): "' + q.model + '"\n' : ''}${targets ? 'Cosa il docente si aspetta di sentire (strutture e parole):\n' + targets + '\n' : ''}${q.free ? 'È un parlato libero: l\'alunno parla quanto vuole.\n' : ''}${Number(q.minWords) > 0 ? 'Lunghezza richiesta: almeno ' + Number(q.minWords) + ' parole.\n' : ''}Punti massimi: ${maxPts}
+
+Trascrizione automatica di quello che ha detto l'alunno: "${transcript}"
+
+ATTENZIONE — è una trascrizione automatica del parlato, non un testo scritto dall'alunno:
+- Il riconoscimento vocale sbaglia spesso: parole dal suono simile (can/can't, he's/his, there/their, to/too/two, wear/where, for/four, a/the), desinenze -s/-ed perse o aggiunte, parole spezzate o unite, nomi propri storpiati, parole capite male per l'accento italiano.
+- Se una parola sembra strana ma una parola dal suono simile ha senso nella consegna, considera che l'alunno abbia detto quella giusta. Nel dubbio, interpreta a favore dell'alunno.
+- Punteggiatura, maiuscole e ortografia non esistono: non valutarle mai. Non valutare la pronuncia: non la puoi sentire.
+- Esitazioni, ripetizioni e autocorrezioni ("I go... I went") sono normali quando si parla: non sono errori.
+
+COME VALUTARE — conta la COMUNICAZIONE:
+1. Ricostruisci cosa l'alunno ha voluto dire.
+2. Ha fatto quello che chiede la consegna? Il messaggio si capisce? Questo decide la fascia.
+3. Solo dopo guarda la lingua: conta solo gli errori che sono sicuramente dell'alunno (non spiegabili con un errore del riconoscimento vocale). Gli errori che non impediscono di capire tolgono poco: da soli portano al massimo alla fascia B. Uno stesso errore ripetuto conta una volta sola.
+4. Le strutture attese e la frase d'esempio sono un riferimento: va bene anche un'altra forma corretta che fa quello che chiede la consegna. Una struttura richiesta usata con un piccolo errore conta come usata.
+5. Una parte della consegna che manca fa scendere di una fascia, non azzera il punteggio.
+Se le indicazioni del docente dicono qualcosa di diverso, seguono quelle.
+
+FASCE (scegli quella che descrive meglio la risposta; i punti li calcola il sistema):
+${bands}
+
+Rispondi SOLO con JSON valido (niente markdown, niente spiegazioni):
+{"inteso": "<la frase che l'alunno ha detto con ogni probabilità, corretta SOLO dove il riconoscimento vocale ha sbagliato, non dove ha sbagliato l'alunno>", "fascia": "<A|B|C|D|E|F|Z>", "feedback": "<2-3 frasi in italiano rivolte all'alunno: prima cosa ha comunicato bene, poi al massimo 1-2 consigli sulla lingua con la forma corretta. Non citare parole che possono essere state sentite male dal microfono, né punteggiatura o ortografia.>"}`;
+}
+function _parseSpeakingResult(text, q) {
+  const maxPts = _qPts(q) || 1;
+  const m = String(text || '').replace(/```json|```/g, '').match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let p;
+  try { p = JSON.parse(m[0]); } catch(e) { return null; }
+  const band = String(p.fascia || p.band || '').trim().toUpperCase().charAt(0);
+  if (!_SPK_AI_BANDS[band]) return null;
+  return {
+    score: _spkAIBandPts(band, maxPts),
+    fascia: band,
+    feedback: String(p.feedback || '').trim().slice(0, 1000),
+    inteso: String(p.inteso || '').trim().slice(0, 1000)
+  };
+}
+
+// Una chiamata all'AI scelta per lo Speaking. Gemini passa da _nativeFetch:
+// il fetch normale la girerebbe all'AI locale se nelle impostazioni c'è Ollama.
+async function _spkAICall(prompt, prov) {
+  if (prov === 'claude') {
+    const key = localStorage.getItem('anthropic_api_key');
+    if (!key) throw new Error('Chiave Anthropic mancante: inseriscila in 🔑 API Key (provider Claude).');
+    const res = await _nativeFetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: _spkAIClaudeModel(), max_tokens: 1000, messages: [{ role: 'user', content: prompt }] })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = data?.error?.message || ('HTTP ' + res.status);
+      if (res.status === 401) throw new Error('Chiave Anthropic non valida (401).');
+      if (res.status === 429 || /credit|quota/i.test(msg)) throw new Error('Claude: credito o limite esaurito (429).');
+      throw new Error('Claude: ' + msg.slice(0, 120));
+    }
+    return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  }
+  if (prov === 'gemini') {
+    const key = localStorage.getItem('gemini_api_key');
+    if (!key) throw new Error('Chiave Gemini mancante: inseriscila in 🔑 API Key.');
+    const res = await _nativeFetch(_geminiUrl(key), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.2 } })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      const msg = data?.error?.message || ('HTTP ' + res.status);
+      if (res.status === 429 || /quota|exhausted/i.test(msg)) throw new Error('Quota Gemini esaurita (429): riprova tra qualche minuto.');
+      throw new Error('Gemini: ' + msg.slice(0, 120));
+    }
+    return data.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+  }
+  // AI locale (Ollama sul PC del docente)
+  const model = _spkAILocalModel();
+  let res;
+  try {
+    res = await ollamaXhr(_OLLAMA_URL + '/api/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, prompt, stream: false, format: 'json', options: { temperature: 0.2, num_ctx: 8192 } })
+    });
+  } catch(e) { throw new Error('AI locale non raggiungibile su ' + _OLLAMA_URL + ': è acceso Ollama?'); }
+  if (!res.ok) throw new Error('AI locale (' + model + '): ' + String(await res.text()).slice(0, 120));
+  return (await res.json()).response || '';
+}
+async function _scoreSpeakingAI(q, transcript, prov) {
+  const prompt = _buildSpeakingPrompt(q, transcript);
+  let r = _parseSpeakingResult(await _spkAICall(prompt, prov), q);
+  // L'AI locale a volte risponde fuori formato: un secondo tentativo
+  if (!r && prov === 'local') r = _parseSpeakingResult(await _spkAICall(prompt + '\n\nRispondi SOLO con l\'oggetto JSON richiesto.', prov), q);
+  if (!r) throw new Error('Risposta dell\'AI non leggibile');
+  return r;
+}
+
+// Risposte Speaking di un alunno da correggere: registrate al microfono,
+// senza punteggio del docente; con redo anche quelle già corrette dall'AI.
+function _spkAITodo(resp, questions, idxs, redo) {
+  const ans = fbArr(resp.answers || []), ms = resp.manualScores || {}, as = resp.aiScores || {};
+  return idxs.filter(i => {
+    const q = questions[i], a = ans[i];
+    return q && q.type === 'speaking' && typeof a === 'string' && a.trim() && ms[i] == null && (redo || as[i] == null);
+  });
+}
+function _spkAIConsegnato(r) {
+  return !!r && !r.removed && !r.aiScoringPending && (!!r.submittedAt || r.status === 'submitted' || r.status === 'recovery_done');
+}
+// Corregge le domande idxs di un alunno e salva. setTotal: ricalcola anche il
+// punteggio della consegna (non nei piani personalizzati, che lo calcolano da sé).
+async function _spkAIScoreResp(ref, resp, questions, idxs, prov, redo, setTotal) {
+  const todo = _spkAITodo(resp, questions, idxs, redo);
+  if (!todo.length) return { n: 0, todo: 0, err: null };
+  const ans = fbArr(resp.answers || []), upd = {};
+  let n = 0, err = null;
+  const one = async i => {
+    try {
+      const r = await _scoreSpeakingAI(questions[i], String(ans[i]).trim(), prov);
+      upd['aiScores/' + i] = r.score;
+      upd['aiFeedbacks/' + i] = r.feedback;
+      upd['aiSpk/' + i] = { inteso: r.inteso, fascia: r.fascia, prov, at: Date.now() };
+      n++;
+    } catch(e) { err = e; console.warn('[Speaking AI] domanda ' + (i + 1) + ':', e.message); }
+  };
+  // Ollama lavora una richiesta alla volta; le AI in cloud in parallelo
+  if (prov === 'local') { for (const i of todo) { await one(i); if (err && /raggiungibile/.test(err.message)) break; } }
+  else await Promise.all(todo.map(one));
+  if (n) {
+    await ref.update(upd);
+    if (setTotal) {
+      const fresh = (await ref.get()).val() || {};
+      await ref.child('score').set(_llEffectiveScore(questions, fresh).score);
+    }
+  }
+  return { n, todo: todo.length, err };
+}
+
+// ── Pulsante e finestra "🎤🤖 Speaking con AI" ──
+function _spkAISessionIdx() {
+  return (S.liveActivity?.questions || []).map((q, i) => q && q.type === 'speaking' ? i : -1).filter(i => i >= 0);
+}
+function _spkAIBtnUpdate() {
+  const b = document.getElementById('btn-spk-ai');
+  if (b) b.style.display = _spkAISessionIdx().length && !S.liveTournament ? 'inline-flex' : 'none';
+}
+function _spkAISelKey() { return 'spk_ai_sel_' + (S.liveCode || ''); }
+function _spkAISel(all) {
+  try {
+    const v = JSON.parse(localStorage.getItem(_spkAISelKey()) || 'null');
+    if (Array.isArray(v)) return v.filter(i => all.includes(i));
+  } catch(e) {}
+  return all.slice();
+}
+// mode: { single: qi } dal pulsante 🤖 AI di una risposta, altrimenti tutta la sessione
+let _spkAIMode = null;
+async function openSpeakingAI(single) {
+  _spkAIMode = single != null ? { single } : {};
+  document.getElementById('modal-spk-ai').classList.remove('hidden');
+  const body = document.getElementById('spk-ai-body');
+  body.innerHTML = '<p class="text-muted">⏳ …</p>';
+  const prov = _spkAIProv();
+  const keyOk = { local: true, gemini: !!localStorage.getItem('gemini_api_key'), claude: !!localStorage.getItem('anthropic_api_key') };
+  const provHtml = _SPK_AI_PROVS.map(p =>
+    '<label style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1.5px solid var(--border);border-radius:10px;cursor:pointer;margin-bottom:6px;">' +
+      '<input type="radio" name="spk-ai-prov" value="' + p + '"' + (p === prov ? ' checked' : '') + ' style="margin-top:3px;">' +
+      '<span><b>' + esc(_spkAIProvLabel(p)) + '</b>' +
+      (p === 'local' ? '<br><span style="font-size:11px;color:var(--muted);">Ollama sul tuo PC (' + esc(_OLLAMA_URL) + '): gratis, più lenta, una risposta alla volta.</span>'
+        : keyOk[p] ? '<br><span style="font-size:11px;color:#16a37f;">✓ chiave impostata</span>'
+        : '<br><span style="font-size:11px;color:#ef4444;">chiave non impostata: aggiungila in 🔑 API Key</span>') +
+      '</span></label>').join('');
+  const nota = '<div style="font-size:12px;color:#475569;background:#f8fafc;border-radius:8px;padding:8px 10px;margin-top:10px;line-height:1.5;">' +
+    'L\'AI legge la consegna, gli obiettivi e la frase d\'esempio, e sa che il testo è quello <b>sentito dal microfono</b>: le parole capite male dal PC o dallo smartphone non contano come errori, conta la <b>comunicazione</b>. ' +
+    'Il punteggio messo a mano da te non viene mai cambiato; le risposte date senza microfono restano fuori dal punteggio.</div>';
+  if (_spkAIMode.single != null) {
+    body.innerHTML = '<div style="font-weight:700;font-size:13px;margin-bottom:8px;">Chi corregge la domanda ' + (_spkAIMode.single + 1) + '</div>' + provHtml + nota +
+      '<div id="spk-ai-progress" style="font-size:13px;margin-top:10px;"></div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">' +
+        '<button class="btn btn-ghost btn-sm" onclick="closeSpeakingAI()">Annulla</button>' +
+        '<button class="btn btn-primary btn-sm" id="spk-ai-run" onclick="spkAIRun()">🤖 Correggi questa risposta</button></div>';
+    return;
+  }
+  const qs = S.liveActivity?.questions || [], all = _spkAISessionIdx(), sel = _spkAISel(all);
+  // Quante risposte ci sono da correggere per ogni domanda (alunni che hanno consegnato)
+  const cnt = {}, done = {};
+  try {
+    const resps = (await db.ref('livelearn/responses/' + S.liveCode).get()).val() || {};
+    Object.entries(resps).forEach(([k, r]) => {
+      if (!_spkAIConsegnato(r)) return;
+      const sq = getStudentAssignedQuestions(k, r.name || k, r.aliasOf, r.studentVersion, null, r.answers);
+      _spkAITodo(r, sq, all, true).forEach(i => {
+        cnt[i] = (cnt[i] || 0) + 1;
+        if ((r.aiScores || {})[i] != null) done[i] = (done[i] || 0) + 1;
+      });
+    });
+  } catch(e) { console.warn('[Speaking AI] conteggio:', e.message); }
+  const qHtml = all.map(i => {
+    const txt = String(qs[i].text || '').replace(/\*\*/g, '');
+    const c = cnt[i] || 0, d = done[i] || 0;
+    return '<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 4px;cursor:pointer;border-bottom:1px dashed var(--border);">' +
+      '<input type="checkbox" class="spk-ai-q" value="' + i + '"' + (sel.includes(i) ? ' checked' : '') + ' onchange="_spkAISaveSel()" style="margin-top:3px;width:16px;height:16px;">' +
+      '<span style="font-size:13px;"><b>' + (i + 1) + '.</b> ' + esc(txt.slice(0, 110)) + (txt.length > 110 ? '…' : '') +
+      '<br><span style="font-size:11px;color:var(--muted);">' + c + (c === 1 ? ' risposta' : ' risposte') + ' al microfono' + (d ? ' · ' + d + ' già corrett' + (d === 1 ? 'a' : 'e') + ' dall\'AI' : '') + '</span></span></label>';
+  }).join('');
+  body.innerHTML =
+    '<div style="font-weight:700;font-size:13px;margin-bottom:8px;">Chi corregge</div>' + provHtml +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 4px;">' +
+      '<span style="font-weight:700;font-size:13px;">Quali domande Speaking</span>' +
+      '<span style="display:flex;gap:6px;"><button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;" onclick="_spkAISelAll(true)">Tutte</button>' +
+      '<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;" onclick="_spkAISelAll(false)">Nessuna</button></span></div>' +
+    '<div style="max-height:34vh;overflow:auto;">' + qHtml + '</div>' +
+    '<label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;cursor:pointer;">' +
+      '<input type="checkbox" id="spk-ai-redo"> Correggi di nuovo anche le risposte già corrette dall\'AI</label>' +
+    nota +
+    '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Si correggono gli alunni che hanno consegnato; chi consegna dopo lo correggi rilanciando questa finestra.</div>' +
+    '<div id="spk-ai-progress" style="font-size:13px;margin-top:10px;"></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">' +
+      '<button class="btn btn-ghost btn-sm" onclick="closeSpeakingAI()">Chiudi</button>' +
+      '<button class="btn btn-primary btn-sm" id="spk-ai-run" onclick="spkAIRun()">🤖 Correggi con l\'AI</button></div>';
+}
+function closeSpeakingAI() { document.getElementById('modal-spk-ai').classList.add('hidden'); }
+function _spkAIChecked() { return [...document.querySelectorAll('#spk-ai-body .spk-ai-q:checked')].map(x => Number(x.value)); }
+function _spkAISaveSel() { try { localStorage.setItem(_spkAISelKey(), JSON.stringify(_spkAIChecked())); } catch(e) {} }
+function _spkAISelAll(on) { document.querySelectorAll('#spk-ai-body .spk-ai-q').forEach(x => { x.checked = on; }); _spkAISaveSel(); }
+
+async function spkAIRun() {
+  const provEl = document.querySelector('input[name="spk-ai-prov"]:checked');
+  const prov = provEl ? provEl.value : _spkAIProv();
+  try { localStorage.setItem('spk_ai_provider', prov); } catch(e) {}
+  const out = document.getElementById('spk-ai-progress'), btn = document.getElementById('spk-ai-run');
+  const say = (h, c) => { if (out) { out.innerHTML = h; out.style.color = c || ''; } };
+  if (prov === 'gemini' && !localStorage.getItem('gemini_api_key')) return say('⚠️ Manca la chiave Gemini: aggiungila in 🔑 API Key.', '#b91c1c');
+  if (prov === 'claude' && !localStorage.getItem('anthropic_api_key')) return say('⚠️ Manca la chiave Anthropic: aggiungila in 🔑 API Key.', '#b91c1c');
+  if (btn) btn.disabled = true;
+  try {
+    if (_spkAIMode && _spkAIMode.single != null) {
+      await _spkAIRunSingle(_spkAIMode.single, prov, say);
+      return;
+    }
+    const idxs = _spkAIChecked();
+    if (!idxs.length) { say('Scegli almeno una domanda.', '#b91c1c'); return; }
+    const redo = !!document.getElementById('spk-ai-redo')?.checked;
+    const resps = (await db.ref('livelearn/responses/' + S.liveCode).get()).val() || {};
+    const keys = Object.keys(resps).filter(k => _spkAIConsegnato(resps[k]));
+    let n = 0, alunni = 0;
+    const errori = [];
+    for (const [j, k] of keys.entries()) {
+      const r = resps[k], name = r.name || k;
+      say('⏳ ' + esc(_spkAIProvLabel(prov)) + ' · alunno ' + (j + 1) + '/' + keys.length + ': ' + esc(name) + '…');
+      const sq = getStudentAssignedQuestions(k, name, r.aliasOf, r.studentVersion, null, r.answers);
+      let res;
+      try { res = await _spkAIScoreResp(db.ref('livelearn/responses/' + S.liveCode + '/' + k), r, sq, idxs, prov, redo, true); }
+      catch(e) { res = { n: 0, todo: 1, err: e }; }
+      if (res.n) {
+        n += res.n; alunni++;
+        if (S.selectedStudent === k) {
+          const fresh = (await db.ref('livelearn/responses/' + S.liveCode + '/' + k).get()).val() || {};
+          renderStudentResultsTeacher(fresh.name || k, fresh);
+        }
+      }
+      if (res.err) {
+        errori.push(name + ': ' + res.err.message);
+        // Chiave sbagliata, credito finito o AI spenta: inutile continuare con gli altri
+        if (/401|429|chiave|credito|quota|raggiungibile/i.test(res.err.message)) break;
+      }
+    }
+    say((n ? '✅ ' + n + (n === 1 ? ' risposta corretta' : ' risposte corrette') + ' (' + alunni + (alunni === 1 ? ' alunno' : ' alunni') + ').'
+           : 'Nessuna risposta da correggere' + (redo ? '.' : ': forse sono già tutte corrette dall\'AI (spunta «Correggi di nuovo»).')) +
+      (errori.length ? '<div style="color:#b91c1c;margin-top:6px;">Non riuscite:<br>' + errori.slice(0, 6).map(esc).join('<br>') + '</div>' : ''),
+      n ? '#166534' : '');
+  } catch(e) {
+    say('❌ ' + esc(e.message), '#b91c1c');
+  } finally { if (btn) btn.disabled = false; }
+}
+async function _spkAIRunSingle(qi, prov, say) {
+  say('⏳ ' + esc(_spkAIProvLabel(prov)) + '…');
+  if (_pvOn()) {
+    const c = _pvCur();
+    if (!c || !c.a) return;
+    const r = await _spkAIScoreResp(_pvAttRef(), c.a, c.qs, [qi], prov, true, false);
+    if (!r.n) throw r.err || new Error('Niente da correggere: la risposta non è stata registrata al microfono o ha un punteggio messo da te.');
+    await pvReloadPlan();
+    closeSpeakingAI();
+    return;
+  }
+  const k = S.selectedStudent;
+  if (!k || !S.liveCode) return;
+  const ref = db.ref('livelearn/responses/' + S.liveCode + '/' + k);
+  const resp = (await ref.get()).val() || {};
+  if (!_spkAIConsegnato(resp)) { say('Si può correggere con l\'AI dopo la consegna dell\'alunno.', '#b91c1c'); return; }
+  const qs = getStudentAssignedQuestions(k, resp.name || k, resp.aliasOf, resp.studentVersion, null, resp.answers);
+  const r = await _spkAIScoreResp(ref, resp, qs, [qi], prov, true, true);
+  if (!r.n) throw r.err || new Error('Niente da correggere: la risposta non è stata registrata al microfono o ha un punteggio messo da te.');
+  const fresh = (await ref.get()).val() || {};
+  renderStudentResultsTeacher(fresh.name || k, fresh);
+  closeSpeakingAI();
 }
 
 
