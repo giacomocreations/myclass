@@ -1811,7 +1811,8 @@ const CONFIG = {
   <div class="preview-modal-box">
     <div class="preview-modal-header">
       <h3>👁 Preview studente — <span id="preview-title-label">Domanda 1/1</span></h3>
-      <div class="flex gap-8">
+      <div class="flex gap-8" style="align-items:center;flex-wrap:wrap;">
+        <select id="preview-ver-select" onchange="previewSetVersion(this.value)" title="Quale prova vedere" style="font-size:12px;font-weight:700;padding:4px 8px;border-radius:8px;border:1.5px solid var(--primary-light);color:var(--primary);background:#fff;max-width:260px;"></select>
         <span class="badge badge-blue" style="font-size:10px;">ANTEPRIMA</span>
         <button class="btn btn-ghost btn-sm" onclick="closePreview()">✕ Chiudi</button>
       </div>
@@ -5580,17 +5581,30 @@ async function quickAudioSelected(i, event) {
 // ── Preview (teacher sees student view) ───────────────────
 let _previewIndex = 0;
 let _previewQsList = null; // null = FILA A (S.questions)
-
-function _getActivePreviewQs() {
-  // Se c'è un tab di versione attivo con domande, usa quelle; altrimenti FILA A
-  if (S.currentVersionTab) {
-    try {
-      const vqs = getVersionQs();
-      if (vqs && vqs.length > 0) return vqs;
-    } catch(e) {}
-  }
+// Prova scelta per Preview e Simula: '' = FILA A. Prima si prendeva la scheda
+// attiva del pannello versioni, che è sempre FILA B (non c'è una scheda FILA A):
+// con una FILA B salvata la preview partiva sempre dalla FILA B.
+let _previewVer = '';
+const _PREVIEW_VER_LBL = { fila_b:'🔀 FILA B', fila_c:'🔀 FILA C', pei:'📘 PEI', pei_2:'📘 PEI 2', dsa:'🔤 DSA', recupero:'🔁 Recupero/Training', training_dsa:'🔤 Training DSA', training_pei:'📘 Training PEI', recupero_1:'⚡ Recupero Fast 1', recupero_2:'⚡ Recupero Fast 2' };
+function _ptsTot(qs) { return Math.round((qs || []).reduce((t, q) => t + _qPts(q), 0) * 100) / 100; }
+function _ptsLbl(qs) { const n = (qs || []).length; return n + ' dom. · ' + _ptsTot(qs) + ' pt'; }
+// Le prove con domande: FILA A + le versioni compilate, ognuna con domande e punti
+function _previewVersionOptions() {
+  const out = [{ v: '', label: '🅰️ FILA A', qs: S.questions || [] }];
+  Object.keys(_PREVIEW_VER_LBL).forEach(v => {
+    const qs = S[_VER_STATE_KEY[v]];
+    if (Array.isArray(qs) && qs.length) out.push({ v, label: _PREVIEW_VER_LBL[v], qs });
+  });
+  return out;
+}
+function _previewVersionSelectHtml(sel) {
+  return _previewVersionOptions().map(o => '<option value="' + o.v + '"' + (o.v === sel ? ' selected' : '') + '>' + o.label + ' — ' + _ptsLbl(o.qs) + '</option>').join('');
+}
+function _previewQsFor(v) {
+  if (v) { const qs = S[_VER_STATE_KEY[v]]; if (Array.isArray(qs) && qs.length) return qs; }
   return S.questions;
 }
+function _getActivePreviewQs() { return _previewQsFor(_previewVer); }
 
 // ══ SIMULAZIONE: il docente svolge l'attività come un alunno ════════════════
 // Stesso svolgimento dell'alunno (feedback, punteggio, consegna, correzione
@@ -5611,8 +5625,10 @@ function _simFakeRef() {
 }
 const _SIM_DB = { ref: () => _simFakeRef() };
 function simulaAttivita() {
-  const qs = (typeof _getActivePreviewQs === 'function' ? _getActivePreviewQs() : S.questions) || [];
+  _previewVer = '';   // si parte sempre dalla FILA A
+  const qs = _getActivePreviewQs() || [];
   if (!qs.length) { alert('Nessuna domanda da simulare.'); return; }
+  const _opts = _previewVersionOptions();
   document.getElementById('sim-choose')?.remove();
   const ov = document.createElement('div');
   ov.id = 'sim-choose';
@@ -5620,7 +5636,11 @@ function simulaAttivita() {
   const b = 'display:block;width:100%;text-align:left;padding:12px 14px;border-radius:10px;border:1.5px solid #c4b5fd;background:#fff;cursor:pointer;margin-bottom:8px;font-family:inherit;';
   ov.innerHTML = `<div style="background:#fff;border-radius:14px;padding:18px;max-width:440px;width:100%;">
     <div style="font-size:16px;font-weight:800;color:#4c1d95;margin-bottom:4px;">🧪 Simula come alunno</div>
-    <div style="font-size:12px;color:#6b7280;margin-bottom:12px;">${qs.length} domande. Non viene salvato niente: nessun alunno risulterà averla svolta.</div>
+    ${_opts.length > 1
+      ? `<label style="display:block;font-size:12px;font-weight:700;color:#4c1d95;margin-bottom:4px;">Prova da svolgere</label>
+         <select id="sim-ver-select" style="width:100%;padding:8px 10px;border-radius:9px;border:1.5px solid #c4b5fd;font-size:13px;font-weight:700;color:#4c1d95;margin-bottom:8px;font-family:inherit;">${_previewVersionSelectHtml('')}</select>`
+      : `<div style="font-size:13px;font-weight:700;color:#4c1d95;margin-bottom:4px;">🅰️ FILA A — ${_ptsLbl(qs)}</div>`}
+    <div style="font-size:12px;color:#6b7280;margin-bottom:12px;">Non viene salvato niente: nessun alunno risulterà averla svolta.</div>
     <button style="${b}" onclick="_simAvvia('practice')"><b>🎮 Esercitazione</b><br><span style="font-size:12px;color:#6b7280;">Feedback subito dopo ogni risposta (come gli alunni nei piani e nelle esercitazioni)</span></button>
     <button style="${b}" onclick="_simAvvia('test')"><b>📝 Test</b><br><span style="font-size:12px;color:#6b7280;">Rispondi a tutto, poi consegna e vedi punteggio e correzione</span></button>
     <div style="text-align:right;"><button class="btn btn-ghost btn-sm" onclick="document.getElementById('sim-choose').remove()">Annulla</button></div>
@@ -5628,8 +5648,11 @@ function simulaAttivita() {
   document.body.appendChild(ov);
 }
 function _simAvvia(mode) {
+  const _verSel = document.getElementById('sim-ver-select');
+  _previewVer = _verSel ? _verSel.value : '';
   document.getElementById('sim-choose')?.remove();
-  const qs = JSON.parse(JSON.stringify((typeof _getActivePreviewQs === 'function' ? _getActivePreviewQs() : S.questions) || []));
+  const qs = JSON.parse(JSON.stringify(_getActivePreviewQs() || []));
+  const _simVer = _previewVer || 'originale';
   const titolo = (document.getElementById('activity-title')?.value || S.activity?.title || 'Attività').trim();
   const passage = document.getElementById('activity-passage')?.value || '';
   // Stato del docente da rimettere a posto all'uscita
@@ -5638,7 +5661,7 @@ function _simAvvia(mode) {
   db = _SIM_DB;
   Object.assign(S, {
     simulazione: true, removed: false, submitted: false,
-    sessionCode: 'SIMULAZIONE', studentName: 'Simulazione docente', safeName: 'simulazione_docente',
+    sessionCode: 'SIMULAZIONE', studentName: 'Simulazione docente', safeName: 'simulazione_docente', studentVersion: _simVer,
     sessionMode: mode, sessionRepeatable: false, sessionTournament: false, _planCode: null, _retryLocal: true,
     activity: { title: titolo, questions: qs, ...(passage ? { passageText: passage } : {}) },
     qOrigMap: qs.map((_, i) => i), qIndex: 0, studentScore: 0,
@@ -5657,7 +5680,8 @@ function _simBanner() {
   const d = document.createElement('div');
   d.id = 'sim-banner';
   d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#f59e0b;color:#1f2937;font-weight:800;font-size:14px;padding:8px 14px;display:flex;align-items:center;justify-content:center;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,.2);';
-  d.innerHTML = '🧪 SIMULAZIONE — non viene salvato niente, nessun alunno risulta averla svolta <button onclick="simulaEsci()" style="background:#1f2937;color:#fff;border:none;border-radius:8px;padding:5px 12px;font-weight:800;cursor:pointer;font-family:inherit;">✕ Esci dalla simulazione</button>';
+  const _prova = (_previewVer ? (_PREVIEW_VER_LBL[_previewVer] || _previewVer) : '🅰️ FILA A') + ' · ' + _ptsLbl(S.activity && S.activity.questions);
+  d.innerHTML = '🧪 SIMULAZIONE — ' + _prova + ' — non viene salvato niente <button onclick="simulaEsci()" style="background:#1f2937;color:#fff;border:none;border-radius:8px;padding:5px 12px;font-weight:800;cursor:pointer;font-family:inherit;">✕ Esci dalla simulazione</button>';
   document.body.appendChild(d);
 }
 function simulaEsci() {
@@ -5674,7 +5698,10 @@ function simulaEsci() {
 }
 
 function openPreview() {
+  _previewVer = '';   // si parte sempre dalla FILA A; le altre prove dal menu in alto
   _previewQsList = _getActivePreviewQs();
+  const _vs = document.getElementById('preview-ver-select');
+  if (_vs) { _vs.innerHTML = _previewVersionSelectHtml(_previewVer); _vs.style.display = _vs.options.length > 1 ? '' : 'none'; }
   if (!_previewQsList.length) return alert('Nessuna domanda da visualizzare in anteprima.');
   _previewIndex = 0;
   document.getElementById('modal-preview').classList.remove('hidden');
@@ -5685,8 +5712,20 @@ function closePreview() {
   document.getElementById('modal-preview').classList.add('hidden');
 }
 
+function previewSetVersion(v) {
+  _previewVer = v || '';
+  _previewQsList = _getActivePreviewQs();
+  _previewIndex = Math.min(_previewIndex, _previewQsList.length - 1);
+  if (_previewIndex < 0) _previewIndex = 0;
+  renderPreviewQuestion();
+}
+
 function previewSingleQ(i) {
   if (!S.questions.length || i < 0 || i >= S.questions.length) return;
+  _previewVer = '';
+  _previewQsList = S.questions;
+  const _vs = document.getElementById('preview-ver-select');
+  if (_vs) { _vs.innerHTML = _previewVersionSelectHtml(''); _vs.style.display = _vs.options.length > 1 ? '' : 'none'; }
   _previewIndex = i;
   document.getElementById('modal-preview').classList.remove('hidden');
   renderPreviewQuestion();
@@ -5699,8 +5738,7 @@ function renderPreviewQuestion() {
   const q = qs[i];
 
   // Etichetta versione nel titolo del modal
-  const versionLabels = { fila_b:'FILA B', fila_c:'FILA C', pei:'📘 PEI', pei_2:'📘 PEI 2', dsa:'🔤 DSA', recupero:'Recupero', recupero_1:'Recupero Fast 1', recupero_2:'Recupero Fast 2', training_dsa:'🔤 Training DSA', training_pei:'📘 Training PEI' };
-  const vLabel = (qs !== S.questions && S.currentVersionTab) ? ' — ' + (versionLabels[S.currentVersionTab] || S.currentVersionTab.toUpperCase()) : '';
+  const vLabel = ' — ' + (_previewVer ? (_PREVIEW_VER_LBL[_previewVer] || _previewVer.toUpperCase()) : '🅰️ FILA A') + ' (' + _ptsTot(qs) + ' pt)';
   document.getElementById('preview-title-label').textContent = 'Domanda ' + (i+1) + '/' + total + vLabel;
   document.getElementById('preview-nav-label').textContent = (i+1) + ' di ' + total;
   document.getElementById('preview-progress-fill').style.width = ((i+1)/total*100) + '%';
@@ -5728,7 +5766,7 @@ function renderPreviewQuestion() {
   // Apply DSA/PEI class if needed
   const card = document.querySelector('#preview-question-area .question-card');
   if (card && q.dsaLargeText) card.classList.add('vl1-mode');
-  if (card && _isPeiTab(S.currentVersionTab)) {
+  if (card && _isPeiTab(_previewVer)) {
     card.classList.remove('vl1-mode');
     card.classList.add('vl2-mode');
   }
@@ -7421,6 +7459,13 @@ async function openLive(code, activityId, roster, silent) {
   if (S._liveWatchdog) { clearInterval(S._liveWatchdog); }
   S._liveWatchdog = setInterval(() => {
     if (!S.liveCode || !db) return;
+    // Solo con la sessione aperta sullo schermo. Prima restava acceso anche dopo
+    // essere tornati alla dashboard: in 🧪 Simula come alunno (database finto,
+    // vuoto) «vedeva» dati cambiati e riapriva la sessione di prima, con le
+    // risposte di un alunno, dopo un paio di domande.
+    if (S.simulazione) return;
+    const _vw = document.querySelector('.view.active')?.id;
+    if (_vw !== 'view-teacher-live' && _vw !== 'view-code-screen') return;
     if (S._reloadInProgress) return; // già in corso riconnessione
     db.ref('livelearn/responses/' + S.liveCode).get().then(snap => {
       const data = snap.val() || {};
@@ -7488,7 +7533,7 @@ async function teacherNextQ() {
     _solClose();
     await db.ref('livelearn/control/'+S.liveCode+'/currentQ').set(999);
     await _closeSessionAndWipeKeys(S.liveCode);
-    if(S.liveListener){S.liveListener();S.liveListener=null;} loadDashboard(); showView('teacher-dashboard'); return;
+    if(S.liveListener){S.liveListener();S.liveListener=null;} if(S._liveWatchdog){clearInterval(S._liveWatchdog);S._liveWatchdog=null;} loadDashboard(); showView('teacher-dashboard'); return;
   }
   S.teacherCurrentQ++; S._qStartAt = Date.now(); await db.ref('livelearn/control/'+S.liveCode+'/currentQ').set(S.teacherCurrentQ); updateTeacherControlBar();
   // Torneo: domande mostrate, per non contare quelle mai arrivate (_tourFixSession)
@@ -11773,6 +11818,7 @@ function goBackFromLive() {
   // La sessione resta aperta per gli alunni: si chiude solo la pagina Soluzioni
   _solClose();
   if (S.liveListener) { S.liveListener(); S.liveListener = null; }
+  if (S._liveWatchdog) { clearInterval(S._liveWatchdog); S._liveWatchdog = null; }
   if (S.liveWatchdog) { clearInterval(S.liveWatchdog); S.liveWatchdog = null; }
   loadDashboard();
   showView('teacher-dashboard');
@@ -21796,7 +21842,7 @@ function renderVersionPreview(qs, tab) {
   const icons = {'multiple-choice':'📋','cloze':'✏️','matching':'🔗','free-response':'💬','listening':'🎧','fill-blanks':'📝','drag-drop':'🎯','reorder':'🔀','categorization':'🗂️','speaking':'🎤'};
   const label = tab.toUpperCase();
   let h = '<div class="alert alert-success" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
-    '<span>✅ <strong>' + qs.length + ' domande</strong> nella versione ' + label + '</span>' +
+    '<span>✅ <strong>' + qs.length + ' domande · ' + _ptsTot(qs) + ' pt</strong> nella versione ' + label + ' <span style="font-weight:400;color:var(--muted);">(FILA A: ' + _ptsTot(S.questions) + ' pt)</span></span>' +
     '<span style="display:flex;gap:6px;flex-wrap:wrap;">' +
     '<button class="btn btn-sm" onclick="addVersionQ()" title="Aggiungi domanda vuota">+ Domanda</button>' +
     '<button class="btn btn-sm" onclick="addVersionQAI()" title="Genera 1 domanda in più con AI (senza cancellare le esistenti)" style="background:#6c47ff;color:#fff;border-color:#6c47ff;">🤖 +1 AI</button>' +
@@ -22693,6 +22739,10 @@ function updateVersionTabBadges() {
     const key = m ? m[1] : 'recupero';
     const qs = S[_VER_STATE_KEY[key] || 'versionRecupero'];
     t.classList.toggle('has-data', !!(qs && qs.length > 0));
+    // Punti della prova accanto al nome
+    let pt = t.querySelector('.vt-pts');
+    if (!pt) { pt = document.createElement('span'); pt.className = 'vt-pts'; pt.style.cssText = 'font-size:10px;font-weight:700;opacity:.8;margin-left:5px;'; t.appendChild(pt); }
+    pt.textContent = qs && qs.length ? '· ' + _ptsTot(qs) + ' pt' : '';
   });
 }
 
