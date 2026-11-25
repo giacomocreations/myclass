@@ -35551,7 +35551,15 @@ ${blocchiPerAlunno}`;
     // Elabora elementi della coda scegliendo il generatore CLASSE PER CLASSE
     // (es. 2E con Claude Code, 3C con Haiku 5.5, 1A saltata per ora).
     async function _ppRunQueue(items) {
-        if (!items.length) { alert('Nessuna attività selezionata.'); return; }
+        _ppSyncAttesaUnico();
+        const inAttesa = items.filter(i => i.ppStatus === 'attesa');
+        items = items.filter(i => i.ppStatus !== 'attesa' && _ppDeferredQueue.includes(i));
+        if (!items.length) {
+            alert(inAttesa.length
+                ? `Niente da generare per ora: ${inAttesa.length === 1 ? 'la voce selezionata aspetta' : 'le voci selezionate aspettano'} l'altra verifica in calendario (piano unico scritto + orale).\n\n` + inAttesa.map(i => `⏸️ ${i.studentName} (${i.unit}): ${i.ppReason}`).join('\n')
+                : 'Nessuna attività selezionata.');
+            return;
+        }
         if (_ppDeferredRunning) { alert('Elaborazione già in corso — attendi.'); return; }
         const groups = [..._ppGroupByClass(items)].map(([classe, list]) => ({ classe, n: list.length }));
         const scelte = await _ppChooseGeneratorByClass(`Generare ${items.length} piani personalizzati`, groups);
@@ -35622,10 +35630,49 @@ ${blocchiPerAlunno}`;
         if (_ppDeferredQueue.length !== before) _ppSavDeferred();
     }
 
+    // ── Piano unico (in calendario sia la verifica scritta sia l'interrogazione) ──
+    // Il piano si fa UNA volta, alla fine, quando ci sono tutti e due i voti. Prima
+    // la voce resta in coda «⏸️ in attesa» e non conta tra i piani da fare (prima
+    // compariva come da fare e veniva saltata solo premendo Elabora).
+    // Restituisce il motivo dell'attesa, '' se non c'è niente da aspettare.
+    function _ppAttesaUnico(stu, classeNome, unit) {
+        if (!stu) return '';
+        const prev = _ppPlannedTests(classeNome, unit);
+        if (!prev.scritto || !prev.orale) return '';
+        if (!_ppLatestGrade(stu, 'scritto', unit)) return 'Piano unico scritto + orale: aspetta il voto della verifica scritta (è in calendario)';
+        if (!_ppLatestGrade(stu, 'orale', unit)) return 'Piano unico scritto + orale: aspetta il voto dell\'interrogazione (è in calendario)';
+        return '';
+    }
+    function _ppSyncAttesaUnico() {
+        let cambiato = false;
+        for (const i of _ppDeferredQueue) {
+            if (['processing', 'exported', 'done'].includes(i.ppStatus)) continue;
+            const motivo = _ppAttesaUnico(_ppFindStudent(i.classeNome, i.studentSafe), i.classeNome, i.unit);
+            if (motivo) {
+                if (i.ppStatus !== 'attesa' || i.ppReason !== motivo) { i.ppStatus = 'attesa'; i.ppReason = motivo; cambiato = true; }
+            } else if (i.ppStatus === 'attesa' || (i.ppStatus === 'skipped' && /^Piano unico scritto \+ orale: aspetta/.test(i.ppReason || ''))) {
+                // Arrivato l'altro voto (o tolta dal calendario la verifica): torna da fare
+                delete i.ppStatus; delete i.ppReason; cambiato = true;
+            }
+        }
+        // Un piano unico = una voce sola: se per lo stesso alunno e la stessa unit c'è anche
+        // la voce dello scritto (porta gli errori della verifica), quella dell'orale esce.
+        const before = _ppDeferredQueue.length;
+        _ppDeferredQueue = _ppDeferredQueue.filter(o => {
+            if (o.tipo !== 'orale' || (o.ppStatus && o.ppStatus !== 'attesa')) return true;
+            const p = _ppPlannedTests(o.classeNome, o.unit);
+            if (!p.scritto || !p.orale) return true;
+            return !_ppDeferredQueue.some(s => s.tipo === 'scritto' && s.studentSafe === o.studentSafe && _ppUnitEq(s.unit, o.unit)
+                && (!s.ppStatus || ['processing', 'exported'].includes(s.ppStatus)));
+        });
+        if (cambiato || _ppDeferredQueue.length !== before) _ppSavDeferred();
+    }
+
     // Pulizia automatica: le voci già trasformate in bozza escono dalla coda
     // quando quella bozza non è più in attesa (approvata o scartata), e quelle
     // esportate per Claude escono se il piano risulta già inviato.
     function _ppPruneDeferred() {
+        _ppSyncAttesaUnico();
         const key = (s, u) => `${s}|${u}`;
         const inAttesa = new Set([
             ..._ppDraftScritto.map(d => key(d.studentSafe, d.unit)),
@@ -35650,7 +35697,7 @@ ${blocchiPerAlunno}`;
     // Rimuove dalla coda gli item già elaborati (done/skipped/error)
     function _ppClearProcessed(vista) {
         const before = _ppDeferredQueue.length;
-        _ppDeferredQueue = _ppDeferredQueue.filter(i => !_ppInVista(i, vista) || !i.ppStatus || i.ppStatus === 'processing' || i.ppStatus === 'pending');
+        _ppDeferredQueue = _ppDeferredQueue.filter(i => !_ppInVista(i, vista) || !i.ppStatus || i.ppStatus === 'processing' || i.ppStatus === 'pending' || i.ppStatus === 'attesa');
         _ppSavDeferred();
         const removed = before - _ppDeferredQueue.length;
         if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
@@ -37982,10 +38029,13 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
             } else {
                 _ppDeferredQueue.push(newEntry);
             }
+            // Piano unico scritto + orale: la voce aspetta l'altro voto (non è da fare)
+            _ppSyncAttesaUnico();
             _ppSavDeferred();
-            console.log(`[Piano] ⏸️ Trigger ${tipo} per ${studentName} (${unitEff}, voto ${voto}) → in coda (${_ppDeferredQueue.length} totali). Usa "Elabora selezionati" per generare.`);
+            if (newEntry.ppStatus === 'attesa') console.log(`[Piano] ⏸️ Trigger ${tipo} per ${studentName} (${unitEff}, voto ${voto}) → in coda IN ATTESA: ${newEntry.ppReason}`);
+            else console.log(`[Piano] ⏸️ Trigger ${tipo} per ${studentName} (${unitEff}, voto ${voto}) → in coda (${_ppDeferredQueue.length} totali). Usa "Elabora selezionati" per generare.`);
             if (typeof renderPianoPersPanel === 'function') renderPianoPersPanel();
-            return;
+            return newEntry.ppStatus === 'attesa' ? { outcome: 'waiting', reason: newEntry.ppReason } : undefined;
         }
 
         // ── Che cosa è previsto in calendario per questa unit ──
@@ -38161,7 +38211,8 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
         console.log(`[Piano] ▶️ Elaborazione coda differita: ${_ppDeferredQueue.length} attività`);
         try {
             // Lavora su una copia; rimuovi gli elementi man mano che vengono processati
-            const pending = [..._ppDeferredQueue];
+            _ppSyncAttesaUnico();
+            const pending = _ppDeferredQueue.filter(i => i.ppStatus !== 'attesa');
             for (const item of pending) {
                 // Salta gli item deselezionati dal docente (rispetta la scelta persistente)
                 if (_ppDeferredExcluded.has(_ppDefKey(item))) {
@@ -39089,8 +39140,14 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
         if (!item) { alert('❌ Nessun voto trovato per questa unit: non è stato messo in coda.'); return; }
         delete item.ppStatus; delete item.ppReason;
         _ppDeferredExcluded.delete(_ppDefKey(item));
+        _ppSyncAttesaUnico();
         _ppSavDeferred();
         ov.remove();
+        if (item.ppStatus === 'attesa' || !_ppDeferredQueue.includes(item)) {
+            ppSwitchTab(0);
+            alert(`⏸️ ${stu.cognome} ${stu.nome} (${unit}) è in coda, ma per ora non c'è niente da generare:\n${item.ppStatus === 'attesa' ? item.ppReason : 'il piano unico scritto + orale parte dalla voce dello scritto, già in coda'}.`);
+            return;
+        }
         ppSwitchTab(0);
         alert(`✅ ${stu.cognome} ${stu.nome} (${unit}) è in coda.\n\nNel riquadro della coda premi "⚡ Elabora selezionati" (puoi lasciare spuntato solo lui) e scegli il generatore.`);
     }
@@ -41141,11 +41198,12 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
             let deferredBanner = '';
             _ppPruneDeferred();
             if (_qItems.length) {
-                const nAttesa = _qItems.filter(i => !['done', 'skipped', 'error'].includes(i.ppStatus)).length;
-                const nElab = _qItems.length - nAttesa;
+                const nAttesa = _qItems.filter(i => !['done', 'skipped', 'error', 'attesa'].includes(i.ppStatus)).length;
+                const nAspetta = _qItems.filter(i => i.ppStatus === 'attesa').length;
+                const nElab = _qItems.length - nAttesa - nAspetta;
                 const hasVer = _ppHasVerificaNelleProssimeOre(1);
                 const tipoLabel = { scritto:'Scritto', orale:'Orale', approfondimento:'Approfondimento' };
-                const selectedCount = _qItems.filter(i => !_ppDeferredExcluded.has(_ppDefKey(i))).length;
+                const selectedCount = _qItems.filter(i => i.ppStatus !== 'attesa' && !_ppDeferredExcluded.has(_ppDefKey(i))).length;
                 const allSelected  = _qItems.every(i => !_ppDeferredExcluded.has(_ppDefKey(i)));
                 const defRows = _qv.map(({ item, idx }) => {
                     const key      = _ppDefKey(item);
@@ -41162,10 +41220,11 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     let stBadge = '';
                     if (st === 'processing') stBadge = `<span title="In elaborazione…" style="background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;">⏳</span>`;
                     else if (st === 'exported') stBadge = `<span title="Esportato per Claude Code: importa il file di Claude per creare la bozza" style="background:#f3e8ff;color:#7e22ce;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;">🟣 in attesa di Claude</span>`;
+                    else if (st === 'attesa') stBadge = `<span title="${(item.ppReason||'').replace(/"/g,'&quot;')}" style="background:#e0f2fe;color:#075985;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;cursor:help;">⏸️ ${/scritta/.test(item.ppReason||'') ? 'aspetta lo scritto' : 'aspetta l\'orale'}</span>`;
                     else if (st === 'done')  stBadge = `<span title="Generato con successo" style="background:#dcfce7;color:#14532d;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;">✅</span>`;
                     else if (st === 'skipped') stBadge = `<span title="${(item.ppReason||'Saltato').replace(/"/g,'&quot;')}" style="background:#f3f4f6;color:#6b7280;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;cursor:help;">⏭️</span><span style="font-size:11px;color:#92400e;font-weight:600;display:block;max-width:260px;white-space:normal;line-height:1.3;margin-top:2px;">${(item.ppReason||'').replace(/</g,'&lt;')}</span>`;
                     else if (st === 'error')   stBadge = `<span title="${(item.ppReason||'Errore').replace(/"/g,'&quot;')}" style="background:#fee2e2;color:#991b1b;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700;cursor:help;">❌</span><span style="font-size:11px;color:#991b1b;font-weight:600;display:block;max-width:260px;white-space:normal;line-height:1.3;margin-top:2px;">${(item.ppReason||'').replace(/</g,'&lt;')}</span>`;
-                    const isProcessed = st === 'done' || st === 'skipped' || st === 'error';
+                    const isProcessed = st === 'done' || st === 'skipped' || st === 'error' || st === 'attesa';
                     return `<tr style="border-bottom:0.5px solid #fed7aa;${isProcessed?'opacity:.65;':!checked?'opacity:.55;':''}">
                       <td style="padding:6px 4px;text-align:center;">
                         ${isProcessed ? '' : `<input type="checkbox" ${checked?'checked':''} onchange="_ppDeferredToggle('${safeKey}',this.checked)" style="cursor:pointer;width:14px;height:14px;">`}
@@ -41187,7 +41246,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 }).join('');
                 deferredBanner = `<div style="background:#fff7ed;border:1.5px solid #fdba74;border-radius:10px;padding:10px 12px;margin-bottom:10px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
-                      <span style="font-size:13px;font-weight:700;color:#9a3412;">📋 Coda approvazione — ${nAttesa} attività in attesa${nElab ? ` <span style="font-weight:400;color:#b45309;">· ${nElab} già elaborate (🧹 Pulisci elaborati)</span>` : ''}</span>
+                      <span style="font-size:13px;font-weight:700;color:#9a3412;">📋 Coda approvazione — ${nAttesa} attività in attesa${nAspetta ? ` <span style="font-weight:400;color:#075985;" title="Piano unico: in calendario ci sono sia la verifica scritta sia l'interrogazione, il piano si fa quando ci sono tutti e due i voti">· ⏸️ ${nAspetta} ${nAspetta === 1 ? 'aspetta' : 'aspettano'} l'altra verifica (piano unico, non da fare ora)</span>` : ''}${nElab ? ` <span style="font-weight:400;color:#b45309;">· ${nElab} già elaborate (🧹 Pulisci elaborati)</span>` : ''}</span>
                       <span style="font-size:11px;color:#b45309;">${hasVer ? '⚠️ Verifiche programmate — attenzione prima di elaborare' : '✅ Nessuna verifica programmata — pronte per la generazione'}</span>
                     </div>
                     <div style="overflow-x:auto;margin-bottom:8px;">
@@ -41211,7 +41270,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
                       <button id="ppDefElabBtn" onclick="_ppProcessSelected('${vista}')" style="font-size:11px;padding:5px 14px;border-radius:8px;border:1.5px solid #ea580c;background:#ea580c;color:#fff;cursor:pointer;font-weight:700;">⚡ Elabora selezionati (${selectedCount})</button>
                       <button onclick="_ppProcessDeferred(true,'${vista}')" style="font-size:11px;padding:5px 14px;border-radius:8px;border:1.5px solid #f97316;background:#fff;color:#ea580c;cursor:pointer;font-weight:600;">▶ Elabora tutti</button>
-                      ${_qItems.some(i => i.ppStatus && i.ppStatus !== 'processing') ? `<button onclick="_ppClearProcessed('${vista}')" style="font-size:11px;padding:5px 12px;border-radius:8px;border:1.5px solid #6366f1;background:#eef2ff;color:#3730a3;cursor:pointer;font-weight:600;">🧹 Pulisci elaborati</button>` : ''}
+                      ${_qItems.some(i => i.ppStatus && i.ppStatus !== 'processing' && i.ppStatus !== 'attesa') ? `<button onclick="_ppClearProcessed('${vista}')" style="font-size:11px;padding:5px 12px;border-radius:8px;border:1.5px solid #6366f1;background:#eef2ff;color:#3730a3;cursor:pointer;font-weight:600;">🧹 Pulisci elaborati</button>` : ''}
                       <button onclick="_ppClearDeferred('${vista}')" style="font-size:11px;padding:5px 12px;border-radius:8px;border:1px solid #d1d5db;background:#fff;color:#666;cursor:pointer;">🗑 Svuota coda</button>
                     </div>
                 </div>`;
