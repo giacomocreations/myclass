@@ -21016,6 +21016,18 @@ async function openCodesManager() {
       .filter(([,s]) => s.classId === classId)
       .map(([code, s]) => ({ code, name: s.name, lastLogin: s.lastLogin }))
       .sort((a,b) => a.name.localeCompare(b.name));
+    // Alunni del roster che non hanno ancora un codice (es. aggiunto in MyClass
+    // e reimportato): vanno mostrati, altrimenti nel pannello non compaiono
+    // finche' non si genera il codice e non si capisce che mancano.
+    const conCodice = new Set(codsForClass.map(s => s.name));
+    const senzaCodice = roster
+      .map((name, idx) => ({ name, idx }))
+      .filter(s => s.name && !conCodice.has(s.name))
+      .sort((a,b) => a.name.localeCompare(b.name));
+    const righe = [
+      ...codsForClass.map(s => ({ ...s, hasCode: true })),
+      ...senzaCodice.map(s => ({ ...s, hasCode: false }))
+    ].sort((a,b) => a.name.localeCompare(b.name));
 
     html += `<div style="margin-bottom:18px;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
@@ -21026,19 +21038,51 @@ async function openCodesManager() {
         <button class="btn btn-sm" onclick="copyCodes('${esc(classId)}')" style="font-size:11px;padding:3px 8px;background:#e8fdf5;color:#047857;border-color:#047857;">📋 Copia lista / targhette</button>
       </div>
       <div style="max-height:200px;overflow-y:auto;border:1px solid #f0f0f0;border-radius:8px;padding:6px 10px;">
-        ${codsForClass.length ? codsForClass.map(s =>
-          `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:0.5px solid #f5f5f5;">
+        ${righe.length ? righe.map(s => !s.hasCode
+          ? `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:0.5px solid #f5f5f5;background:#fffbeb;">
+            <div style="flex:1;font-weight:500;font-size:13px;">${esc(s.name)}</div>
+            <span style="font-size:11px;color:#b45309;font-style:italic;">nessun codice</span>
+            <button class="btn btn-sm" onclick="generateCodeForStudent('${esc(classId)}',${s.idx})" style="font-size:11px;padding:1px 7px;background:#6c47ff;color:#fff;border-color:#6c47ff;" title="Genera il codice solo per questo alunno">⚡ Genera</button>
+          </div>`
+          : `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:0.5px solid #f5f5f5;">
             <div style="flex:1;font-weight:500;font-size:13px;">${esc(s.name)}</div>
             <code style="background:#f5f0ff;color:#6c47ff;padding:2px 8px;border-radius:6px;letter-spacing:1px;font-size:12px;">${s.code}</code>
             <div style="width:8px;height:8px;border-radius:50%;background:${s.lastLogin?'#34a853':'#ddd'}" title="${s.lastLogin?'Attivato':'Non ancora usato'}"></div>
             <button class="btn btn-sm btn-ghost" onclick="regenerateSingleCode('${esc(classId)}','${s.code}')" style="font-size:11px;padding:1px 7px;" title="Rigenera solo il codice di questo alunno (i suoi dati passano al nuovo codice)">🔄</button>
           </div>`).join('')
-        : '<div style="color:#aaa;font-size:11px;padding:4px 0;">Nessun codice generato. Clicca ⚡ Genera tutti.</div>'}
+        : '<div style="color:#aaa;font-size:11px;padding:4px 0;">Nessun alunno nel roster.</div>'}
       </div>
     </div>`;
   });
 
   panel.innerHTML = html;
+}
+
+// Genera il codice di UN alunno del roster che ancora non ce l'ha
+// (riga gialla "nessun codice" in Gestisci codici). idx = posizione nel roster,
+// cosi' i nomi con apostrofi non passano dentro l'onclick.
+async function generateCodeForStudent(classId, idx) {
+  if (!db) { alert('Firebase non configurato.'); return; }
+  let classes = {};
+  try { const s = await db.ref('livelearn/classes').get(); if (s.val()) classes = s.val(); } catch(e) {}
+  if (!classes[classId]) {
+    const local = localStorage.getItem('livelearn_classes');
+    if (local) { const all = JSON.parse(local); if (all[classId]) classes[classId] = all[classId]; }
+  }
+  const cl = classes[classId];
+  const name = cl && (cl.studenti || [])[idx];
+  if (!name) { alert('Alunno non trovato: riapri Gestisci codici.'); openCodesManager(); return; }
+  let existing = {};
+  try { const s = await db.ref('livelearn/students').get(); if (s.val()) existing = s.val(); } catch(e) {}
+  if (Object.values(existing).some(s => s && s.classId === classId && s.name === name)) {
+    alert(name + ' ha già un codice.'); openCodesManager(); return;
+  }
+  let code;
+  do { code = _genCode(); } while (existing[code]);
+  try {
+    await db.ref('livelearn/students/' + code).set({ name, classId, className: cl.nome, createdAt: Date.now() });
+  } catch(e) { alert('Scrittura fallita: ' + e.message); return; }
+  openCodesManager();
 }
 
 async function generateCodes(classId) {
