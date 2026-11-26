@@ -9491,6 +9491,7 @@ function renderLiveSidebar(responses) {
 }
 
 async function selectStudent(key) {
+  if (S._attView && (S._attView.key !== key || S._attView.code !== S.liveCode)) S._attView = null;
   S.selectedStudent = key;
   window._llInlineVer = null; // reset selezione versione pendente (cambio studente)
   window._llInlineMode = null;
@@ -10145,6 +10146,7 @@ function _llEffectiveScore(qs, r) {
 // restano in excludedQuestions/{i} e vengono ripristinati al reinserimento.
 async function toggleExcludeQuestion(qi) {
   if (_pvOn()) return _pvToggleExclude(qi);
+  if (_attOn()) return _attToggleExclude(qi);
   const studentKey = S.selectedStudent;
   if (!db || !studentKey || !S.liveCode) return;
   const ref = db.ref('livelearn/responses/' + S.liveCode + '/' + studentKey);
@@ -10297,6 +10299,7 @@ function _sessExclCheck(code, responses) {
 // MyClass quando genera la valutazione e il feedback per StudentApp
 async function saveExcludeNote(qi) {
   if (_pvOn()) return _pvSaveExclNote(qi);
+  if (_attOn()) return _attSaveExclNote(qi);
   const studentKey = S.selectedStudent;
   if (!db || !studentKey || !S.liveCode) return;
   const el = document.getElementById('excl-note-' + qi);
@@ -10858,6 +10861,13 @@ function renderStudentResultsTeacher(name, response) {
       '</div>';
     return;
   }
+  // Tentativo precedente scelto dal docente (✏️ Correggi): la scheda mostra quello
+  const _rootResp = response;
+  if (_attOn()) {
+    const _v = _llAttemptAsResp(response, S._attView.i);
+    if (_v) response = _v; else S._attView = null;
+  }
+  const isAttView = response !== _rootResp;
   const answers = fbArr(response.answers);
   const displayName = String(response.name || name);
   // Usa le domande della versione effettivamente somministrata allo studente
@@ -10952,7 +10962,7 @@ function renderStudentResultsTeacher(name, response) {
   const aiScoresRST = Object.assign({}, response.aiScores || {});
   const aiFeedbacksRST = Object.assign({}, response.aiFeedbacks || {});
   const fixUpdates = {};
-  const canFixRST = submitted && S.liveCode && S.selectedStudent === studentKey;
+  const canFixRST = submitted && S.liveCode && S.selectedStudent === studentKey && !isAttView;
   // Versione svolta salvata nel record (alla consegna andava persa): così
   // PDF, cronologia e MyClass usano le domande giuste anche in futuro
   // (anche 'originale': un record senza versione per MyClass vuol dire "guarda la sessione")
@@ -10990,7 +11000,7 @@ function renderStudentResultsTeacher(name, response) {
   // se la correzione era sbagliata (es. versione PEI con risposte giuste in
   // formato testo) MyClass leggerebbe un voto sbagliato. Si riallinea a quello
   // ricalcolato qui, lo stesso del PDF.
-  if (submitted && !response.aiScoringPending && S.liveCode && S.selectedStudent === studentKey &&
+  if (submitted && !response.aiScoringPending && S.liveCode && S.selectedStudent === studentKey && !isAttView &&
       Math.abs(effectiveScore - Number(response.score || 0)) >= 0.01) {
     fixUpdates.score = effectiveScore;
   }
@@ -11159,7 +11169,7 @@ function renderStudentResultsTeacher(name, response) {
     const isFR = q.type === 'free-response' || (q.type === 'listening' && (q.subtype || q.question?.type) === 'free-response');
     if (isFR && answers[i] && aiScoresRST[i] == null && manualScoresRST[i] == null) pendingFRCount++;
   });
-  const aiAllBtn = (submitted && pendingFRCount > 0)
+  const aiAllBtn = (submitted && pendingFRCount > 0 && !isAttView)
     ? '<button id="btn-teacher-ai-all" class="btn btn-sm" style="background:#ede9ff;color:#6c47ff;border-color:#c4b5fd;font-weight:800;" onclick="teacherAIScoreAll()" title="Valuta tutte le risposte libere con AI (usa la tua chiave Gemini)">🤖 Valuta con AI (' + pendingFRCount + ')</button>'
     : '';
 
@@ -11314,7 +11324,20 @@ function renderStudentResultsTeacher(name, response) {
       '</div>' +
     '</div>' +
     timelineCard + focusCard + connCard +
-    _attemptsTeacherBox(response, studentKey, displayName, effectiveScore, effectiveTotalPts, submitted) +
+    (isAttView ? (() => {
+      // riepilogo dei tentativi sempre con l'ultimo come "attuale"
+      let rs = 0, rm = 0;
+      try {
+        const rq = getStudentAssignedQuestions(studentKey, displayName, _rootResp.aliasOf, _rootResp.studentVersion, null, _rootResp.answers);
+        const re = _llEffectiveScore(rq, _rootResp); rs = re.score; rm = re.maxPts;
+      } catch (e) {}
+      return _attemptsTeacherBox(_rootResp, studentKey, displayName, rs, rm, _rootResp.submittedAt);
+    })() : _attemptsTeacherBox(response, studentKey, displayName, effectiveScore, effectiveTotalPts, submitted)) +
+    (isAttView ? '<div style="background:#f5f3ff;border:2px solid #a78bfa;border-radius:12px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
+      '<span style="flex:1;font-size:13px;color:#4c1d95;"><strong>✏️ Stai correggendo il ' + (S._attView.i + 1) + '° tentativo</strong>' +
+      (response.submittedAt > 1 ? ' (' + new Date(response.submittedAt).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + ')' : '') +
+      '. Punteggi a mano, massimi, esclusioni e AI valgono solo per questo tentativo.</span>' +
+      '<button class="btn btn-sm btn-primary" onclick="llAttemptView(null)">↩ Torna all\'ultimo tentativo</button></div>' : '') +
     recoveryHtml +
     '<div id="teacher-answer-cards">' + cardsHtml + '</div>';
 }
@@ -11344,12 +11367,168 @@ function _llAttemptRestore(t) {
     status: 'submitted', aiScores: t.aiScores || null, aiFeedbacks: t.aiFeedbacks || null,
     manualScores: t.manualScores || null, questionTimes: t.questionTimes || null,
     joinedAt: t.joinedAt || null, studentVersion: t.studentVersion || 'originale',
-    retryStartedAt: null, aiScoringPending: null, forcedSubmit: null, forcedByTeacher: null
+    retryStartedAt: null, aiScoringPending: null, forcedSubmit: null, forcedByTeacher: null,
+    // correzioni del docente fatte sul tentativo (vedi _attPrepare)
+    ...(t.ownCorr ? { excludedQuestions: t.excludedQuestions || null, questionMaxOverrides: t.questionMaxOverrides || null } : {})
   };
 }
+// ── Correzione dei tentativi precedenti ──────────────────────────────────
+// S._attView = { code, key, i }: nella scheda dell'alunno si guarda e si
+// corregge il tentativo archiviato attempts[i] invece dell'ultimo. Le
+// correzioni (punteggio a mano, massimo, esclusioni, AI) si scrivono nel
+// tentativo, con score/maxScore/pct ricalcolati. Un tentativo corretto dal
+// docente ha ownCorr: true e non eredita più esclusioni e massimi del record.
+function _attOn() {
+  const v = S._attView;
+  return !!(v && v.code === S.liveCode && v.key === S.selectedStudent);
+}
+function _llAttCorr(t, entry) {
+  if (t && t.ownCorr) return { exc: t.excludedQuestions || {}, qmo: t.questionMaxOverrides || {} };
+  const same = ((t && t.studentVersion) || 'originale') === ((entry && entry.studentVersion) || 'originale');
+  return {
+    exc: (t && t.excludedQuestions) || (same && entry ? entry.excludedQuestions : null) || {},
+    qmo: (t && t.questionMaxOverrides) || (same && entry ? entry.questionMaxOverrides : null) || {}
+  };
+}
+// Il tentativo i con la forma di un record di risposta (per la scheda del docente)
+function _llAttemptAsResp(r, i) {
+  const t = _llAttemptList(r)[i];
+  if (!t) return null;
+  const c = _llAttCorr(t, r);
+  const ms = Object.assign({}, t.manualScores || {});
+  Object.keys(c.exc).forEach(k => { if (c.exc[k]) ms[k] = 0; });
+  return Object.assign({}, r, {
+    answers: t.answers || null, score: t.score != null ? t.score : 0,
+    aiScores: t.aiScores || null, aiFeedbacks: t.aiFeedbacks || null, aiSpk: t.aiSpk || null,
+    manualScores: ms, questionTimes: t.questionTimes || null, joinedAt: t.joinedAt || null,
+    submittedAt: t.submittedAt || r.submittedAt || 1, studentVersion: t.studentVersion || 'originale',
+    excludedQuestions: c.exc, questionMaxOverrides: c.qmo,
+    status: 'submitted', aiScoringPending: null, forcedSubmit: null, forcedByTeacher: null,
+    recScore1: null, recScore2: null, recoveryAnswers: null, recoveryAttempt: null, _attIdx: i
+  });
+}
+window.llAttemptView = function(i) {
+  S._attView = (i == null || i === '') ? null : { code: S.liveCode, key: S.selectedStudent, i: Number(i) };
+  selectStudent(S.selectedStudent);
+};
+// Dati freschi del tentativo aperto
+async function _attLoad() {
+  const v = S._attView;
+  const base = db.ref('livelearn/responses/' + v.code + '/' + v.key);
+  const root = (await base.get()).val() || {};
+  const t = _llAttemptList(root)[v.i];
+  if (!t) throw new Error('Il tentativo non c\'è più (forse è stato eliminato).');
+  const view = _llAttemptAsResp(root, v.i);
+  const qs = getStudentAssignedQuestions(v.key, root.name || v.key, root.aliasOf, view.studentVersion, null, view.answers);
+  return { root, t, view, qs, ref: base.child('attempts/' + v.i) };
+}
+// Prima correzione del docente: il tentativo prende le sue esclusioni e i suoi
+// massimi (copiati da quelli che ereditava dal record)
+async function _attPrepare(c) {
+  if (c.t.ownCorr) return c;
+  const exc = {};
+  Object.keys(c.view.excludedQuestions || {}).forEach(k => {
+    const e = c.view.excludedQuestions[k];
+    if (e) exc[k] = Object.assign({}, e, { prevManual: null, sess: null });
+  });
+  const qmo = Object.assign({}, c.view.questionMaxOverrides || {});
+  await c.ref.update({ ownCorr: true, excludedQuestions: Object.keys(exc).length ? exc : null, questionMaxOverrides: Object.keys(qmo).length ? qmo : null });
+  return _attLoad();
+}
+// Dopo una correzione: punteggio del tentativo ricalcolato e scheda ridisegnata
+async function _attAfter() {
+  const c = await _attLoad();
+  const e = _llEffectiveScore(c.qs, c.view);
+  const pct = e.maxPts > 0 ? Math.round(e.score / e.maxPts * 100) : null;
+  if (c.t.score !== e.score || c.t.maxScore !== e.maxPts || c.t.pct !== pct)
+    await c.ref.update({ score: e.score, maxScore: e.maxPts, pct });
+  const root = (await db.ref('livelearn/responses/' + S._attView.code + '/' + S._attView.key).get()).val() || {};
+  renderStudentResultsTeacher(root.name || S._attView.key, root);
+}
+async function _attSaveScore(qi, origPts) {
+  const input = document.getElementById('score-override-' + qi), maxInput = document.getElementById('score-max-override-' + qi);
+  if (!input) return;
+  const btn = document.getElementById('score-override-btn-' + qi);
+  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+  let newMax = maxInput ? parseFloat(maxInput.value) : NaN;
+  if (isNaN(newMax) || newMax <= 0) newMax = origPts;
+  newMax = Math.round(newMax * 100) / 100;
+  let val = parseFloat(input.value);
+  if (isNaN(val) || val < 0) val = 0;
+  if (val > newMax) val = newMax;
+  try {
+    const c = await _attPrepare(await _attLoad());
+    const updates = { ['manualScores/' + qi]: val };
+    if (newMax !== origPts) updates['questionMaxOverrides/' + qi] = newMax;
+    await c.ref.update(updates);
+    await _attAfter();
+  } catch(e) {
+    alert('Errore: ' + e.message);
+    if (btn) { btn.textContent = 'Salva'; btn.disabled = false; }
+  }
+}
+async function _attToggleExclude(qi) {
+  try {
+    const c = await _attPrepare(await _attLoad());
+    const exc = c.t.excludedQuestions || {}, qmo = c.t.questionMaxOverrides || {}, ms = c.t.manualScores || {};
+    const updates = {};
+    if (exc[qi]) {
+      updates['questionMaxOverrides/' + qi] = exc[qi].prevMax != null ? exc[qi].prevMax : null;
+      updates['manualScores/' + qi] = exc[qi].prevManual != null ? exc[qi].prevManual : null;
+      updates['excludedQuestions/' + qi] = null;
+    } else {
+      const restanti = c.qs.filter((q, i) => q && i !== qi && !exc[i] && (qmo[i] != null ? Number(qmo[i]) : _qPts(q)) > 0).length;
+      if (!restanti) { alert('Non puoi escludere tutti gli esercizi: almeno uno deve restare nella valutazione.'); return; }
+      const nota = prompt('Togliere l\'esercizio ' + (qi + 1) + ' dalla valutazione di questo tentativo?\n\nNon conterà né nel punteggio né nel totale. Puoi reinserirlo in qualunque momento.\n\nPerché lo escludi? (facoltativo)', '');
+      if (nota === null) return;
+      updates['excludedQuestions/' + qi] = {
+        prevMax: qmo[qi] != null ? qmo[qi] : null, prevManual: ms[qi] != null ? ms[qi] : null, at: Date.now(),
+        ...(nota.trim() ? { nota: nota.trim().slice(0, 500) } : {})
+      };
+      updates['questionMaxOverrides/' + qi] = 0;
+      updates['manualScores/' + qi] = 0;
+    }
+    await c.ref.update(updates);
+    await _attAfter();
+  } catch(e) { alert('Errore: ' + e.message); }
+}
+async function _attSaveExclNote(qi) {
+  const el = document.getElementById('excl-note-' + qi), btn = document.getElementById('excl-note-btn-' + qi);
+  if (!el) return;
+  try {
+    const c = await _attPrepare(await _attLoad());
+    const ref = c.ref.child('excludedQuestions/' + qi);
+    if (!(await ref.get()).exists()) { alert('L\'esercizio non è più escluso.'); return; }
+    await ref.child('nota').set(el.value.trim().slice(0, 500) || null);
+    if (btn) { btn.textContent = '✓ Salvata'; setTimeout(() => { if (btn) btn.textContent = 'Salva nota'; }, 1800); }
+  } catch(e) { alert('Errore: ' + e.message); }
+}
+async function _attAIScore(qi) {
+  const btn = document.getElementById('ai-score-btn-' + qi);
+  const geminiKey = localStorage.getItem('gemini_api_key');
+  const passageText = S.liveActivity?.passageText || null;
+  if (!geminiKey && !passageText && _AI_PROVIDER === 'gemini') {
+    alert('Nessuna chiave Gemini configurata. Aggiungila in Impostazioni → Gemini API Key.');
+    return;
+  }
+  if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+  try {
+    const c = await _attLoad();
+    const q = c.qs[qi], ans = fbArr(c.view.answers || [])[qi];
+    if (!q || !ans) { if (btn) { btn.textContent = '🤖 AI'; btn.disabled = false; } return; }
+    const result = await _scoreFreeResponse(q, ans, geminiKey || 'ollama-local', passageText);
+    await c.ref.update({ ['aiScores/' + qi]: result.score, ['aiFeedbacks/' + qi]: result.feedback });
+    await _attAfter();
+  } catch(e) {
+    if (btn) { btn.textContent = '🤖 AI'; btn.disabled = false; }
+    alert('Errore AI: ' + e.message);
+  }
+}
+
 async function llAttemptDelete(which) {
   const code = S.liveCode, key = S.selectedStudent;
   if (!db || !code || !key) return;
+  S._attView = null;   // gli indici dei tentativi cambiano
   const ref = db.ref('livelearn/responses/' + code + '/' + key);
   const r = (await ref.get()).val() || {};
   const list = _llAttemptList(r);
@@ -11414,7 +11593,13 @@ function _attemptsTeacherBox(response, studentKey, displayName, score, maxPts, s
       _att.map((t, i) => '<button style="' + _bs + '" onclick="llAttemptDelete(' + i + ')" title="Elimina il ' + (i + 1) + '° tentativo">' + (i + 1) + '°' + (t.pct != null ? ' · ' + t.pct + '%' : '') + '</button>').join('') +
       '<button style="' + _bs + '" onclick="llAttemptDelete(\'cur\')" title="Elimina l\'ultimo tentativo: torna attuale il precedente">' + (_att.length + 1) + '° (ultimo)</button>' +
       '<div style="font-size:11px;color:#888;margin-top:2px;">I tentativi aperti e lasciati senza risposte per più di 2 ore si eliminano da soli.</div></div>';
-    return '<div style="margin-bottom:16px;">' + h.summary + delBtns +
+    const _cs = (on) => 'font-size:11px;padding:3px 9px;border-radius:8px;border:1px solid #a78bfa;cursor:pointer;font-weight:700;margin:2px 4px 2px 0;' +
+      (on ? 'background:#7c3aed;color:#fff;' : 'background:#fff;color:#5b21b6;');
+    const _vi = _attOn() ? S._attView.i : null;
+    const corrBtns = '<div style="margin:-6px 0 12px;font-size:12px;color:#555;">✏️ Correggi il tentativo: ' +
+      _att.map((t, i) => '<button style="' + _cs(_vi === i) + '" onclick="llAttemptView(' + i + ')" title="Mostra e correggi il ' + (i + 1) + '° tentativo">' + (i + 1) + '°' + (t.pct != null ? ' · ' + t.pct + '%' : '') + '</button>').join('') +
+      '<button style="' + _cs(_vi == null) + '" onclick="llAttemptView(null)" title="Mostra e correggi l\'ultimo tentativo">' + (_att.length + 1) + '° (ultimo)</button></div>';
+    return '<div style="margin-bottom:16px;">' + h.summary + corrBtns + delBtns +
       (submitted ? '' : '<div style="font-size:12px;color:#5b21b6;margin:-8px 0 10px;">⏳ L\'ultimo tentativo è in corso: le schede qui sotto mostrano le risposte date finora.</div>') +
       (h.detail ? '<details style="margin-top:-6px;"><summary style="cursor:pointer;font-size:13px;font-weight:800;color:#5b21b6;padding:4px 0;">👁 Risposte dei tentativi precedenti</summary>' +
         '<div class="pq-live" style="margin-top:8px;">' + h.detail + '</div></details>' : '') +
@@ -14592,6 +14777,13 @@ async function submitAnswers(auto) {
   }
   S._doneQmo = payload.questionMaxOverrides || null;
   // Assegnate ripetibili: il set() riscrive il record, i tentativi precedenti vanno riportati
+  // Si rileggono da Firebase: il docente può averli corretti (o eliminati) nel frattempo
+  if (Array.isArray(S._attempts) && S._attempts.length && db && S.sessionCode && !S._retryLocal) {
+    try {
+      const _fa = (await _fbGet(db.ref('livelearn/responses/' + S.sessionCode + '/' + safeName + '/attempts'), 3000)).val();
+      S._attempts = _fa ? (fbArr(_fa) || []).filter(Boolean) : [];
+    } catch (e) { console.warn('[tentativi] rilettura prima della consegna:', e.message); }
+  }
   if (Array.isArray(S._attempts) && S._attempts.length) payload.attempts = S._attempts;
   if (db && S.sessionCode && !S._retryLocal) {
     try {
@@ -18413,13 +18605,14 @@ function _llPrevAttempts(entry, studentKey, displayName) {
   const curVer = (entry && entry.studentVersion) || 'originale';
   return list.map((t, i) => {
     const sameVer = (t.studentVersion || 'originale') === curVer;
-    const exc = t.excludedQuestions || (sameVer ? entry.excludedQuestions : null) || {};
+    const _corr = _llAttCorr(t, entry);
+    const exc = _corr.exc;
     const ms = Object.assign({}, t.manualScores || {});
     Object.keys(exc).forEach(k => { if (exc[k]) ms[k] = 0; });
     const e = {
       answers: fbArr(t.answers || []), aiScores: t.aiScores || {}, manualScores: ms,
       aiFeedbacks: t.aiFeedbacks || {}, questionTimes: fbArr(t.questionTimes || []),
-      questionMaxOverrides: t.questionMaxOverrides || (sameVer ? entry.questionMaxOverrides : null) || {},
+      questionMaxOverrides: _corr.qmo,
       excludedQuestions: exc, joinedAt: t.joinedAt || null, submittedAt: t.submittedAt || null,
       studentVersion: t.studentVersion || 'originale'
     };
@@ -19232,6 +19425,7 @@ async function saveRecoveryScoreFromDetailModal(qi, maxPts) {
 // ── Teacher score override (punteggio + eventuale riscalaggio max) ─────────
 async function saveScoreOverride(qi, origPts) {
   if (_pvOn()) return _pvSaveScore(qi, origPts);
+  if (_attOn()) return _attSaveScore(qi, origPts);
   const studentKey = S.selectedStudent;
   if (!studentKey || !S.liveCode) return;
   const input    = document.getElementById('score-override-'     + qi);
@@ -19296,6 +19490,7 @@ async function saveScoreOverride(qi, origPts) {
 // ── Valutazione AI lato docente — singola domanda ─────────────────────────
 async function teacherAIScoreQuestion(qi, maxPts) {
   if (_pvOn()) return _pvAIScore(qi);
+  if (_attOn()) return _attAIScore(qi);
   const studentKey = S.selectedStudent;
   if (!studentKey || !S.liveCode) return;
   const btn = document.getElementById('ai-score-btn-' + qi);
@@ -19811,6 +20006,14 @@ async function _spkAIRunSingle(qi, prov, say) {
     const r = await _spkAIScoreResp(_pvAttRef(), c.a, c.qs, [qi], prov, true, false);
     if (!r.n) throw r.err || new Error('Niente da correggere: la risposta non è stata registrata al microfono o ha un punteggio messo da te.');
     await pvReloadPlan();
+    closeSpeakingAI();
+    return;
+  }
+  if (_attOn()) {
+    const c = await _attLoad();
+    const r = await _spkAIScoreResp(c.ref, c.view, c.qs, [qi], prov, true, false);
+    if (!r.n) throw r.err || new Error('Niente da correggere: la risposta non è stata registrata al microfono o ha un punteggio messo da te.');
+    await _attAfter();
     closeSpeakingAI();
     return;
   }
@@ -25875,6 +26078,13 @@ function _qdUpdateView() {
 // Helper chiamati dai click sulle card
 function openQuestionDetailTeacher(i) {
   if (_pvOn()) return _pvQuestionDetail(i);
+  if (_attOn()) {
+    _attLoad().then(c => openQuestionDetail(i, {
+      mode: 'teacher', questions: c.qs, answers: c.view.answers || [], aiScores: c.view.aiScores || {},
+      manualScores: c.view.manualScores || {}, aiFeedbacks: c.view.aiFeedbacks || {}
+    })).catch(e => alert('Errore: ' + e.message));
+    return;
+  }
   if (!S.selectedStudent || !S.liveCode) return;
   db.ref('livelearn/responses/' + S.liveCode + '/' + S.selectedStudent).get().then(snap => {
     const r = snap.val() || {};
