@@ -4803,16 +4803,90 @@ function _llNormCloze(s) {
   return String(s == null ? '' : s)
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toLowerCase()
-    .replace(/[-–—]/g, '')
-    .replace(/[.,!?;:'"()]/g, '')
+    .replace(/[’‘ʼ´`']/g, '')   // apostrofi di ogni tipo: rimossi (I'm = I’m = Im)
+    .replace(/[-–—]/g, '')   // trattini: rimossi
+    .replace(/[.,!?;:"()“”«»]/g, ' ')   // altra punteggiatura → SPAZIO ("Hi,I'm" = "Hi, I'm")
     .replace(/\s+/g, ' ')
     .trim();
 }
-function _llClozeOk(givenRaw, correctRaw) {
-  const alternatives = String(correctRaw || '').split('|').map(x => x.trim()).filter(Boolean);
-  if (!alternatives.length) return false;
-  const g = _llNormCloze(givenRaw);
-  return alternatives.some(alt => _llNormCloze(alt) === g);
+function _llClozeOk(givenRaw, correctRaw, keyRaw, minSim) {
+  // keyAnswers (facoltativo): stessa regola di LiveLearn (_clozeKeyMatch)
+  return _clozeKeyMatch(givenRaw, correctRaw, keyRaw, minSim, _llNormCloze).ok;
+}
+// ── Parola chiave (keyAnswers) ───────────────────────────────────────────
+// Esercizi in cui l'alunno riscrive la frase intera ma si valuta solo una
+// struttura (es. il verbo be): keyAnswers è parallelo ad answers, una voce per
+// spazio, alternative con | ("are|'re"); voce vuota = nessuna chiave.
+// Lo spazio è giusto "con tolleranza" se la risposta contiene la chiave come
+// parole contigue E somiglia alla soluzione (similarità ≥ keyMinSimilarity, 0.7).
+// Tokenizzazione per la chiave: apostrofi curvi → ', contrazioni staccate
+// (we're → we 're, isn't → isn 't), punteggiatura → spazio.
+function _ckTokens(s) {
+  return String(s == null ? '' : s)
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[’‘ʼ´`]/g, "'")
+    .replace(/([a-z0-9])'(?=[a-z])/g, "$1 '")
+    .replace(/[.,!?;:"()“”«»]/g, ' ')
+    .replace(/\s+/g, ' ').trim()
+    .split(' ').filter(Boolean);
+}
+function _ckAlts(v) {
+  return (Array.isArray(v) ? v.join('|') : String(v == null ? '' : v)).split('|').map(x => x.trim()).filter(Boolean);
+}
+// keyAnswers può arrivare da Firebase come oggetto {0:"are",2:"is"}
+function _ckKeyList(v) {
+  if (Array.isArray(v)) return v;
+  if (v && typeof v === 'object') {
+    const r = [];
+    Object.keys(v).forEach(k => { if (/^\d+$/.test(k)) r[Number(k)] = v[k]; });
+    return r;
+  }
+  return typeof v === 'string' && v.trim() ? [v] : [];
+}
+function _ckLev(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = [];
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+// true se una delle alternative della chiave compare come sequenza contigua di parole nel testo
+function _ckKeyIn(keyRaw, textRaw) {
+  const t = _ckTokens(textRaw);
+  if (!t.length) return false;
+  return _ckAlts(keyRaw).some(k => {
+    const kt = _ckTokens(k);
+    if (!kt.length) return false;
+    for (let i = 0; i + kt.length <= t.length; i++) {
+      if (kt.every((w, j) => t[i + j] === w)) return true;
+    }
+    return false;
+  });
+}
+// Esito di uno spazio: { ok, tol }. tol = accettato con tolleranza (solo la parola chiave è giusta).
+// Senza chiave è il confronto di sempre (normalizzazione standard contro le alternative).
+function _clozeKeyMatch(givenRaw, correctRaw, keyRaw, minSim, norm) {
+  const alts = _ckAlts(correctRaw);
+  if (!alts.length) return { ok: false, tol: false };
+  const g = norm(givenRaw);
+  if (alts.some(a => norm(a) === g)) return { ok: true, tol: false };
+  if (!g || !_ckAlts(keyRaw).length || !_ckKeyIn(keyRaw, givenRaw)) return { ok: false, tol: false };
+  let th = Number(minSim);
+  if (minSim == null || minSim === '' || !isFinite(th)) th = 0.7;
+  const sim = Math.max(...alts.map(a => {
+    const c = norm(a), m = Math.max(g.length, c.length);
+    return m ? 1 - _ckLev(g, c) / m : 0;
+  }));
+  return sim >= th ? { ok: true, tol: true } : { ok: false, tol: false };
 }
 function _llRes(n, total, pts) {
   const earned = Math.round((n / total) * pts * 100) / 100;
@@ -4820,11 +4894,12 @@ function _llRes(n, total, pts) {
   return { scorable: true, correct: allOk, points: pts, earnedPoints: earned,
            partial: n > 0 && !allOk, correctCount: n, totalCount: total };
 }
-function _llEvalCloze(corrects, a, pts) {
+function _llEvalCloze(corrects, a, pts, keys, minSim) {
   const total = corrects.length || 1;
   if (!Array.isArray(a)) return _llRes(0, total, pts);
   let n = 0;
-  corrects.forEach((corr, bi) => { if (_llClozeOk(a[bi], corr)) n++; });
+  const kl = _ckKeyList(keys);
+  corrects.forEach((corr, bi) => { if (_llClozeOk(a[bi], corr, kl[bi], minSim)) n++; });
   return _llRes(n, total, pts);
 }
 function _llEvalDragDrop(corrects, a, pts, sentences, unordered) {
@@ -4957,7 +5032,7 @@ function _llEvaluate(q, a) {
   const pts = q.points || 1;
   const t = q.type;
   if (t === 'multiple-choice') return _saEvalMC(q, a, pts);
-  if (t === 'cloze' || t === 'fill-blanks') return _llEvalCloze(q.answers || [], a, pts);
+  if (t === 'cloze' || t === 'fill-blanks') return _llEvalCloze(q.answers || [], a, pts, q.keyAnswers, q.keyMinSimilarity);
   if (t === 'drag-drop')      return _llEvalDragDrop(q.answers || [], a, pts, q.sentences, q.unordered);
   if (t === 'reorder')        return _llEvalReorder(q.sentences || [], a, pts);
   if (t === 'matching')       return _llEvalMatching(q.left || [], q.right || [], a, pts);
@@ -4979,7 +5054,7 @@ function _llEvaluate(q, a) {
       else sub = 'free-response';
     }
     if (sub === 'multiple-choice') return _saEvalMC(inner, a, pts);
-    if (sub === 'cloze' || sub === 'fill-blanks') return _llEvalCloze(inner.answers || [], a, pts);
+    if (sub === 'cloze' || sub === 'fill-blanks') return _llEvalCloze(inner.answers || [], a, pts, inner.keyAnswers, inner.keyMinSimilarity);
     if (sub === 'drag-drop')      return _llEvalDragDrop(inner.answers || [], a, pts, inner.sentences, inner.unordered);
     if (sub === 'reorder')        return _llEvalReorder(inner.sentences || [], a, pts);
     if (sub === 'matching')       return _llEvalMatching(inner.left || [], inner.right || [], a, pts);
@@ -5039,23 +5114,24 @@ function _pdfqRich(s) {
 }
 function _pdfqNorm(s) {
   return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
-    .replace(/[-–—]/g, '').replace(/[.,!?;:'"()]/g, '').replace(/\s+/g, ' ').trim();
+    .replace(/[’‘ʼ´`']/g, '').replace(/[-–—]/g, '').replace(/[.,!?;:"()“”«»]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 function _pdfqAlts(c) { return String(c == null ? '' : c).split('|').map(x => x.trim()).filter(Boolean); }
-function _pdfqClozeOk(given, corr) { const g = _pdfqNorm(given); return _pdfqAlts(corr).some(alt => _pdfqNorm(alt) === g); }
+function _pdfqClozeRes(given, corr, key, minSim) { return _clozeKeyMatch(given, corr, key, minSim, _pdfqNorm); }
+function _pdfqClozeOk(given, corr, key, minSim) { return _pdfqClozeRes(given, corr, key, minSim).ok; }
 function _pdfqEmpty(v) { return v === null || v === undefined || (typeof v === 'string' && v.trim() === ''); }
 const _PDFQ_NONE = '<span class="pq-none">nessuna risposta</span>';
 // Spazio compilato: risposta dell'alunno (verde/rossa) + quella giusta se sbagliata
-function _pdfqChip(given, ok, correctTxt) {
+function _pdfqChip(given, ok, correctTxt, tol) {
   if (_pdfqEmpty(given)) {
     return '<span class="pq-chip pq-ko">___</span>' + (correctTxt ? '<span class="pq-fix">→ ' + _pdfqEsc(correctTxt) + '</span>' : '');
   }
   const cls = ok === true ? 'pq-ok' : ok === false ? 'pq-ko' : 'pq-neutral';
-  return '<span class="pq-chip ' + cls + '">' + _pdfqEsc(given) + (ok === true ? ' ✓' : ok === false ? ' ✗' : '') + '</span>' +
+  return '<span class="pq-chip ' + cls + '"' + (ok === true && tol ? ' title="Accettata con tolleranza (parola chiave giusta)"' : '') + '>' + _pdfqEsc(given) + (ok === true ? (tol ? ' ≈' : ' ✓') : ok === false ? ' ✗' : '') + '</span>' +
     (ok === false && correctTxt ? '<span class="pq-fix">→ ' + _pdfqEsc(correctTxt) + '</span>' : '');
 }
 // Testo con gli spazi (___ e [[a|b|c]]) sostituiti dalle risposte dell'alunno
-function _pdfqFillText(text, given, corrects, startIdx) {
+function _pdfqFillText(text, given, corrects, startIdx, keys, minSim) {
   let k = startIdx || 0;
   const parts = [];
   const tok = String(text || '').replace(_PDFQ_BLANK_RE, (m, inner) => {
@@ -5063,8 +5139,9 @@ function _pdfqFillText(text, given, corrects, startIdx) {
     const corr = corrects[n];
     const g = given[n];
     const hasCorr = corr != null && String(corr).trim() !== '';
-    const ok = hasCorr ? (!_pdfqEmpty(g) && _pdfqClozeOk(g, corr)) : null;
-    let h = _pdfqChip(g, hasCorr ? ok : null, hasCorr ? _pdfqAlts(corr).join(' / ') : '');
+    const res = hasCorr && !_pdfqEmpty(g) ? _pdfqClozeRes(g, corr, (keys || [])[n], minSim) : null;
+    const ok = hasCorr ? !!(res && res.ok) : null;
+    let h = _pdfqChip(g, hasCorr ? ok : null, hasCorr ? _pdfqAlts(corr).join(' / ') : '', !!(res && res.tol));
     if (inner !== undefined) h += '<span class="pq-icopts">(' + inner.split('|').map(o => _pdfqEsc(o.trim())).join(' / ') + ')</span>';
     parts.push(h);
     return '\u0000' + (parts.length - 1) + '\u0000';
@@ -5104,13 +5181,14 @@ function _pdfqBody(q, type, a) {
   if (type === 'cloze' || type === 'fill-blanks') {
     const given = _pdfqArr(a) || (_pdfqEmpty(a) ? [] : [a]);
     const corrects = _pdfqArr(q.answers) || [];
+    const keys = _ckKeyList(q.keyAnswers);
     const bank = Array.isArray(q.wordBank) && q.wordBank.length
       ? '<div class="pq-bank"><strong>Banca parole:</strong> ' + q.wordBank.map(_pdfqEsc).join(' · ') + '</div>' : '';
     const nBlanks = _pdfqCountBlanks(q.text);
     let html = '';
     let used = 0;
     if (nBlanks > 0) {
-      const r = _pdfqFillText(q.text, given, corrects, 0);
+      const r = _pdfqFillText(q.text, given, corrects, 0, keys, q.keyMinSimilarity);
       html = '<div class="pq-text pq-filled">' + r.html + '</div>';
       used = r.next;
     } else {
@@ -5123,8 +5201,9 @@ function _pdfqBody(q, type, a) {
       for (let b = used; b < n; b++) {
         const corr = corrects[b];
         const hasCorr = corr != null && String(corr).trim() !== '';
-        const ok = hasCorr ? (!_pdfqEmpty(given[b]) && _pdfqClozeOk(given[b], corr)) : null;
-        li += '<li>' + _pdfqChip(given[b], ok, hasCorr ? _pdfqAlts(corr).join(' / ') : '') + '</li>';
+        const res = hasCorr && !_pdfqEmpty(given[b]) ? _pdfqClozeRes(given[b], corr, keys[b], q.keyMinSimilarity) : null;
+        const ok = hasCorr ? !!(res && res.ok) : null;
+        li += '<li>' + _pdfqChip(given[b], ok, hasCorr ? _pdfqAlts(corr).join(' / ') : '', !!(res && res.tol)) + '</li>';
       }
       html += '<ol class="pq-list" start="' + (used + 1) + '">' + li + '</ol>';
     }

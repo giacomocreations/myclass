@@ -4808,11 +4808,13 @@ function buildListeningInnerFormHTML(sub, inner) {
   inner = inner || {};
   if (sub === 'fill-blanks') {
     return fg+'<label>Testo con spazi numerati (usa ___ per ogni spazio — oppure [[a|b|c]] per far cliccare una scelta)</label><textarea id="qf-text" rows="5" placeholder="Esempio: Seb\'s house is small.\n1. In Zara\'s house there are ___ floors.\n2. Zara\'s bedroom is in the ___.">'+esc(inner.text||'')+'</textarea></div>'+
-      fg+'<label>Risposte corrette (una per riga, in ordine)</label><textarea id="qf-answers" rows="4" placeholder="two\nattic">'+((inner.answers||[]).join('\n'))+'</textarea></div>';
+      fg+'<label>Risposte corrette (una per riga, in ordine)</label><textarea id="qf-answers" rows="4" placeholder="two\nattic">'+((inner.answers||[]).join('\n'))+'</textarea></div>'+
+      _keyFieldHTML('qf-key-answers', inner.keyAnswers);
   }
   if (sub === 'cloze') {
     return fg+'<label>Testo con spazi (usa ___ per ogni blank — oppure [[a|b|c]] per far cliccare una scelta)</label><textarea id="qf-text" rows="4" placeholder="Ben\'s dad has a problem with his ___. He doesn\'t want to watch a ___.">'+esc(inner.text||'')+'</textarea></div>'+
-      fg+'<label>Risposte corrette (una per riga) <span style="font-weight:400;color:var(--muted);font-size:11px;">— usa <code style="background:#f0ede8;padding:1px 5px;border-radius:3px;">|</code> per alternative (es. <code>go|goes</code>)</span></label><textarea id="qf-answers" rows="3" placeholder="laptop\nhorror film|horror movie">'+((inner.answers||[]).join('\n'))+'</textarea></div>';
+      fg+'<label>Risposte corrette (una per riga) <span style="font-weight:400;color:var(--muted);font-size:11px;">— usa <code style="background:#f0ede8;padding:1px 5px;border-radius:3px;">|</code> per alternative (es. <code>go|goes</code>)</span></label><textarea id="qf-answers" rows="3" placeholder="laptop\nhorror film|horror movie">'+((inner.answers||[]).join('\n'))+'</textarea></div>'+
+      _keyFieldHTML('qf-key-answers', inner.keyAnswers);
   }
   if (sub === 'multiple-choice') {
     const opts = inner.options || ['','','',''];
@@ -4945,6 +4947,7 @@ async function addQuestion() {
     if (subtype === 'fill-blanks' || subtype === 'cloze') {
       inner.text = v('qf-text');
       inner.answers = v('qf-answers').split('\n').map(s => s.trim()).filter(Boolean);
+      _keyApplyFromForm(inner, null, 'qf-key-answers');
     } else if (subtype === 'multiple-choice') {
       inner.text = v('qf-text');
       inner.options = ['qf-a','qf-b','qf-c','qf-d'].map(id => v(id)).filter(Boolean);
@@ -6014,6 +6017,7 @@ async function _aiModifySingleQuestion(origQ, userHint, versionContext) {
           newQ.text = consegna + '\n' + _afterWrong;
         }
       }
+      _keyCarry(newQ, origQ); // parole chiave: conservate se valgono ancora per le nuove soluzioni
       return newQ;
     } catch(e) {
       if (attempt === 1) throw e;
@@ -6058,6 +6062,8 @@ async function saveEditQ(i) {
   const newType = typeEl ? typeEl.value : q.type;
   const updated = await buildQFromCurrentForm(newType);
   if (!updated) return;
+  // Parole chiave (keyAnswers): dal campo del modulo, oppure conservate com'erano
+  _keyApplyFromForm(_keyInner(updated), _keyInner(q), 'qf-key-answers');
   const imgRemoveEl = document.getElementById('qf-image-remove');
   const _editImgFile = document.getElementById('qf-image');
   const _editImgUrl  = document.getElementById('qf-image-url');
@@ -6165,6 +6171,7 @@ function changeEditQType() {
     sentences: preserved.sentences.split('\n').map(s => s.trim()).filter(Boolean),
     words:    preserved.words.split('\n').map(s => s.trim()).filter(Boolean),
     options:  [preserved.a, preserved.b, preserved.c, preserved.d].filter(Boolean),
+    keyAnswers: document.getElementById('qf-key-answers') ? _keyLinesToArr(readField('qf-key-answers')) : ((_keyInner(S.questions[i]) || {}).keyAnswers || []),
     correct: 0,
     points: parseFloat(preserved.points) || 1
   };
@@ -6223,6 +6230,7 @@ function getEditFormHTML(q, forcedType) {
   } else if (type === 'cloze') {
     body = fg+'<label>Testo (usa ___ per ogni spazio — oppure [[a|b|c]] per far cliccare una scelta)</label><textarea id="qf-text" rows="4">'+esc(q.text||'')+'</textarea></div>'+
       fg+'<label>Risposte corrette (una per riga) <span style="font-weight:400;color:var(--muted);font-size:11px;">— usa <code style="background:#f0ede8;padding:1px 5px;border-radius:3px;">|</code> per alternative accettate (es. <code style="background:#f0ede8;padding:1px 5px;border-radius:3px;">go|goes|is going</code>)</span></label><textarea id="qf-answers" rows="3" placeholder="soluzione1|alt1|alt2&#10;soluzione2">'+(q.answers||[]).join('\n')+'</textarea></div>'+
+      _keyFieldHTML('qf-key-answers', q.keyAnswers)+
       fg+'<label>💡 Suggerimento (opzionale)</label><input type="text" id="qf-hint" value="'+esc(q.hint||'')+'"></div>'+
       fg+'<label style="font-size:12px;cursor:pointer;"><input type="checkbox" id="qf-hide-instruction"'+(q.hideInstruction?' checked':'')+'> Nascondi banner istruzione ("Scrivi SOLO le parole…")</label></div>'+
       fg+'<label>🖼️ Immagine (opzionale)</label>'+
@@ -6298,6 +6306,7 @@ function getEditFormHTML(q, forcedType) {
   } else if (type === 'fill-blanks') {
     body = fg+'<label>Testo (usa ___ per ogni spazio — oppure [[a|b|c]] per far cliccare una scelta)</label><textarea id="qf-text" rows="4">'+esc(q.text||'')+'</textarea></div>'+
       fg+'<label>Risposte corrette (una per riga) <span style="font-weight:400;color:var(--muted);font-size:11px;">— usa <code style="background:#f0ede8;padding:1px 5px;border-radius:3px;">|</code> per alternative accettate (es. <code style="background:#f0ede8;padding:1px 5px;border-radius:3px;">go|goes|is going</code>)</span></label><textarea id="qf-answers" rows="3" placeholder="soluzione1|alt1|alt2&#10;soluzione2">'+(q.answers||[]).join('\n')+'</textarea></div>'+
+      _keyFieldHTML('qf-key-answers', q.keyAnswers)+
       fg+'<label>💡 Suggerimento (opzionale)</label><input type="text" id="qf-hint" value="'+esc(q.hint||'')+'"></div>'+
       fg+'<label style="font-size:12px;cursor:pointer;"><input type="checkbox" id="qf-hide-instruction"'+(q.hideInstruction?' checked':'')+'> Nascondi banner istruzione ("Scrivi SOLO le parole…")</label></div>'+
       fg+'<label>🖼️ Immagine (opzionale)</label>'+
@@ -6367,6 +6376,8 @@ function refreshListeningEditSubForm() {
     items: preserved.catItems.split('\n').map(s=>s.trim()).filter(Boolean),
     answers: preserved.catAnswers.split('\n').map(s=>s.trim()).filter(Boolean).map(a=>parseInt(a)-1),
   };
+  const _kEl = document.getElementById('qf-key-answers');
+  synth.keyAnswers = _kEl ? _keyLinesToArr(_kEl.value) : (((S.questions[S.editingQIndex] || {}).question || {}).keyAnswers || []);
   el.innerHTML = buildListeningInnerFormHTML(sub, synth);
 }
 
@@ -8284,11 +8295,13 @@ function _solMarkCard(root, q, a) {
     card.querySelectorAll('.option-btn').forEach((b, bi) => { if (bi === ci) b.classList.add('correct'); else if (bi === ai) b.classList.add('wrong'); });
     done = ci != null;
   } else if (kind === 'cloze' || kind === 'fill-blanks') {
-    const ans = fbArr(inner.answers);
+    const ans = fbArr(inner.answers), keys = _ckKeyList(inner.keyAnswers);
     card.querySelectorAll('.blank-input').forEach((inp, bi) => {
       if (ans[bi] == null) return;
       done = true;
       const m = _clozeAnswerMatches(arr[bi], ans[bi]), g = inp.closest('.ic-group');
+      // stesso esito della correzione (parola chiave compresa)
+      m.ok = _clozeKeyMatch(arr[bi], ans[bi], keys[bi], inner.keyMinSimilarity, _normClozeAnswer).ok;
       if (g) {
         // Scelta tra opzioni: la giusta in verde, quella scelta per sbaglio in rosso
         const n = m.alternatives.map(_normClozeAnswer);
@@ -13772,8 +13785,9 @@ function _normClozeAnswer(s) {
   return String(s == null ? '' : s)
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
-    .replace(/[-–—]/g, '')
-    .replace(/[.,!?;:'"()]/g, '')
+    .replace(/[’‘ʼ´`']/g, '')   // apostrofi di ogni tipo: rimossi (I'm = I’m = Im)
+    .replace(/[-–—]/g, '')   // trattini: rimossi
+    .replace(/[.,!?;:"()“”«»]/g, ' ')   // altra punteggiatura → SPAZIO ("Hi,I'm" = "Hi, I'm")
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -13797,6 +13811,136 @@ function _clozeFormatAlternatives(correctRaw) {
   return alts.join(' / ');
 }
 
+// ── Parola chiave (keyAnswers) ───────────────────────────────────────────
+// Esercizi in cui l'alunno riscrive la frase intera ma si valuta solo una
+// struttura (es. il verbo be): keyAnswers è parallelo ad answers, una voce per
+// spazio, alternative con | ("are|'re"); voce vuota = nessuna chiave.
+// Lo spazio è giusto "con tolleranza" se la risposta contiene la chiave come
+// parole contigue E somiglia alla soluzione (similarità ≥ keyMinSimilarity, 0.7).
+// Tokenizzazione per la chiave: apostrofi curvi → ', contrazioni staccate
+// (we're → we 're, isn't → isn 't), punteggiatura → spazio.
+function _ckTokens(s) {
+  return String(s == null ? '' : s)
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[’‘ʼ´`]/g, "'")
+    .replace(/([a-z0-9])'(?=[a-z])/g, "$1 '")
+    .replace(/[.,!?;:"()“”«»]/g, ' ')
+    .replace(/\s+/g, ' ').trim()
+    .split(' ').filter(Boolean);
+}
+function _ckAlts(v) {
+  return (Array.isArray(v) ? v.join('|') : String(v == null ? '' : v)).split('|').map(x => x.trim()).filter(Boolean);
+}
+// keyAnswers può arrivare da Firebase come oggetto {0:"are",2:"is"}
+function _ckKeyList(v) {
+  if (Array.isArray(v)) return v;
+  if (v && typeof v === 'object') {
+    const r = [];
+    Object.keys(v).forEach(k => { if (/^\d+$/.test(k)) r[Number(k)] = v[k]; });
+    return r;
+  }
+  return typeof v === 'string' && v.trim() ? [v] : [];
+}
+function _ckLev(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = [];
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+// true se una delle alternative della chiave compare come sequenza contigua di parole nel testo
+function _ckKeyIn(keyRaw, textRaw) {
+  const t = _ckTokens(textRaw);
+  if (!t.length) return false;
+  return _ckAlts(keyRaw).some(k => {
+    const kt = _ckTokens(k);
+    if (!kt.length) return false;
+    for (let i = 0; i + kt.length <= t.length; i++) {
+      if (kt.every((w, j) => t[i + j] === w)) return true;
+    }
+    return false;
+  });
+}
+// Esito di uno spazio: { ok, tol }. tol = accettato con tolleranza (solo la parola chiave è giusta).
+// Senza chiave è il confronto di sempre (normalizzazione standard contro le alternative).
+function _clozeKeyMatch(givenRaw, correctRaw, keyRaw, minSim, norm) {
+  const alts = _ckAlts(correctRaw);
+  if (!alts.length) return { ok: false, tol: false };
+  const g = norm(givenRaw);
+  if (alts.some(a => norm(a) === g)) return { ok: true, tol: false };
+  if (!g || !_ckAlts(keyRaw).length || !_ckKeyIn(keyRaw, givenRaw)) return { ok: false, tol: false };
+  let th = Number(minSim);
+  if (minSim == null || minSim === '' || !isFinite(th)) th = 0.7;
+  const sim = Math.max(...alts.map(a => {
+    const c = norm(a), m = Math.max(g.length, c.length);
+    return m ? 1 - _ckLev(g, c) / m : 0;
+  }));
+  return sim >= th ? { ok: true, tol: true } : { ok: false, tol: false };
+}
+
+// Per il listening la domanda con gli spazi è quella interna
+function _keyInner(q) { return q && q.type === 'listening' ? (q.question || null) : q; }
+function _keyStr(k) { return Array.isArray(k) ? k.join('|') : (k == null ? '' : String(k)); }
+// Conserva keyAnswers/keyMinSimilarity quando una domanda viene rigenerata o
+// convertita (AI, versioni): si tiene la chiave di uno spazio solo se compare
+// ancora nella sua nuova soluzione, così una chiave vecchia non resta su una frase diversa.
+// Se la nuova domanda ha già keyAnswers (es. scritti dall'AI) si controllano quelli.
+function _keyCarry(newQ, oldQ) {
+  const dst = _keyInner(newQ), src = _keyInner(oldQ);
+  if (!dst || typeof dst !== 'object') return newQ;
+  if (dst.type && dst.type !== 'cloze' && dst.type !== 'fill-blanks') {
+    delete dst.keyAnswers; delete dst.keyMinSimilarity; return newQ;
+  }
+  const cand = dst.keyAnswers != null ? _ckKeyList(dst.keyAnswers)
+    : (src && src.keyAnswers != null ? _ckKeyList(src.keyAnswers) : null);
+  if (!cand) return newQ;
+  const ans = _ckKeyList(dst.answers);
+  const out = ans.map((a, i) => {
+    const k = _keyStr(cand[i]).trim();
+    return k && _ckAlts(a).some(alt => _ckKeyIn(k, alt)) ? k : '';
+  });
+  while (out.length && !out[out.length - 1]) out.pop();
+  if (out.length) {
+    dst.keyAnswers = out;
+    if (dst.keyMinSimilarity == null && src && src.keyMinSimilarity != null) dst.keyMinSimilarity = src.keyMinSimilarity;
+  } else { delete dst.keyAnswers; delete dst.keyMinSimilarity; }
+  return newQ;
+}
+// Campo "Parole chiave" dei moduli: una riga per spazio, riga vuota = nessuna chiave
+function _keyLinesToArr(txt) {
+  const lines = String(txt == null ? '' : txt).replace(/\r/g, '').split('\n').map(x => x.trim());
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  return lines;
+}
+function _keyFieldHTML(id, keys, small) {
+  const val = _ckKeyList(keys).map(_keyStr).join('\n');
+  const fs = small ? 'font-size:11px;' : '';
+  return '<div class="form-group"' + (small ? ' style="margin-bottom:10px;"' : '') + '><label style="' + fs + '">🔑 Parole chiave (opzionale — una per riga, alternative con <code>|</code>) ' +
+    '<span style="font-weight:400;color:var(--muted);font-size:11px;">— se la frase ha piccoli errori di copiatura ma la parola chiave è giusta, lo spazio vale lo stesso (es. <code>are|\'re</code>). Riga vuota = nessuna chiave per quello spazio.</span></label>' +
+    '<textarea id="' + id + '" rows="2" style="' + fs + '" placeholder="are|\'re&#10;is|\'s">' + esc(val) + '</textarea></div>';
+}
+// Legge il campo nel salvataggio di un modulo. dst/src: domanda con gli spazi
+// (per il listening quella interna). Senza campo nel modulo si conserva la chiave di prima.
+function _keyApplyFromForm(dst, src, id) {
+  if (!dst || (dst.type && dst.type !== 'cloze' && dst.type !== 'fill-blanks')) return;
+  const el = document.getElementById(id);
+  if (!el) { if (src && src.keyAnswers != null) _keyCarry(dst, src); return; }
+  const arr = _keyLinesToArr(el.value);
+  if (arr.some(Boolean)) {
+    dst.keyAnswers = arr;
+    if (dst.keyMinSimilarity == null && src && src.keyMinSimilarity != null) dst.keyMinSimilarity = src.keyMinSimilarity;
+  } else { delete dst.keyAnswers; delete dst.keyMinSimilarity; }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // evaluateAnswer — credito parziale uniforme per TUTTI i tipi multi-parte
 // (matching, cloze, fill-blanks, drag-drop, reorder). Restituisce sempre
@@ -13812,24 +13956,29 @@ function _qPerItemType(q) {
 function _perItemDetail(label, items) {
   return items.map((it, i) => {
     const g = (it.given == null || String(it.given).trim() === '') ? '—' : esc(String(it.given));
-    if (it.ok) return '<span style="color:#059669;font-weight:700;white-space:nowrap;">' + label + (i + 1) + ': ' + g + ' ✓</span>';
+    if (it.ok) return '<span style="color:#059669;font-weight:700;white-space:nowrap;"' + (it.tol ? ' title="Accettata con tolleranza: parola chiave giusta, piccoli errori nel resto della frase"' : '') + '>' + label + (i + 1) + ': ' + g + (it.tol ? ' ≈' : ' ✓') + '</span>';
     return '<span style="color:#dc2626;font-weight:700;">' + label + (i + 1) + ': <s>' + g + '</s> ✗</span>' +
       (it.correct != null && it.correct !== '' ? ' → <strong style="color:#059669;">' + esc(String(it.correct)) + '</strong>' : '');
   }).join(' · ');
 }
-function _evalCloze(corrects, a, pts) {
+function _evalCloze(corrects, a, pts, keys, minSim) {
   const total = corrects.length || 1;
   // Firebase restituisce l'array con uno spazio vuoto come oggetto {1:"x"}
   if (a && typeof a === 'object' && !Array.isArray(a)) a = fbArr(a);
   else if (typeof a === 'string' && a.trim() !== '') a = [a];
   if (!Array.isArray(a)) return {scorable:true,correct:false,points:pts,earnedPoints:0,correctCount:0,totalCount:total,detail:'Nessuna risposta.'};
   let n = 0;
-  const okC = corrects.map((corr, bi) => _clozeAnswerMatches(a[bi], corr).ok);
+  // keyAnswers (facoltativo): spazio giusto anche con piccoli errori se la parola chiave è giusta
+  const kl = _ckKeyList(keys);
+  const res = corrects.map((corr, bi) => _clozeKeyMatch(a[bi], corr, kl[bi], minSim, _normClozeAnswer));
+  const okC = res.map(r => r.ok);
+  const anyTol = res.some(r => r.tol);
   okC.forEach(ok => { if (ok) n++; });
   const earned = Math.round((n/total) * pts * 100) / 100;
   const allOk = n === total;
-  const detail = allOk ? '' : _perItemDetail('Sp.', corrects.map((corr, bi) =>
-    ({ given: a[bi], ok: okC[bi], correct: _clozeFormatAlternatives(corr) })));
+  // Con spazi accettati con tolleranza il dettaglio si mostra anche se è tutto giusto (≈ in verde)
+  const detail = (allOk && !anyTol) ? '' : _perItemDetail('Sp.', corrects.map((corr, bi) =>
+    ({ given: a[bi], ok: okC[bi], tol: res[bi].tol, correct: _clozeFormatAlternatives(corr) })));
   return { scorable:true, correct:allOk, points:pts, earnedPoints:earned,
     partial: n > 0 && !allOk, correctCount: n, totalCount: total, detail, okList: okC };
 }
@@ -14456,8 +14605,8 @@ function evaluateAnswer(q, a) {
   if (_qIsPoll(q)) return {scorable:false,correct:false,points:0,poll:true,detail:''};
   const pts = q.points || 1;
   if (q.type === 'multiple-choice') return _evalMC(q, a, pts);
-  if (q.type === 'cloze')       return _evalCloze(q.answers||[], a, pts);
-  if (q.type === 'fill-blanks') return _evalCloze(q.answers||[], a, pts);
+  if (q.type === 'cloze')       return _evalCloze(q.answers||[], a, pts, q.keyAnswers, q.keyMinSimilarity);
+  if (q.type === 'fill-blanks') return _evalCloze(q.answers||[], a, pts, q.keyAnswers, q.keyMinSimilarity);
   if (q.type === 'drag-drop')   return _evalDragDrop(q.answers||[], a, pts, q.sentences, q.unordered);
   if (q.type === 'reorder')     return _evalReorder(q.sentences||[], a, pts);
   if (q.type === 'matching')    return _evalMatching(q.left||[], q.right||[], a, pts);
@@ -14474,7 +14623,7 @@ function evaluateAnswer(q, a) {
       else sub = 'free-response';
     }
     if (sub === 'multiple-choice') return _evalMC(inner, a, pts);
-    if (sub === 'cloze' || sub === 'fill-blanks') return _evalCloze(inner.answers||[], a, pts);
+    if (sub === 'cloze' || sub === 'fill-blanks') return _evalCloze(inner.answers||[], a, pts, inner.keyAnswers, inner.keyMinSimilarity);
     if (sub === 'drag-drop')   return _evalDragDrop(inner.answers||[], a, pts, inner.sentences, inner.unordered);
     if (sub === 'reorder')     return _evalReorder(inner.sentences||[], a, pts);
     if (sub === 'matching')    return _evalMatching(inner.left||[], inner.right||[], a, pts);
@@ -15554,6 +15703,7 @@ const _BLANK_RE = /___|\[\[([^\[\]\n]*\|[^\[\]\n]*)\]\]/g;
 function _countBlanks(text) { return (String(text || '').match(_BLANK_RE) || []).length; }
 // Riga per i prompt AI: così la sintassi [[a|b|c]] sopravvive alle rigenerazioni
 const _IC_AI_RULE = 'SCELTA DENTRO LA FRASE (cloze/fill-blanks, anche dentro un listening): nel testo [[a|b|c]] è uno spazio in cui lo studente clicca una delle opzioni (es. "[[Chloe|Noah|Lisa]] loves tennis."). Conta come uno spazio, esattamente come ___, nello stesso ordine del testo; answers[i] contiene il testo dell\'opzione giusta, che deve essere una delle opzioni. Se l\'originale usa [[...]] MANTIENI questa sintassi (doppie parentesi quadre, opzioni separate da |), anche cambiando frasi e opzioni; non trasformarla in ___ e non trasformare gli ___ in [[...]]. ' +
+  'PAROLE CHIAVE: se una cloze/fill-blanks dell\'originale ha "keyAnswers" (array parallelo ad "answers": per ogni spazio la sola parola/struttura che si valuta, alternative con |, es. ["are|\'re","is|\'s"]; voce vuota = nessuna chiave), MANTIENI "keyAnswers" (e "keyMinSimilarity" se c\'è) anche nella nuova domanda, aggiornato alle nuove risposte: ogni chiave deve comparire nella risposta del suo spazio. Se l\'originale non ha keyAnswers, non aggiungerlo. ' +
   'SONDAGGIO: una multiple-choice con "poll": true (es. "Hai capito?") non ha una risposta giusta: copiala uguale, con "poll": true, senza "correct" e con "points": 0.';
 function _hasInlineChoice(text) { return /\[\[[^\[\]\n]*\|[^\[\]\n]*\]\]/.test(String(text || '')); }
 function _icOptions(inner) { return String(inner || '').split('|').map(s => s.trim()).filter(Boolean); }
@@ -17788,23 +17938,24 @@ function _pdfqRich(s) {
 }
 function _pdfqNorm(s) {
   return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
-    .replace(/[-–—]/g, '').replace(/[.,!?;:'"()]/g, '').replace(/\s+/g, ' ').trim();
+    .replace(/[’‘ʼ´`']/g, '').replace(/[-–—]/g, '').replace(/[.,!?;:"()“”«»]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 function _pdfqAlts(c) { return String(c == null ? '' : c).split('|').map(x => x.trim()).filter(Boolean); }
-function _pdfqClozeOk(given, corr) { const g = _pdfqNorm(given); return _pdfqAlts(corr).some(alt => _pdfqNorm(alt) === g); }
+function _pdfqClozeRes(given, corr, key, minSim) { return _clozeKeyMatch(given, corr, key, minSim, _pdfqNorm); }
+function _pdfqClozeOk(given, corr, key, minSim) { return _pdfqClozeRes(given, corr, key, minSim).ok; }
 function _pdfqEmpty(v) { return v === null || v === undefined || (typeof v === 'string' && v.trim() === ''); }
 const _PDFQ_NONE = '<span class="pq-none">nessuna risposta</span>';
 // Spazio compilato: risposta dell'alunno (verde/rossa) + quella giusta se sbagliata
-function _pdfqChip(given, ok, correctTxt) {
+function _pdfqChip(given, ok, correctTxt, tol) {
   if (_pdfqEmpty(given)) {
     return '<span class="pq-chip pq-ko">___</span>' + (correctTxt ? '<span class="pq-fix">→ ' + _pdfqEsc(correctTxt) + '</span>' : '');
   }
   const cls = ok === true ? 'pq-ok' : ok === false ? 'pq-ko' : 'pq-neutral';
-  return '<span class="pq-chip ' + cls + '">' + _pdfqEsc(given) + (ok === true ? ' ✓' : ok === false ? ' ✗' : '') + '</span>' +
+  return '<span class="pq-chip ' + cls + '"' + (ok === true && tol ? ' title="Accettata con tolleranza (parola chiave giusta)"' : '') + '>' + _pdfqEsc(given) + (ok === true ? (tol ? ' ≈' : ' ✓') : ok === false ? ' ✗' : '') + '</span>' +
     (ok === false && correctTxt ? '<span class="pq-fix">→ ' + _pdfqEsc(correctTxt) + '</span>' : '');
 }
 // Testo con gli spazi (___ e [[a|b|c]]) sostituiti dalle risposte dell'alunno
-function _pdfqFillText(text, given, corrects, startIdx) {
+function _pdfqFillText(text, given, corrects, startIdx, keys, minSim) {
   let k = startIdx || 0;
   const parts = [];
   const tok = String(text || '').replace(_PDFQ_BLANK_RE, (m, inner) => {
@@ -17812,8 +17963,9 @@ function _pdfqFillText(text, given, corrects, startIdx) {
     const corr = corrects[n];
     const g = given[n];
     const hasCorr = corr != null && String(corr).trim() !== '';
-    const ok = hasCorr ? (!_pdfqEmpty(g) && _pdfqClozeOk(g, corr)) : null;
-    let h = _pdfqChip(g, hasCorr ? ok : null, hasCorr ? _pdfqAlts(corr).join(' / ') : '');
+    const res = hasCorr && !_pdfqEmpty(g) ? _pdfqClozeRes(g, corr, (keys || [])[n], minSim) : null;
+    const ok = hasCorr ? !!(res && res.ok) : null;
+    let h = _pdfqChip(g, hasCorr ? ok : null, hasCorr ? _pdfqAlts(corr).join(' / ') : '', !!(res && res.tol));
     if (inner !== undefined) h += '<span class="pq-icopts">(' + inner.split('|').map(o => _pdfqEsc(o.trim())).join(' / ') + ')</span>';
     parts.push(h);
     return '\u0000' + (parts.length - 1) + '\u0000';
@@ -17851,13 +18003,14 @@ function _pdfqBody(q, type, a) {
   if (type === 'cloze' || type === 'fill-blanks') {
     const given = _pdfqArr(a) || (_pdfqEmpty(a) ? [] : [a]);
     const corrects = _pdfqArr(q.answers) || [];
+    const keys = _ckKeyList(q.keyAnswers);
     const bank = Array.isArray(q.wordBank) && q.wordBank.length
       ? '<div class="pq-bank"><strong>Banca parole:</strong> ' + q.wordBank.map(_pdfqEsc).join(' · ') + '</div>' : '';
     const nBlanks = _pdfqCountBlanks(q.text);
     let html = '';
     let used = 0;
     if (nBlanks > 0) {
-      const r = _pdfqFillText(q.text, given, corrects, 0);
+      const r = _pdfqFillText(q.text, given, corrects, 0, keys, q.keyMinSimilarity);
       html = '<div class="pq-text pq-filled">' + r.html + '</div>';
       used = r.next;
     } else {
@@ -17870,8 +18023,9 @@ function _pdfqBody(q, type, a) {
       for (let b = used; b < n; b++) {
         const corr = corrects[b];
         const hasCorr = corr != null && String(corr).trim() !== '';
-        const ok = hasCorr ? (!_pdfqEmpty(given[b]) && _pdfqClozeOk(given[b], corr)) : null;
-        li += '<li>' + _pdfqChip(given[b], ok, hasCorr ? _pdfqAlts(corr).join(' / ') : '') + '</li>';
+        const res = hasCorr && !_pdfqEmpty(given[b]) ? _pdfqClozeRes(given[b], corr, keys[b], q.keyMinSimilarity) : null;
+        const ok = hasCorr ? !!(res && res.ok) : null;
+        li += '<li>' + _pdfqChip(given[b], ok, hasCorr ? _pdfqAlts(corr).join(' / ') : '', !!(res && res.tol)) + '</li>';
       }
       html += '<ol class="pq-list" start="' + (used + 1) + '">' + li + '</ol>';
     }
@@ -22222,6 +22376,7 @@ function renderVersionEditForm(q, i, tab) {
   } else if (type === 'cloze' || type === 'fill-blanks') {
     h += fg + '<label style="font-size:11px;">Testo (usa ___ per spazi, [[a|b|c]] per una scelta)</label><textarea id="vqf-text" rows="3" style="font-size:12px;">' + esc(q.text||'') + '</textarea></div>';
     h += fg + '<label style="font-size:11px;">Risposte (una per riga, <code>|</code> per alternative)</label><textarea id="vqf-answers" rows="3" style="font-size:12px;" placeholder="go|goes|is going">' + (q.answers||[]).join('\n') + '</textarea></div>';
+    h += _keyFieldHTML('vqf-key-answers', q.keyAnswers, true);
     h += fg + '<label style="font-size:11px;">💡 Suggerimento (opzionale)</label><input type="text" id="vqf-hint" value="' + esc(q.hint||'') + '" style="font-size:12px;"></div>';
     h += fg + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" id="vqf-hide-instruction" ' + (q.hideInstruction ? 'checked' : '') + '> Nascondi banner istruzione ("Scrivi SOLO le parole…")</label></div>';
   } else if (type === 'matching') {
@@ -22766,6 +22921,7 @@ async function saveVersionQ(i) {
   } else if (type === 'cloze' || type === 'fill-blanks') {
     q.answers = (document.getElementById('vqf-answers')?.value || '').split('\n').map(function(s){return s.trim();}).filter(Boolean);
     q.hint = document.getElementById('vqf-hint')?.value.trim() || '';
+    _keyApplyFromForm(q, _keyInner(qs[i]), 'vqf-key-answers');
   } else if (type === 'matching') {
     q.left = (document.getElementById('vqf-left')?.value || '').split('\n').map(function(s){return s.trim();}).filter(Boolean);
     q.right = (document.getElementById('vqf-right')?.value || '').split('\n').map(function(s){return s.trim();}).filter(Boolean);
@@ -22789,6 +22945,7 @@ async function saveVersionQ(i) {
     _vInner.text = _vv('qf-text');
     if (_vSub === 'fill-blanks' || _vSub === 'cloze') {
       _vInner.answers = (_vv('qf-answers')||'').split('\n').map(function(s){return s.trim();}).filter(Boolean);
+      _keyApplyFromForm(_vInner, _keyInner(qs[i]), 'qf-key-answers');
     } else if (_vSub === 'multiple-choice') {
       _vInner.options = ['qf-a','qf-b','qf-c','qf-d'].map(_vv).filter(Boolean);
       _vInner.correct = parseInt(document.getElementById('qf-correct')?.value)||0;
@@ -23324,6 +23481,16 @@ Rispondi SOLO con un array JSON valido. Nessun markdown, nessuna spiegazione.`;
     }
 
     if (_isDsaTab(tab) || _isPeiTab(tab)) generated.forEach(q => { q.dsaLargeText = true; });
+    // Parole chiave (keyAnswers): dall'esercizio di partenza nella stessa posizione e dello
+    // stesso tipo; restano solo se compaiono ancora nelle nuove soluzioni.
+    {
+      const _kSrc = (tab === 'recupero_1' || tab === 'recupero_2' || tab === 'fila_b' || tab === 'fila_c') ? S.questions : _srcQs;
+      generated.forEach((q, gi) => {
+        const o = _kSrc[gi];
+        const same = o && q && (o.type === q.type) && (q.type !== 'listening' || (o.subtype || (o.question || {}).type) === (q.subtype || (q.question || {}).type));
+        _keyCarry(q, same ? o : null);
+      });
+    }
     _setVerQs(tab, generated);
 
     st.className = 'alert alert-success';
@@ -26917,6 +27084,8 @@ function qeBuildBody(type, q, scope) {
     h += '<div class="qe-section-lbl">Risposte — una per spazio (usa <code style="font-weight:800;">|</code> per alternative)</div>';
     h += qeList('answers', q.answers || [''], 'es: go|goes|is going');
     h += '<div class="qe-count" id="qe-blankcount-'+scope+'"></div>';
+    h += '<div class="qe-section-lbl">🔑 Parole chiave (opzionale) — una per spazio, alternative con <code style="font-weight:800;">|</code>; riga vuota = nessuna chiave</div>';
+    h += qeField('keys', _ckKeyList(q.keyAnswers).map(_keyStr).join('\n'), 'es: are|\'re — vale lo spazio anche con piccoli errori nel resto della frase', '', 'qe-hintbox');
     h += '<div class="qe-section-lbl">💡 Suggerimento (opzionale)</div>';
     h += qeField('hint', q.hint || '', 'Suggerimento per lo studente…', '', 'qe-hintbox');
   } else if (type === 'matching') {
@@ -27196,7 +27365,8 @@ function qeChangeSubtype(newSub) {
   var synth = { type:newSub, text: curInner.text||'', hint: curInner.hint||'',
     options: curInner.options||[], correct: curInner.correct||0, answers: curInner.answers||[],
     left: curInner.left||[], right: curInner.right||[], sentences: curInner.sentences||[],
-    words: curInner.words||[], categories: curInner.categories||[], items: curInner.items||[] };
+    words: curInner.words||[], categories: curInner.categories||[], items: curInner.items||[],
+    keyAnswers: curInner.keyAnswers||[] };
   inner.innerHTML = qeBuildBody(newSub, synth, 'inner');
   inner.querySelectorAll('textarea.qe-ce').forEach(qeAutoGrow);
   QE.dirty = true;
@@ -27263,6 +27433,8 @@ function qeReadBody(body) {
   } else if (type === 'cloze' || type === 'fill-blanks') {
     q.answers = qeReadList(body, 'answers');
     var hintEl = body.querySelector('textarea[data-field="hint"]'); if (hintEl && hintEl.value.trim()) q.hint = hintEl.value.trim();
+    var keysEl = body.querySelector('textarea[data-field="keys"]');
+    if (keysEl) { var _ka = _keyLinesToArr(keysEl.value); if (_ka.some(Boolean)) q.keyAnswers = _ka; }
   } else if (type === 'matching') {
     var L = [], R = [];
     body.querySelectorAll('[data-pairrow]').forEach(function(r){
@@ -27305,7 +27477,7 @@ function qeReadBody(body) {
 }
 
 // Legge l'intera domanda corrente (compresi toolbar/media), pronta per il salvataggio
-var QE_CONTENT_KEYS = ['options','correct','answers','left','right','sentences','words','categories','items','hint','targets','model','avoid','free','minWords'];
+var QE_CONTENT_KEYS = ['options','correct','answers','left','right','sentences','words','categories','items','hint','targets','model','avoid','free','minWords','keyAnswers'];
 function qeReadCurrentQ() {
   var q = JSON.parse(JSON.stringify(QE.base || {}));
   var type = (document.querySelector('#qedit-toolbar select') || {}).value || q.type;
@@ -27320,6 +27492,9 @@ function qeReadCurrentQ() {
     var sub = (document.getElementById('qe-lsub')||{}).value || (q.subtype||'fill-blanks');
     var innerQ = qeReadBody(innerBody);
     innerQ.type = sub;
+    // keyMinSimilarity non è nel modulo: si conserva (solo se restano parole chiave)
+    var _baseInner = (QE.base && QE.base.question) || {};
+    if (innerQ.keyAnswers && _baseInner.keyMinSimilarity != null) innerQ.keyMinSimilarity = _baseInner.keyMinSimilarity;
     q.subtype = sub;
     q.question = innerQ;
     var ttsT = document.getElementById('qe-tts-text'); if (ttsT) q.ttsText = ttsT.value.trim();
@@ -27332,6 +27507,7 @@ function qeReadCurrentQ() {
     var mainBody = document.querySelector('[data-scope="main"]');
     var frag = qeReadBody(mainBody);
     Object.assign(q, frag);
+    if (!q.keyAnswers || (q.type !== 'cloze' && q.type !== 'fill-blanks')) { delete q.keyAnswers; delete q.keyMinSimilarity; }
     if (QE.pendingImage !== undefined) { if (QE.pendingImage === null) delete q.image; else q.image = QE.pendingImage; }
   }
 

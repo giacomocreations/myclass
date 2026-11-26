@@ -28934,13 +28934,96 @@ ${sectionInstr}`;
     // ── Normalizza risposta cloze (identica a _normClozeAnswer in LiveLearn) ──
     // Rimuove diacritici, punteggiatura, trattini e spazi extra per confronto robusto.
     function _normClozeAg(s) {
-        return (s || '')
+        return String(s == null ? '' : s)
             .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
             .toLowerCase()
-            .replace(/[-–—]/g, '')
-            .replace(/[.,!?;:'"()]/g, '')
+            .replace(/[’‘ʼ´`']/g, '')   // apostrofi di ogni tipo: rimossi (I'm = I’m = Im)
+            .replace(/[-–—]/g, '')   // trattini: rimossi
+            .replace(/[.,!?;:"()“”«»]/g, ' ')   // altra punteggiatura → SPAZIO ("Hi,I'm" = "Hi, I'm")
             .replace(/\s+/g, ' ')
             .trim();
+    }
+
+    // ── Parola chiave (keyAnswers) ───────────────────────────────────────────
+    // Esercizi in cui l'alunno riscrive la frase intera ma si valuta solo una
+    // struttura (es. il verbo be): keyAnswers è parallelo ad answers, una voce per
+    // spazio, alternative con | ("are|'re"); voce vuota = nessuna chiave.
+    // Lo spazio è giusto "con tolleranza" se la risposta contiene la chiave come
+    // parole contigue E somiglia alla soluzione (similarità ≥ keyMinSimilarity, 0.7).
+    // Tokenizzazione per la chiave: apostrofi curvi → ', contrazioni staccate
+    // (we're → we 're, isn't → isn 't), punteggiatura → spazio.
+    function _ckTokens(s) {
+      return String(s == null ? '' : s)
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toLowerCase()
+        .replace(/[’‘ʼ´`]/g, "'")
+        .replace(/([a-z0-9])'(?=[a-z])/g, "$1 '")
+        .replace(/[.,!?;:"()“”«»]/g, ' ')
+        .replace(/\s+/g, ' ').trim()
+        .split(' ').filter(Boolean);
+    }
+    function _ckAlts(v) {
+      return (Array.isArray(v) ? v.join('|') : String(v == null ? '' : v)).split('|').map(x => x.trim()).filter(Boolean);
+    }
+    // keyAnswers può arrivare da Firebase come oggetto {0:"are",2:"is"}
+    function _ckKeyList(v) {
+      if (Array.isArray(v)) return v;
+      if (v && typeof v === 'object') {
+        const r = [];
+        Object.keys(v).forEach(k => { if (/^\d+$/.test(k)) r[Number(k)] = v[k]; });
+        return r;
+      }
+      return typeof v === 'string' && v.trim() ? [v] : [];
+    }
+    function _ckLev(a, b) {
+      if (a === b) return 0;
+      if (!a.length) return b.length;
+      if (!b.length) return a.length;
+      let prev = [];
+      for (let j = 0; j <= b.length; j++) prev[j] = j;
+      for (let i = 1; i <= a.length; i++) {
+        const cur = [i];
+        for (let j = 1; j <= b.length; j++) {
+          cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        }
+        prev = cur;
+      }
+      return prev[b.length];
+    }
+    // true se una delle alternative della chiave compare come sequenza contigua di parole nel testo
+    function _ckKeyIn(keyRaw, textRaw) {
+      const t = _ckTokens(textRaw);
+      if (!t.length) return false;
+      return _ckAlts(keyRaw).some(k => {
+        const kt = _ckTokens(k);
+        if (!kt.length) return false;
+        for (let i = 0; i + kt.length <= t.length; i++) {
+          if (kt.every((w, j) => t[i + j] === w)) return true;
+        }
+        return false;
+      });
+    }
+    // Identica a LiveLearn (_clozeKeyMatch): stessi punti per gli spazi con parola chiave.
+    // Esito di uno spazio: { ok, tol }. tol = accettato con tolleranza (solo la parola chiave è giusta).
+    // Senza chiave è il confronto di sempre (normalizzazione standard contro le alternative).
+    function _clozeKeyMatch(givenRaw, correctRaw, keyRaw, minSim, norm) {
+      const alts = _ckAlts(correctRaw);
+      if (!alts.length) return { ok: false, tol: false };
+      const g = norm(givenRaw);
+      if (alts.some(a => norm(a) === g)) return { ok: true, tol: false };
+      if (!g || !_ckAlts(keyRaw).length || !_ckKeyIn(keyRaw, givenRaw)) return { ok: false, tol: false };
+      let th = Number(minSim);
+      if (minSim == null || minSim === '' || !isFinite(th)) th = 0.7;
+      const sim = Math.max(...alts.map(a => {
+        const c = norm(a), m = Math.max(g.length, c.length);
+        return m ? 1 - _ckLev(g, c) / m : 0;
+      }));
+      return sim >= th ? { ok: true, tol: true } : { ok: false, tol: false };
+    }
+    // Spazio giusto? (con keyAnswers facoltativi) — usato da tutti i ricalcoli dei punti
+    function _clozeOkAg(given, corr, key, minSim) {
+        if (!_normClozeAg(given)) return false;   // spazio vuoto: sbagliato, come prima
+        return _clozeKeyMatch(given, corr, key, minSim, _normClozeAg).ok;
     }
 
     // ── Punti guadagnati da una risposta, specchio di LiveLearn.evaluateAnswer ──
@@ -28975,15 +29058,12 @@ ${sectionInstr}`;
         const pts = q.points || 1;
         const arrOf = v => Array.isArray(v) ? v : (v && typeof v === 'object' ? agentFbArr(v) : null);
         const frac = (n, tot) => { if (out) { out.n = n; out.tot = tot; } return Math.round((n / (tot || 1)) * pts * 100) / 100; };
-        const evalCloze = (corrects, ans) => {
+        const evalCloze = (corrects, ans, keys, minSim) => {
             const arr = arrOf(ans);
             if (!arr) return 0;
             let n = 0;
-            corrects.forEach((c, i) => {
-                const given = _normClozeAg(String(arr[i] ?? ''));
-                const alts  = String(c || '').split('|').map(x => _normClozeAg(x)).filter(Boolean);
-                if (given && alts.some(alt => alt === given)) n++;
-            });
+            const kl = _ckKeyList(keys);
+            corrects.forEach((c, i) => { if (_clozeOkAg(arr[i], c, kl[i], minSim)) n++; });
             return frac(n, corrects.length);
         };
         const evalDrag = (inner, ans) => {
@@ -29034,7 +29114,7 @@ ${sectionInstr}`;
         };
         const evalBy = (sub, inner) => {
             if (sub === 'multiple-choice') { const ok = _agentMcOk(inner, a); if (out) { out.n = ok ? 1 : 0; out.tot = 1; } return ok ? pts : 0; }
-            if (sub === 'cloze' || sub === 'fill-blanks') return evalCloze(agentFbArr(inner.answers || []), a);
+            if (sub === 'cloze' || sub === 'fill-blanks') return evalCloze(agentFbArr(inner.answers || []), a, inner.keyAnswers, inner.keyMinSimilarity);
             if (sub === 'drag-drop')      return evalDrag(inner, a);
             if (sub === 'reorder')        return evalReorder(inner, a);
             if (sub === 'matching')       return evalMatch(inner, a);
@@ -29764,10 +29844,9 @@ ${sectionInstr}`;
                                             const corr2 = agentFbArr(q.answers || q.blanks || q.correctAnswers || []);
                                             if (corr2.length) {
                                                 let ok2 = 0;
+                                                const kl2 = _ckKeyList(q.keyAnswers);
                                                 corr2.forEach((c2, ci2) => {
-                                                    const g2 = _normClozeAg(String(arr2[ci2]||''));
-                                                    const alts2 = String(c2||'').split('|').map(x=>_normClozeAg(x)).filter(Boolean);
-                                                    if (g2 && alts2.some(a=>a===g2)) ok2++;
+                                                    if (_clozeOkAg(arr2[ci2], c2, kl2[ci2], q.keyMinSimilarity)) ok2++;
                                                 });
                                                 earned2 += Math.round(ok2/corr2.length*pts2*100)/100;
                                             }
@@ -30347,10 +30426,9 @@ ${sectionInstr}`;
                         const corr = agentFbArr(q.answers || q.blanks || q.correctAnswers || []);
                         if (corr.length) {
                             let ok = 0;
+                            const kl = _ckKeyList(q.keyAnswers);
                             corr.forEach((c, ci) => {
-                                const given = _normClozeAg(String(arr[ci] || ''));
-                                const alts  = String(c || '').split('|').map(x => _normClozeAg(x)).filter(Boolean);
-                                if (given && alts.some(alt => alt === given)) ok++;
+                                if (_clozeOkAg(arr[ci], c, kl[ci], q.keyMinSimilarity)) ok++;
                             });
                             earned += Math.round(ok / corr.length * pts * 100) / 100;
                         }
@@ -39990,7 +40068,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
     }
     function _ppkqNorm(s) {
       return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
-        .replace(/[-–—]/g, '').replace(/[.,!?;:'"()]/g, '').replace(/\s+/g, ' ').trim();
+        .replace(/[’‘ʼ´`']/g, '').replace(/[-–—]/g, '').replace(/[.,!?;:"()“”«»]/g, ' ').replace(/\s+/g, ' ').trim();
     }
     function _ppkqAlts(c) { return String(c == null ? '' : c).split('|').map(x => x.trim()).filter(Boolean); }
     function _ppkqClozeOk(given, corr) { const g = _ppkqNorm(given); return _ppkqAlts(corr).some(alt => _ppkqNorm(alt) === g); }
