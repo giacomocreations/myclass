@@ -42229,26 +42229,19 @@ Rispondi SOLO con JSON valido, niente altro:
             f.orale = { pct: Number(best.voto) * 10, fonte: `Orale ${d}: voto ${best.voto}` };
             f.griglia = ((best.punteggi && best.punteggi.length) ? best.punteggi : _obvPunteggiDaTesto(best.nota))
                 .map(p => ({ ...p, fonte: `Orale ${d}: ${p.nome} ${p.voto}/${p.max}` }));
-        } else {
-            // Nessuna valutazione orale dettagliata: prima impressione dalla griglia LIVE
-            const date = new Set(_obvLezioni(classe, nomeU).map(p => p.data));
-            const vp = (studente.votiPromemoria || [])
-                .filter(p => p && date.has(String(p.data).slice(0, 10)) && Number(p.voto10) > 0)
-                .sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
-            if (vp) {
-                const d = _obvDataBreve(vp.data);
-                f.orale = { pct: Number(vp.voto10) * 10, fonte: `LIVE ${d}: ${vp.voto10}/10 (prima impressione)`, provvisorio: true };
-                f.griglia = (vp.punteggi || []).map(p => ({ ...p, fonte: `LIVE ${d}: ${p.nome} ${p.voto}/${p.max} (prima impressione)`, provvisorio: true }));
-            }
         }
+        // La griglia LIVE (votiPromemoria) NON conta: si salva da sola appena la
+        // griglia di un alunno e' completa, quindi non e' un voto approvato. Per gli
+        // obiettivi valgono solo gli orali approvati (studente.orale).
         return f;
     }
 
     // ── Griglia orale ↔ obiettivi ──────────────────────────────────────
     // Come le domande dello scritto, anche le macroaree della griglia orale e il
     // voto complessivo dell'orale si abbinano agli obiettivi della unit. Sta sulla
-    // unit, per nome della macroarea: vale per la prima impressione della griglia
-    // LIVE e per la valutazione rivista a casa con l'audio (stessa griglia).
+    // unit, per nome della macroarea: vale per la valutazione orale approvata
+    // (rivista a casa con l'audio). La griglia LIVE serve solo a sapere quali
+    // macroaree ci sono, non da' esiti.
     //   unit.obiettiviOrale = { aree: {[nome macroarea minuscolo]: [id obiettivo]},
     //                           voto: [id obiettivo], griglie: [id griglia aggiunte a mano] }
     // Una macroarea (o il voto) che il docente non ha abbinato segue la regola
@@ -42277,7 +42270,7 @@ Rispondi SOLO con JSON valido, niente altro:
         // Orale: voto complessivo e macroaree della griglia abbinati all'obiettivo
         if (f.orale && _obvOraleAbbinato(u, o, null)) v.push(f.orale);
         f.griglia.filter(p => p.max > 0 && _obvOraleAbbinato(u, o, p.nome))
-            .forEach(p => v.push({ pct: p.voto / p.max * 100, fonte: p.fonte, provvisorio: p.provvisorio }));
+            .forEach(p => v.push({ pct: p.voto / p.max * 100, fonte: p.fonte }));
         return v;
     }
 
@@ -42295,8 +42288,7 @@ Rispondi SOLO con JSON valido, niente altro:
         return {
             stato: man || auto, auto, manuale: !!man,
             pct: pct == null ? null : Math.round(pct),
-            fonti: vals.map(x => x.fonte),
-            provvisorio: vals.some(x => x.provvisorio)
+            fonti: vals.map(x => x.fonte)
         };
     }
 
@@ -42941,7 +42933,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
                     av != null ? `Autovalutazione: ${OBV_AUTO[av].icon} ${OBV_AUTO[av].label}${scarto === 'sopra' ? ' (si sopravvaluta)' : scarto === 'sotto' ? ' (si sottovaluta)' : ''}` : '',
                     'Clic per cambiare'
                 ].filter(Boolean).join('\n');
-                const stile = (st.manuale ? 'outline:2px solid #4f46e5;' : scarto ? 'outline:2px dashed #f59e0b;' : '') + (st.provvisorio && !st.manuale ? 'opacity:.55;' : '');
+                const stile = (st.manuale ? 'outline:2px solid #4f46e5;' : scarto ? 'outline:2px dashed #f59e0b;' : '');
                 return `<td style="text-align:center;padding:3px;"><button onclick="obvCambiaEsito(${si},'${o.id}')" title="${_obvEsc(tip)}" style="${stile}border:1px solid #e8eaf6;background:white;border-radius:8px;padding:3px 6px;cursor:pointer;min-width:44px;font-family:inherit;">
                     <div style="font-size:15px;line-height:1.1;">${OBV_STATI[st.stato].icon}</div>
                     ${st.pct != null && !st.manuale && st.stato !== 'escluso' ? `<div style="font-size:9px;color:#888;">${st.pct}%</div>` : ''}
@@ -42956,7 +42948,7 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         return `<div style="background:#f7f8fc;border:1px solid #e8eaf6;border-radius:10px;padding:10px 12px;margin-bottom:12px;">${legenda}</div>
             <div style="font-size:12px;color:#666;margin-bottom:10px;line-height:1.5;">
                 Calcolato dalle prove della unit: domande abbinate a ciascun obiettivo (scheda 🔗) o, se il test non è abbinato, parziali per area; voto e macroaree della griglia orale abbinati a ciascun obiettivo (scheda 🎤).
-                ✅ da ${OBV_SOGLIA_OK}% · 🟡 da ${OBV_SOGLIA_PARZ}% · 🔴 sotto · ⚪ nessuna prova · ➖ non previsto (PEI: solo i minimi). Senza l'orale dettagliato vale la prima impressione della griglia LIVE (cella sbiadita).
+                ✅ da ${OBV_SOGLIA_OK}% · 🟡 da ${OBV_SOGLIA_PARZ}% · 🔴 sotto · ⚪ nessuna prova · ➖ non previsto (PEI: solo i minimi). Dell'orale contano solo le valutazioni approvate: la griglia compilata nella LIVE non dà esiti finché non approvi l'orale.
                 Clic su una cella per correggere: il bordo blu indica una tua decisione. Passa sopra una cella per vedere da quali dati viene.
                 Sotto l'esito, la faccina è l'autovalutazione dell'alunno (😀 lo so fare · 😐 quasi · 😟 non ancora); il bordo arancio tratteggiato segnala chi si sopravvaluta o si sottovaluta.
             </div>
@@ -43151,11 +43143,11 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
         }).join(' ');
         return `<div style="font-size:12px;color:#666;margin-bottom:12px;line-height:1.5;">
                 Per la verifica orale (anche se fai solo lo speaking) spunta quali obiettivi verifica ogni <b>macroarea della griglia</b> e il <b>voto complessivo</b>.
-                L'abbinamento vale per la prima impressione della griglia LIVE e, appena approvi la valutazione rivista a casa con l'audio, per i punteggi di quella (le macroaree sono le stesse).
+                L'abbinamento vale per i punteggi della valutazione orale approvata (quella rivista a casa con l'audio): la griglia compilata nella LIVE da sola non dà esiti.
                 Se un obiettivo ha più fonti (più macroaree, voto, domande dello scritto) l'esito è la media.
                 Le righe <b>🤖 automatiche</b> seguono la regola di base (voto → speaking e funzioni, macroaree di lessico e strutture → quegli obiettivi): appena cambi una spunta la riga diventa tua (<b>✋</b>).
             </div>
-            <div style="font-size:12px;margin-bottom:10px;color:#4c1d95;">🎤 ${rivisti} alunn${rivisti === 1 ? 'o' : 'i'} con l'orale rivisto e approvato${live ? ` · ${live} solo con la griglia LIVE (prima impressione)` : ''}</div>
+            <div style="font-size:12px;margin-bottom:10px;color:#4c1d95;">🎤 ${rivisti} alunn${rivisti === 1 ? 'o' : 'i'} con l'orale rivisto e approvato${live ? ` · ${live} solo con la griglia LIVE (non conta finché non approvi l'orale)` : ''}</div>
             <div style="overflow-x:auto;"><table style="border-collapse:collapse;width:100%;">
                 <tr><th style="text-align:left;font-size:12px;padding:4px 8px 4px 0;">Macroarea</th><th></th>${th}</tr>
                 ${tr}
