@@ -17479,6 +17479,11 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 { key:'fase3', label:'✅ Consolidamento / Chiusura', color:'#5c6bc0', bg:'#e8eaf6' },
             ];
             const fasi = FASI_DEF.map(f=>({...f,testo:pd[f.key]||'',minuti:estraiMinuti(pd[f.key])})).filter(f=>f.testo.trim());
+            const FASI_B_DEF = [
+                { key:'fase1', label:'🔥 Warm up / Avvio',          color:'#f06292', bg:'#fce4ec' },
+                { key:'fase2', label:'📖 Attività principale (B)',   color:'#ba68c8', bg:'#f3e5f5' },
+                { key:'fase3', label:'✅ Chiusura (B)',              color:'#e91e8c', bg:'#fce4ec' },
+            ];
 
             const risorse = (lz.risorse||[]).map(id=>(data.risorseLezioni||[]).find(x=>x.id===id)).filter(Boolean);
             const TIPO_ICONS_R = {video:'🎬',esercizio:'📝',gioco:'🎮',audio:'🔊',documento:'📄',altro:'🔗'};
@@ -17650,6 +17655,8 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
 .lv-att-ctl button.del{border-color:#ef4444;color:#fca5a5;}
 .lv-att-addbtn.lv-att-undo{border-style:solid;border-color:rgba(255,255,255,.3);background:rgba(255,255,255,.06);color:#e5e7eb;}
 .lv-att-addbtn:disabled{opacity:.35;cursor:default;}
+.lv-fase-vuota{border-bottom:1px solid rgba(255,255,255,.06);opacity:.75;cursor:pointer;}
+.lv-fase-vuota:hover{opacity:1;background:rgba(255,255,255,.03);}
 .lv-att-addbtn{margin-top:10px;padding:8px 16px;border-radius:10px;border:1.5px dashed #a78bfa;background:rgba(167,139,250,.12);color:#c4b5fd;cursor:pointer;font-size:calc(15px*var(--lv-z,1));font-weight:700;font-family:inherit;}
 .lv-att-ed{width:100%;box-sizing:border-box;background:rgba(255,255,255,.08);border:1.5px solid #a78bfa;color:#fff;border-radius:8px;padding:10px;font-size:inherit;line-height:1.5;font-family:inherit;resize:vertical;}
 .lvbtn.att-on{background:#7c3aed;border-color:#a78bfa;color:#fff;}
@@ -18068,7 +18075,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             function lvRenderFL(block){
                 const el=q('lv-fasi-scroll');if(!el)return;
                 const fv=LV.fPreview!==null?LV.fPreview:LV.fc;
-                el.innerHTML=LV.fasi.map((f,i)=>{
+                const blocchi=LV.fasi.map((f,i)=>{
                     const isDone=i<LV.fc;
                     const isActive=i===LV.fc;
                     const isPreviewing=i===fv&&fv!==LV.fc;
@@ -18089,7 +18096,28 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                         +'</div>'
                         +(isShown?(LV.attEdit?lvAttBody(i,f):'<div class="lv-fb-body">'+lvParseTesto(f.testo,f.color)+'</div>'):'')
                         +'</div>';
-                }).join('');
+                });
+                // Fasi senza attività: non sono in LV.fasi (niente timer), ma in
+                // modifica compaiono al loro posto, così ci si può aggiungere un'attività
+                let html='';
+                if(LV.attEdit){
+                    const defs=lvFasiDef(), usate=new Set();
+                    defs.forEach(d=>{
+                        const i=LV.fasi.findIndex(f=>f.key===d.key);
+                        if(i>=0){ html+=blocchi[i]; usate.add(i); return; }
+                        html+='<div class="lv-fase-vuota" onclick="lvAttOpenAdd(\'k:'+d.key+'\')">'
+                            +'<div class="lv-fb-header">'
+                            +'<div class="lv-fb-num" style="background:'+d.color+'22;color:'+d.color+';">+</div>'
+                            +'<div class="lv-fb-label" style="color:'+d.color+';">'+d.label+' <span style="font-size:calc(13px*var(--lv-z,1));opacity:.6;font-weight:400;text-transform:none;letter-spacing:0;">· vuota</span></div>'
+                            +'<button class="lv-att-addbtn" style="margin-top:0;" onclick="event.stopPropagation();lvAttOpenAdd(\'k:'+d.key+'\')">➕ Aggiungi attività</button>'
+                            +'</div></div>';
+                    });
+                    blocchi.forEach((b,i)=>{ if(!usate.has(i))html+=b; });
+                } else {
+                    html=blocchi.join('');
+                    if(!LV.fasi.length)html='<div style="padding:24px 20px;opacity:.6;font-size:calc(16px*var(--lv-z,1));">Nessuna attività in questo piano: premi <b>✏️ Attività</b> per aggiungerne.</div>';
+                }
+                el.innerHTML=html;
                 const shownEl=el.querySelectorAll('.lv-fase-block')[fv];
                 // La colonna scorre per intero: lascia sotto il timer fisso la parte che si vuole leggere
                 const colF=q('lv-col-fasi'), curF=q('lv-fase-current');
@@ -18855,6 +18883,29 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 if(!LV.pianoBAttivo&&pd.fasiPrimaDelLive)return pd.fasiPrimaDelLive;
                 return LV.pianoBAttivo?LV._origB:LV._origA;
             }
+            // Fasi previste dal piano visualizzato (A o B). Il vecchio Piano B a
+            // descrizione unica ha una fase sola, già presente.
+            function lvFasiDef(){
+                if(!LV.pianoBAttivo)return FASI_DEF;
+                return LV.fasi.some(f=>f.key==='pianoB')?[]:FASI_B_DEF;
+            }
+            // Mette nel LIVE una fase prevista ma vuota, al suo posto; ne ritorna l'indice
+            function lvAttInsFase(key){
+                const defs=lvFasiDef(), k=defs.findIndex(d=>d.key===key);
+                if(k<0)return -1;
+                const gia=LV.fasi.findIndex(f=>f.key===key); if(gia>=0)return gia;
+                const ordine=f=>{ const j=defs.findIndex(d=>d.key===f.key); return j<0?99:j; };
+                const pos=LV.fasi.filter(f=>ordine(f)<k).length;
+                const eraVuoto=!LV.fasi.length;
+                LV.fasi.splice(pos,0,{...defs[k],testo:'',minuti:null});
+                // gli indici dopo pos scorrono di uno
+                const adj={}; Object.entries(LV.fAdj).forEach(([i,v])=>{ i=+i; adj[i>=pos?i+1:i]=v; }); LV.fAdj=adj;
+                if(!eraVuoto){
+                    if(pos<=LV.fc)LV.fc++;
+                    if(LV.fPreview!=null&&pos<=LV.fPreview)LV.fPreview++;
+                }
+                return pos;
+            }
             function lvAttBody(fi,f){
                 const items=lvItems(f.testo);
                 let h='<div class="lv-fb-body lv-att-edit" onclick="event.stopPropagation()">';
@@ -18884,7 +18935,6 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                 return h;
             }
             window.lvAttToggle=function(){
-                if(!LV.fasi.length){alert('Nessuna fase nel piano.');return;}
                 LV.attEditing=null;
                 LV.attEdit=!LV.attEdit;
                 const b=q('lv-att-btn'); if(b){b.textContent=LV.attEdit?'✅ Fine modifica':'✏️ Attività';b.classList.toggle('att-on',LV.attEdit);}
@@ -18964,7 +19014,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
                         if(pos<=LV.fc&&LV.fasi.length>1)LV.fc++;
                     }
                 });
-                LV.fasi.forEach(f=>{ if(Object.prototype.hasOwnProperty.call(src,f.key))f.testo=String(src[f.key]||''); });
+                LV.fasi.forEach(f=>{ f.testo=Object.prototype.hasOwnProperty.call(src,f.key)?String(src[f.key]||''):''; });
                 LV.rimosse=[]; LV.aggiunte=[];
                 LV.attDirty=true; lvAutoSave();
                 LV.fPreview=null;
@@ -18989,7 +19039,16 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             window.lvAttOpenAdd=function(fi){
                 window.lvAttCloseAdd();
                 const p=document.createElement('div'); p.id='lv-att-panel';
-                const opts=LV.fasi.map((f,i)=>'<option value="'+i+'"'+(i===fi?' selected':'')+'>'+(i+1)+'. '+String(f.label).replace(/</g,'&lt;')+'</option>').join('');
+                // fi = indice di una fase del LIVE, oppure 'k:fase1' per una fase ancora vuota
+                const sel=String(fi==null?LV.fc:fi);
+                const voci=[], usate=new Set();
+                lvFasiDef().forEach(d=>{
+                    const i=LV.fasi.findIndex(f=>f.key===d.key);
+                    if(i>=0){ usate.add(i); voci.push({v:String(i),l:d.label}); }
+                    else voci.push({v:'k:'+d.key,l:d.label+' (vuota)'});
+                });
+                LV.fasi.forEach((f,i)=>{ if(!usate.has(i))voci.push({v:String(i),l:f.label}); });
+                const opts=voci.map((x,n)=>'<option value="'+x.v+'"'+(x.v===sel?' selected':'')+'>'+(n+1)+'. '+String(x.l).replace(/</g,'&lt;')+'</option>').join('');
                 p.innerHTML='<div class="lv-att-box"><div style="font-weight:800;margin-bottom:10px;">➕ Aggiungi attività</div>'
                   +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;"><span style="opacity:.6;">Fase:</span><select id="lv-att-fase">'+opts+'</select></div>'
                   +'<input id="lv-att-in" type="text" placeholder="Scrivi una nuova attività o cerca nello storico…" autocomplete="off">'
@@ -19010,15 +19069,18 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             window.lvAttConfirmAdd=function(){
                 const inp=q('lv-att-in'); if(!inp)return;
                 const testo=inp.value.trim().replace(/^[-•*]\s+/,''); if(!testo)return;
-                const fi=parseInt(q('lv-att-fase')?.value)||0;
+                const v=String(q('lv-att-fase')?.value||'');
+                const eraVuoto=!LV.fasi.length;
                 lvAttSnap();
+                const fi=v.indexOf('k:')===0?lvAttInsFase(v.slice(2)):(parseInt(v)||0);
+                if(fi<0||!LV.fasi[fi])return;
                 const items=lvItems(LV.fasi[fi].testo);
                 items.unshift('- '+testo); // in cima: più comodo poi spostarla giù con ▼
                 lvAttSet(fi,items);
                 LV.aggiunte.push(testo);
                 window.lvAttCloseAdd();
-                LV.fPreview=(fi!==LV.fc)?fi:null;
-                lvRenderFL();
+                if(eraVuoto)lvGoF(fi);   // prima attività del piano: diventa la fase attiva (timer fermo)
+                else lvPreview(fi);
             };
 
             // ── Compiti per la prossima volta: modifica al volo ─────────────
@@ -19180,11 +19242,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             // Costruisce le fasi del Piano B con lo stesso formato del Piano A
             const fasiBConfig = (() => {
                 if(!pianoB) return [];
-                const FASI_B = [
-                    { key:'fase1', label:'🔥 Warm up / Avvio',          color:'#f06292', bg:'#fce4ec' },
-                    { key:'fase2', label:'📖 Attività principale (B)',   color:'#ba68c8', bg:'#f3e5f5' },
-                    { key:'fase3', label:'✅ Chiusura (B)',              color:'#e91e8c', bg:'#fce4ec' },
-                ];
+                const FASI_B = FASI_B_DEF;
                 // Compatibilità con vecchio formato {descrizione}
                 if (!pianoB.fase1 && !pianoB.fase2 && !pianoB.fase3 && pianoB.descrizione) {
                     return [{ key:'pianoB', label:'⚡ '+(pianoB.titolo||'Piano B'), color:'#f48fb1', bg:'#fce4ec', testo:pianoB.descrizione, minuti:pianoB.durata||50 }];
