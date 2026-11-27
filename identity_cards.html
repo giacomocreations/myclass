@@ -1429,7 +1429,36 @@ const liveFollow = window.MyClassLive && MyClassLive.follow && MyClassLive.follo
 // ♻️ Rivedi / correggi: voti salvati qui e promemoria di MyClass, nota e punteggi correggibili.
 // I voti salvati qui che non sono arrivati a MyClass (LIVE chiusa, errore…) sono già spuntati: salvando si creano i promemoria.
 // Solo la griglia /16: i voti /15 (3 voci, altro id) restano com'erano.
-const review = window.MyClassLive && MyClassLive.review && MyClassLive.review({ getDoc: () => twOpen() ? teacherWin.document : null, boxId: 't-riv', grid: GRID, loadGrades, localOk: g => +g.max === RUB_MAX, storeGrades, voto: t => voto(t), onLocalSaved: () => renderTeacherSaved() });
+const review = window.MyClassLive && MyClassLive.review && MyClassLive.review({ getDoc: () => twOpen() ? teacherWin.document : null, boxId: 't-riv', grid: GRID, loadGrades, localOk: g => +g.max === RUB_MAX, storeGrades, voto: t => voto(t), onLocalSaved: () => renderTeacherSaved(), suggest: noteSuggest });
+// ♻️ Rivedi: proposta con le regole di adesso. Le spunte vengono dalla fotografia del voto salvato qui
+// (se la nota è la stessa) o, se no, dalla nota (come 🔄 Converti la nota in spunte); i suggerimenti
+// si rifanno con computeHints. Le voci scelte a mano dal docente (fotografia) o corrette dopo con
+// Rivedi restano come sono: la proposta cambia solo quelle che seguivano le spunte.
+function noteSuggest(note, old) {
+  note = String(note || ''); if (!note || old.length !== GRID.aree.length) return null;
+  const y = loadGrades().find(g => g.st && g.st.ck && g.note === note);
+  let k, cA = null, cB = null, man = {};
+  if (y) {
+    const st = y.st, sl = st.s || 'A', o = sl === 'A' ? 'B' : 'A';
+    k = clone(st.ck);
+    const cd = n => n ? CARDS.find(c => c.n === n) || null : null;
+    const mine = st.cards ? cd(st.cards[sl]) : cd(st.card), mate = st.cards ? cd(st.cards[o]) : cd(st.mateCard);
+    cA = mine; cB = mate;
+    GRID.aree.forEach((a, i) => { if ((st.man && st.man[i]) || (st.rub && st.rub[i] !== undefined && +st.rub[i] !== +old[i])) man[i] = true; });
+  } else {
+    const r = noteConvert({ note, det: old.join('-') }); if (!r || !r.st || !r.n) return null;
+    k = r.st.ck; cA = r.st.card ? CARDS.find(c => c.n === r.st.card) || null : null; cB = r.st.mateCard ? CARDS.find(c => c.n === r.st.mateCard) || null : null;
+  }
+  if (cA) k.p2card = cA.n;
+  const keep = { ck: ck.A, pA: state.pair.A, pB: state.pair.B };
+  let H;
+  try { ck.A = k; state.pair.A = cA; state.pair.B = cB; H = computeHints('A'); }
+  finally { ck.A = keep.ck; state.pair.A = keep.pA; state.pair.B = keep.pB; }
+  const scores = old.map((v, i) => H[i] && !man[i] ? H[i].v : v);
+  const why = GRID.aree.map((a, i) => scores[i] !== old[i] ? `${a.nome.split(' — ')[0]} ${old[i]} → ${scores[i]} (${H[i].why})` : '').filter(Boolean);
+  const kept = GRID.aree.filter((a, i) => man[i] && H[i] && H[i].v !== +old[i]).map(a => a.nome.split(' — ')[0]);
+  return { scores, why: why.concat(kept.length ? [`scelti a mano, restano: ${kept.join(', ')}`] : []).join(' · ') };
+}
 const nameOf = s => state.names[s] || (s === 'A' ? 'Studente A' : 'Studente B');
 
 function updateTeacherWin() {
