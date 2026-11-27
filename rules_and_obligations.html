@@ -1260,6 +1260,7 @@ let teacherWin = null;
 const TEACHER_HTML = `<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>Finestra docente – Rules & Obligations</title>
 <style>
 :root{color-scheme:dark}*{box-sizing:border-box}
+html{overflow-anchor:none}
 body{margin:0;font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',sans-serif;background:#0f141f;color:#eef2f8;padding:18px 20px 40px;font-size:14px}
 h1{font-size:15px;margin:0 0 4px;color:#3ec6ff;letter-spacing:.04em;text-transform:uppercase}
 h2{font-size:12px;color:#97a3bd;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:20px 0 8px}
@@ -1351,13 +1352,30 @@ textarea{width:100%;background:#1a2234;border:1px solid rgba(255,255,255,.12);co
 <div id="t-saved"></div>
 </body></html>`;
 
+// La finestra docente resta allo stesso punto mentre si ridisegna (spunte, punteggi, note)
+function twKeepScroll(fn) {
+  if (!twOpen()) return fn();
+  const w = teacherWin, y = w.scrollY;
+  try { return fn(); } finally {
+    if (twOpen()) {
+      if (Math.abs(w.scrollY - y) > 1) w.scrollTo(0, y);
+      w.requestAnimationFrame(() => { if (twOpen() && Math.abs(w.scrollY - y) > 1) w.scrollTo(0, y); });
+    }
+  }
+}
 function openTeacherWin() {
   if (teacherWin && !teacherWin.closed) { teacherWin.focus(); updateTeacherWin(); return; }
   teacherWin = window.open('', 'roo_teacher', 'popup,width=640,height=860');
   if (!teacherWin) { alert('Il browser ha bloccato la finestra. Consenti i pop-up per questa pagina e riprova.'); return; }
   const d = teacherWin.document; d.open(); d.write(TEACHER_HTML); d.close();
   if (window.DrillZoom) DrillZoom.attach(d);   // A− / A+ anche nella finestra docente
-  d.addEventListener('click', onTeacherClick);
+  // ogni spunta ridisegna la finestra: la pagina resta dov'era (in Chrome saliva dalla prima spunta della Parte 1).
+  // Riapri un voto e 🔄 Note → spunte invece portano in cima apposta.
+  d.addEventListener('click', e => {
+    const b = e.target.closest('[data-act]'), act = b && b.dataset.act;
+    if (act === 'reopen' || act === 'conv1') return onTeacherClick(e);
+    twKeepScroll(() => onTeacherClick(e));
+  });
   if (review) review.bind();   // ♻️ Rivedi / correggi (myclass-live-link.js)
   if (notesTicks) notesTicks.bind();   // 🔄 Note → spunte (myclass-live-link.js)
   d.addEventListener('keydown', onTeacherKey);
@@ -1550,6 +1568,9 @@ function pushLive(save, who) {
 }
 function showLive(r) {
   if (!twOpen()) return;
+  return twKeepScroll(() => showLive0(r));
+}
+function showLive0(r) {
   const el = tw('t-link');
   if (!r) { el.className = 'link'; el.textContent = '⚪ LIVE di MyClass non aperta: i punteggi restano solo qui.'; return; }
   el.className = 'link ' + (r.ok ? 'ok' : 'err');

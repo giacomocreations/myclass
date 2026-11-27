@@ -5608,6 +5608,10 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                                     <span style="font-size:12px;color:#888;">${slot.ora}ª ora${slot.oraInizio?' ('+slot.oraInizio+')':''}</span>
                                 </div>
                                 <div class="prep-titolo" style="color:#bbb;font-style:italic;">Nessuna lezione pianificata</div>
+                                <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
+                                    <span class="prep-no-piano">⚠️ Piano mancante</span>
+                                    <button class="btn-live" onclick="apriLive(${idx},'${today}_${slot.ora}')" title="Apre la LIVE con un piano vuoto: scrivi in diretta le attività che fai">▶ LIVE</button>
+                                </div>
                             </div>`;
                         });
                         return;
@@ -5616,7 +5620,8 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                     lezioniGiorno.forEach(lz => {
                         if (!lz) return;
                         const pd = lz.pianoDettagliato;
-                        const hasPd = !!pd;
+                        const hasPd = !!pd && !!String((pd.fase1||'') + (pd.fase2||'') + (pd.fase3||'')).trim();
+                        const pdVuoto = !hasPd && !!pd && !!pd.pianoVuoto;
                         const slotId = lzId(lz);
                         const risorse = (lz.risorse||[]).map(id => {
                             const r = (data.risorseLezioni||[]).find(x => x.id === id);
@@ -5637,8 +5642,8 @@ LUNGHEZZA: Massimo 280 parole totali. Conciso e diretto.`;
                             ${durataLabel}
                             ${risorse ? `<div class="prep-risorse">${risorse}</div>` : ''}
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
-                                <span class="${hasPd?'prep-piano-ok':'prep-no-piano'}">${hasPd?'📋 Piano pronto':'⚠️ Piano mancante'}</span>
-                                <button class="btn-live" onclick="apriLive(${idx},'${slotId}')" ${!hasPd?'disabled title="Crea prima il piano dettagliato"':''}>▶ LIVE</button>
+                                <span class="${hasPd?'prep-piano-ok':'prep-no-piano'}">${hasPd?'📋 Piano pronto':pdVuoto?'📝 Piano vuoto: lo scrivi in LIVE':'⚠️ Piano mancante'}</span>
+                                <button class="btn-live" onclick="apriLive(${idx},'${slotId}')" ${!hasPd?'title="Apre la LIVE con un piano vuoto: scrivi in diretta le attività che fai"':''}>▶ LIVE</button>
                             </div>
                         </div>`;
                     });
@@ -11520,7 +11525,7 @@ Rispondi SOLO con JSON valido (niente testo prima/dopo):
             if (lz.stato === 'svolta') return false;
             return !String(lz.titolo||'').trim() && !String(lz.descrizione||'').trim()
                 && !String(lz.compiti||'').trim() && !String(lz.unit||'').trim()
-                && !String(lz.pagine||'').trim() && !lz.pianoDettagliato
+                && !String(lz.pagine||'').trim() && (!lz.pianoDettagliato || (lz.pianoDettagliato.pianoVuoto && !String((lz.pianoDettagliato.fase1||'') + (lz.pianoDettagliato.fase2||'') + (lz.pianoDettagliato.fase3||'')).trim()))
                 && !_tipoArr(lz.tipo||[]).length;
         }
 
@@ -17385,6 +17390,30 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
         // Piano standard del LIVE per una lezione senza piano dettagliato: 80 minuti
         // nelle tre fasi solite (avvio breve, attività principale, chiusura).
         const LIVE_STD_FASI = { fase1: 10, fase2: 55, fase3: 15 };
+        // Piano vuoto per una lezione senza piano: stesse tre fasi, ma senza attività.
+        // In LIVE si scrive quello che si fa (✏️ Attività → ➕ Aggiungi attività).
+        function _pianoVuotoLive(prima) {
+            return { ...(prima || {}), durata: (prima && prima.durata) || (LIVE_STD_FASI.fase1 + LIVE_STD_FASI.fase2 + LIVE_STD_FASI.fase3),
+                fase1: '', fase2: '', fase3: '', pianoVuoto: true };
+        }
+        const _pdHaFasi = pd => !!pd && !!String((pd.fase1||'') + (pd.fase2||'') + (pd.fase3||'')).trim();
+        // Piano mancante o vuoto per la lezione di quello slot: crea la lezione (se non c'è) e il piano vuoto.
+        // Ritorna true se ha cambiato qualcosa.
+        function _assicuraPianoVuoto(classe, isoDate, ora) {
+            if (!classe) return false;
+            if (!classe.pianificazione) classe.pianificazione = {};
+            if (!classe.pianificazione.piano) classe.pianificazione.piano = [];
+            const sid = isoDate + '_' + ora;
+            let lz = classe.pianificazione.piano.find(p => lzId(p) === sid || (!p.ora && p.data === isoDate));
+            if (lz && lz.pianoDettagliato && (_pdHaFasi(lz.pianoDettagliato) || lz.pianoDettagliato.pianoVuoto)) return false;
+            if (!lz) {
+                lz = { data: isoDate, ora: String(ora || '1'), titolo: '', descrizione: '', compiti: '', stato: 'pianificata' };
+                classe.pianificazione.piano.push(lz);
+            }
+            lz.pianoDettagliato = _pianoVuotoLive(lz.pianoDettagliato);
+            delete lz.vuota; delete lz.creataAuto;
+            return true;
+        }
         function _pianoStandardLive() {
             return {
                 durata: LIVE_STD_FASI.fase1 + LIVE_STD_FASI.fase2 + LIVE_STD_FASI.fase3,
@@ -17414,19 +17443,11 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             const [isoDate, oraSlot] = slotId.split('_');
             let lz = (classe?.pianificazione?.piano||[]).find(p => p._testId===slotId || lzId(p)===slotId || (!p.ora && p.data===isoDate));
             if (!classe) { alert('Classe non trovata.'); return; }
-            // Senza piano (o senza lezione) il LIVE parte lo stesso con il piano
-            // standard: le fasi si riscrivono in diretta con quello che si è fatto.
-            if (!lz) {
-                if (!classe.pianificazione) classe.pianificazione = {};
-                if (!classe.pianificazione.piano) classe.pianificazione.piano = [];
-                lz = { data: isoDate, ora: oraSlot || '1', titolo: '', descrizione: '', compiti: '', stato: 'pianificata' };
-                classe.pianificazione.piano.push(lz);
-            }
-            const _pdPrima = lz.pianoDettagliato;
-            if (!_pdPrima || !String((_pdPrima.fase1||'') + (_pdPrima.fase2||'') + (_pdPrima.fase3||'')).trim()) {
-                lz.pianoDettagliato = { ...(_pdPrima || {}), ..._pianoStandardLive() };
-                delete lz.vuota; delete lz.creataAuto;
-                saveData();
+            // Senza piano (o senza lezione) il LIVE parte lo stesso con un piano vuoto:
+            // le attività si scrivono in diretta con quello che si è fatto.
+            if (!lz || !_pdHaFasi(lz.pianoDettagliato)) {
+                if (_assicuraPianoVuoto(classe, isoDate, oraSlot || '1')) saveData();
+                lz = (classe.pianificazione.piano||[]).find(p => p._testId===slotId || lzId(p)===slotId || (!p.ora && p.data===isoDate));
             }
 
             // Se LIVE già aperto per questo slot, solo mostrarlo
@@ -19658,6 +19679,7 @@ ${blocco.regole ? blocco.regole + '\nQueste regole valgono per ciò che aggiungi
             q('lv-note-ta')?.addEventListener('input',()=>lvAutoSave(1500));
             if(isVerOrale)lvRendSL();else if(isVerScritta)lvRendScr();else lvRendCop();
             if(LV.fasi.length>0){lvGoF(0);lvToggle();}  // auto-avvia primo timer
+            else if(!LV.attEdit) window.lvAttToggle();   // piano vuoto: subito in modifica, con ➕ Aggiungi attività in ogni fase
 
             } catch(e) { lvDebugErr('Errore durante apertura LIVE:\n'+e.message, e); }
         }
@@ -41991,6 +42013,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
       const minutiNow = now.getHours() * 60 + now.getMinutes();
       let nextInfo = null;
       let senzaOrario = 0; // ore di oggi senza ora d'inizio nell'orario: non possono partire da sole
+      let _pianiVuotiCreati = 0;
       data.classi.forEach((classe, ci) => {
         const orario = classe.pianificazione?.orario || [];
         const piano  = classe.pianificazione?.piano  || [];
@@ -42002,8 +42025,13 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
           const diff = (sh * 60 + sm) - minutiNow;
           // Da 10 min prima a 15 min dopo l'inizio: copre tab in background
           // (timer rallentati dal browser) e pagina aperta a lezione iniziata.
-          // Anche senza piano: il LIVE parte con il piano standard da 80 minuti.
+          // Anche senza piano: il LIVE parte con un piano vuoto (creato 5 minuti prima).
           if (diff < -15 || diff > 10) return;
+          // da 5 minuti prima: se manca il piano si crea quello vuoto, da scrivere in LIVE
+          if (diff <= 5 && typeof _assicuraPianoVuoto === 'function' && _assicuraPianoVuoto(classe, today, slot.ora)) {
+            _pianiVuotiCreati++;
+            console.log('[Auto-LIVE] piano vuoto creato per ' + classe.nome + ' ' + today + ' ' + slot.ora + 'ª ora');
+          }
           const key = ci + '_' + today + '_' + slot.ora;
           if (_autoLiveNotified.has(key)) return;
           _autoLiveNotified.add(key);
@@ -42016,10 +42044,15 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
           const diff = (sh*60+sm) - minutiNow;
           if (diff < -15) return;
           const lz2 = piano.find(p => p.data===today && String(p.ora)===String(slot.ora));
-          const std = !lz2?.pianoDettagliato ? ' · senza piano: LIVE standard 80 min' : '';
+          const pd2 = lz2?.pianoDettagliato;
+          const std = !String((pd2?.fase1||'') + (pd2?.fase2||'') + (pd2?.fase3||'')).trim() ? ' · senza piano: LIVE con piano vuoto (creato 5 min prima)' : '';
           if (!nextInfo || diff < nextInfo.diff) nextInfo = {diff, nome:classe.nome, ora:slot.oraInizio, std};
         });
       });
+      if (_pianiVuotiCreati) {
+        saveData({ auto: true });
+        try { if (typeof renderDayPanel === 'function') renderDayPanel(); } catch(e) {}
+      }
       // Aggiorna status UI con prossima lezione
       const sts = document.getElementById('autoLiveStatus');
       if (sts && _autoLiveEnabled) {
