@@ -42315,61 +42315,83 @@ Rispondi SOLO con JSON valido, niente altro:
         return t.length ? t : null;
     }
 
-    // Dati delle prove della unit per un alunno. Per ogni area si tiene il
-    // risultato migliore, così un recupero superato aggiorna la spunta.
+    // Dati delle prove della unit per un alunno: tutte le prove (la prima e i
+    // recuperi, anche più di uno), ognuna per conto suo. Per ogni obiettivo si fa
+    // la media tra le prove che lo misurano (vedi _obvValori): un recupero non
+    // cancella la prima prova e non viene ignorato. Restano fuori solo i recuperi
+    // «🔴 escludi dalla media».
     function _obvFonti(studente, classe, nomeU) {
-        const f = { scritto: {}, orale: null, griglia: [] };
-        const metti = (area, pct, fonte) => {
-            if (f.scritto[area] == null || pct > f.scritto[area].pct) f.scritto[area] = { pct, fonte };
-        };
-        const scritti = (studente.scritto || []).filter(g => g && g.recupero !== 'escludi' && _matchUnit(g.unit, nomeU));
+        const f = { prove: [], orali: [] };
+        const scritti = (studente.scritto || []).filter(g => g && g.recupero !== 'escludi' && _matchUnit(g.unit, nomeU))
+            .sort((a, b) => String(a.data || '').localeCompare(String(b.data || '')));
         // Verifiche con le domande abbinate agli obiettivi: contano per obiettivo,
         // non per area (un obiettivo senza domande in quel test non prende niente).
         const mappe = classe?.pianificazione?.obiettiviDomande || {};
-        const mappati = new Set();
-        f.obiettivi = {};
+        const etichetta = g => `Scritto ${_obvDataBreve(g.data)}${g.recupero ? ' (recupero)' : ''}`;
+        const soloVoto = [];
         scritti.forEach(g => {
             const d = g.domande, mv = d && mappe[d.act]?.v?.[d.ver];
-            if (!mv) return;
-            const acc = {};
-            (d.oi || []).forEach((oi, j) => {
-                const id = mv[oi];
-                if (!id || !(d.m[j] > 0)) return;
-                const a = acc[id] || (acc[id] = { e: 0, t: 0, n: 0 });
-                a.e += Number(d.p[j]) || 0; a.t += d.m[j]; a.n++;
-            });
-            if (!Object.keys(acc).length) return;
-            mappati.add(g);
-            Object.entries(acc).forEach(([id, a]) => {
-                const pct = Math.min(100, a.e / a.t * 100);
-                if (!f.obiettivi[id] || pct > f.obiettivi[id].pct)
-                    f.obiettivi[id] = { pct, fonte: `Scritto ${_obvDataBreve(g.data)}: ${a.n} domand${a.n === 1 ? 'a' : 'e'} abbinat${a.n === 1 ? 'a' : 'e'}, ${Math.round(pct)}%` };
-            });
+            if (mv) {
+                const acc = {};
+                (d.oi || []).forEach((oi, j) => {
+                    const id = mv[oi];
+                    if (!id || !(d.m[j] > 0)) return;
+                    const a = acc[id] || (acc[id] = { e: 0, t: 0, n: 0 });
+                    a.e += Number(d.p[j]) || 0; a.t += d.m[j]; a.n++;
+                });
+                if (Object.keys(acc).length) {
+                    const ob = {};
+                    Object.entries(acc).forEach(([id, a]) => {
+                        const pct = Math.min(100, a.e / a.t * 100);
+                        ob[id] = { pct, fonte: `${etichetta(g)}: ${a.n} domand${a.n === 1 ? 'a' : 'e'} abbinat${a.n === 1 ? 'a' : 'e'}, ${Math.round(pct)}%` };
+                    });
+                    f.prove.push({ g, obiettivi: ob });
+                    return;
+                }
+            }
+            if (g.tags && typeof g.tags === 'object') {
+                const aree = {};
+                Object.entries(g.tags).forEach(([k, v]) => {
+                    const n = Number(v);
+                    if (v === '' || v == null || isNaN(n)) return;
+                    aree[k] = { pct: Math.min(100, n), fonte: `${etichetta(g)}: ${k} ${Math.round(n)}%` };
+                });
+                if (Object.keys(aree).length) { f.prove.push({ g, aree }); return; }
+            }
+            if (Number(g.voto) > 0) soloVoto.push(g);
         });
-        const conTag = scritti.filter(g => !mappati.has(g) && g.tags && typeof g.tags === 'object' && Object.keys(g.tags).length);
-        conTag.forEach(g => Object.entries(g.tags).forEach(([k, v]) => {
-            const n = Number(v);
-            if (v === '' || v == null || isNaN(n)) return;
-            metti(k, Math.min(100, n), `Scritto ${_obvDataBreve(g.data)}: ${k} ${Math.round(n)}%`);
-        }));
         // Voto scritto senza parziali (inserito a mano o recupero): vale per tutte le
-        // aree scritte. Se la unit ha già una verifica con i parziali conta solo un recupero.
-        scritti.filter(g => !conTag.includes(g) && !mappati.has(g) && Number(g.voto) > 0 && ((!conTag.length && !mappati.size) || g.recupero === 'media'))
-            .forEach(g => OBV_AREE_SCRITTE.forEach(k => metti(k, Number(g.voto) * 10,
-                `Scritto ${_obvDataBreve(g.data)}: voto complessivo ${g.voto}${g.recupero ? ' (recupero)' : ''}`)));
+        // aree scritte. Se la unit ha già una verifica con i parziali conta solo se è
+        // un recupero (un voto normale senza parziali lì è di solito un doppione).
+        const conParziali = f.prove.length > 0;
+        soloVoto.filter(g => !conParziali || g.recupero).forEach(g => {
+            const aree = {};
+            OBV_AREE_SCRITTE.forEach(k => { aree[k] = { pct: Number(g.voto) * 10, fonte: `${etichetta(g)}: voto complessivo ${g.voto}` }; });
+            f.prove.push({ g, aree });
+        });
+        f.prove.sort((a, b) => String(a.g.data || '').localeCompare(String(b.g.data || '')));
 
-        const orali = (studente.orale || []).filter(g => g && g.recupero !== 'escludi' && _matchUnit(g.unit, nomeU) && Number(g.voto) > 0);
-        if (orali.length) {
-            const best = orali.reduce((a, b) => Number(b.voto) > Number(a.voto) ? b : a);
-            const d = _obvDataBreve(best.data);
-            f.orale = { pct: Number(best.voto) * 10, fonte: `Orale ${d}: voto ${best.voto}` };
-            f.griglia = ((best.punteggi && best.punteggi.length) ? best.punteggi : _obvPunteggiDaTesto(best.nota))
-                .map(p => ({ ...p, fonte: `Orale ${d}: ${p.nome} ${p.voto}/${p.max}` }));
-        }
+        // Orali approvati della unit (anche i recuperi): voto complessivo e macroaree della griglia
+        f.orali = (studente.orale || []).filter(g => g && g.recupero !== 'escludi' && _matchUnit(g.unit, nomeU) && Number(g.voto) > 0)
+            .sort((a, b) => String(a.data || '').localeCompare(String(b.data || '')))
+            .map(g => {
+                const et = `Orale ${_obvDataBreve(g.data)}${g.recupero ? ' (recupero)' : ''}`;
+                return { g, voto: { pct: Number(g.voto) * 10, fonte: `${et}: voto ${g.voto}` },
+                    griglia: ((g.punteggi && g.punteggi.length) ? g.punteggi : _obvPunteggiDaTesto(g.nota))
+                        .filter(p => p && p.max > 0)
+                        .map(p => ({ nome: p.nome, pct: p.voto / p.max * 100, fonte: `${et}: ${p.nome} ${p.voto}/${p.max}` })) };
+            });
         // La griglia LIVE (votiPromemoria) NON conta: si salva da sola appena la
         // griglia di un alunno e' completa, quindi non e' un voto approvato. Per gli
         // obiettivi valgono solo gli orali approvati (studente.orale).
         return f;
+    }
+    // Media di più prove in un valore solo (la fonte le elenca tutte)
+    function _obvMediaProve(vals, tipo) {
+        if (!vals.length) return null;
+        if (vals.length === 1) return vals[0];
+        const pct = vals.reduce((t, x) => t + x.pct, 0) / vals.length;
+        return { pct, fonte: `${tipo}: media di ${vals.length} prove ${Math.round(pct)}% (${vals.map(x => x.fonte).join(' · ')})` };
     }
 
     // ── Griglia orale ↔ obiettivi ──────────────────────────────────────
@@ -42400,13 +42422,20 @@ Rispondi SOLO con JSON valido, niente altro:
 
     function _obvValori(o, f, u) {
         const v = [], area = o.area;
-        // Scritto: domande abbinate all'obiettivo, altrimenti il parziale dell'area
-        const scr = f.obiettivi?.[o.id] || (area !== 'SPEAKING' && f.scritto[area]);
+        // Scritto, prova per prova: le domande abbinate all'obiettivo (una verifica
+        // con le domande abbinate ma nessuna per questo obiettivo non conta),
+        // altrimenti il parziale dell'area; poi la media tra le prove.
+        const scr = _obvMediaProve(f.prove.map(p => p.obiettivi ? p.obiettivi[o.id] : (area !== 'SPEAKING' && p.aree[area])).filter(Boolean), 'Scritto');
         if (scr) v.push(scr);
-        // Orale: voto complessivo e macroaree della griglia abbinati all'obiettivo
-        if (f.orale && _obvOraleAbbinato(u, o, null)) v.push(f.orale);
-        f.griglia.filter(p => p.max > 0 && _obvOraleAbbinato(u, o, p.nome))
-            .forEach(p => v.push({ pct: p.voto / p.max * 100, fonte: p.fonte }));
+        // Orale: voto complessivo e macroaree della griglia abbinati all'obiettivo,
+        // ognuno con la media tra gli orali della unit
+        if (_obvOraleAbbinato(u, o, null)) { const x = _obvMediaProve(f.orali.map(r => r.voto), 'Orale'); if (x) v.push(x); }
+        const nomi = [...new Set(f.orali.flatMap(r => r.griglia.map(p => _obvChiaveArea(p.nome))))];
+        nomi.forEach(k => {
+            const ps = f.orali.map(r => r.griglia.find(p => _obvChiaveArea(p.nome) === k)).filter(Boolean);
+            if (!ps.length || !_obvOraleAbbinato(u, o, ps[0].nome)) return;
+            const x = _obvMediaProve(ps, `Orale, ${ps[0].nome}`); if (x) v.push(x);
+        });
         return v;
     }
 
