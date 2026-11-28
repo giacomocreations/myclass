@@ -42866,6 +42866,8 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
     // ── Autovalutazione degli alunni ────────────────────────────────────
     // La scrive l'alunno nella StudentApp prima della verifica:
     //   studentapp/autovalutazione/{codice}/{unit} = { unit, ts, r: {id obiettivo: 2 | 1 | 0} }
+    // (una per ogni verifica della unit: chiave «unit~scritto~data» / «unit~orale~data»;
+    // per il confronto con gli esiti vale la più recente)
     // (2 = lo so fare, 1 = quasi, 0 = non ancora). MyClass la copia sull'alunno
     // (studente.obiettiviAuto) per confrontarla con gli esiti.
     const OBV_AUTO = { 2: { icon: '😀', label: 'lo so fare' }, 1: { icon: '😐', label: 'quasi' }, 0: { icon: '😟', label: 'non ancora' } };
@@ -42875,7 +42877,9 @@ Rispondi SOLO con JSON valido, una voce per ogni domanda:
     const OBV_REGOLA_AUTO = '"autovalutazione": {".read": "auth != null && auth.uid === \'8RtaYMmlVme4Tzk7bu1Gvjjd1wu1\'", ".write": "auth != null && auth.uid === \'8RtaYMmlVme4Tzk7bu1Gvjjd1wu1\'", "$codice": {".read": "auth != null", "$unit": {".write": "auth != null && (auth.uid === \'8RtaYMmlVme4Tzk7bu1Gvjjd1wu1\' || (newData.exists() && $unit.length <= 120 && root.child(\'livelearn/students\').child($codice).exists()))", ".validate": "newData.hasChildren([\'unit\', \'ts\'])", "unit": {".validate": "newData.isString() && newData.val().length <= 200"}, "ts": {".validate": "newData.isNumber()"}, "r": {".validate": "newData.hasChildren()", "$obiettivo": {".validate": "$obiettivo.length <= 40 && newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2)"}}, "$altro": {".validate": false}}}}';
 
     function _obvAutoAlunno(s, nomeU, oid) {
-        const e = Object.values(s?.obiettiviAuto || {}).find(x => x && x.unit === nomeU);
+        // Una per ogni verifica della unit (scritta e orale): vale la più recente
+        const e = Object.values(s?.obiettiviAuto || {}).filter(x => x && x.unit === nomeU)
+            .sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
         const v = e?.r?.[oid];
         return v == null ? null : (OBV_AUTO[Number(v)] ? Number(v) : null);
     }

@@ -3665,8 +3665,52 @@ function _obvUnita(){
 // obiettivo; quando il docente mostra gli esiti resta visibile accanto.
 const _OBV_AUTO = [[2,'😀','Lo so fare'],[1,'😐','Quasi'],[0,'😟','Non ancora']];
 function _obvKey(unit){ return String(unit||'').replace(/[.#$\[\]\/]/g,'_').slice(0,120) || 'unit'; }
+// Un'autovalutazione per ogni verifica: la scritta e l'orale della stessa unit hanno
+// obiettivi in comune, ma prima di ognuna l'alunno la rifà. La chiave è
+// «unit~scritto~data» / «unit~orale~data» (stesso ramo e stesse regole di Firebase:
+// unit, ts, r). Fuori dai giorni prima di una verifica si vede l'ultima compilata;
+// la vecchia chiave della sola unit (prima di questa modifica) vale come una qualsiasi.
+function _obvTipoV(l){ return l.tipo==='interrogazione' || (!l.tipo && /interrog/i.test(l.titolo||'')) ? 'orale' : 'scritto'; }
+function _obvKeyV(u, v){ return _obvKey(u.unit).slice(0,90) + '~' + _obvTipoV(v.l) + '~' + v.l.data; }
+function _obvCompleto(u, e){ return u.items.every(it=>!it.id || e?.r?.[it.id]!=null); }
+// Verifiche della unit nei prossimi giorni, ognuna con la sua chiave
+function _obvVerifiche(u){
+  return (S.lessons||[])
+    .filter(l => l && l.data && _isVerifica(l) && (!l.unit || !u.unit || _obvStessaUnit(l.unit, u.unit)))
+    .map(l => ({ l, d: daysUntil(l.data) }))
+    .filter(x => x.d >= 0 && x.d <= OBV_GIORNI_PRIMA)
+    .sort((a, b) => a.d - b.d)
+    .map(x => ({ ...x, key: _obvKeyV(u, x) }));
+}
+// La verifica per cui l'alunno deve ancora compilare (la più vicina non completa)
+function _obvAttiva(u){
+  if(!u || u.esiti) return null;
+  return _obvVerifiche(u).find(v => !_obvCompleto(u, S.autoval?.[v.key])) || null;
+}
+// Autovalutazioni già salvate di questa unit, dalla più recente
+function _obvEntrate(u){
+  const k0 = _obvKey(u.unit), pre = k0.slice(0,90) + '~';
+  return Object.entries(S.autoval||{}).filter(([k, e]) => e && (k===k0 || k.startsWith(pre) || e.unit===u.unit))
+    .sort((a, b) => (b[1].ts||0) - (a[1].ts||0) || String(b[0].split('~')[2]||'').localeCompare(String(a[0].split('~')[2]||'')));
+}
+// Rifacendola per la prova successiva: l'autovalutazione già fatta (resta salvata)
+function _obvPrecedente(u){
+  const a = _obvAttiva(u); if(!a) return null;
+  const x = _obvEntrate(u).find(([k, e]) => k !== a.key && e.r && Object.keys(e.r).length);
+  if(!x) return null;
+  return { key:x[0], r:x[1].r, per: /~orale~/.test(x[0]) ? "per l'interrogazione" : /~scritto~/.test(x[0]) ? 'per la verifica scritta' : 'prima' };
+}
+// Dove stanno (e dove si scrivono) le faccine che si vedono adesso
+function _obvChiaveFacce(u){
+  const a = _obvAttiva(u); if(a) return a.key;
+  const e = _obvEntrate(u)[0];   // niente da compilare: l'ultima compilata
+  return e ? e[0] : _obvKey(u.unit);
+}
 function _obvAutoOf(u, id){
-  const v = S.autoval?.[_obvKey(u.unit)]?.r?.[id];
+  const k = _obvChiaveFacce(u);
+  let v = S.autoval?.[k]?.r?.[id];
+  // prova successiva non ancora toccata: si vedono le faccine dell'altra volta, da modificare
+  if(v==null && !S.autoval?.[k]?.r){ const p = _obvPrecedente(u); if(p && _obvAttiva(u)?.key===k) v = p.r[id]; }
   return v==null ? null : _OBV_AUTO.find(a=>a[0]===Number(v)) || null;
 }
 function _obvRerender(){
@@ -3681,10 +3725,17 @@ async function setAutoval(ord, id, v){
   if(_previewNo()) return;
   const u = _obvUnita().find(x=>x.ord===ord);
   if(!u || u.esiti || S._autovalOff) return;
-  const k = _obvKey(u.unit);
+  const k = _obvChiaveFacce(u);
+  // prova successiva: al primo tocco (o con «Confermo così») si parte dalle faccine
+  // dell'altra volta, che restano salvate anche nella loro autovalutazione
+  const prec = _obvAttiva(u)?.key===k && !S.autoval[k]?.r ? _obvPrecedente(u) : null;
+  if(id==null && !prec) return;
   const e = S.autoval[k] || (S.autoval[k] = { unit:u.unit, r:{} });
   e.r = e.r || {};
-  if(Number(e.r[id])===v) delete e.r[id]; else e.r[id] = v;   // secondo tocco: toglie
+  if(prec){
+    u.items.forEach(it=>{ if(it.id && prec.r[it.id]!=null) e.r[it.id] = Number(prec.r[it.id]); });
+    if(id!=null) e.r[id] = v;
+  } else if(Number(e.r[id])===v) delete e.r[id]; else e.r[id] = v;   // secondo tocco: toglie
   _obvRerender();
   try {
     await db.ref('studentapp/autovalutazione/'+S.code+'/'+k).set({ unit:u.unit, ts:Date.now(), r:e.r });
@@ -3694,6 +3745,8 @@ async function setAutoval(ord, id, v){
     alert('Non è stato possibile salvare la tua autovalutazione. Avvisa il prof.');
   }
 }
+// «Confermo così»: per la prova successiva tiene le faccine dell'altra volta
+function confermaAutoval(ord){ return setAutoval(ord, null, null); }
 // big: caratteri più grandi (schermata a tutto schermo)
 function _obvRigheHtml(u, big){
   const z = big ? { ico:24, txt:19, sub:13, btn:15, pad:'8px 14px', row:'14px 0', gap:14 } : { ico:14, txt:13, sub:10, btn:11, pad:'3px 9px', row:'6px 0', gap:9 };
@@ -3717,7 +3770,7 @@ function _obvRigheHtml(u, big){
 function _obvDaCompilare(u){
   if(!u || u.esiti) return false;
   if(S._autovalOff) return true;
-  return u.items.some(it=>it.id && !_obvAutoOf(u, it.id));
+  return !_obvCompleto(u, S.autoval?.[_obvChiaveFacce(u)]);
 }
 // Verifica o interrogazione della unit in calendario nei prossimi giorni (oggi
 // compreso): da 6 giorni prima la card degli obiettivi lampeggia con «Compila
@@ -3731,24 +3784,21 @@ function _obvStessaUnit(a, b){
   if(na && nb) return na === nb;
   return String(a||'').trim().toLowerCase() === String(b||'').trim().toLowerCase();
 }
-function _obvVerificaVicina(u){
-  if(!u) return null;
-  return (S.lessons||[])
-    .filter(l => l && l.data && _isVerifica(l) && (!l.unit || !u.unit || _obvStessaUnit(l.unit, u.unit)))
-    .map(l => ({ l, d: daysUntil(l.data) }))
-    .filter(x => x.d >= 0 && x.d <= OBV_GIORNI_PRIMA)
-    .sort((a, b) => a.d - b.d)[0] || null;
-}
 function _obvQuando(v){
-  const cosa = v.l.tipo === 'interrogazione' ? 'Interrogazione' : 'Verifica';
+  const cosa = _obvTipoV(v.l) === 'orale' ? 'Interrogazione' : 'Verifica scritta';
   return `${cosa} ${v.d === 0 ? 'oggi' : v.d === 1 ? 'domani' : `fra ${v.d} giorni (${fmtDate(v.l.data)})`}`;
 }
 // Invito all'autovalutazione sopra l'elenco (solo prima degli esiti)
 function _obvInvitoHtml(u, big){
   if(u.esiti || S._autovalOff || !u.items.some(it=>it.id)) return '';
-  const fatti = u.items.filter(it=>it.id && _obvAutoOf(u, it.id)).length;
+  const a = _obvAttiva(u), prec = a && !S.autoval?.[a.key]?.r ? _obvPrecedente(u) : null;
+  const fatti = prec ? 0 : u.items.filter(it=>it.id && _obvAutoOf(u, it.id)).length;
+  // prova successiva della unit (es. l'orale dopo lo scritto): si parte dalle faccine dell'altra volta
+  const di = a ? (_obvTipoV(a.l)==='orale' ? "all'interrogazione" : 'alla verifica scritta') : '';
   return `<div style="font-size:${big?15:11}px;color:var(--purple-dark);background:var(--purple-light);border-radius:8px;padding:6px 9px;margin:4px 0 6px;line-height:1.4;">
-    Come ti senti su ogni obiettivo? Tocca una faccina: dopo la verifica la confronterai con il risultato.${fatti?` <b>${fatti}/${u.items.length}</b>`:''}
+    ${prec?`Le faccine sono quelle che hai messo ${prec.per} (restano salvate): <b>rifallo pensando ${di}</b>. Cambia quelle che vuoi, oppure
+    <button onclick="event.stopPropagation();confermaAutoval(${Number(u.ord)||0})" style="border:1px solid var(--purple);background:#fff;color:var(--purple-dark);border-radius:14px;padding:${big?'6px 14px':'2px 9px'};font-size:${big?14:11}px;font-weight:700;cursor:pointer;font-family:inherit;margin:2px 0;">✅ Confermo così</button>`
+      :`Come ti senti su ogni obiettivo? Tocca una faccina: dopo la verifica la confronterai con il risultato.${fatti?` <b>${fatti}/${u.items.length}</b>`:''}`}
   </div>`;
 }
 // Raggiunti = pienamente (✅) + da consolidare (🟡): la barra li mostra in due colori
@@ -3778,12 +3828,12 @@ function renderObiettiviCard(){
   // calendario) finché l'alunno non ha messo la faccina a tutti gli obiettivi; poi
   // torna normale. L'autovalutazione sta su Firebase: completata su un
   // dispositivo, smette su tutti.
-  const vicina = _obvDaCompilare(u) ? _obvVerificaVicina(u) : null;
+  const vicina = !u.esiti ? (S._autovalOff ? _obvVerifiche(u)[0] : _obvAttiva(u)) || null : null;
   const lampeggia = !!vicina;
   el.innerHTML=`<div class="card${lampeggia?' obv-blink':''}" style="border-color:var(--purple-mid);background:#f7f6ff;margin-bottom:12px;padding:12px 14px;">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;" onclick="openObiettiviFull(${Number(u.ord)||0})">
       <div style="flex:1;min-width:0;">
-        <div class="obv-blink-t" style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--purple-dark);">${lampeggia?'⏰ COMPILA PRIMA DELLA VERIFICA':`🎯 ${u.esiti?'I MIEI OBIETTIVI':'IN QUESTA UNIT IMPARERAI A…'}`}</div>
+        <div class="obv-blink-t" style="font-size:11px;font-weight:700;letter-spacing:0.5px;color:var(--purple-dark);">${lampeggia?`⏰ COMPILA PRIMA ${_obvTipoV(vicina.l)==='orale'?"DELL'INTERROGAZIONE":'DELLA VERIFICA SCRITTA'}`:`🎯 ${u.esiti?'I MIEI OBIETTIVI':'IN QUESTA UNIT IMPARERAI A…'}`}</div>
         <div style="font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${lampeggia?`<b style="color:#A32D2D;">${esc(_obvQuando(vicina))}</b> · `:''}${esc(u.unit)}</div>
       </div>
       <span class="obv-open" title="Apri a tutto schermo">⤢ Apri</span>
