@@ -44,6 +44,9 @@
   .card:hover { transform: translateY(-2px); border-color: var(--accent2); }
   .card svg { display: block; width: 100%; height: auto; }
   .card .nm { display: block; background: rgba(20,16,36,0.86); color: #fff; font-weight: 800; font-size: clamp(11px, calc(var(--cw, 150px) * 0.12), 17px); padding: 3px 2px 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .zbtn { display: none; position: absolute; top: 4px; right: 4px; width: calc(var(--cw, 150px) * 0.26); height: calc(var(--cw, 150px) * 0.26); min-width: 26px; min-height: 26px; border-radius: 50%; background: rgba(20,16,36,.75); color: #fff; font-size: calc(var(--cw, 150px) * 0.13); align-items: center; justify-content: center; z-index: 2; }
+  body.tapflip .zbtn { display: flex; }
+  .gmid .wt { font-size: 13px; font-weight: 800; color: var(--gold); }
   .card.down { opacity: .28; filter: grayscale(1); }
   .card.down::after { content: '✕'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: calc(var(--cw, 150px) * 0.7); color: #e63946; font-weight: 900; opacity: .8; pointer-events: none; }
   .card.win { border-color: var(--gold); box-shadow: 0 0 0 4px rgba(255,209,102,.55), 0 10px 30px rgba(255,209,102,.35); opacity: 1; filter: none; }
@@ -711,16 +714,20 @@ function drawHead(c, act) {
 }
 
 // sposta braccia e gambe per la corporatura (spalle e fianchi più larghi o più stretti)
-function bodyPose(c) {
-  const act = ACT[c.action], bw = BW[c.body], A0 = ARMS[act.arms], L0 = LEGS[act.legs];
+function bodyPose(c, act) {
+  act = act || ACT[c.action];
+  const bw = BW[c.body], A0 = ARMS[act.arms], L0 = LEGS[act.legs];
   const sh = (pts, side) => pts.map((p, k) => { const s = side === 'L' ? -1 : 1; const out = side === 'L' ? p[0] < 96 : p[0] > 104; return k < 2 || out ? [p[0] + s * bw.w, p[1]] : p; });
   const lg = (pts, side) => pts.map(p => [p[0] + (side === 'L' ? -1 : 1) * bw.w * 0.5, p[1]]);
   return { act, bw, A: { L: sh(A0.L, 'L'), R: sh(A0.R, 'R') }, Lg: { L: lg(L0.L, 'L'), R: lg(L0.R, 'R') } };
 }
 
-function drawPerson(c, noScale) {
-  const { act, bw, A, Lg } = bodyPose(c);
-  const props = drawProps(c.action, A, c);
+// hk (facoltativo, per i temi come i Jobs): { pose:{arms,legs,mouth}, props(c,A), sleeve:'long'|'short', sleeveCol, over(c,w), hat(c) }
+function drawPerson(c, noScale) { return drawPersonBase(c, noScale, null); }
+function drawPersonBase(c, noScale, hk) {
+  hk = hk || {};
+  const { act, bw, A, Lg } = bodyPose(c, hk.pose);
+  const props = hk.props ? hk.props(c, A) : drawProps(c.action, A, c);
   const sk = c.skin, w = bw.w;
   let o = `<ellipse cx="100" cy="392" rx="${52 + w}" ry="8" fill="#000" opacity="0.16"/>`;
   o += props.back + hairBack(c);
@@ -738,10 +745,16 @@ function drawPerson(c, noScale) {
   o += `<rect x="92" y="78" width="16" height="26" fill="${sk}" stroke="${dark(sk, 0.32)}" stroke-width="2"/>`;
   o += shape(c.body === 'overweight' ? bellyBody(212, w) : garmentBody(210, 8, w), tk);
   o += `<path d="M87,97 Q100,106 113,97" fill="none" stroke="${dark(tk, 0.32)}" stroke-width="3"/>`;
-  // braccia con le maniche corte
-  [A.L, A.R].forEach(pts => { o += tube(pts, bw.arm, sk) + tube([pts[0], lerp(pts[0], pts[1], 0.52)], bw.sleeve, tk, 'round'); });
+  if (hk.over) o += hk.over(c, w);
+  // braccia: maniche corte (o lunghe, con il colore della giacca / del camice)
+  const sc = hk.sleeveCol || tk;
+  [A.L, A.R].forEach(pts => {
+    o += tube(pts, bw.arm, sk);
+    if (hk.sleeve === 'long') { const p = [pts[0], pts[1], lerp(pts[1], pts[2], 0.78)]; o += tube(p, bw.sleeve - 2, sc, 'round') + line(portion(p, 0.92, 1), bw.sleeve - 1, dark(sc, 0.12), 'butt'); }
+    else o += tube([pts[0], lerp(pts[0], pts[1], 0.52)], bw.sleeve, sc, 'round');
+  });
   // testa
-  o += drawHead(c, act) + hairFront(c);
+  o += drawHead(c, act) + hairFront(c) + (hk.hat ? hk.hat(c) : '');
   o += props.held + drawHand(A.L[1], A.L[2], sk, handKind(act.arms, 'L')) + drawHand(A.R[1], A.R[2], sk, handKind(act.arms, 'R')) + props.fx;
   const s = noScale ? 1 : HSC[c.height];
   return s === 1 ? o : `<g transform="translate(100,392) scale(${s}) translate(-100,-392)">${o}</g>`;
@@ -877,6 +890,19 @@ function cluesFor(c) {
   return out;
 }
 
+// ══════════════════════════════════════════════════════════════════
+//  TEMA: descrizione fisica (i Jobs lo sostituiscono con il loro)
+// ══════════════════════════════════════════════════════════════════
+var THEME = {
+  key: 'gw', title: 'Guess Who?', n: 20, oral: true,
+  cats: ['person', 'age', 'height', 'body', 'hlen', 'htype', 'hcol', 'face', 'action'], catLbl: CAT_LBL,
+  guessQ: c => `Is it ${c.name}?`, guessYes: c => 'Yes, it is!', guessNo: c => "No, it isn't.",
+  found: c => `Yes! It's ${c.name}!`, notFound: c => `No, it isn't ${c.name}. Try again!`, pickBtn: c => `✅ It's ${isMale(c) ? 'him' : 'her'}!`,
+  askHint: '💬 <b>Is he / she …?</b> (tall, young, bald…) · <b>Has he / she got …?</b> (long hair, a beard, glasses…) · <b>Is he / she …ing?</b> · <b>Is it …?</b>',
+  bonusHint: s => `${Pr(s)}'s… ${Pr(s)}'s got… ${Pr(s)}'s …ing.`,
+  bonusRule: 'be, have got, ordine degli aggettivi, -ing',
+};
+
 
 // ══════════════════════════════════════════════════════════════════
 //  STATO
@@ -890,6 +916,8 @@ const state = {
 const G = state.game, H = state.home;
 const secretC = () => state.board[state.secret];
 const MAX_TEAMS = 6;
+G.autoFlip = (() => { try { return localStorage.getItem('gw_autoflip') !== '0'; } catch (e) { return true; } })();
+function setAutoFlip(on) { G.autoFlip = !!on; try { localStorage.setItem('gw_autoflip', on ? '1' : '0'); } catch (e) {} tapClass(); renderGame(); renderTW(); }
 try { const t = JSON.parse(localStorage.getItem('gw_teams') || 'null'); if (Array.isArray(t) && t.length >= 2 && t.length <= MAX_TEAMS) { G.teams = t.map(String); G.score = G.teams.map(() => 0); }
   const all = JSON.parse(localStorage.getItem('gw_teams_all') || 'null'); if (Array.isArray(all)) G.allNames = all.map(String); } catch (e) {}
 
@@ -909,14 +937,14 @@ function say(text) {
 //  TABELLONE
 // ══════════════════════════════════════════════════════════════════
 function newBoard() {
-  state.board = genBoard(20);
+  state.board = genBoard(THEME.n);
   state.feats = boardFeatures(state.board);
   state.secret = rnd(state.board.length);
   state.down = new Set();
   renderBoard();
 }
 function renderBoard() {
-  document.getElementById('board').innerHTML = state.board.map((c, i) => `<button type="button" class="card" data-i="${i}" aria-label="${esc(c.name)}">${svgCard(c)}<span class="nm">${esc(c.name)}</span></button>`).join('');
+  document.getElementById('board').innerHTML = state.board.map((c, i) => `<button type="button" class="card" data-i="${i}" aria-label="${esc(c.name)}">${svgCard(c)}<span class="nm">${esc(c.name)}</span><span class="zbtn" data-zoom title="Ingrandisci">🔍</span></button>`).join('');
   updateCards(); fitBoard();
 }
 function updateCards(flipped) {
@@ -932,9 +960,9 @@ function updateCards(flipped) {
 function fitBoard() {
   const b = document.getElementById('board'); if (!b || !b.offsetParent) return;
   const W = b.parentElement.clientWidth, gap = 8;
-  const cols = W >= 880 ? 10 : W >= 560 ? 5 : 4;
+  const half = THEME.n / 2, cols = W >= 880 ? half : W >= 560 ? (half % 5 ? 4 : 5) : 4;
   let cw = (W - gap * (cols - 1)) / cols;
-  if (state.mode === 'class' && cols === 10) {
+  if (state.mode === 'class' && cols === half) {
     const top = b.getBoundingClientRect().top;
     const maxH = (window.innerHeight - top - 12 - gap) / 2;
     const nameH = Math.max(18, Math.min(26, cw * 0.17));
@@ -947,16 +975,20 @@ window.addEventListener('resize', () => { clearTimeout(fitBoard.t); fitBoard.t =
 document.getElementById('board').addEventListener('click', e => {
   const el = e.target.closest('.card'); if (!el) return;
   const i = +el.dataset.i;
+  if (e.target.closest('[data-zoom]')) { openZoom(i); return; }
   if (state.mode === 'home' && state.tap === 'flip' && !H.done) { toggleDown(i); return; }
+  if (state.mode === 'class' && !G.autoFlip) { toggleDown(i); return; }
   openZoom(i);
 });
 function toggleDown(i) {
   if (state.down.has(i)) state.down.delete(i); else state.down.add(i);
   updateCards([i]);
   if (state.zoom === i) openZoom(i);
-  if (state.mode === 'class') renderTW();
+  if (state.mode === 'class') { autoPron(); renderGame(); renderTW(); }
 }
-function setTap(t) { state.tap = t; document.querySelectorAll('[data-tap]').forEach(b => b.setAttribute('aria-pressed', b.dataset.tap === t)); }
+function setTap(t) { state.tap = t; document.querySelectorAll('[data-tap]').forEach(b => b.setAttribute('aria-pressed', b.dataset.tap === t)); tapClass(); }
+// il tocco abbassa la carta (At home con ⬇️ Flip down, o in classe con le carte a mano): lo zoom resta sul 🔍
+function tapClass() { document.body.classList.toggle('tapflip', (state.mode === 'home' && state.tap === 'flip') || (state.mode === 'class' && !G.autoFlip)); }
 
 // ── zoom: la persona grande, con il viso in primo piano ──
 function openZoom(i) {
@@ -966,11 +998,11 @@ function openZoom(i) {
   let btns = '';
   if (state.mode === 'home') {
     btns += `<button class="btn" onclick="toggleDown(${i})">${dn ? '⬆️ Stand up' : '⬇️ Flip down'}</button>`;
-    if (!H.done) btns += `<button class="btn gold" onclick="pickHome(${i})">✅ It's ${hs}!</button>`;
+    if (!H.done) btns += `<button class="btn gold" onclick="pickHome(${i})">${esc(THEME.pickBtn(c))}</button>`;
   } else if (state.mode === 'class') {
-    if (!G.won && !dn) btns += `<button class="btn gold" onclick="guess(${i})">❓ Is it ${esc(c.name)}?</button>`;
+    if (!G.won && !dn) btns += `<button class="btn gold" onclick="guess(${i})">❓ ${esc(THEME.guessQ(c))}</button>`;
     btns += `<button class="btn" onclick="toggleDown(${i})">${dn ? '⬆️ Stand up' : '⬇️ Flip down'}</button>`;
-    if (G.won && i === state.secret) btns = `<div class="zwin">🎉 It's ${esc(c.name)}! ${esc(teamName(G.winner))} +5${G.bonus === 'pending' ? `<br>⭐ Bonus +2: ${G.describer ? esc(dispOf(G.describer)) + ', d' : 'D'}escribe ${hs}!` : G.bonus === 'yes' ? '<br>⭐ +2 Great description!' : ''}</div>`;
+    if (G.won && i === state.secret) btns = `<div class="zwin">🎉 ${esc(THEME.found(c))} ${esc(teamName(G.winner))} +${G.wonPts}${G.bonus === 'pending' ? `<br>⭐ Bonus +2: ${G.describer ? esc(dispOf(G.describer)) + ', d' : 'D'}escribe ${hs}!` : G.bonus === 'yes' ? '<br>⭐ +2 Great description!' : ''}</div>`;
   }
   z.innerHTML = `<div class="zbox ${dn ? 'down' : ''}" role="dialog" aria-label="${esc(c.name)}"><div class="zf"><svg viewBox="${VB}" xmlns="http://www.w3.org/2000/svg">${heightWall()}${drawPerson(c)}</svg></div>
     <div class="zh">${svgHead(c)}<div class="zn">${esc(c.name)}</div><div class="zb">${btns}</div></div><button class="zx" onclick="closeZoom()" aria-label="Chiudi">✕</button></div>`;
@@ -1028,13 +1060,13 @@ function pickHome(i) {
     H.done = true;
     const stars = Math.max(1, (H.shown <= 3 ? 3 : H.shown <= 5 ? 2 : 1) - H.wrong);
     r.className = 'result ok';
-    r.innerHTML = `✅ Yes! It's ${esc(c.name)}! ${'⭐'.repeat(stars)} <span class="note">(${H.shown} clue${H.shown > 1 ? 's' : ''}${H.wrong ? `, ${H.wrong} wrong guess${H.wrong > 1 ? 'es' : ''}` : ''})</span><div class="note" style="font-size:15px;color:var(--text);margin-top:6px">${esc(describe(c))}</div>`;
-    say(`Yes! It's ${c.name}! ${describe(c)}`);
+    r.innerHTML = `✅ ${esc(THEME.found(c))} ${'⭐'.repeat(stars)} <span class="note">(${H.shown} clue${H.shown > 1 ? 's' : ''}${H.wrong ? `, ${H.wrong} wrong guess${H.wrong > 1 ? 'es' : ''}` : ''})</span><div class="note" style="font-size:15px;color:var(--text);margin-top:6px">${esc(describe(c))}</div>`;
+    say(`${THEME.found(c)} ${describe(c)}`);
     closeZoom(); renderClues(); updateCards();
   } else {
     H.wrong++; state.down.add(i); updateCards([i]); closeZoom();
-    r.className = 'result no'; r.textContent = `❌ No, it isn't ${c.name}. Try again!`;
-    say(`No, it isn't ${c.name}.`);
+    r.className = 'result no'; r.textContent = `❌ ${THEME.notFound(c)}`;
+    say(THEME.notFound(c));
   }
 }
 
@@ -1043,6 +1075,9 @@ function pickHome(i) {
 // ══════════════════════════════════════════════════════════════════
 const defName = t => 'Team ' + 'ABCDEF'[t];
 const teamName = t => G.teams[t] || defName(t);
+// punti per chi indovina: 10 con zero domande, uno in meno per ogni domanda (e tentativo sbagliato) del round, almeno 2
+const PTS_MAX = 10, PTS_MIN = 2;
+const worth = () => Math.max(PTS_MIN, PTS_MAX - G.qc);
 const nTeams = () => G.teams.length;
 const nextTeam = (t = G.turn) => (t + 1) % nTeams();
 // i nomi di tutte e 6 le squadre restano in memoria: togliendo e rimettendo una squadra torna con il suo nome
@@ -1154,7 +1189,7 @@ function askFeature(id) {
   const s = secretC(), yes = !!f.test(s);
   const q = questionText(f, G.pron), a = answerText(f, yes, G.pron, s);
   const downed = [];
-  state.board.forEach((c, i) => { if (!state.down.has(i) && !!f.test(c) !== yes) { state.down.add(i); downed.push(i); } });
+  if (G.autoFlip) state.board.forEach((c, i) => { if (!state.down.has(i) && !!f.test(c) !== yes) { state.down.add(i); downed.push(i); } });
   G.hist.push({ kind: 'q', turn: G.turn, downed, id, last: G.last, pron: G.pron, ptr: G.ptr.slice() });
   advance(G.turn);
   G.qc++; G.asked.push(id); G.last = { q, a, yes };
@@ -1174,24 +1209,25 @@ function wrongQuestion() {
 function guess(i) {
   if (G.won || state.down.has(i)) return;
   closeZoom();
-  const c = state.board[i], q = `Is it ${c.name}?`;
+  const c = state.board[i], q = THEME.guessQ(c);
   if (i === state.secret) {
-    G.hist.push({ kind: 'win', turn: G.turn, downed: [], last: G.last, pron: G.pron, pts: 5, ptr: G.ptr.slice() });
+    const pts = worth();
+    G.hist.push({ kind: 'win', turn: G.turn, downed: [], last: G.last, pron: G.pron, pts, ptr: G.ptr.slice() });
     const who = asker(G.turn); advance(G.turn);
-    G.qc++; G.won = true; G.winner = G.turn; G.score[G.turn] += 5; G.bonus = 'pending';
+    G.qc++; G.won = true; G.winner = G.turn; G.wonPts = pts; G.score[G.turn] += pts; G.bonus = 'pending';
     G.describer = pickDescriber(G.turn, who);
-    G.last = { q, a: `Yes, it is! 🎉 ${teamName(G.turn)} +5`, win: true };
+    G.last = { q, a: `${THEME.guessYes(c)} 🎉 ${teamName(G.turn)} +${pts}`, win: true };
     renderGame(true); updateCards(); renderTW();
-    if (G.tts) say(`${q} Yes, it is!`);
+    if (G.tts) say(`${q} ${THEME.guessYes(c)}`);
     openZoom(i);
   } else {
     state.down.add(i);
     G.hist.push({ kind: 'guess', turn: G.turn, downed: [i], last: G.last, pron: G.pron, ptr: G.ptr.slice() });
     advance(G.turn);
-    G.qc++; G.last = { q, a: "No, it isn't.", yes: false };
+    G.qc++; G.last = { q, a: THEME.guessNo(c), yes: false };
     autoPron(); G.turn = nextTeam();
     renderGame(true); updateCards([i]); renderTW();
-    if (G.tts) say(`${q} No, it isn't.`);
+    if (G.tts) say(`${q} ${THEME.guessNo(c)}`);
   }
 }
 function setBonus(ok) {
@@ -1214,24 +1250,25 @@ function undo() {
 }
 function renderGame(pop) {
   if (state.mode !== 'class') return;
-  const mid = `<div class="gmid"><div class="rd">Round ${G.round}</div><div class="qc" id="g-qc"></div></div>`;
+  const mid = `<div class="gmid"><div class="rd">Round ${G.round}</div><div class="qc" id="g-qc"></div><div class="wt">${G.won ? `+${G.wonPts} pts` : `🏆 now: ${worth()} pts`}</div></div>`;
   document.getElementById('gtop').innerHTML = mid + G.teams.map((n, t) => `<div class="team ${!G.won && G.turn === t ? 'on' : ''}"><span class="tn">${esc(teamName(t))}<small>${!G.won && G.turn === t ? '▶ ' + esc(askerName(t) || 'your turn') : ''}</small></span><span class="ts">${G.score[t]}</span></div>`).join('');
   const up = state.board.length - state.down.size;
   document.getElementById('g-qc').textContent = `${G.qc} question${G.qc === 1 ? '' : 's'} · ${up} left`;
   const qa = document.getElementById('qa');
-  let h;
+  let h, h0 = '';
   if (G.won) {
     const s = secretC();
     h = `<span class="q">${esc(G.last.q)}</span><span class="a win">${esc(G.last.a)}</span>`;
-    if (G.bonus === 'pending') h += `<div class="hint" style="width:100%">⭐ <b>Bonus +2:</b> ${G.describer ? `<b style="color:var(--gold);font-size:20px">${esc(dispOf(G.describer))}</b> (${esc(teamName(G.winner))})` : esc(teamName(G.winner))}, describe ${esc(s.name)}! <i>${pr(s) === 'he' ? 'He' : 'She'}'s… ${pr(s) === 'he' ? 'He' : 'She'}'s got… ${pr(s) === 'he' ? 'He' : 'She'}'s …ing.</i></div>`;
+    if (G.bonus === 'pending') h += `<div class="hint" style="width:100%">⭐ <b>Bonus +2:</b> ${G.describer ? `<b style="color:var(--gold);font-size:20px">${esc(dispOf(G.describer))}</b> (${esc(teamName(G.winner))})` : esc(teamName(G.winner))}, describe ${esc(s.name)}! <i>${esc(THEME.bonusHint(s))}</i></div>`;
     else if (G.bonus === 'yes') h += `<div class="hint" style="width:100%">⭐ <b>+2</b> Great description! · ${esc(describe(s))}</div>`;
     else h += `<div class="hint" style="width:100%">${esc(describe(s))}</div>`;
   } else if (G.last) {
+    if (!G.autoFlip && !G.last.bad && G.last.yes !== undefined) h0 = `<div class="hint" style="width:100%">✋ Who can we flip down? <i>It isn't…</i></div>`;
     h = `<span class="q">${esc(G.last.q)}</span><span class="a ${G.last.bad || G.last.yes === false ? 'no' : ''}">${esc(G.last.a)}</span><div class="hint" style="width:100%">${askerName(G.turn) ? `<b style="color:var(--gold);font-size:20px">${esc(askerName(G.turn))}</b> (${esc(teamName(G.turn))})` : esc(teamName(G.turn))}, your turn!</div>`;
   } else {
-    h = `<span class="q">${esc(callName(G.turn))}, ask a question!</span><div class="hint" style="width:100%">💬 <b>Is he / she …?</b> (tall, young, bald…) · <b>Has he / she got …?</b> (long hair, a beard, glasses…) · <b>Is he / she …ing?</b> · <b>Is it …?</b></div>`;
+    h = `<span class="q">${esc(callName(G.turn))}, ask a question!</span><div class="hint" style="width:100%">${THEME.askHint}</div>`;
   }
-  qa.innerHTML = h;
+  qa.innerHTML = h + h0;
   qa.classList.remove('pop'); if (pop) { void qa.offsetWidth; qa.classList.add('pop'); }
   const nt = document.getElementById('needtw'), hide = !!twOpen();
   if (nt.hidden !== hide) { nt.hidden = hide; fitBoard(); }
@@ -1450,16 +1487,18 @@ input,textarea{width:100%;background:#1a2234;border:1px solid rgba(255,255,255,.
 table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}table.sv td,table.sv th{text-align:left;padding:5px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}table.sv th{color:#97a3bd;font-size:11px;text-transform:uppercase}td.v{font-weight:800;color:#ffd166}
 .x{background:none;border:none;color:#97a3bd;padding:0 4px}.empty{color:#97a3bd;font-style:italic}
 </style></head><body>
-<h1>🖥️ Finestra docente · Guess Who?</h1>
+<h1>🖥️ Finestra docente · ${THEME.title}</h1>
 <div id="t-game">
   <div class="sub">Tienila sul tuo schermo: alla LIM si vedono solo il tabellone, le domande e le risposte.</div>
   <div class="sec" id="t-sec"></div>
   <div class="turn" id="t-turn"></div>
   <div class="bar"><button class="or" data-act="wrongq" title="Domanda formulata male: niente risposta, il turno passa">✗ Domanda sbagliata · passa il turno</button><button data-act="undo" title="Annulla l'ultima risposta (clic sbagliato)">↩ Annulla l'ultima</button></div>
   <div class="bar" style="margin-top:8px">Pronome nella domanda: <button data-act="pron" data-v="he" id="t-pron-he">he</button><button data-act="pron" data-v="she" id="t-pron-she">she</button><label style="margin-left:10px;display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="t-tts" style="width:auto"> 🔊 Leggi domanda e risposta alla LIM</label></div>
+  <div class="bar" style="margin-top:8px">Carte: <button data-act="auto" data-v="1" id="t-auto1" title="Dopo ogni risposta si abbassano da sole quelle che non c'entrano">⚙️ Si abbassano da sole</button><button data-act="auto" data-v="0" id="t-auto0" title="Dopo la risposta i ragazzi dicono chi togliere e le abbassi tu">✋ Le abbasso io</button></div>
   <div class="sub" style="margin-top:6px">Clicca la domanda che ha fatto la squadra (se è corretta): la LIM mostra la risposta breve e abbassa da sola chi non c'entra. Il pronome segue la domanda dei ragazzi e si fissa da solo quando restano solo maschi o solo femmine.</div>
   <h2>Domande sì / no</h2><div id="t-feats"></div>
-  <h2>❓ Is it …? <span style="text-transform:none;letter-spacing:0;font-weight:500">(★ = il personaggio segreto)</span></h2><div class="gs" id="t-guess"></div>
+  <h2>❓ Tentativo <span style="text-transform:none;letter-spacing:0;font-weight:500">(★ = il personaggio segreto)</span></h2><div class="gs" id="t-guess"></div>
+  <div id="t-manual"></div>
   <div id="t-bonus"></div>
   <h2>Squadre</h2>
   <div class="bar" style="margin-bottom:8px">Quante squadre? <span id="t-nteams"></span></div>
@@ -1467,7 +1506,7 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
   <div id="t-roster"></div>
   <div class="teams" id="t-teams"></div>
   <div class="bar" style="margin-top:10px"><button class="pri" data-act="newround">🎲 Nuovo round</button><button data-act="turn" title="Passa il turno alla squadra successiva">⇄ Squadra successiva</button><button data-act="resetscores">↺ Azzera i punteggi</button></div>
-  <div class="sub" style="margin-top:8px">Punti: indovina il personaggio → <b>+5</b> · descrizione completa e corretta del personaggio (be, have got, ordine degli aggettivi, -ing) → <b>+2</b>. Domanda sbagliata o tentativo sbagliato: il turno passa alla squadra successiva. A ogni round inizia una squadra diversa.</div>
+  <div class="sub" style="margin-top:8px">Punti: chi indovina prende <b>10 punti meno uno per ogni domanda</b> già fatta nel round (anche i tentativi sbagliati), almeno 2 · descrizione completa e corretta del personaggio (${esc(THEME.bonusRule)}) → <b>+2</b>. Domanda sbagliata o tentativo sbagliato: il turno passa alla squadra successiva. A ogni round inizia una squadra diversa.</div>
 </div>
 <div id="t-oral" hidden>
   <div class="tmr"><span class="tv" id="t-timer">3:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia 3:00</button><button data-act="treset" title="Azzera">↺</button><span class="tl" id="t-tlbl"></span></div>
@@ -1540,7 +1579,7 @@ function renderTW() {
   if (!twOpen()) return;
   const oral = state.mode === 'oral';
   tw('t-game').hidden = oral; tw('t-oral').hidden = !oral;
-  teacherWin.document.title = oral ? 'Finestra docente – Oral test · Guess Who?' : 'Finestra docente – Guess Who?';
+  teacherWin.document.title = (oral ? 'Finestra docente – Oral test · ' : 'Finestra docente – ') + THEME.title;
   if (oral) renderTWOral(); else renderTWGame();
 }
 function renderTWGame() {
@@ -1551,10 +1590,12 @@ function renderTWGame() {
   tw('t-turn').innerHTML = G.won ? `🎉 Round vinto da <b>${esc(teamName(G.winner))}</b>` : `Tocca a: <b>${esc(teamName(G.turn))}</b>${askerName(G.turn) ? ` — <b>${esc(askerName(G.turn))}</b>` : ''}`;
   tw('t-pron-he').classList.toggle('on', G.pron === 'he'); tw('t-pron-she').classList.toggle('on', G.pron === 'she');
   tw('t-tts').checked = G.tts;
-  const cats = ['person', 'age', 'height', 'body', 'hlen', 'htype', 'hcol', 'face', 'action'];
-  tw('t-feats').innerHTML = cats.map(cat => `<div class="cat"><div class="cl">${CAT_LBL[cat]}</div>${state.feats.filter(f => f.cat === cat).map(f => `<button data-act="ask" data-id="${f.id}" class="${G.asked.includes(f.id) ? 'used' : ''}" ${G.won ? 'disabled' : ''}>${esc(questionText(f, G.pron))}</button>`).join('')}</div>`).join('');
-  tw('t-guess').innerHTML = state.board.map((c, i) => state.down.has(i) ? '' : `<button data-act="guess" data-i="${i}" class="${i === state.secret ? 'sec2' : ''}" ${G.won ? 'disabled' : ''}>${i === state.secret ? '★ ' : ''}Is it ${esc(c.name)}?</button>`).join('');
-  tw('t-bonus').innerHTML = G.won && G.bonus === 'pending' ? `<div class="bonus"><b>⭐ Bonus:</b> ${G.describer ? `<b style="color:#ffd166">${esc(dispOf(G.describer))}</b> (${esc(teamName(G.winner))})` : esc(teamName(G.winner))} descrive ${esc(s.name)}.${(G.lineup[G.winner] || []).length > 1 ? ' <button data-act="redraw" title="Estrai un altro alunno della squadra">🎲 Un altro</button>' : ''} Completa e corretta (be / have got, ordine degli aggettivi, -ing)? <div class="bar" style="margin-top:8px"><button class="ok" data-act="bonus" data-v="1">⭐ Sì, +2</button><button data-act="bonus" data-v="0">✗ No</button><button class="pri" data-act="newround">🎲 Nuovo round</button></div></div>`
+  tw('t-auto1').classList.toggle('on', G.autoFlip); tw('t-auto0').classList.toggle('on', !G.autoFlip);
+  tw('t-feats').innerHTML = THEME.cats.map(cat => `<div class="cat"><div class="cl">${THEME.catLbl[cat]}</div>${state.feats.filter(f => f.cat === cat).map(f => `<button data-act="ask" data-id="${f.id}" class="${G.asked.includes(f.id) ? 'used' : ''}" ${G.won ? 'disabled' : ''}>${esc(questionText(f, G.pron))}</button>`).join('')}</div>`).join('');
+  tw('t-guess').innerHTML = state.board.map((c, i) => state.down.has(i) ? '' : `<button data-act="guess" data-i="${i}" class="${i === state.secret ? 'sec2' : ''}" ${G.won ? 'disabled' : ''}>${i === state.secret ? '★ ' : ''}${esc(THEME.guessQ(c))}</button>`).join('');
+  // carte a mano: i ragazzi dicono chi togliere, tu clicchi (oppure tocchi la carta alla LIM)
+  tw('t-manual').innerHTML = G.autoFlip ? '' : `<h2>✋ Abbassa / rialza <span style="text-transform:none;letter-spacing:0;font-weight:500">(un clic qui o sulla carta alla LIM)</span></h2><div class="gs">${state.board.map((c, i) => `<button data-act="flip" data-i="${i}" class="${state.down.has(i) ? 'used' : ''}" title="${state.down.has(i) ? 'Rialza' : 'Abbassa'}">${state.down.has(i) ? '⬆️' : '⬇️'} ${i === state.secret ? '★ ' : ''}${esc(c.name)}</button>`).join('')}</div>`;
+  tw('t-bonus').innerHTML = G.won && G.bonus === 'pending' ? `<div class="bonus"><b>⭐ Bonus:</b> ${G.describer ? `<b style="color:#ffd166">${esc(dispOf(G.describer))}</b> (${esc(teamName(G.winner))})` : esc(teamName(G.winner))} descrive ${esc(s.name)}.${(G.lineup[G.winner] || []).length > 1 ? ' <button data-act="redraw" title="Estrai un altro alunno della squadra">🎲 Un altro</button>' : ''} Completa e corretta (${esc(THEME.bonusRule)})? <div class="bar" style="margin-top:8px"><button class="ok" data-act="bonus" data-v="1">⭐ Sì, +2</button><button data-act="bonus" data-v="0">✗ No</button><button class="pri" data-act="newround">🎲 Nuovo round</button></div></div>`
     : G.won ? `<div class="bonus">${G.bonus === 'yes' ? '⭐ Bonus dato (+2).' : 'Nessun bonus.'} <button class="pri" data-act="newround" style="margin-left:8px">🎲 Nuovo round</button></div>` : '';
   tw('t-nteams').innerHTML = [2, 3, 4, 5, 6].map(n => `<button data-act="nteams" data-n="${n}" class="${nTeams() === n ? 'on' : ''}">${n}</button>`).join('');
   // classe e alunni
@@ -1611,6 +1652,8 @@ function onTeacherClick(e) {
   else if (act === 'wrongq') wrongQuestion();
   else if (act === 'undo') undo();
   else if (act === 'pron') { G.pron = b.dataset.v; renderTW(); }
+  else if (act === 'auto') setAutoFlip(b.dataset.v === '1');
+  else if (act === 'flip') toggleDown(+b.dataset.i);
   else if (act === 'guess') guess(+b.dataset.i);
   else if (act === 'bonus') setBonus(b.dataset.v === '1');
   else if (act === 'sc') { G.score[+b.dataset.t] = Math.max(0, G.score[+b.dataset.t] + +b.dataset.d); renderGame(); renderTW(); }
@@ -1704,7 +1747,7 @@ window.addEventListener('beforeunload', () => { try { if (teacherWin && !teacher
 // ══════════════════════════════════════════════════════════════════
 //  MODALITÀ E AVVIO (Guess Who e Oral test solo per il docente: PIN, vedi teacher-lock.js)
 // ══════════════════════════════════════════════════════════════════
-const MODE_KEY = 'gw_mode';
+const MODE_KEY = THEME.key + '_mode';
 const saved = {};
 function refreshLock() {
   const ok = TeacherLock.isUnlocked();
@@ -1718,6 +1761,7 @@ function toggleLock() {
   else TeacherLock.ask(() => { refreshLock(); setMode('class'); });
 }
 function setMode(m) {
+  if (m === 'oral' && !THEME.oral) m = 'class';
   if (m !== 'home' && !TeacherLock.isUnlocked()) { TeacherLock.ask(() => { refreshLock(); setMode(m); }); return; }
   const prev = state.mode;
   state.mode = m;
@@ -1726,8 +1770,8 @@ function setMode(m) {
   document.querySelectorAll('#mode-switch [data-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
   document.getElementById('tw-top').hidden = m === 'home';
   try { localStorage.setItem(MODE_KEY, m); } catch (e) {}
-  closeZoom();
-  document.getElementById('subtitle').textContent = m === 'oral' ? 'Oral test · describe the person: be, have got, present continuous' : 'Leggi gli indizi e trova la persona misteriosa';
+  closeZoom(); tapClass();
+  document.getElementById('subtitle').textContent = m === 'oral' ? 'Oral test · describe the person: be, have got, present continuous' : (THEME.subtitle || 'Leggi gli indizi e trova la persona misteriosa');
   // ogni modalità ha il suo tabellone: tornando al gioco la partita in corso è ancora lì
   if (prev !== m && state.board.length && prev !== 'oral') saved[prev] = { board: state.board, feats: state.feats, secret: state.secret, down: state.down };
   if (prev !== m || !state.board.length) {
@@ -1742,7 +1786,8 @@ function setMode(m) {
 
 (function () { try { const c = localStorage.getItem('gw_cls'); if (c && gwClasses().some(x => x.nome === c)) selectClass(c); } catch (e) {} })();
 (function init() {
-  document.getElementById('vocab').innerHTML = VOCAB.map(([h, ws]) => `<h4>${h}</h4><div class="w">${ws.map(w => `<span>${w}</span>`).join('')}</div>`).join('');
+  if (!THEME.oral) document.querySelectorAll('[data-mode=oral]').forEach(b => b.remove());
+  document.getElementById('vocab').innerHTML = (THEME.vocab || VOCAB).map(([h, ws]) => `<h4>${h}</h4><div class="w">${ws.map(w => `<span>${w}</span>`).join('')}</div>`).join('');
   setTap('zoom');
   const url = new URLSearchParams(location.search).get('mode');
   let m = /^(class|classe|game)$/.test(url || '') ? 'class' : /^(oral|test)$/.test(url || '') ? 'oral' : url === 'home' || url === 'casa' ? 'home' : null;

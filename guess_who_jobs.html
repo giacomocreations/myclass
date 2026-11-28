@@ -1,0 +1,1977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guess Who? – Jobs · going to</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&display=swap');
+
+  :root {
+    --bg: #0c0a16; --surface: #161226; --card: #1f1934;
+    --accent: #ffb547; --accent2: #3ec6ff; --gold: #ffd166; --pink: #ff5d8f;
+    --text: #f6f3fb; --muted: #a49cbd; --correct: #06d6a0; --wrong: #ff4d6d;
+    --border: rgba(255,255,255,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; overflow-x: hidden; }
+  body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(ellipse 60% 40% at 15% 15%, rgba(255,181,71,0.12) 0%, transparent 60%), radial-gradient(ellipse 50% 50% at 85% 85%, rgba(62,198,255,0.10) 0%, transparent 60%); pointer-events: none; z-index: 0; }
+  .container { max-width: 1180px; margin: 0 auto; padding: 24px 16px 80px; position: relative; z-index: 1; }
+  body.mode-class .container { max-width: none; padding: 58px 14px 14px; }
+  .header { text-align: center; margin: 34px 0 18px; }
+  .header .eyebrow { font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  .header h1 { font-family: 'Bebas Neue', sans-serif; font-size: clamp(38px, 8vw, 66px); letter-spacing: 2px; line-height: 1; background: linear-gradient(135deg, #fff 30%, var(--accent) 70%, var(--accent2) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 8px; }
+  .header .subtitle { color: var(--muted); font-size: 14px; }
+  body.mode-class .header, body.mode-oral .header { display: none; }
+  body.mode-oral .container { padding-top: 62px; }
+
+  .home-link { position: fixed; top: 14px; left: 14px; z-index: 100; display: inline-flex; align-items: center; gap: 7px; padding: 8px 16px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; color: #aaa; text-decoration: none; font-size: 13px; font-weight: 500; backdrop-filter: blur(6px); }
+  .home-link:hover { color: #fff; }
+  #mode-switch { position: fixed; top: 14px; right: 14px; z-index: 101; display: inline-flex; flex-wrap: wrap; justify-content: flex-end; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 3px; backdrop-filter: blur(6px); }
+  #mode-switch button { border: none; background: transparent; color: #aaa; font-family: inherit; font-size: 13px; font-weight: 500; padding: 6px 12px; border-radius: 7px; cursor: pointer; }
+  #mode-switch button[aria-pressed="true"] { background: var(--gold); color: var(--bg); font-weight: 700; }
+  #mode-switch button.tw-top { background: var(--pink); color: #fff; font-weight: 700; margin: 0 2px; }
+  body:not(.mode-home) .home-only, body:not(.mode-class) .class-only, body:not(.mode-oral) .oral-only, body.mode-oral .board-only { display: none !important; }
+  body:not(.teacher) .teacher-only { display: none !important; }
+  #lock-btn { padding: 6px 9px; }
+  [hidden] { display: none !important; }
+
+  /* ── tabellone (line-up) ── */
+  .board-wrap { position: relative; }
+  .board { display: grid; grid-template-columns: repeat(var(--cols, 5), var(--cw, 150px)); gap: 8px; justify-content: center; }
+  .card { position: relative; width: var(--cw, 150px); border: 2px solid transparent; border-radius: 12px; padding: 0; cursor: pointer; font-family: inherit; color: var(--text);
+    background: linear-gradient(180deg, #e9eef6 0%, #dfe6f1 86%, #c9cfd8 86%, #c3c9d3 100%); overflow: hidden; transition: transform .15s, opacity .3s, filter .3s; }
+  .card:hover { transform: translateY(-2px); border-color: var(--accent2); }
+  .card svg { display: block; width: 100%; height: auto; }
+  .card .nm { display: block; background: rgba(20,16,36,0.86); color: #fff; font-weight: 800; font-size: clamp(11px, calc(var(--cw, 150px) * 0.12), 17px); padding: 3px 2px 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .zbtn { display: none; position: absolute; top: 4px; right: 4px; width: calc(var(--cw, 150px) * 0.26); height: calc(var(--cw, 150px) * 0.26); min-width: 26px; min-height: 26px; border-radius: 50%; background: rgba(20,16,36,.75); color: #fff; font-size: calc(var(--cw, 150px) * 0.13); align-items: center; justify-content: center; z-index: 2; }
+  body.tapflip .zbtn { display: flex; }
+  .gmid .wt { font-size: 13px; font-weight: 800; color: var(--gold); }
+  .card.down { opacity: .28; filter: grayscale(1); }
+  .card.down::after { content: '✕'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: calc(var(--cw, 150px) * 0.7); color: #e63946; font-weight: 900; opacity: .8; pointer-events: none; }
+  .card.win { border-color: var(--gold); box-shadow: 0 0 0 4px rgba(255,209,102,.55), 0 10px 30px rgba(255,209,102,.35); opacity: 1; filter: none; }
+  .card.win::after { content: none; }
+  @keyframes flipdown { 0% { transform: scale(1); } 40% { transform: scale(.9) translateY(6px); } 100% { transform: scale(1); } }
+  .card.flipping { animation: flipdown .4s ease; }
+  .zwin { background: #1a1630; color: #ffd166; border-radius: 12px; padding: 8px 12px; font-weight: 800; text-align: center; font-size: 17px; }
+
+  /* ── Guess Who in classe: punteggi e domanda ── */
+  .gtop { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
+  .team { flex: 1 1 0; min-width: 0; background: var(--surface); border: 2px solid var(--border); border-radius: 14px; padding: 6px 12px; display: flex; align-items: center; gap: 10px; }
+  .team .tn { font-family: 'Bebas Neue', sans-serif; font-size: clamp(18px, 2vw, 28px); letter-spacing: 1px; flex: 1; min-width: 0; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .team .tn small { display: block; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 700; color: var(--gold); letter-spacing: 0; height: 15px; }
+  .team .ts { font-family: 'Bebas Neue', sans-serif; font-size: clamp(30px, 3vw, 44px); color: var(--gold); line-height: 1; min-width: 40px; text-align: center; }
+  .team.on { border-color: var(--gold); background: rgba(255,209,102,.12); box-shadow: 0 0 22px rgba(255,209,102,.25); }
+  .gmid { flex: none; text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 6px 16px; display: flex; flex-direction: column; justify-content: center; }
+  .gmid .rd { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; line-height: 1; }
+  .gmid .qc { font-size: 13px; color: var(--muted); font-weight: 600; }
+  .qa { display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap; min-height: 58px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 8px 16px; margin-bottom: 8px; text-align: center; }
+  .qa .q { font-size: clamp(20px, 2.4vw, 32px); font-weight: 800; }
+  .qa .a { font-size: clamp(20px, 2.4vw, 32px); font-weight: 900; color: var(--correct); }
+  .qa .a.no { color: var(--wrong); }
+  .qa .a.win { color: var(--gold); }
+  .qa .hint { font-size: 15px; color: var(--muted); }
+  .qa .hint b { color: var(--accent2); }
+  @keyframes qpop { 0% { transform: scale(.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+  .qa.pop > * { animation: qpop .3s ease; }
+  .needtw { text-align: center; margin: 10px 0; }
+
+  /* ── pannelli ── */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 18px 20px; }
+  .panel h3 { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .panel p, .panel li { font-size: 14px; line-height: 1.6; color: #ddd8ea; }
+  .panel ol, .panel ul { padding-left: 20px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+  .btn { cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 700; padding: 9px 14px; border-radius: 10px; background: var(--card); color: var(--text); border: 1px solid var(--border); }
+  .btn:hover { border-color: var(--accent2); }
+  .btn.primary { background: var(--accent2); color: #08131c; border-color: transparent; }
+  .btn.pink { background: var(--pink); color: #fff; border-color: transparent; }
+  .btn.gold { background: var(--gold); color: #1a1300; border-color: transparent; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn-new { border: none; cursor: pointer; font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1.5px; padding: 9px 22px 7px; border-radius: 14px; color: #1a1300; background: linear-gradient(135deg, var(--gold), var(--accent)); box-shadow: 0 8px 24px rgba(255,181,71,0.3); }
+  .seg { display: inline-flex; flex-wrap: wrap; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 3px; gap: 2px; }
+  .seg button { border: none; background: transparent; color: var(--muted); font-family: inherit; font-size: 13px; font-weight: 600; padding: 7px 10px; border-radius: 9px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--accent2); color: #08131c; }
+  .seg .seg-lbl { font-size: 11px; color: var(--muted); padding: 7px 6px; letter-spacing: 1px; text-transform: uppercase; font-family: 'Space Mono', monospace; }
+  .note { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+
+  /* At home: indizi */
+  .cluep { margin-bottom: 14px; }
+  .grid2.g1 { grid-template-columns: 1fr 1fr; }
+  .clues { list-style: none; padding: 0 !important; margin-top: 6px; }
+  .clues li { background: var(--card); border-radius: 10px; padding: 9px 12px; margin-top: 6px; font-size: 17px !important; font-weight: 600; color: var(--text) !important; display: flex; gap: 10px; align-items: center; }
+  .clues li .n { font-family: 'Bebas Neue', sans-serif; font-size: 20px; color: var(--gold); min-width: 22px; }
+  .clues li.hid { color: var(--muted) !important; font-style: italic; font-weight: 500; }
+  .clues li button { margin-left: auto; }
+  .result { margin-top: 12px; font-size: 18px; font-weight: 800; }
+  .result.ok { color: var(--correct); } .result.no { color: var(--wrong); }
+  .vocab h4 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin: 10px 0 4px; }
+  .vocab .w { display: flex; flex-wrap: wrap; gap: 5px; }
+  .vocab .w span { background: rgba(255,181,71,0.13); color: #ffd9a0; border-radius: 7px; padding: 3px 9px; font-size: 13px; font-weight: 600; }
+  .lang-box { background: var(--card); border-radius: 12px; padding: 12px 14px; margin-top: 10px; font-size: 14px; line-height: 1.7; }
+  .lang-box b { color: var(--gold); } .lang-box .ex { color: var(--accent2); }
+
+  /* Oral test */
+  .ostage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; background: linear-gradient(180deg, #e9eef6 0%, #dfe6f1 88%, #c9cfd8 88%); border-radius: 22px; padding: 12px; border: 1px solid var(--border); }
+  .ostage .of { display: flex; justify-content: center; align-items: flex-end; }
+  .ostage .of svg { height: 62vh; width: auto; max-width: 100%; }
+  .ostage .oh { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+  .ostage .oh svg { width: min(100%, 52vh); height: auto; background: #f4f7fb; border-radius: 18px; border: 3px solid #fff; box-shadow: 0 8px 26px rgba(0,0,0,.15); }
+  .ostage .onm { font-family: 'Bebas Neue', sans-serif; font-size: 40px; color: #1a1630; letter-spacing: 1px; }
+  .q-box { background: var(--card); border-radius: 12px; padding: 14px 16px; margin-top: 10px; }
+  .q-box .q { font-size: 22px; font-weight: 800; }
+  .timer-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  .timer { font-family: 'Bebas Neue', sans-serif; font-size: 40px; letter-spacing: 2px; line-height: 1; min-width: 90px; font-variant-numeric: tabular-nums; }
+  .timer.run { color: var(--correct); } .timer.warn { color: var(--gold); } .timer.over { color: var(--wrong); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .45; } }
+
+  /* zoom */
+  .zoom { position: fixed; inset: 0; z-index: 300; background: rgba(8,6,16,.78); display: flex; align-items: center; justify-content: center; padding: 16px; backdrop-filter: blur(3px); }
+  .zbox { position: relative; display: grid; grid-template-columns: auto minmax(260px, 46vh); gap: 18px; align-items: center; background: linear-gradient(180deg, #e9eef6 0%, #dfe6f1 88%, #c9cfd8 88%); border-radius: 22px; padding: 18px 22px; max-width: 96vw; max-height: 94vh; }
+  .zbox .zf svg { height: 80vh; max-height: 720px; width: auto; display: block; }
+  .zbox .zh { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+  .zbox .zh svg { width: 100%; height: auto; background: #f4f7fb; border-radius: 18px; border: 3px solid #fff; }
+  .zbox .zn { font-family: 'Bebas Neue', sans-serif; font-size: 46px; color: #1a1630; text-align: center; line-height: 1; }
+  .zbox .zb { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .zbox .zx { position: absolute; top: 8px; right: 10px; background: #1a1630; color: #fff; border: none; border-radius: 50%; width: 38px; height: 38px; font-size: 18px; cursor: pointer; }
+  .zbox.down .zf, .zbox.down .zh svg { opacity: .35; filter: grayscale(1); }
+
+  .toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%); background: var(--correct); color: #032; font-weight: 800; padding: 10px 18px; border-radius: 12px; z-index: 400; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+
+  @media (max-width: 760px) {
+    .grid2 { grid-template-columns: 1fr; }
+    #mode-switch button { padding: 6px 8px; font-size: 12px; }
+    .header { margin-top: 64px; }
+    .zbox { grid-template-columns: auto minmax(0, 1fr); gap: 10px; padding: 14px 12px; overflow: auto; }
+    .zbox .zf svg { height: 50vh; }
+    .zbox .zn { font-size: 34px; }
+    .zbox .zb .btn { font-size: 13px; padding: 8px 10px; }
+    .ostage { grid-template-columns: 1fr; }
+    .ostage .of svg { height: 48vh; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+</style>
+<script src="font-zoom.js" defer></script>
+<script src="teacher-lock.js"></script>
+<script src="myclass-live-link.js"></script>
+</head>
+<body class="mode-home">
+<a class="home-link" href="index.html">← Home</a>
+<div id="mode-switch" role="group" aria-label="Modalità">
+  <button type="button" data-mode="home" onclick="setMode('home')">🏠 At home</button>
+  <button type="button" data-mode="class" class="teacher-only" onclick="setMode('class')">🎲 Guess Who</button>
+  <button type="button" data-mode="oral" class="teacher-only" onclick="setMode('oral')">📺 Oral test</button>
+  <button type="button" class="teacher-only tw-top" id="tw-top" onclick="openTeacherWin()" title="Apri la finestra docente (o portala davanti se è già aperta)">🖥️ Finestra docente</button>
+  <button type="button" id="lock-btn" onclick="toggleLock()" title="Area docente">🔒</button>
+</div>
+<div class="container">
+  <div class="header">
+    <div class="eyebrow">Jobs · going to · Unit 1</div>
+    <h1>Guess Who?</h1>
+    <div class="subtitle" id="subtitle">Che lavoro farà da grande? Leggi gli indizi e trova la persona misteriosa</div>
+  </div>
+
+  <!-- ═══ GUESS WHO IN CLASSE: punteggi + domanda ═══ -->
+  <div class="class-only">
+    <div class="gtop" id="gtop"></div>
+    <div class="qa" id="qa"></div>
+    <div class="needtw" id="needtw"><button class="btn pink" onclick="openTeacherWin()">🖥️ Apri la finestra docente</button> <span class="note">Il personaggio segreto e le risposte si gestiscono da lì, sul tuo schermo.</span></div>
+  </div>
+
+  <!-- ═══ AT HOME: indizi ═══ -->
+  <div class="home-only">
+    <div class="row" style="justify-content:center;margin:0 0 12px">
+      <button class="btn-new" onclick="newHome()">🎲 New game</button>
+      <div class="seg" role="group" aria-label="Tocca un personaggio per"><span class="seg-lbl">Tap</span><button type="button" data-tap="zoom" onclick="setTap('zoom')">🔍 Zoom</button><button type="button" data-tap="flip" onclick="setTap('flip')">⬇️ Flip down</button></div>
+    </div>
+      <div class="panel cluep">
+        <h3>🕵️ What is he / she going to be? <span class="seg" style="margin-left:auto"><button type="button" id="btn-audio" aria-pressed="false" onclick="toggleAudioOnly()">👂 Solo ascolto</button></span></h3>
+        <p>La persona misteriosa è una di quelle del tabellone. Leggi gli indizi (o ascoltali), abbassa chi non c'entra e trovala con meno indizi possibile.</p>
+        <ul class="clues" id="clues"></ul>
+        <div class="row">
+          <button class="btn primary" id="btn-clue" onclick="nextClue()">💡 Next clue</button>
+          <button class="btn" onclick="speakClues()">🔊 Ascolta</button>
+          <button class="btn" onclick="resetFlips()">⬆️ Rialza tutti</button>
+        </div>
+        <div class="result" id="h-result"></div>
+      </div>
+  </div>
+
+  <!-- ═══ TABELLONE ═══ -->
+  <div class="board-wrap board-only"><div class="board" id="board"></div></div>
+
+  <div class="home-only">
+    <div class="grid2 g1">
+      <div class="panel">
+        <h3>📚 Words (Unit 1)</h3>
+        <div class="vocab" id="vocab"></div>
+        <div class="lang-box">
+          <span class="ex">Is he / she going to</span> <b>work in an office</b>? — Yes, he <b>is</b>. / No, she <b>isn't</b>.<br>
+          <span class="ex">She's going to</span> <b>work with people</b>. · <span class="ex">He isn't going to</span> <b>wear special clothes</b>.<br>
+          <span class="ex">She's going to be</span> <b>a</b> nurse. · <span class="ex">He's going to be</span> <b>an</b> engineer. <i>(a / an)</i>
+        </div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h3>🏠 Come allenarti a casa</h3>
+      <ol>
+        <li>Premi <b>🎲 New game</b>: arrivano 16 ragazzi, ognuno vestito con il lavoro che farà da grande. Uno di loro è quello misterioso.</li>
+        <li>Premi <b>💡 Next clue</b>: leggi l'indizio e abbassa le persone che non c'entrano (scegli <b>⬇️ Flip down</b> e tocca la carta, oppure tocca, guarda bene con lo zoom e premi <b>⬇️</b>).</li>
+        <li>Quando sei sicuro, tocca la persona e premi <b>✅ It's him / her!</b> Con 3 indizi o meno: ⭐⭐⭐.</li>
+        <li>Allenati anche con l'orecchio: <b>👂 Solo ascolto</b> nasconde il testo, gli indizi li senti soltanto.</li>
+        <li>Poi descrivi tu ad alta voce un ragazzo del tabellone: <i>Emma is going to be a nurse. She's going to work in a hospital and she's going to wear special clothes. She isn't going to work in an office.</i></li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- ═══ ORAL TEST ═══ -->
+  <div class="oral-only">
+    <div class="ostage"><div class="of" id="o-full"></div><div class="oh"><div id="o-head" style="width:100%;display:flex;justify-content:center"></div><div class="onm" id="o-name"></div></div></div>
+    <div class="grid2">
+      <div class="panel">
+        <h3>🗣️ Describe the person</h3>
+        <p style="font-size:18px;font-weight:700;color:var(--text)" id="o-task"></p>
+        <div class="row"><button class="btn-new" onclick="newOralPerson()">🎲 New person</button><button class="btn pink" onclick="openTeacherWin()">🖥️ Finestra docente</button></div>
+      </div>
+      <div class="panel">
+        <h3>❓ Question</h3>
+        <div class="q-box"><div class="q" id="o-q">Describe the person in the picture.</div></div>
+        <div class="timer-row"><button class="btn" id="tm-btn" onclick="timerToggle()">⏱ Avvia 3:00</button><span class="timer" id="tm-main">3:00</span><button class="btn" onclick="timerReset()" title="Azzera il timer">↺</button></div>
+        <p class="note">La finestra docente mostra la descrizione giusta, le risposte alle domande e la griglia /16. In modalità <b>Estendi</b> tienila sul tuo schermo: alla LIM si vede solo la persona.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="zoom" id="zoom" hidden></div>
+<div class="toast" id="toast"></div>
+<script>
+// ── copiato da what_are_they_wearing.html: utilità, pose, piedi, mani, oggetti delle azioni ──
+const rnd = n => Math.floor(Math.random() * n);
+const pick = a => a[rnd(a.length)];
+function wpick(pairs) {
+  const tot = pairs.reduce((s, p) => s + p[1], 0);
+  let r = Math.random() * tot;
+  for (const p of pairs) { r -= p[1]; if (r <= 0) return p[0]; }
+  return pairs[pairs.length - 1][0];
+}
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = rnd(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function mix(hex, to, t) {
+  const a = parseInt(hex.slice(1), 16), b = parseInt(to.slice(1), 16);
+  const ch = (x, s) => (x >> s) & 255;
+  const m = s => Math.round(ch(a, s) + (ch(b, s) - ch(a, s)) * t);
+  return '#' + ((1 << 24) + (m(16) << 16) + (m(8) << 8) + m(0)).toString(16).slice(1);
+}
+const dark = (h, t = 0.3) => mix(h, '#000000', t);
+const light = (h, t = 0.3) => mix(h, '#ffffff', t);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// geometria
+const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+function portion(pts, t0, t1) {
+  const segs = []; let tot = 0;
+  for (let i = 1; i < pts.length; i++) { const d = dist(pts[i - 1], pts[i]); segs.push(d); tot += d; }
+  const at = t => {
+    let L = t * tot;
+    for (let i = 0; i < segs.length; i++) { if (L <= segs[i] || i === segs.length - 1) return { p: lerp(pts[i], pts[i + 1], Math.min(1, L / segs[i])), i }; L -= segs[i]; }
+  };
+  const A = at(t0), B = at(t1);
+  const out = [A.p];
+  for (let i = A.i + 1; i <= B.i; i++) out.push(pts[i]);
+  out.push(B.p);
+  return out;
+}
+const D = pts => 'M' + pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' L');
+const line = (pts, w, col, cap = 'round', extra = '') => `<path d="${D(pts)}" fill="none" stroke="${col}" stroke-width="${w}" stroke-linecap="${cap}" stroke-linejoin="round" ${extra}/>`;
+const tube = (pts, w, col, cap = 'round') => line(pts, w + 3.5, dark(col, 0.32), cap) + line(pts, w, col, cap);
+const shape = (d, col, extra = '') => `<path d="${d}" fill="${col}" stroke="${dark(col, 0.32)}" stroke-width="2" stroke-linejoin="round" ${extra}/>`;
+const circ = (x, y, r, col, extra = '') => `<circle cx="${x}" cy="${y}" r="${r}" fill="${col}" ${extra}/>`;
+
+// ══════════════════════════════════════════════════════════════════
+//  POSE (coordinate locali: testa in 100,58 · piedi a terra y≈390)
+// ══════════════════════════════════════════════════════════════════
+const SL = [77, 110], SR = [123, 110];
+const ARMS = {
+  rest:     { L: [SL, [68, 156], [64, 200]],  R: [SR, [132, 156], [136, 200]] },
+  wave:     { L: [SL, [68, 156], [64, 200]],  R: [SR, [152, 90], [160, 46]] },
+  mouth:    { L: [SL, [68, 156], [64, 200]],  R: [SR, [148, 146], [117, 90]] },
+  mic:      { L: [SL, [62, 146], [52, 104]],  R: [SR, [150, 148], [126, 110]] },
+  ear:      { L: [SL, [68, 156], [64, 200]],  R: [SR, [150, 132], [131, 72]] },
+  front:    { L: [SL, [66, 152], [88, 150]],  R: [SR, [134, 152], [112, 150]] },
+  read:     { L: [SL, [60, 162], [71, 153]],  R: [SR, [140, 162], [129, 153]] },   // libro retto ai bordi esterni
+  frontLow: { L: [SL, [70, 156], [93, 170]],  R: [SR, [130, 156], [107, 170]] },
+  camera:   { L: [SL, [62, 146], [86, 118]],  R: [SR, [138, 146], [114, 118]] },
+  guitar:   { L: [SL, [56, 150], [52, 122]],  R: [SR, [144, 146], [118, 174]] },
+  run:      { L: [SL, [60, 146], [76, 172]],  R: [SR, [144, 132], [140, 100]] },
+  up:       { L: [SL, [58, 76], [52, 36]],    R: [SR, [142, 76], [148, 36]] },
+  dance:    { L: [SL, [54, 86], [40, 52]],    R: [SR, [148, 136], [170, 156]] },
+  leash:    { L: [SL, [68, 156], [64, 200]],  R: [SR, [142, 152], [160, 192]] },
+  bags:     { L: [SL, [64, 156], [56, 200]],  R: [SR, [136, 156], [144, 200]] },
+  umbrella: { L: [SL, [68, 156], [64, 200]],  R: [SR, [150, 150], [138, 120]] },
+  selfie:   { L: [SL, [68, 156], [64, 200]],  R: [SR, [156, 90], [182, 60]] },
+  ballUp:   { L: [SL, [68, 156], [64, 200]],  R: [SR, [150, 80], [144, 38]] },
+  racket:   { L: [SL, [64, 150], [70, 192]],  R: [SR, [154, 124], [180, 108]] },
+  kite:     { L: [SL, [68, 156], [64, 200]],  R: [SR, [154, 90], [174, 62]] },
+  snowman:  { L: [SL, [68, 156], [64, 200]],  R: [SR, [154, 146], [184, 190]] },
+  throw:    { L: [SL, [56, 138], [42, 160]],  R: [SR, [154, 98], [164, 56]] },
+  balance:  { L: [SL, [50, 126], [26, 136]],  R: [SR, [150, 126], [174, 136]] },
+  paint:    { L: [SL, [64, 152], [78, 190]],  R: [SR, [154, 134], [178, 118]] },
+};
+const HL = [86, 206], HR = [114, 206];
+const LEGS = {
+  stand: { L: [HL, [85, 296], [83, 372]],  R: [HR, [115, 296], [117, 372]] },
+  wide:  { L: [HL, [80, 296], [74, 372]],  R: [HR, [120, 296], [126, 372]] },
+  walk:  { L: [HL, [82, 294], [76, 370]],  R: [HR, [120, 288], [124, 362]] },
+  run:   { L: [HL, [64, 262], [78, 320]],  R: [HR, [117, 294], [124, 372]] },
+  kick:  { L: [HL, [83, 296], [80, 372]],  R: [HR, [138, 270], [160, 324]] },
+  jump:  { L: [HL, [66, 262], [80, 322]],  R: [HR, [134, 262], [120, 322]] },
+  dance: { L: [HL, [78, 296], [70, 372]],  R: [HR, [140, 262], [124, 318]] },
+  skate: { L: [HL, [78, 294], [72, 364]],  R: [HR, [122, 294], [128, 364]] },
+};
+
+// Piedi di profilo (punta verso l'esterno): così trainers, shoes, boots e sandals si riconoscono bene
+function drawFoot(type, c, x, y, s, skin) {
+  const d = dark(c, 0.38), st = `stroke="${d}" stroke-width="1.8" stroke-linejoin="round"`;
+  let g = '';
+  if (type === 'trainers') {
+    const lace = c === COLORS.white ? '#8f96a0' : '#ffffff', swoosh = c === COLORS.white ? COLORS.blue : '#ffffff';
+    g += `<path d="M-12,5 L-13,-10 Q-12,-17 -4,-17 L4,-15 Q9,-9 16,-6 Q27,-3 28,5 Z" fill="${c}" ${st}/>`;
+    g += `<path d="M17,-5 Q26,-3 28,5 L16,5 Q15,0 17,-5 Z" fill="${light(c, 0.55)}" ${st}/>`;
+    g += `<ellipse cx="-6" cy="-15.5" rx="7" ry="2.6" fill="${dark(c, 0.3)}"/>`;
+    g += `<path d="M0,-12 l6,-3.5 M3.5,-8.5 l6,-3.5 M7,-5 l6,-3.5" stroke="${lace}" stroke-width="2.2" stroke-linecap="round"/>`;
+    g += `<path d="M-10,-1 Q1,3 13,-5" fill="none" stroke="${swoosh}" stroke-width="3" stroke-linecap="round"/>`;
+    g += `<path d="M-14,4 L27,4 Q32,4 32,8.5 Q32,13 27,13 L-11,13 Q-16,13 -16,8.5 Q-16,4 -14,4 Z" fill="#fbfbfb" stroke="#8f96a0" stroke-width="1.8"/>`;
+    g += `<path d="M-12,10 L29,10" stroke="#c8ccd2" stroke-width="1.6" stroke-dasharray="3 2.5"/>`;
+  } else if (type === 'boots') {
+    g += `<path d="M-14,6 L-14,-17 L12,-17 L12,-7 Q22,-5 27,0 Q30,3 29,6 Z" fill="${c}" ${st}/>`;
+    g += `<path d="M12,-7 Q22,-5 27,0" fill="none" stroke="${light(c, 0.35)}" stroke-width="2" stroke-linecap="round"/>`;
+    g += `<rect x="-16" y="5" width="47" height="8" rx="3" fill="${dark(c, 0.6)}"/>`;
+    g += `<path d="M-12,13 l0,-3 M-4,13 l0,-3 M4,13 l0,-3 M12,13 l0,-3 M20,13 l0,-3" stroke="${dark(c, 0.8)}" stroke-width="2"/>`;
+  } else if (type === 'sandals') {
+    g += `<path d="M-14,5 L26,5 Q31,5 31,8 Q31,11 26,11 L-11,11 Q-15,11 -15,8 Z" fill="${c}" ${st}/>`;
+    g += `<path d="M-11,5 L-11,-9 Q-10,-14 -4,-13 Q2,-10 6,-6 Q16,-3 22,-1 Q28,0 28,3 L28,5 Z" fill="${skin}" stroke="${dark(skin, 0.32)}" stroke-width="1.6" stroke-linejoin="round"/>`;
+    g += `<path d="M24,0 q2,2 0,5 M20,-1 q2,2 0,6" fill="none" stroke="${dark(skin, 0.3)}" stroke-width="1.2"/>`;
+    g += `<path d="M-11,-6 L5,-7" stroke="${c}" stroke-width="4" stroke-linecap="round"/><path d="M7,-6 L13,5 M15,-3 L19,5" stroke="${c}" stroke-width="3.6" stroke-linecap="round"/>`;
+  } else { // shoes: basse, lucide, con il tacco
+    g += `<path d="M-11,4 L-11,-8 Q-10,-13 -4,-12 Q2,-10 6,-6 Q14,-4 22,-1 Q29,1 27,4 Z" fill="${c}" ${st}/>`;
+    g += `<ellipse cx="-4" cy="-10.5" rx="5.5" ry="1.8" fill="${dark(c, 0.5)}"/>`;
+    g += `<path d="M-1,-9 Q6,-5 13,-4" fill="none" stroke="${dark(c, 0.45)}" stroke-width="1.3"/>`;
+    g += `<ellipse cx="15" cy="-2.5" rx="5" ry="1.6" fill="#ffffff" opacity="0.6"/>`;
+    g += `<rect x="-12" y="3.5" width="9" height="7" rx="1" fill="${dark(c, 0.6)}"/><path d="M3,3.5 L27,3.5 Q29,4 28,7 L4,7 Z" fill="${dark(c, 0.6)}"/>`;
+  }
+  return `<g transform="translate(${x},${y + 6}) scale(${s * 1.12},1.12)">${g}</g>`;
+}
+
+// Mani: rest (rilassata), fist (tiene qualcosa), open (saluta / braccia in alto)
+function drawHand(el, p, sk, kind) {
+  if (kind === 'none') return '';
+  const th = Math.atan2(p[1] - el[1], p[0] - el[0]) - Math.PI / 2;
+  const ang = th * 180 / Math.PI;
+  // pollice verso il centro del corpo
+  let side = Math.sign((100 - p[0]) * Math.cos(th)) || 1;
+  const d = dark(sk, 0.32);
+  const shapes = st => {
+    if (kind === 'open') {
+      let f = `<ellipse cx="0" cy="3" rx="8" ry="7.5" ${st}/>`;
+      [10, 12, 11.5, 9].forEach((h, i) => { const x = -5.4 + i * 3.6; f += `<rect x="${x - 1.9}" y="4" width="3.8" height="${h}" rx="1.9" transform="rotate(${(-18 + i * 12) * side} ${x} 6)" ${st}/>`; });
+      return f + `<ellipse cx="${side * 8.5}" cy="0" rx="2.6" ry="5.8" transform="rotate(${side * -42} ${side * 8.5} 0)" ${st}/>`;
+    }
+    if (kind === 'fist') return `<rect x="-8.5" y="-5" width="17" height="15" rx="7" ${st}/><ellipse cx="${side * 4.5}" cy="0" rx="5.2" ry="2.8" transform="rotate(${side * -25} ${side * 4.5} 0)" ${st}/>`;
+    return `<ellipse cx="0" cy="3" rx="7.5" ry="9.5" ${st}/><ellipse cx="${side * 6.5}" cy="0" rx="2.4" ry="5" transform="rotate(${side * -25} ${side * 6.5} 0)" ${st}/>`;
+  };
+  const detail = kind === 'fist' ? `<path d="M-4.5,9.5 L-4.5,6 M0,10 L0,6.5 M4.5,9.5 L4.5,6" stroke="${d}" stroke-width="1.1" stroke-linecap="round"/>`
+    : kind === 'rest' ? `<path d="M-3,11.5 L-3,8 M1,12.3 L1,8.5" stroke="${d}" stroke-width="1.1" stroke-linecap="round"/>` : '';
+  return `<g transform="translate(${p[0].toFixed(1)},${p[1].toFixed(1)}) rotate(${ang.toFixed(1)})">${shapes(`fill="${d}" stroke="${d}" stroke-width="3.6"`)}${shapes(`fill="${sk}"`)}${detail}</g>`;
+}
+const OPEN_HANDS = { wave: 'R', up: 'LR', dance: 'LR', balance: 'LR', throw: 'L', snowman: 'R', mic: 'L' };
+function handKind(armsKey, side) {
+  if (armsKey === 'read') return 'none';   // le mani le disegna il libro (dita dietro, pollici sulle pagine)
+  if ((OPEN_HANDS[armsKey] || '').includes(side)) return 'open';
+  const restP = ARMS.rest[side][2], p = ARMS[armsKey][side][2];
+  return p[0] === restP[0] && p[1] === restP[1] ? 'rest' : 'fist';
+}
+
+
+// ── oggetti delle azioni: back (dietro), held (in mano, dopo la testa), fx (effetti) ──
+function drawProps(key, A, c) {
+  const R = A.R[2], L = A.L[2];
+  const back = [], held = [], fx = [];
+  const note = (x, y, s = 1) => `<g transform="translate(${x},${y}) scale(${s})" fill="#3b2a6b"><ellipse cx="0" cy="12" rx="5" ry="4"/><rect x="3.6" y="-6" width="2.2" height="18"/><path d="M5.8,-6 Q14,-3 12,6 Q11,0 5.8,-1 Z"/></g>`;
+  const lines = (x, y, n = 3, dx = -16) => { let o = ''; for (let i = 0; i < n; i++) o += `<path d="M${x},${y + i * 9} l${dx},0" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity="0.85"/>`; return o; };
+  switch (key) {
+    case 'icecream':
+      held.push(`<path d="M${R[0] - 7},${R[1] - 6} L${R[0] + 7},${R[1] - 6} L${R[0]},${R[1] + 12} Z" fill="#e7b46a" stroke="#a8742f" stroke-width="1.6" stroke-linejoin="round"/>`
+        + circ(R[0], R[1] - 12, 8, '#ff9fc4', 'stroke="#d06a94" stroke-width="1.6"') + circ(R[0] + 1, R[1] - 22, 7, '#fff4d6', 'stroke="#d8c39a" stroke-width="1.6"') + circ(R[0] + 3, R[1] - 29, 2.5, '#e63946'));
+      break;
+    case 'sandwich':
+      held.push(`<g transform="rotate(-12 ${R[0]} ${R[1]})"><rect x="${R[0] - 14}" y="${R[1] - 16}" width="28" height="8" rx="4" fill="#e9c27b" stroke="#a8742f" stroke-width="1.5"/><path d="M${R[0] - 15},${R[1] - 8} q4,-3 7,0 q4,-3 7,0 q4,-3 7,0 q4,-3 8,0" fill="#5cc25c" stroke="#2e8a3a" stroke-width="1.5"/><rect x="${R[0] - 14}" y="${R[1] - 7}" width="28" height="4" fill="#e63946"/><rect x="${R[0] - 14}" y="${R[1] - 3}" width="28" height="8" rx="4" fill="#e9c27b" stroke="#a8742f" stroke-width="1.5"/></g>`);
+      break;
+    case 'apple':
+      held.push(circ(R[0] - 2, R[1] - 12, 10, '#e63946', 'stroke="#a01f2b" stroke-width="1.6"') + `<path d="M${R[0] - 2},${R[1] - 22} l1,-6" stroke="#6b3b1f" stroke-width="2"/><path d="M${R[0] - 1},${R[1] - 26} q7,-5 10,0 q-6,4 -10,0" fill="#4caf50"/>` + circ(R[0] - 11, R[1] - 14, 4, '#fbd9bd'));
+      break;
+    case 'water':
+      held.push(`<g transform="rotate(-28 ${R[0]} ${R[1]})"><rect x="${R[0] - 7}" y="${R[1] - 30}" width="14" height="38" rx="5" fill="#bfe6ff" stroke="#4a9fd8" stroke-width="1.6" opacity="0.95"/><rect x="${R[0] - 7}" y="${R[1] - 14}" width="14" height="8" fill="#3ec6ff"/><rect x="${R[0] - 4}" y="${R[1] - 37}" width="8" height="7" rx="2" fill="#2f6fdb"/></g>`);
+      break;
+    case 'hotchoc':
+      held.push(`<rect x="${R[0] - 12}" y="${R[1] - 20}" width="20" height="22" rx="4" fill="#ffffff" stroke="#8a8f99" stroke-width="1.8"/><path d="M${R[0] + 8},${R[1] - 15} q9,0 8,7 q-1,6 -8,5" fill="none" stroke="#8a8f99" stroke-width="2.4"/><rect x="${R[0] - 12}" y="${R[1] - 14}" width="20" height="5" fill="${COLORS.red}"/>`
+        + `<path d="M${R[0] - 6},${R[1] - 26} q-4,-5 0,-10 q4,-5 0,-10 M${R[0] + 2},${R[1] - 26} q-4,-5 0,-10 q4,-5 0,-10" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity="0.9"/>`);
+      break;
+    case 'phone':
+      held.push(`<rect x="${R[0] - 7}" y="${R[1] - 26}" width="12" height="26" rx="3" fill="#2b2b33" stroke="#111" stroke-width="1.4"/>`);
+      fx.push(`<path d="M150,40 q8,8 0,16 M158,34 q12,14 0,28" fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round"/>`);
+      break;
+    case 'texting':
+      held.push(`<rect x="91" y="152" width="18" height="28" rx="3" fill="#2b2b33" stroke="#111" stroke-width="1.4"/><rect x="93.5" y="155" width="13" height="20" rx="1.5" fill="#8fd8ff"/>`);
+      fx.push(`<g transform="translate(140,96)"><rect x="0" y="0" width="34" height="22" rx="8" fill="#ffffff" stroke="#3ec6ff" stroke-width="2"/><path d="M8,22 l-4,8 l10,-8" fill="#ffffff" stroke="#3ec6ff" stroke-width="2" stroke-linejoin="round"/><circle cx="10" cy="11" r="2.4" fill="#3ec6ff"/><circle cx="17" cy="11" r="2.4" fill="#3ec6ff"/><circle cx="24" cy="11" r="2.4" fill="#3ec6ff"/></g>`);
+      break;
+    case 'selfie':
+      held.push(`<rect x="${R[0] - 9}" y="${R[1] - 18}" width="18" height="30" rx="4" fill="#2b2b33" stroke="#111" stroke-width="1.4"/>` + circ(R[0] - 3, R[1] - 12, 2.6, '#8fd8ff'));
+      fx.push(`<path d="M${R[0] + 16},${R[1] - 30} l6,-6 M${R[0] + 20},${R[1] - 18} l9,-1 M${R[0] + 8},${R[1] - 36} l1,-9" stroke="#fff27a" stroke-width="3" stroke-linecap="round"/>`);
+      break;
+    case 'photo':
+      held.push(`<rect x="80" y="102" width="40" height="28" rx="5" fill="#3a3a44" stroke="#18181d" stroke-width="1.6"/><rect x="86" y="97" width="12" height="7" rx="2" fill="#3a3a44"/>` + circ(100, 116, 10, '#7fa6c9', 'stroke="#18181d" stroke-width="2.5"') + circ(97, 113, 3, '#ffffff', 'opacity="0.7"') + circ(113, 108, 2.4, '#ffd166'));
+      fx.push(`<path d="M128,86 l4,-12 l4,12 l12,4 l-12,4 l-4,12 l-4,-12 l-12,-4 Z" fill="#fff27a" stroke="#e3b500" stroke-width="1.2"/>`);
+      break;
+    case 'book': {
+      // mani che reggono il libro: dita dietro la copertina, pollici sul bordo delle pagine
+      const sk = c.skin, sd = dark(sk, 0.32);
+      const fingers = (x, sgn) => `<g transform="translate(${x},152) rotate(${sgn * -8})"><ellipse cx="0" cy="0" rx="8" ry="10.5" fill="${sk}" stroke="${sd}" stroke-width="2"/>`
+        + `<path d="M${sgn * -6},-5 l${sgn * -2.5},0 M${sgn * -6.8},0 l${sgn * -2.5},0 M${sgn * -6},5 l${sgn * -2.5},0" stroke="${sd}" stroke-width="1.2" stroke-linecap="round"/></g>`;
+      const thumb = (x, sgn) => `<ellipse cx="${x}" cy="146" rx="3.6" ry="7" transform="rotate(${sgn * 22} ${x} 146)" fill="${sk}" stroke="${sd}" stroke-width="1.6"/>`;
+      held.push(fingers(70, 1) + fingers(130, -1));
+      const blue = [c.outer, c.top].some(x => x && x.color === 'blue');   // copertina diversa dai vestiti
+      held.push(`<path d="M74,128 L100,136 L126,128 L126,160 L100,168 L74,160 Z" fill="${blue ? COLORS.red : COLORS.blue}" stroke="${blue ? '#9e1d29' : '#1d4794'}" stroke-width="2" stroke-linejoin="round"/><path d="M77,129 L100,135 L100,164 L77,157 Z M123,129 L100,135 L100,164 L123,157 Z" fill="#fffdf4" stroke="#cfc6a8" stroke-width="1.2"/><path d="M82,138 L96,142 M82,144 L96,148 M82,150 L96,154 M104,142 L118,138 M104,148 L118,144 M104,154 L118,150" stroke="#b9b4a0" stroke-width="1.2"/>`);
+      held.push(thumb(80.5, 1) + thumb(119.5, -1));
+      break;
+    }
+    case 'music':
+      fx.push(`<path d="M68,58 C64,12 136,12 132,58" fill="none" stroke="#2b2b33" stroke-width="6" stroke-linecap="round"/><rect x="60" y="48" width="14" height="24" rx="6" fill="${COLORS.red}" stroke="#2b2b33" stroke-width="2"/><rect x="126" y="48" width="14" height="24" rx="6" fill="${COLORS.red}" stroke="#2b2b33" stroke-width="2"/>`);
+      fx.push(note(42, 24, 0.9) + note(152, 14, 1.1) + note(170, 52, 0.8));
+      break;
+    case 'guitar': {
+      held.push(`<g transform="rotate(-38 108 166)"><rect x="104" y="72" width="9" height="78" rx="2" fill="#6b3b1f"/><rect x="102" y="62" width="13" height="14" rx="3" fill="#4a2814"/>`
+        + `<ellipse cx="108" cy="176" rx="24" ry="27" fill="#d98b3a" stroke="#8a4f17" stroke-width="2"/><ellipse cx="108" cy="148" rx="17" ry="18" fill="#d98b3a" stroke="#8a4f17" stroke-width="2"/><ellipse cx="108" cy="162" rx="22" ry="12" fill="#d98b3a"/>`
+        + circ(108, 160, 7, '#3b2210') + `<rect x="98" y="186" width="20" height="5" rx="2" fill="#4a2814"/><path d="M106,74 L106,188 M108.5,74 L108.5,188 M111,74 L111,188" stroke="#f3e9d2" stroke-width="0.8"/></g>`);
+      fx.push(note(40, 40) + note(160, 30, 0.9));
+      break;
+    }
+    case 'sing':
+      // microfono grande accanto alla bocca: testa a griglia, anello, manico e filo
+      held.push(`<path d="M${R[0] + 4},${R[1] + 22} q10,40 -14,70" fill="none" stroke="#2b2b33" stroke-width="2.6" stroke-linecap="round"/>`
+        + `<path d="M${R[0] - 4},${R[1] - 18} L${R[0] + 9},${R[1] + 24} L${R[0] + 1},${R[1] + 26} L${R[0] - 12},${R[1] - 15} Z" fill="#2b2b33" stroke="#111" stroke-width="1.5" stroke-linejoin="round"/>`
+        + `<path d="M${R[0] - 13},${R[1] - 19} L${R[0] - 2},${R[1] - 22} L${R[0] - 1},${R[1] - 15} L${R[0] - 12},${R[1] - 12} Z" fill="#c9ced6" stroke="#6b717b" stroke-width="1.3"/>`
+        + `<circle cx="${R[0] - 9}" cy="${R[1] - 29}" r="11" fill="#7d838d" stroke="#3a3e45" stroke-width="2"/>`
+        + `<path d="M${R[0] - 19},${R[1] - 29} L${R[0] + 1},${R[1] - 29} M${R[0] - 9},${R[1] - 39} L${R[0] - 9},${R[1] - 19} M${R[0] - 16},${R[1] - 36} L${R[0] - 2},${R[1] - 22} M${R[0] - 2},${R[1] - 36} L${R[0] - 16},${R[1] - 22}" stroke="#4b5059" stroke-width="1.2"/>`
+        + `<circle cx="${R[0] - 12}" cy="${R[1] - 33}" r="3" fill="#ffffff" opacity="0.55"/>`);
+      fx.push(note(30, 34) + note(152, 6, 1.15) + note(172, 52, 0.9) + note(18, 92, 0.8));
+      break;
+    case 'dance':
+      fx.push(note(160, 70) + note(30, 100, 0.8) + `<path d="M150,110 q10,-4 14,6 M42,150 q-10,-4 -14,6" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>`);
+      break;
+    case 'wave':
+      fx.push(`<path d="M172,30 q8,12 0,24 M180,24 q12,18 0,36 M146,30 q-8,12 0,24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity="0.9"/>`);
+      break;
+    case 'run':
+      back.push(lines(40, 150, 4, -26) + lines(44, 250, 3, -22));
+      break;
+    case 'walkdog': {
+      const dog = `<g transform="translate(176,318)">`
+        + `<path d="M58,22 q16,-12 14,-26" fill="none" stroke="#8b5a3c" stroke-width="5" stroke-linecap="round"/>`
+        + `<rect x="10" y="40" width="9" height="30" rx="4" fill="#a86b45"/><rect x="48" y="40" width="9" height="30" rx="4" fill="#a86b45"/>`
+        + `<ellipse cx="34" cy="34" rx="30" ry="18" fill="#c98b5e" stroke="#8b5a3c" stroke-width="2"/>`
+        + `<rect x="18" y="42" width="9" height="30" rx="4" fill="#c98b5e" stroke="#8b5a3c" stroke-width="1.5"/><rect x="40" y="42" width="9" height="30" rx="4" fill="#c98b5e" stroke="#8b5a3c" stroke-width="1.5"/>`
+        + `<circle cx="6" cy="12" r="17" fill="#c98b5e" stroke="#8b5a3c" stroke-width="2"/><ellipse cx="-8" cy="16" rx="8" ry="6" fill="#e2b58e"/><circle cx="-14" cy="14" r="3.4" fill="#2b2220"/>`
+        + `<path d="M8,-2 q12,-6 12,14 q-8,-2 -12,-14 Z" fill="#8b5a3c"/><circle cx="0" cy="8" r="2.6" fill="#2b2220"/>`
+        + `<path d="M10,26 q8,4 14,-2" stroke="${COLORS.red}" stroke-width="5" fill="none" stroke-linecap="round"/></g>`;
+      back.push(dog);
+      held.push(`<path d="M${R[0]},${R[1]} Q${R[0] + 30},${R[1] + 70} 194,345" fill="none" stroke="${COLORS.red}" stroke-width="2.6"/>`);
+      break;
+    }
+    case 'football':
+      fx.push(`<g transform="translate(176,318)"><circle r="14" fill="#ffffff" stroke="#2b2b33" stroke-width="2"/><path d="M0,-5 l5,3.5 -2,6 h-6 l-2,-6 z" fill="#2b2b33"/><path d="M0,-5 L0,-14 M5,-1.5 L13,-5 M3,4.5 L8,11 M-3,4.5 L-8,11 M-5,-1.5 L-13,-5" stroke="#2b2b33" stroke-width="1.5"/></g>` + lines(206, 304, 3, 16));
+      break;
+    case 'basketball':
+      held.push(`<g transform="translate(${R[0]},${R[1] - 16})"><circle r="16" fill="#f4842c" stroke="#9a4a10" stroke-width="2"/><path d="M-16,0 L16,0 M0,-16 L0,16 M-11,-11 Q-4,0 -11,11 M11,-11 Q4,0 11,11" fill="none" stroke="#9a4a10" stroke-width="1.6"/></g>`);
+      break;
+    case 'tennis':
+      held.push(`<g transform="rotate(30 ${R[0]} ${R[1]})"><rect x="${R[0] - 3}" y="${R[1] - 34}" width="6" height="34" rx="3" fill="#2b2b33"/><ellipse cx="${R[0]}" cy="${R[1] - 56}" rx="16" ry="22" fill="none" stroke="${COLORS.purple}" stroke-width="4.5"/><path d="M${R[0] - 12},${R[1] - 64} L${R[0] + 12},${R[1] - 64} M${R[0] - 14},${R[1] - 56} L${R[0] + 14},${R[1] - 56} M${R[0] - 12},${R[1] - 48} L${R[0] + 12},${R[1] - 48} M${R[0] - 6},${R[1] - 76} L${R[0] - 6},${R[1] - 36} M${R[0]},${R[1] - 78} L${R[0]},${R[1] - 34} M${R[0] + 6},${R[1] - 76} L${R[0] + 6},${R[1] - 36}" stroke="#d8d8d8" stroke-width="1"/></g>`);
+      fx.push(circ(232, 40, 8, '#d7f04a', 'stroke="#9bb01f" stroke-width="1.6"') + `<path d="M226,36 q6,4 12,0" fill="none" stroke="#fff" stroke-width="1.4"/>`);
+      break;
+    case 'kite':
+      fx.push(`<path d="M${R[0]},${R[1]} Q210,40 232,-40" fill="none" stroke="#ffffff" stroke-width="1.6"/>`
+        + `<path d="M232,-70 L254,-40 L232,-6 L210,-40 Z" fill="${COLORS.red}" stroke="#9e1d29" stroke-width="2" stroke-linejoin="round"/><path d="M232,-70 L232,-6 M210,-40 L254,-40" stroke="#ffd166" stroke-width="2"/>`
+        + `<path d="M232,-6 q-8,12 2,22 q8,10 -2,22" fill="none" stroke="#ffffff" stroke-width="1.5"/><path d="M228,6 l-6,-4 0,8 z M234,26 l6,-4 0,8 z" fill="${COLORS.blue}"/>`);
+      break;
+    case 'skate':
+      back.push(`<rect x="42" y="378" width="116" height="9" rx="4.5" fill="${COLORS.orange}" stroke="#8a4410" stroke-width="2"/>` + circ(62, 392, 6, '#2b2b33') + circ(138, 392, 6, '#2b2b33') + circ(62, 392, 2, '#ccc') + circ(138, 392, 2, '#ccc'));
+      fx.push(lines(30, 300, 3, -20));
+      break;
+    case 'bags': {
+      const bag = (x, y, k, txt) => `<path d="M${x - 9},${y + 4} q9,-18 18,0" fill="none" stroke="${dark(k, 0.4)}" stroke-width="2.4"/><rect x="${x - 17}" y="${y + 4}" width="34" height="40" rx="3" fill="${k}" stroke="${dark(k, 0.35)}" stroke-width="2"/>` + (txt ? `<text x="${x}" y="${y + 29}" text-anchor="middle" font-family="Arial Black,Arial" font-weight="900" font-size="9" fill="#ffffff">${txt}</text>` : '');
+      held.push(bag(L[0], L[1], COLORS.pink, 'SALE') + bag(R[0], R[1], COLORS.purple, '★'));
+      break;
+    }
+    case 'umbrella':
+      back.push(`<path d="M${R[0]},${R[1] + 26} L${R[0]},-54" stroke="#2b2b33" stroke-width="3.2"/><path d="M${R[0]},${R[1] + 26} q0,9 -8,9 q-7,0 -7,-7" fill="none" stroke="#2b2b33" stroke-width="3.2" stroke-linecap="round"/>`);
+      back.push(`<path d="M${R[0] - 80},-48 Q${R[0]},-138 ${R[0] + 80},-48 q-10,-9 -20,0 q-10,-9 -20,0 q-10,-9 -20,0 q-10,-9 -20,0 q-10,-9 -20,0 q-10,-9 -20,0 q-10,-9 -20,0 q-10,-9 -20,0 Z" fill="${COLORS.yellow}" stroke="#b58b00" stroke-width="2.4" stroke-linejoin="round"/><path d="M${R[0]},-93 L${R[0]},-48 M${R[0]},-93 Q${R[0] - 32},-70 ${R[0] - 40},-48 M${R[0]},-93 Q${R[0] + 32},-70 ${R[0] + 40},-48" fill="none" stroke="#b58b00" stroke-width="1.6"/>` + circ(R[0], -94, 3, '#2b2b33'));
+      break;
+    case 'snowman': {
+      const sx = 205;
+      back.push(circ(sx, 346, 42, '#ffffff', 'stroke="#b9cbe0" stroke-width="2.4"') + circ(sx, 276, 31, '#ffffff', 'stroke="#b9cbe0" stroke-width="2.4"') + circ(sx, 220, 23, '#ffffff', 'stroke="#b9cbe0" stroke-width="2.4"')
+        + circ(sx - 8, 214, 2.8, '#2b2b33') + circ(sx + 8, 214, 2.8, '#2b2b33') + `<path d="M${sx},221 l16,4 l-16,3 z" fill="#f4842c"/>`
+        + circ(sx, 262, 3, '#2b2b33') + circ(sx, 280, 3, '#2b2b33') + circ(sx, 298, 3, '#2b2b33')
+        + `<path d="M${sx - 22},240 Q${sx},250 ${sx + 22},240 L${sx + 22},248 Q${sx},258 ${sx - 22},248 Z" fill="${COLORS.red}"/><rect x="${sx + 8}" y="244" width="8" height="24" rx="2" fill="${COLORS.red}"/>`
+        + `<rect x="${sx - 16}" y="190" width="32" height="6" rx="2" fill="#2b2b33"/><rect x="${sx - 11}" y="168" width="22" height="24" rx="2" fill="#2b2b33"/>`
+        + `<path d="M${sx + 30},270 l22,-18 M${sx + 44},259 l6,-10" stroke="#6b3b1f" stroke-width="3" stroke-linecap="round"/>`);
+      break;
+    }
+    case 'snowball':
+      held.push(circ(R[0], R[1] - 6, 10, '#ffffff', 'stroke="#b9cbe0" stroke-width="2"'));
+      fx.push(`<path d="M182,40 q14,-8 26,2 M186,56 q14,-4 24,6" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>`);
+      break;
+    case 'paint':
+      back.push(`<path d="M206,190 L188,392 M226,190 L246,392 M216,250 L216,392" stroke="#8b5a3c" stroke-width="5" stroke-linecap="round"/><rect x="176" y="118" width="80" height="86" rx="3" fill="#ffffff" stroke="#8b5a3c" stroke-width="4"/>`
+        + `<rect x="181" y="123" width="70" height="76" fill="#bfe7ff"/><circle cx="234" cy="140" r="9" fill="#ffd166"/><path d="M181,199 L181,178 Q200,160 216,178 Q232,164 251,180 L251,199 Z" fill="#5cc25c"/><path d="M196,170 l8,-14 l8,14 z" fill="#e63946"/>`);
+      held.push(`<path d="M${R[0]},${R[1]} L${R[0] + 14},${R[1] - 10}" stroke="#8b5a3c" stroke-width="3.5" stroke-linecap="round"/>` + circ(R[0] + 16, R[1] - 12, 3.5, COLORS.red));
+      held.push(`<path d="M${L[0] - 20},${L[1] + 2} q-4,-16 16,-18 q22,-2 24,12 q2,14 -12,12 q-8,-2 -10,6 q-4,8 -18,-12 Z" fill="#e9c27b" stroke="#a8742f" stroke-width="1.6"/>` + circ(L[0] - 10, L[1] - 8, 3, COLORS.red) + circ(L[0] - 1, L[1] - 11, 3, COLORS.blue) + circ(L[0] + 9, L[1] - 9, 3, COLORS.yellow) + circ(L[0] + 10, L[1] + 1, 3, COLORS.green));
+      break;
+    case 'jump':
+      fx.push(`<path d="M70,344 l-8,10 M100,348 l0,12 M130,344 l8,10" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>`);
+      break;
+  }
+  return { back: back.join(''), held: held.join(''), fx: fx.join('') };
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+//  DATI: solo il lessico del libro (Unit 1 · p. 16, Ex 2) + azioni (present continuous)
+//  Età: young / middle-aged / old · Altezza: tall / average height / short
+//  Corporatura: slim / average weight / overweight · Capelli: length → type → colour, bald
+//  Viso: beard, moustache, glasses, braces, freckles
+// ══════════════════════════════════════════════════════════════════
+const COLORS = {
+  red: '#e63946', blue: '#2f6fdb', green: '#2a9d5c', yellow: '#f7c948', black: '#2e2e38',
+  white: '#f7f7f3', grey: '#9ba3ad', pink: '#ff8fbf', purple: '#8e5bd0', orange: '#f4842c', brown: '#8b5a3c'
+};
+const HAIR = { black: '#2b2220', brown: '#6b4226', blonde: '#e3bd6c', red: '#c4622d', grey: '#b9b9c0' };
+const EYES = ['#6b4226', '#3b7bd4', '#3f8f5a', '#4a3426'];
+const SKINS = ['#fbd9bd', '#f3c9a0', '#e4ad7a', '#c98a57', '#8f5a36'];
+const TOPS = ['red', 'blue', 'green', 'yellow', 'white', 'pink', 'purple', 'orange', 'grey'];
+const PANTS = [['blue', '#4372b8'], ['black', '#34353f'], ['grey', '#8d97a6'], ['brown', '#7a5236'], ['blue', '#2c4f8a']];
+const SHOES = ['white', 'black', 'red', 'blue'];
+const NAMES = {
+  boy: ['Tom', 'Jack', 'Sam', 'Ben', 'Leo', 'Max', 'Harry', 'Alfie', 'Charlie', 'Dan', 'Josh', 'Luke', 'Ryan', 'Oscar'],
+  girl: ['Emma', 'Lucy', 'Mia', 'Sophie', 'Grace', 'Lily', 'Chloe', 'Amy', 'Ella', 'Zoe', 'Ruby', 'Kate', 'Veronica', 'Holly'],
+  man: ['Fred', 'Jacob', 'William', 'Rufus', 'Joseph', 'Peter', 'George', 'Frank', 'Paul', 'Robert', 'Michael', 'David', 'Oliver', 'Steve'],
+  woman: ['Belinda', 'Alison', 'Caroline', 'Nora', 'Martha', 'Helen', 'Sarah', 'Linda', 'Rose', 'Mary', 'Anna', 'Julia', 'Susan', 'Karen'],
+};
+// Azioni (stesse pose e oggetti di What Are They Wearing?), tutte dentro la carta
+const ACT = {
+  icecream:   { ing: 'eating an ice cream',    arms: 'mouth',    legs: 'stand', mouth: 'o' },
+  sandwich:   { ing: 'eating a sandwich',      arms: 'mouth',    legs: 'stand', mouth: 'o' },
+  apple:      { ing: 'eating an apple',        arms: 'mouth',    legs: 'stand', mouth: 'o' },
+  water:      { ing: 'drinking water',         arms: 'mouth',    legs: 'stand', mouth: 'o' },
+  phone:      { ing: 'talking on the phone',   arms: 'ear',      legs: 'stand', mouth: 'open' },
+  texting:    { ing: 'sending a message',      arms: 'frontLow', legs: 'stand', mouth: 'smile' },
+  selfie:     { ing: 'taking a selfie',        arms: 'selfie',   legs: 'stand', mouth: 'big' },
+  photo:      { ing: 'taking a photo',         arms: 'camera',   legs: 'wide',  mouth: 'smile' },
+  book:       { ing: 'reading a book',         arms: 'read',     legs: 'stand', mouth: 'smile' },
+  music:      { ing: 'listening to music',     arms: 'ear',      legs: 'stand', mouth: 'smile' },
+  guitar:     { ing: 'playing the guitar',     arms: 'guitar',   legs: 'wide',  mouth: 'open' },
+  sing:       { ing: 'singing',                arms: 'mic',      legs: 'wide',  mouth: 'open' },
+  dance:      { ing: 'dancing',                arms: 'dance',    legs: 'dance', mouth: 'big' },
+  wave:       { ing: 'waving',                 arms: 'wave',     legs: 'stand', mouth: 'big' },
+  run:        { ing: 'running',                arms: 'run',      legs: 'run',   mouth: 'smile' },
+  basketball: { ing: 'playing basketball',     arms: 'ballUp',   legs: 'stand', mouth: 'smile' },
+  skate:      { ing: 'skateboarding',          arms: 'balance',  legs: 'skate', mouth: 'big' },
+  bags:       { ing: 'carrying shopping bags', arms: 'bags',     legs: 'walk',  mouth: 'smile' },
+  jump:       { ing: 'jumping',                arms: 'up',       legs: 'jump',  mouth: 'big' },
+};
+// le due azioni con il telefono all'orecchio non vanno sullo stesso tabellone (si confondono da lontano)
+const ACT_CLASH = [['phone', 'music'], ['icecream', 'apple'], ['sandwich', 'apple'], ['icecream', 'sandwich']];
+const VOCAB = [
+  ['Age', ['young', 'middle-aged', 'old']],
+  ['Height', ['tall', 'average height', 'short']],
+  ['Body', ['slim', 'average weight', 'overweight']],
+  ['Hair length', ['long', 'medium-length', 'short', 'bald']],
+  ['Hair type', ['straight', 'wavy', 'curly']],
+  ['Hair colour', ['black', 'blonde', 'brown', 'grey', 'red']],
+  ['Face', ['beard', 'moustache', 'glasses', 'braces', 'freckles']],
+];
+
+// ══════════════════════════════════════════════════════════════════
+//  DISEGNO: corpo (altezza e corporatura), capelli, viso
+// ══════════════════════════════════════════════════════════════════
+const BW = { slim: { w: -8, limb: 13, pant: 20, arm: 12, sleeve: 20 }, average: { w: 0, limb: 19, pant: 28, arm: 16, sleeve: 26 }, overweight: { w: 10, limb: 23, pant: 34, arm: 19, sleeve: 31 } };
+const HSC = { tall: 1.13, average: 1, short: 0.84 };
+const isMale = c => c.gender === 'boy' || c.gender === 'man';
+const VB = '10 -52 180 458';          // carta del tabellone: figura intera, anche la più alta
+const VB_HEAD = '50 6 100 100';       // primo piano del viso (senza scala dell'altezza)
+
+function garmentBody(hem, neck, w) {
+  return `M${71 - w},113 Q${73 - w},99 87,97 Q100,${97 + neck} 113,97 Q${127 + w},99 ${129 + w},113 L${130 + w},${hem} Q100,${hem + 4} ${70 - w},${hem} Z`;
+}
+// pancia: la maglia si allarga ai fianchi
+function bellyBody(hem, w) {
+  return `M${71 - w + 4},113 Q${73 - w + 4},99 87,97 Q100,105 113,97 Q${127 + w - 4},99 ${129 + w - 4},113 Q${142 + w},160 ${132 + w},${hem} Q100,${hem + 6} ${68 - w},${hem} Q${58 - w},160 ${71 - w + 4},113 Z`;
+}
+
+// onde lungo un lato: da (x0,y0) a (x1,y1), n mezze onde di ampiezza amp (verso l'esterno = segno)
+function wavySide(x0, y0, x1, y1, n, amp) {
+  let d = '';
+  for (let k = 1; k <= n; k++) {
+    const t0 = (k - 1) / n, t1 = k / n, tm = (t0 + t1) / 2;
+    const cx = x0 + (x1 - x0) * tm + (k % 2 ? amp : -amp * 0.4), cy = y0 + (y1 - y0) * tm;
+    d += ` Q${cx.toFixed(1)},${cy.toFixed(1)} ${(x0 + (x1 - x0) * t1).toFixed(1)},${(y0 + (y1 - y0) * t1).toFixed(1)}`;
+  }
+  return d;
+}
+
+function hairBack(c) {
+  if (c.bald || c.hairLen === 'short') return '';
+  const h = HAIR[c.hairCol], s = `fill="${h}" stroke="${dark(h, 0.3)}" stroke-width="2" stroke-linejoin="round"`;
+  const Y = c.hairLen === 'long' ? 150 : 102;
+  if (c.hairType === 'straight') return `<path d="M66,56 C60,22 140,22 134,56 L${c.hairLen === 'long' ? 140 : 137},${Y} Q100,${Y + 9} ${c.hairLen === 'long' ? 60 : 63},${Y} Z" ${s}/>`;
+  if (c.hairType === 'wavy') {
+    const n = c.hairLen === 'long' ? 6 : 3;
+    let d = `M66,56 C60,22 140,22 134,56` + wavySide(134, 56, 140, Y, n, 9);
+    d += ` Q127,${Y + 10} 113,${Y + 2} Q100,${Y + 12} 87,${Y + 2} Q73,${Y + 10} 60,${Y}`;
+    d += wavySide(60, Y, 66, 56, n, -9) + ' Z';
+    return `<path d="${d}" ${s}/>`;
+  }
+  // curly: tante palline intorno
+  let o = `<path d="M64,56 C58,22 142,22 136,56 L141,${Y - 6} Q100,${Y + 4} 59,${Y - 6} Z" ${s}/>`;
+  const rows = c.hairLen === 'long' ? 7 : 3;
+  for (let i = 0; i < rows; i++) { const y = 66 + i * 13.5; o += `<circle cx="${59 + (i % 2) * 4}" cy="${y}" r="10" ${s}/><circle cx="${141 - (i % 2) * 4}" cy="${y}" r="10" ${s}/>`; }
+  for (let x = 66; x <= 134; x += 13) o += `<circle cx="${x}" cy="${Y - 4 + ((x / 13) % 2) * 3}" r="9" ${s}/>`;
+  return o;
+}
+
+function hairFront(c) {
+  if (c.bald) return '';
+  const h = HAIR[c.hairCol], s = `fill="${h}" stroke="${dark(h, 0.3)}" stroke-width="2" stroke-linejoin="round"`;
+  if (c.hairType === 'curly') {
+    let o = `<path d="M70,62 C64,30 136,30 130,62 C120,48 80,48 70,62 Z" ${s}/>`;
+    [[71, 50], [77, 38], [89, 30], [101, 27], [113, 30], [125, 37], [131, 50], [84, 42], [98, 38], [112, 41]].forEach(p => { o += `<circle cx="${p[0]}" cy="${p[1]}" r="9" ${s}/>`; });
+    return o;
+  }
+  if (c.hairType === 'wavy') {
+    const tex = `<path d="M80,36 q5,-5 10,0 t10,0 t10,0 M78,46 q5,-4 9,0 M113,46 q5,-4 9,0" fill="none" stroke="${dark(h, 0.28)}" stroke-width="1.8" stroke-linecap="round"/>`;
+    return `<path d="M68,64 C62,24 138,24 132,64 Q131,55 125,51 Q119,44 112,48 Q106,42 99,47 Q93,42 87,48 Q80,45 75,52 Q70,56 68,64 Z" ${s}/>` + tex;
+  }
+  if (c.hairLen === 'short') return `<path d="M69,62 C62,28 92,18 108,23 C126,26 138,40 131,62 C128,52 122,44 112,42 C102,48 86,44 76,48 C72,52 70,57 69,62 Z" ${s}/>`;
+  return `<path d="M68,66 C62,26 138,26 132,66 C128,52 118,42 100,44 C92,50 80,52 74,54 C70,58 69,62 68,66 Z" ${s}/>`;
+}
+
+function drawHead(c, act) {
+  const sk = c.skin, ds = dark(sk, 0.32);
+  const fh = HAIR[c.hairCol];   // anche barba e baffi
+  let o = circ(70, 62, 6.5, sk, `stroke="${ds}" stroke-width="2"`) + circ(130, 62, 6.5, sk, `stroke="${ds}" stroke-width="2"`);
+  o += circ(100, 58, c.body === 'overweight' ? 31.5 : 30, sk, `stroke="${ds}" stroke-width="2"`);
+  if (c.body === 'overweight') o += `<path d="M87,90 Q100,97 113,90" fill="none" stroke="${ds}" stroke-width="1.6" opacity="0.55"/>`;
+  if (c.age === 'young') o += circ(84, 70, 5, '#ff7b8f', 'opacity="0.35"') + circ(116, 70, 5, '#ff7b8f', 'opacity="0.35"');
+  if (c.freckles) [[82, 67], [86, 70], [79, 71], [88, 66], [118, 67], [114, 70], [121, 71], [112, 66], [96, 64], [104, 64]].forEach(p => { o += circ(p[0], p[1], 1.45, mix(sk, '#4a200a', 0.55), 'opacity="0.9"'); });
+  // rughe: middle-aged le pieghe ai lati della bocca, old anche borse sotto gli occhi, zampe di gallina e fronte
+  if (c.age !== 'young') o += `<path d="M93,66 Q88,71 90,78 M107,66 Q112,71 110,78" fill="none" stroke="${ds}" stroke-width="1.4" stroke-linecap="round" opacity="${c.age === 'old' ? 0.7 : 0.45}"/>`;
+  if (c.age === 'old') {
+    o += `<path d="M84,66 Q89,69 94,66 M106,66 Q111,69 116,66" fill="none" stroke="${ds}" stroke-width="1.3" stroke-linecap="round" opacity="0.6"/>`;
+    o += `<path d="M79,57 l-5,-2 M79,61 l-5,1 M121,57 l5,-2 M121,61 l5,1" stroke="${ds}" stroke-width="1.2" stroke-linecap="round" opacity="0.6"/>`;
+    o += `<path d="M88,42 Q100,39 112,42 M90,46 Q100,43.5 110,46" fill="none" stroke="${ds}" stroke-width="1.2" stroke-linecap="round" opacity="0.5"/>`;
+  }
+  // occhi (colore) e sopracciglia
+  o += circ(89, 60, 3.9, c.eyes) + circ(111, 60, 3.9, c.eyes) + circ(89, 60, 1.9, '#141018') + circ(111, 60, 1.9, '#141018') + circ(90.3, 58.6, 1.2, '#fff') + circ(112.3, 58.6, 1.2, '#fff');
+  const bc = c.age === 'old' ? '#d2d2d8' : dark(fh, 0.15);
+  o += `<path d="M83,51 Q89,48 94,51 M106,51 Q111,48 117,51" fill="none" stroke="${bc}" stroke-width="${c.age === 'old' ? 2.8 : 2.2}" stroke-linecap="round"/>`;
+  o += `<path d="M99,63 Q101,66 98,67" fill="none" stroke="${ds}" stroke-width="1.6" stroke-linecap="round"/>`;
+  // barba (prima della bocca, così la bocca resta visibile)
+  if (c.beard) {
+    o += `<path d="M70,60 C69,92 84,106 100,106 C116,106 131,92 130,60 C127,73 121,81 112,82 Q100,86 88,82 C79,81 73,73 70,60 Z" fill="${fh}" stroke="${dark(fh, 0.3)}" stroke-width="1.8" stroke-linejoin="round"/>`;
+    o += `<path d="M86,92 q2,5 0,9 M100,95 q2,5 0,9 M114,92 q-2,5 0,9" fill="none" stroke="${dark(fh, 0.25)}" stroke-width="1.3" stroke-linecap="round"/>`;
+  }
+  // bocca: con l'apparecchio si vedono i denti
+  if (c.braces) {
+    o += `<path d="M90,71 Q100,85 110,71 Z" fill="#7a2e3a" stroke="#7a2e3a" stroke-width="1.5" stroke-linejoin="round"/><path d="M92,72 L108,72 L107,76.5 Q100,79 93,76.5 Z" fill="#ffffff"/>`;
+    o += `<path d="M92.5,74.3 L107.5,74.3" stroke="#7d8896" stroke-width="1.5"/>` + [94.5, 98, 102, 105.5].map(x => `<rect x="${x - 1.2}" y="73.1" width="2.4" height="2.4" fill="#9aa5b4"/>`).join('');
+  } else {
+    const m = act.mouth;
+    if (m === 'open') o += `<ellipse cx="100" cy="75" rx="5" ry="4.5" fill="#7a2e3a"/><ellipse cx="100" cy="77" rx="3" ry="1.6" fill="#ff8a9a"/>`;
+    else if (m === 'o') o += `<ellipse cx="101" cy="75" rx="3.4" ry="3" fill="#7a2e3a"/>`;
+    else if (m === 'big') o += `<path d="M91,72 Q100,84 109,72 Z" fill="#7a2e3a" stroke="#7a2e3a" stroke-width="1.5" stroke-linejoin="round"/><path d="M94,73 L106,73" stroke="#fff" stroke-width="2.4"/>`;
+    else o += `<path d="M92,73 Q100,80 108,73" fill="none" stroke="#7a2e3a" stroke-width="2.4" stroke-linecap="round"/>`;
+  }
+  if (c.moustache) o += `<path d="M86,72 Q90,64 100,67.5 Q110,64 114,72 Q108,70 100,71.5 Q92,70 86,72 Z" fill="${fh}" stroke="${dark(fh, 0.3)}" stroke-width="1.6" stroke-linejoin="round"/>`;
+  if (c.glasses) {
+    o += `<circle cx="89" cy="60" r="8.5" fill="#ffffff" fill-opacity="0.16" stroke="#26222e" stroke-width="2.4"/><circle cx="111" cy="60" r="8.5" fill="#ffffff" fill-opacity="0.16" stroke="#26222e" stroke-width="2.4"/>`;
+    o += `<path d="M97.5,59 Q100,56.5 102.5,59 M80.5,58 L71,55.5 M119.5,58 L129,55.5" fill="none" stroke="#26222e" stroke-width="2.2" stroke-linecap="round"/>`;
+  }
+  if (c.bald) o += `<ellipse cx="88" cy="37" rx="8" ry="4.5" fill="#ffffff" opacity="0.45" transform="rotate(-25 88 37)"/>`;
+  return o;
+}
+
+// sposta braccia e gambe per la corporatura (spalle e fianchi più larghi o più stretti)
+function bodyPose(c, act) {
+  act = act || ACT[c.action];
+  const bw = BW[c.body], A0 = ARMS[act.arms], L0 = LEGS[act.legs];
+  const sh = (pts, side) => pts.map((p, k) => { const s = side === 'L' ? -1 : 1; const out = side === 'L' ? p[0] < 96 : p[0] > 104; return k < 2 || out ? [p[0] + s * bw.w, p[1]] : p; });
+  const lg = (pts, side) => pts.map(p => [p[0] + (side === 'L' ? -1 : 1) * bw.w * 0.5, p[1]]);
+  return { act, bw, A: { L: sh(A0.L, 'L'), R: sh(A0.R, 'R') }, Lg: { L: lg(L0.L, 'L'), R: lg(L0.R, 'R') } };
+}
+
+// hk (facoltativo, per i temi come i Jobs): { pose:{arms,legs,mouth}, props(c,A), sleeve:'long'|'short', sleeveCol, over(c,w), hat(c) }
+function drawPerson(c, noScale) { return drawPersonBase(c, noScale, null); }
+function drawPersonBase(c, noScale, hk) {
+  hk = hk || {};
+  const { act, bw, A, Lg } = bodyPose(c, hk.pose);
+  const props = hk.props ? hk.props(c, A) : drawProps(c.action, A, c);
+  const sk = c.skin, w = bw.w;
+  let o = `<ellipse cx="100" cy="392" rx="${52 + w}" ry="8" fill="#000" opacity="0.16"/>`;
+  o += props.back + hairBack(c);
+  // gambe e pantaloni
+  o += tube(Lg.L, bw.limb, sk) + tube(Lg.R, bw.limb, sk);
+  const pk = c.pants;
+  const ext = pts => { const n = pts.length, a = pts[n - 2], z = pts[n - 1]; const dd = dist(a, z); return [...pts.slice(0, -1), [z[0] + (z[0] - a[0]) / dd * 3, z[1] + (z[1] - a[1]) / dd * 3]]; };
+  o += tube(ext(Lg.L), bw.pant, pk, 'butt') + tube(ext(Lg.R), bw.pant, pk, 'butt');
+  o += shape(`M${71 - w},198 L${129 + w},198 L${131 + w},234 Q100,240 ${69 - w},234 Z`, pk);
+  o += `<path d="M100,206 L100,236" stroke="${dark(pk, 0.32)}" stroke-width="1.4"/>`;
+  const fk = COLORS[c.shoes];
+  o += drawFoot('trainers', fk, Lg.L[2][0], Lg.L[2][1], -1, sk) + drawFoot('trainers', fk, Lg.R[2][0], Lg.R[2][1], 1, sk);
+  // busto e maglietta
+  const tk = COLORS[c.top];
+  o += `<rect x="92" y="78" width="16" height="26" fill="${sk}" stroke="${dark(sk, 0.32)}" stroke-width="2"/>`;
+  o += shape(c.body === 'overweight' ? bellyBody(212, w) : garmentBody(210, 8, w), tk);
+  o += `<path d="M87,97 Q100,106 113,97" fill="none" stroke="${dark(tk, 0.32)}" stroke-width="3"/>`;
+  if (hk.over) o += hk.over(c, w);
+  // braccia: maniche corte (o lunghe, con il colore della giacca / del camice)
+  const sc = hk.sleeveCol || tk;
+  [A.L, A.R].forEach(pts => {
+    o += tube(pts, bw.arm, sk);
+    if (hk.sleeve === 'long') { const p = [pts[0], pts[1], lerp(pts[1], pts[2], 0.78)]; o += tube(p, bw.sleeve - 2, sc, 'round') + line(portion(p, 0.92, 1), bw.sleeve - 1, dark(sc, 0.12), 'butt'); }
+    else o += tube([pts[0], lerp(pts[0], pts[1], 0.52)], bw.sleeve, sc, 'round');
+  });
+  // testa
+  o += drawHead(c, act) + hairFront(c) + (hk.hat ? hk.hat(c) : '');
+  o += props.held + drawHand(A.L[1], A.L[2], sk, handKind(act.arms, 'L')) + drawHand(A.R[1], A.R[2], sk, handKind(act.arms, 'R')) + props.fx;
+  const s = noScale ? 1 : HSC[c.height];
+  return s === 1 ? o : `<g transform="translate(100,392) scale(${s}) translate(-100,-392)">${o}</g>`;
+}
+// parete con le righe dell'altezza (come nel box Look! del libro)
+function heightWall() {
+  let o = '';
+  for (let y = 392 - 50, k = 1; y > -40; y -= 50, k++) o += `<line x1="10" y1="${y}" x2="190" y2="${y}" stroke="#9aa6b8" stroke-width="1.2" opacity="${k % 2 ? 0.35 : 0.6}"/>`;
+  return o;
+}
+const svgCard = c => `<svg viewBox="${VB}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${heightWall()}${drawPerson(c)}</svg>`;
+const svgHead = c => `<svg viewBox="${VB_HEAD}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${drawPerson(c, true)}</svg>`;
+
+// ══════════════════════════════════════════════════════════════════
+//  GENERAZIONE: tabellone di 20 persone, tutte diverse, con domande che dividono il gruppo
+// ══════════════════════════════════════════════════════════════════
+function genPerson(gender, usedNames) {
+  const c = { gender };
+  c.name = pick(NAMES[gender].filter(n => !usedNames.includes(n)));
+  c.age = gender === 'boy' || gender === 'girl' ? 'young' : wpick([['middle-aged', 0.55], ['old', 0.45]]);
+  c.height = wpick([['tall', 1], ['average', 1], ['short', 1]]);
+  c.body = wpick([['slim', 1.1], ['average', 1], ['overweight', 0.9]]);
+  c.bald = gender === 'man' && Math.random() < (c.age === 'old' ? 0.45 : 0.28);
+  c.hairCol = c.age === 'old' ? wpick([['grey', 0.8], ['black', 0.05], ['brown', 0.1], ['blonde', 0.05]])
+    : c.age === 'middle-aged' ? wpick([['black', 0.3], ['brown', 0.3], ['blonde', 0.15], ['red', 0.1], ['grey', 0.15]])
+    : wpick([['black', 0.25], ['brown', 0.3], ['blonde', 0.25], ['red', 0.2]]);
+  c.hairLen = isMale(c) ? wpick([['short', 0.6], ['medium-length', 0.3], ['long', 0.1]]) : wpick([['short', 0.2], ['medium-length', 0.35], ['long', 0.45]]);
+  c.hairType = wpick([['straight', 0.4], ['wavy', 0.3], ['curly', 0.3]]);
+  const adultMan = gender === 'man';
+  c.beard = adultMan && Math.random() < (c.age === 'old' ? 0.45 : 0.35);
+  c.moustache = adultMan && Math.random() < (c.age === 'old' ? 0.45 : 0.35);
+  c.glasses = Math.random() < (c.age === 'young' ? 0.25 : c.age === 'old' ? 0.55 : 0.35);
+  c.braces = c.age === 'young' && Math.random() < 0.35;
+  c.freckles = Math.random() < (c.hairCol === 'red' ? 0.55 : 0.2);
+  c.skin = pick(SKINS); c.eyes = pick(EYES);
+  c.top = pick(TOPS); const p = pick(PANTS); c.pants = p[1]; c.shoes = pick(SHOES);
+  return c;
+}
+const sig = c => [c.gender, c.age, c.height, c.body, c.bald ? 'bald' : c.hairLen + c.hairType + c.hairCol, c.beard, c.moustache, c.glasses, c.braces, c.freckles, c.action].join('|');
+
+function pickActions(n) {
+  for (let t = 0; t < 50; t++) {
+    const a = shuffle(Object.keys(ACT)).slice(0, n);
+    if (!ACT_CLASH.some(p => a.includes(p[0]) && a.includes(p[1]))) return a;
+  }
+  return shuffle(Object.keys(ACT)).slice(0, n);
+}
+function genBoard(n = 20) {
+  let best = null, bestScore = -1;
+  for (let t = 0; t < 40; t++) {
+    const acts = pickActions(5), genders = shuffle([...Array(6).fill('boy'), ...Array(5).fill('girl'), ...Array(5).fill('man'), ...Array(4).fill('woman')]).slice(0, n);
+    const board = [], used = [], sigs = new Set();
+    const actList = shuffle(Array.from({ length: n }, (_, i) => acts[i % acts.length]));
+    for (let i = 0; i < n; i++) {
+      let c, tries = 0;
+      do { c = genPerson(genders[i], used); c.action = actList[i]; tries++; } while (sigs.has(sig(c)) && tries < 30);
+      sigs.add(sig(c)); used.push(c.name); board.push(c);
+    }
+    // un buon tabellone: tante domande che dividono davvero (tra 3 e 12 persone su 20)
+    const feats = baseFeatures();
+    const score = feats.filter(f => { const k = board.filter(f.test).length; return k >= 3 && k <= 12; }).length;
+    if (score > bestScore) { best = board; bestScore = score; }
+  }
+  return best;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  LINGUA: domande sì / no, risposte brevi, indizi, descrizione modello
+// ══════════════════════════════════════════════════════════════════
+const pr = c => isMale(c) ? 'he' : 'she';
+const Pr = c => isMale(c) ? 'He' : 'She';
+const cap1 = s => s.charAt(0).toUpperCase() + s.slice(1);
+const listJoin = a => a.length <= 1 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+const HEIGHT_W = { tall: 'tall', average: 'average height', short: 'short' };
+const BODY_W = { slim: 'slim', average: 'average weight', overweight: 'overweight' };
+const FACE_W = { beard: 'a beard', moustache: 'a moustache', glasses: 'glasses', braces: 'braces', freckles: 'freckles' };
+const CAT_LBL = { person: '👤 Person', age: '🎂 Age', height: '📏 Height', body: '⚖️ Body', hlen: '💇 Hair length', htype: '〰️ Hair type', hcol: '🎨 Hair colour', face: '👓 Face', action: '🏃 Action' };
+
+// kind: who (Is it a girl?) · be (Is he tall?) · got (Has she got curly hair?) · act (Is he running?)
+function baseFeatures() {
+  const F = [];
+  const add = (id, cat, kind, word, test) => F.push({ id, cat, kind, word, test });
+  ['boy', 'girl', 'man', 'woman'].forEach(g => add('g_' + g, 'person', 'who', `a ${g}`, c => c.gender === g));
+  ['young', 'middle-aged', 'old'].forEach(a => add('a_' + a, 'age', 'be', a, c => c.age === a));
+  Object.keys(HEIGHT_W).forEach(v => add('h_' + v, 'height', 'be', HEIGHT_W[v], c => c.height === v));
+  Object.keys(BODY_W).forEach(v => add('b_' + v, 'body', 'be', BODY_W[v], c => c.body === v));
+  add('bald', 'hlen', 'be', 'bald', c => c.bald);
+  ['long', 'medium-length', 'short'].forEach(v => add('hl_' + v, 'hlen', 'got', `${v} hair`, c => !c.bald && c.hairLen === v));
+  ['straight', 'wavy', 'curly'].forEach(v => add('ht_' + v, 'htype', 'got', `${v} hair`, c => !c.bald && c.hairType === v));
+  ['black', 'blonde', 'brown', 'grey', 'red'].forEach(v => add('hc_' + v, 'hcol', 'got', `${v} hair`, c => !c.bald && c.hairCol === v));
+  Object.keys(FACE_W).forEach(k => add('f_' + k, 'face', 'got', FACE_W[k], c => !!c[k]));
+  return F;
+}
+function boardFeatures(board) {
+  const F = baseFeatures();
+  [...new Set(board.map(c => c.action))].forEach(k => F.push({ id: 'act_' + k, cat: 'action', kind: 'act', word: ACT[k].ing, test: c => c.action === k }));
+  return F;
+}
+function questionText(f, p) {
+  if (f.kind === 'who') return `Is it ${f.word}?`;
+  if (f.kind === 'got') return `Has ${p} got ${f.word}?`;
+  return `Is ${p} ${f.word}?`;
+}
+function answerText(f, yes, p, secret) {
+  if (f.kind === 'who') return yes ? 'Yes, it is.' : "No, it isn't.";
+  if (f.kind === 'got') {
+    if (yes) return `Yes, ${p} has.`;
+    return `No, ${p} hasn't.` + (secret.bald && /hair$/.test(f.word) ? ` ${cap1(p)}'s bald.` : '');
+  }
+  return yes ? `Yes, ${p} is.` : `No, ${p} isn't.`;
+}
+const hairPhrase = c => `${c.hairLen}, ${c.hairType}, ${c.hairCol} hair`;
+const nounPhrase = c => `${c.age === 'old' ? 'an old' : c.age === 'middle-aged' ? 'a middle-aged' : 'a young'} ${c.gender}`;
+function describe(c) {
+  const P = Pr(c);
+  const s = [`${c.name} is ${nounPhrase(c)}.`, `${P}'s ${HEIGHT_W[c.height]} and ${BODY_W[c.body]}.`];
+  s.push(c.bald ? `${P}'s bald.` : `${P}'s got ${hairPhrase(c)}.`);
+  const face = Object.keys(FACE_W).filter(k => c[k]).map(k => (k === 'beard' || k === 'moustache') && c.age === 'old' && !c.bald ? FACE_W[k] : FACE_W[k]);
+  if (face.length) s.push(`${P}'s got ${listJoin(face)}.`);
+  s.push(`${P}'s ${ACT[c.action].ing}.`);
+  return s.join(' ');
+}
+// indizi per At home: ognuno con il suo filtro
+function cluesFor(c) {
+  const P = Pr(c), out = [];
+  out.push({ t: `It's a ${c.gender}.`, f: x => x.gender === c.gender });
+  if (c.age !== 'young') out.push({ t: `${P}'s ${c.age}.`, f: x => x.age === c.age });
+  out.push({ t: `${P}'s ${HEIGHT_W[c.height]}.`, f: x => x.height === c.height });
+  out.push({ t: `${P}'s ${BODY_W[c.body]}.`, f: x => x.body === c.body });
+  out.push(c.bald ? { t: `${P}'s bald.`, f: x => x.bald } : { t: `${P}'s got ${hairPhrase(c)}.`, f: x => !x.bald && x.hairLen === c.hairLen && x.hairType === c.hairType && x.hairCol === c.hairCol });
+  Object.keys(FACE_W).forEach(k => out.push(c[k] ? { t: `${P}'s got ${FACE_W[k]}.`, f: x => !!x[k] } : { t: `${P} hasn't got ${FACE_W[k]}.`, f: x => !x[k], neg: true }));
+  out.push({ t: `${P}'s ${ACT[c.action].ing}.`, f: x => x.action === c.action });
+  return out;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  TEMA: descrizione fisica (i Jobs lo sostituiscono con il loro)
+// ══════════════════════════════════════════════════════════════════
+var THEME = {
+  key: 'gw', title: 'Guess Who?', n: 20, oral: true,
+  cats: ['person', 'age', 'height', 'body', 'hlen', 'htype', 'hcol', 'face', 'action'], catLbl: CAT_LBL,
+  guessQ: c => `Is it ${c.name}?`, guessYes: c => 'Yes, it is!', guessNo: c => "No, it isn't.",
+  found: c => `Yes! It's ${c.name}!`, notFound: c => `No, it isn't ${c.name}. Try again!`, pickBtn: c => `✅ It's ${isMale(c) ? 'him' : 'her'}!`,
+  askHint: '💬 <b>Is he / she …?</b> (tall, young, bald…) · <b>Has he / she got …?</b> (long hair, a beard, glasses…) · <b>Is he / she …ing?</b> · <b>Is it …?</b>',
+  bonusHint: s => `${Pr(s)}'s… ${Pr(s)}'s got… ${Pr(s)}'s …ing.`,
+  bonusRule: 'be, have got, ordine degli aggettivi, -ing',
+};
+
+
+// ══════════════════════════════════════════════════════════════════
+//  TEMA JOBS (3° anno, Unit 1 · p. 16): 16 ragazzi, ognuno vestito con il lavoro che farà da grande.
+//  Domande con going to (anche questo nella unit): Is she going to work in an office? → Yes, she is.
+//  Tentativo: Is he going to be an engineer? · Le domande vengono dall'Ex 7 del libro (Do you design things?
+//  fix things? make things? wear special clothes? work at the weekend? work in an office? work outside?
+//  work with people?) + qualche idea in più per distinguere i lavori.
+// ══════════════════════════════════════════════════════════════════
+Object.assign(COLORS, { skyblue: '#8ec5ff', navy: '#26355e', teal: '#2a9d8f', charcoal: '#3a3d46', cream: '#f4efe3' });
+const JOB_LIST = ['chef', 'dentist', 'doctor', 'electrician', 'engineer', 'factory', 'hairdresser', 'journalist', 'mechanic', 'nurse', 'office', 'plumber', 'police', 'developer', 'teacher', 'waiter'];
+const JOB_W = { chef: 'chef', dentist: 'dentist', doctor: 'doctor', electrician: 'electrician', engineer: 'engineer', factory: 'factory worker', hairdresser: 'hairdresser', journalist: 'journalist', mechanic: 'mechanic', nurse: 'nurse', office: 'office worker', plumber: 'plumber', police: 'police officer', developer: 'software developer', teacher: 'teacher', waiter: 'waiter' };
+const jobWord = c => c.job === 'waiter' && !isMale(c) ? 'waitress' : JOB_W[c.job];
+const art = w => /^[aeiou]/i.test(w) ? 'an' : 'a';
+const aJob = c => `${art(jobWord(c))} ${jobWord(c)}`;
+// le domande (going to + verbo) e la tabella: 1 = sì
+const FACTS = [
+  { k: 'office', v: 'work in an office', cat: 'where' }, { k: 'outside', v: 'work outside', cat: 'where' },
+  { k: 'hospital', v: 'work in a hospital', cat: 'where' }, { k: 'restaurant', v: 'work in a restaurant', cat: 'where' },
+  { k: 'design', v: 'design things', cat: 'what' }, { k: 'fix', v: 'fix things', cat: 'what' }, { k: 'make', v: 'make things', cat: 'what' },
+  { k: 'people', v: 'work with people', cat: 'what' }, { k: 'computers', v: 'work with computers', cat: 'what' }, { k: 'cars', v: 'work with cars', cat: 'what' },
+  { k: 'clothes', v: 'wear special clothes', cat: 'more' }, { k: 'uni', v: 'go to university', cat: 'more' }, { k: 'weekend', v: 'work at the weekend', cat: 'more' },
+];
+//              office outside hosp rest design fix make people comp cars clothes uni weekend
+const JT = {
+  chef:        [0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1],
+  dentist:     [0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0],
+  doctor:      [0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1],
+  electrician: [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0],
+  engineer:    [0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0],
+  factory:     [0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0],
+  hairdresser: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+  journalist:  [1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1],
+  mechanic:    [0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0],
+  nurse:       [0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1],
+  office:      [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0],
+  plumber:     [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0],
+  police:      [0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1],
+  developer:   [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0],
+  teacher:     [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0],
+  waiter:      [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1],
+};
+const fact = (c, k) => !!JT[c.job][FACTS.findIndex(f => f.k === k)];
+// lavori con le stesse risposte: sul tabellone sono sempre un ragazzo e una ragazza (Is it a boy?)
+const JOB_TWINS = [['doctor', 'nurse'], ['electrician', 'plumber']];
+
+// ── disegno: divisa, cappello e attrezzo di ogni lavoro ──
+const ccol = k => COLORS[k] || k;
+const panels = (k, w, bottom, inner) => shape(`M${70 - w},114 Q${72 - w},99 86,96 L${inner},122 L${inner + 2},${bottom} L${62 - w},${bottom - 4} L${69 - w},200 Z`, k) + shape(`M${130 + w},114 Q${128 + w},99 114,96 L${200 - inner},122 L${198 - inner},${bottom} L${138 + w},${bottom - 4} L${131 + w},200 Z`, k);
+const labCoat = (w, extra = '') => panels('#fbfbf8', w, 292, 95) + `<path d="M86,96 L96,138 L86,126 L79,110 Z M114,96 L104,138 L114,126 L121,110 Z" fill="#e8e8e3" stroke="#a9aba6" stroke-width="1.5"/><rect x="${110 + w * 0.6}" y="150" width="14" height="16" rx="2" fill="none" stroke="#a9aba6" stroke-width="1.5"/>` + extra;
+const overalls = (k, w) => `<path d="M84,152 L80,101 M116,152 L120,101" stroke="${k}" stroke-width="7" stroke-linecap="round"/>` + shape(`M81,148 L119,148 L${127 + w},206 L${73 - w},206 Z`, k) + circ(84, 152, 3, '#ffd166') + circ(116, 152, 3, '#ffd166') + `<rect x="91" y="160" width="18" height="14" rx="2" fill="none" stroke="${dark(k, 0.35)}" stroke-width="1.6"/>`;
+const hiVis = w => shape(`M${72 - w},112 Q${74 - w},100 86,98 L94,130 L94,206 L${71 - w},206 Z`, '#ff7a1a') + shape(`M${128 + w},112 Q${126 + w},100 114,98 L106,130 L106,206 L${129 + w},206 Z`, '#ff7a1a') + `<path d="M${72 - w},160 L94,160 M${72 - w},184 L94,184 M106,160 L${128 + w},160 M106,184 L${128 + w},184" stroke="#e8edf2" stroke-width="5"/>`;
+const tie = k => shape('M97,100 L103,100 L102,107 L107,150 L100,159 L93,150 L98,107 Z', k);
+const bowTie = () => `<path d="M91,99 L100,103.5 L91,108 Z M109,99 L100,103.5 L109,108 Z" fill="#1f1f26"/>` + circ(100, 103.5, 2.6, '#1f1f26');
+const belt = (w, tools) => `<rect x="${71 - w}" y="196" width="${58 + 2 * w}" height="9" fill="#7a4b2a" stroke="#4d2e18" stroke-width="1.5"/>` + (tools ? `<rect x="${76 - w}" y="200" width="10" height="20" rx="2" fill="#a86b45"/><rect x="${114 + w}" y="200" width="10" height="20" rx="2" fill="#a86b45"/><path d="M${81 - w},198 L${81 - w},186" stroke="#e63946" stroke-width="3"/><path d="M${119 + w},198 L${119 + w},188" stroke="#ffd166" stroke-width="3"/>` : '');
+const hardHat = k => `<path d="M68,44 C68,10 132,10 132,44 Z" fill="${k}" stroke="${dark(k, 0.35)}" stroke-width="2"/><path d="M60,44 L140,44 Q142,51 135,51 L65,51 Q58,51 60,44 Z" fill="${k}" stroke="${dark(k, 0.35)}" stroke-width="2"/><path d="M100,12 L100,44" stroke="${dark(k, 0.2)}" stroke-width="5"/>`;
+const capHat = (k, badge) => `<path d="M67,46 C66,14 134,14 133,46 Z" fill="${k}" stroke="${dark(k, 0.35)}" stroke-width="2"/><path d="M118,44 Q148,38 162,47 Q146,55 118,51 Z" fill="${dark(k, 0.15)}" stroke="${dark(k, 0.35)}" stroke-width="2"/>` + (badge || '');
+const HATS = {
+  chef: () => `<path d="M72,38 C58,32 62,6 80,10 C82,-6 118,-6 120,10 C138,6 142,32 128,38 Z" fill="#ffffff" stroke="#c9ced6" stroke-width="2"/><rect x="71" y="28" width="58" height="16" rx="3" fill="#ffffff" stroke="#c9ced6" stroke-width="2"/>`,
+  electrician: () => hardHat('#f7c948'),
+  engineer: () => hardHat('#f7f7f3'),
+  factory: () => `<path d="M68,40 Q100,33 132,40" fill="none" stroke="#2b2b33" stroke-width="4"/><circle cx="88" cy="38" r="8" fill="#9fd8ff" stroke="#2b2b33" stroke-width="2.4"/><circle cx="112" cy="38" r="8" fill="#9fd8ff" stroke="#2b2b33" stroke-width="2.4"/>`,
+  mechanic: () => capHat('#6b7280'),
+  police: () => `<path d="M64,34 Q100,10 136,34 L132,44 L68,44 Z" fill="#26355e" stroke="#151d36" stroke-width="2"/><rect x="67" y="40" width="66" height="9" fill="#151d36"/><path d="M70,49 Q100,58 130,49 L128,47 L72,47 Z" fill="#111"/><path d="M100,26 l3,6 6,1 -4.5,4 1,6 -5.5,-3 -5.5,3 1,-6 -4.5,-4 6,-1 Z" fill="#ffd166"/>`,
+  nurse: () => `<path d="M80,32 L120,32 L114,16 L86,16 Z" fill="#ffffff" stroke="#c9ced6" stroke-width="2"/><path d="M100,19 L100,29 M95,24 L105,24" stroke="#e63946" stroke-width="3"/>`,
+};
+const OVERS = {
+  chef: w => [100, 120, 140, 160, 180].map(y => circ(93, y, 2.4, '#c9ced6') + circ(107, y, 2.4, '#c9ced6')).join('') + `<path d="M88,99 Q100,112 112,99 L108,114 Q100,118 92,114 Z" fill="#e63946"/>`,
+  dentist: w => labCoat(w, `<path d="M${114 + w * 0.6},153 q3,-3 6,0 q-1,6 -2,10 q-1,-3 -2,0 q-1,-4 -2,-10 Z" fill="#8ec5ff"/>`),
+  doctor: w => labCoat(w) + `<path d="M88,100 Q82,132 96,142 M112,100 Q118,132 104,142" fill="none" stroke="#5b6270" stroke-width="2.6"/>` + circ(100, 147, 5.5, '#9aa3ad', 'stroke="#5b6270" stroke-width="2"'),
+  electrician: w => belt(w, true),
+  engineer: w => hiVis(w),
+  factory: w => overalls('#8d97a6', w),
+  hairdresser: w => `<path d="M88,100 L84,124 M112,100 L116,124" stroke="#1f1f26" stroke-width="3"/>` + shape(`M82,122 L118,122 L${124 + w},258 L${76 - w},258 Z`, '#1f1f26') + `<rect x="91" y="150" width="18" height="14" rx="2" fill="none" stroke="#6b6f7a" stroke-width="1.5"/>`,
+  journalist: w => panels('#34353f', w, 216, 94) + `<path d="M93,99 L100,150 L107,99" fill="none" stroke="#c9ced6" stroke-width="1.5"/><path d="M100,104 L100,140" stroke="#e63946" stroke-width="1.6"/><rect x="92" y="140" width="16" height="12" rx="2" fill="#ffffff" stroke="#888" stroke-width="1"/><text x="100" y="149" text-anchor="middle" font-family="Arial Black,Arial" font-size="5.5" font-weight="900" fill="#e63946">PRESS</text>`,
+  mechanic: w => overalls('#2c3e63', w) + circ(108, 182, 4, '#1a1a1a', 'opacity="0.45"') + circ(90, 192, 3, '#1a1a1a', 'opacity="0.4"'),
+  nurse: w => `<path d="M90,98 L100,114 L110,98" fill="none" stroke="${dark(COLORS.teal, 0.3)}" stroke-width="2.4"/><rect x="${106 + w * 0.5}" y="130" width="14" height="12" rx="2" fill="none" stroke="${dark(COLORS.teal, 0.3)}" stroke-width="1.6"/><path d="M${113 + w * 0.5},133 L${113 + w * 0.5},139 M${110 + w * 0.5},136 L${116 + w * 0.5},136" stroke="#e63946" stroke-width="2"/>`,
+  office: w => tie('#2f6fdb') + `<path d="M86,96 L94,108 L100,100 L106,108 L114,96" fill="none" stroke="#c9ced6" stroke-width="1.6"/>`,
+  plumber: w => overalls('#2f7d4f', w) + belt(w, true),
+  police: w => `<path d="M${112 + w * 0.4},124 l3,6 6,1 -4.5,4 1,6 -5.5,-3 -5.5,3 1,-6 -4.5,-4 6,-1 Z" fill="#ffd166" stroke="#b58b00" stroke-width="1"/>` + belt(w, false) + `<rect x="${80 - w}" y="186" width="9" height="16" rx="2" fill="#1a1a1a"/>`,
+  developer: w => shape('M78,101 Q100,130 122,101 Q118,92 100,93 Q82,92 78,101 Z', dark(COLORS.purple, 0.15)) + `<path d="M95,112 L94,138 M105,112 L106,138" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>` + shape(`M82,172 L118,172 L124,202 L76,202 Z`, dark(COLORS.purple, 0.08)),
+  teacher: w => `<path d="M90,99 L100,132 L110,99" fill="none" stroke="#3f8f5a" stroke-width="2.4"/><rect x="94" y="132" width="12" height="16" rx="2" fill="#ffffff" stroke="#3f8f5a" stroke-width="1.5"/>`,
+  waiter: w => shape(`M${72 - w},112 Q${74 - w},100 86,98 L95,128 L96,206 L${71 - w},206 Z`, '#1f1f26') + shape(`M${128 + w},112 Q${126 + w},100 114,98 L105,128 L104,206 L${129 + w},206 Z`, '#1f1f26') + bowTie() + [150, 168, 186].map(y => circ(98, y, 2, '#c9ced6')).join(''),
+};
+// attrezzi in mano: A = punti delle braccia (mani in A.L[2], A.R[2])
+const HELD = {
+  chef: (c, A) => { const R = A.R[2], L = A.L[2]; return `<path d="M${R[0]},${R[1] + 6} L${R[0] + 8},${R[1] - 36}" stroke="#b07a45" stroke-width="4.5" stroke-linecap="round"/><ellipse cx="${R[0] + 9}" cy="${R[1] - 42}" rx="6" ry="9" fill="#c58c55" stroke="#8a5a2b" stroke-width="1.5"/>`
+    + `<path d="M${L[0]},${L[1]} L${L[0] - 18},${L[1] + 6}" stroke="#2b2b33" stroke-width="5" stroke-linecap="round"/><ellipse cx="${L[0] - 34}" cy="${L[1] + 9}" rx="17" ry="7" fill="#4a4d57" stroke="#22242a" stroke-width="2"/><ellipse cx="${L[0] - 34}" cy="${L[1] + 7}" rx="12" ry="4" fill="#f4c542"/>`; },
+  dentist: (c, A) => { const R = A.R[2]; return `<rect x="${R[0] - 3.5}" y="${R[1] - 62}" width="7" height="70" rx="3" fill="#3ec6ff" stroke="#1d7fb0" stroke-width="1.5"/><rect x="${R[0] - 6}" y="${R[1] - 80}" width="12" height="20" rx="2" fill="#ffffff" stroke="#9aa3ad" stroke-width="1.5"/><path d="M${R[0] - 4},${R[1] - 77} l0,14 M${R[0]},${R[1] - 77} l0,14 M${R[0] + 4},${R[1] - 77} l0,14" stroke="#c9ced6" stroke-width="1.2"/>`; },
+  doctor: () => `<rect x="80" y="146" width="40" height="50" rx="3" fill="#a86b45" stroke="#6b3b1f" stroke-width="2"/><rect x="84" y="152" width="32" height="40" fill="#ffffff"/><rect x="93" y="142" width="14" height="8" rx="2" fill="#9aa3ad"/><path d="M88,162 L112,162 M88,170 L112,170 M88,178 L104,178" stroke="#9aa3ad" stroke-width="1.6"/><path d="M98,184 l4,0 M100,182 l0,4" stroke="#e63946" stroke-width="2"/>`,
+  nurse: (c, A) => { const R = A.R[2]; return `<path d="M${R[0] - 8},${R[1] + 4} q8,-14 16,0" fill="none" stroke="#9aa3ad" stroke-width="3"/><rect x="${R[0] - 17}" y="${R[1] + 4}" width="34" height="28" rx="4" fill="#ffffff" stroke="#9aa3ad" stroke-width="2"/><path d="M${R[0]},${R[1] + 10} L${R[0]},${R[1] + 26} M${R[0] - 8},${R[1] + 18} L${R[0] + 8},${R[1] + 18}" stroke="#e63946" stroke-width="5"/>`; },
+  electrician: (c, A) => { const R = A.R[2]; return `<rect x="${R[0] - 5}" y="${R[1] - 22}" width="10" height="9" rx="1.5" fill="#9aa3ad" stroke="#5b6270" stroke-width="1.4"/>` + circ(R[0], R[1] - 33, 12, '#fff27a', 'stroke="#d4b400" stroke-width="2"') + `<path d="M${R[0] - 3},${R[1] - 30} q3,-6 6,0" fill="none" stroke="#d4b400" stroke-width="1.5"/>`; },
+  engineer: (c, A) => { const R = A.R[2]; return `<rect x="${R[0] - 6}" y="${R[1] - 62}" width="12" height="70" rx="5" fill="#5b8fd6" stroke="#2c5aa0" stroke-width="2"/><path d="M${R[0] - 6},${R[1] - 50} L${R[0] + 6},${R[1] - 50} M${R[0] - 6},${R[1] - 30} L${R[0] + 6},${R[1] - 30}" stroke="#ffffff" stroke-width="1.6"/><ellipse cx="${R[0]}" cy="${R[1] - 62}" rx="6" ry="2.5" fill="#dbe8fb" stroke="#2c5aa0" stroke-width="1.2"/>`; },
+  factory: () => `<rect x="70" y="128" width="60" height="44" rx="3" fill="#c98b5e" stroke="#8b5a3c" stroke-width="2"/><path d="M70,140 L130,140 M100,128 L100,140" stroke="#e9c27b" stroke-width="4"/><path d="M110,152 l6,-8 6,8 M116,144 l0,14" fill="none" stroke="#6b3b1f" stroke-width="1.8"/>`,
+  hairdresser: (c, A) => { const R = A.R[2], L = A.L[2]; return `<g transform="rotate(-30 ${R[0]} ${R[1]})"><circle cx="${R[0] - 5}" cy="${R[1] + 6}" r="5" fill="none" stroke="#e63946" stroke-width="2.6"/><circle cx="${R[0] + 5}" cy="${R[1] + 6}" r="5" fill="none" stroke="#e63946" stroke-width="2.6"/><path d="M${R[0] - 3},${R[1] + 2} L${R[0] + 4},${R[1] - 26} M${R[0] + 3},${R[1] + 2} L${R[0] - 4},${R[1] - 26}" stroke="#9aa3ad" stroke-width="3.2" stroke-linecap="round"/></g>`
+    + `<g transform="rotate(25 ${L[0]} ${L[1]})"><rect x="${L[0] - 4}" y="${L[1] - 30}" width="8" height="30" rx="2" fill="#1f1f26"/>${[0, 1, 2, 3, 4, 5].map(i => `<path d="M${L[0] - 4},${L[1] - 27 + i * 5} l-5,0" stroke="#1f1f26" stroke-width="1.8"/>`).join('')}</g>`; },
+  journalist: (c, A) => { const R = A.R[2]; return `<rect x="${R[0] - 4}" y="${R[1] - 4}" width="8" height="26" rx="3" fill="#2b2b33"/><rect x="${R[0] - 9}" y="${R[1] - 18}" width="18" height="14" rx="2" fill="#e63946"/><text x="${R[0]}" y="${R[1] - 8}" text-anchor="middle" font-family="Arial Black,Arial" font-size="6" font-weight="900" fill="#ffffff">NEWS</text>` + circ(R[0], R[1] - 27, 10, '#7d838d', 'stroke="#3a3e45" stroke-width="2"'); },
+  mechanic: (c, A) => { const L = A.L[2]; return `<g transform="rotate(-20 ${L[0]} ${L[1]})"><rect x="${L[0] - 4}" y="${L[1] - 48}" width="8" height="54" rx="3" fill="#9aa3ad" stroke="#5b6270" stroke-width="1.6"/><path d="M${L[0] - 12},${L[1] - 50} a12,12 0 1,1 24,0 l-6,0 l0,-8 l-12,0 l0,8 Z" fill="#9aa3ad" stroke="#5b6270" stroke-width="1.6"/></g>`; },
+  office: (c, A) => { const R = A.R[2], L = A.L[2]; return `<rect x="${R[0] - 7}" y="${R[1] - 26}" width="12" height="26" rx="3" fill="#2b2b33" stroke="#111" stroke-width="1.4"/><path d="M${L[0] - 8},${L[1] + 4} q8,-10 16,0" fill="none" stroke="#4d2e18" stroke-width="3"/><rect x="${L[0] - 20}" y="${L[1] + 4}" width="40" height="28" rx="3" fill="#7a4b2a" stroke="#4d2e18" stroke-width="2"/><rect x="${L[0] - 3}" y="${L[1] + 12}" width="6" height="5" fill="#ffd166"/>`; },
+  plumber: (c, A) => { const R = A.R[2]; return `<path d="M${R[0]},${R[1] - 6} L${R[0] + 4},${R[1] + 52}" stroke="#b07a45" stroke-width="5" stroke-linecap="round"/><path d="M${R[0] - 12},${R[1] + 68} Q${R[0] + 4},${R[1] + 40} ${R[0] + 20},${R[1] + 68} Z" fill="#e63946" stroke="#9e1d29" stroke-width="2"/>`; },
+  police: () => '',
+  developer: () => `<rect x="78" y="134" width="44" height="32" rx="3" fill="#2b2b33" stroke="#111" stroke-width="2"/><rect x="82" y="138" width="36" height="24" fill="#1d2b3a"/><text x="100" y="155" text-anchor="middle" font-family="Courier New,monospace" font-size="11" font-weight="700" fill="#5be39a">&lt;/&gt;</text><path d="M72,166 L128,166 L124,174 L76,174 Z" fill="#9aa3ad" stroke="#5b6270" stroke-width="1.5"/>`,
+  teacher: (c, A) => drawProps('book', A, c).held,
+  waiter: (c, A) => { const R = A.R[2]; return `<ellipse cx="${R[0] - 4}" cy="${R[1] - 7}" rx="24" ry="5" fill="#c9ced6" stroke="#8a8f99" stroke-width="2"/><path d="M${R[0] - 14},${R[1] - 10} L${R[0] - 17},${R[1] - 30} L${R[0] - 5},${R[1] - 30} L${R[0] - 8},${R[1] - 10} Z" fill="#ffe08a" stroke="#c9a23a" stroke-width="1.5" opacity="0.95"/><path d="M${R[0] + 2},${R[1] - 10} L${R[0] - 1},${R[1] - 28} L${R[0] + 11},${R[1] - 28} L${R[0] + 8},${R[1] - 10} Z" fill="#ffb3c6" stroke="#d06a94" stroke-width="1.5" opacity="0.95"/>`; },
+};
+const JOB_DRESS = {
+  chef:        { arms: 'paint',    top: 'white',    pants: '#2e2e38', sleeve: 'long', sleeveCol: '#ffffff' },
+  dentist:     { arms: 'umbrella', top: 'skyblue',  pants: '#4372b8', sleeve: 'long', sleeveCol: '#fbfbf8' },
+  doctor:      { arms: 'frontLow', top: 'skyblue',  pants: '#34353f', sleeve: 'long', sleeveCol: '#fbfbf8' },
+  electrician: { arms: 'ballUp',   top: 'blue',     pants: '#2c4f8a' },
+  engineer:    { arms: 'rest',     top: 'skyblue',  pants: '#7a5236' },
+  factory:     { arms: 'front',    top: 'charcoal', pants: '#8d97a6' },
+  hairdresser: { arms: 'camera',   top: 'pink',     pants: '#2e2e38' },
+  journalist:  { arms: 'mic',      top: 'white',    pants: '#34353f', sleeve: 'long', sleeveCol: '#34353f' },
+  mechanic:    { arms: 'guitar',   top: 'grey',     pants: '#2c3e63' },
+  nurse:       { arms: 'bags',     top: 'teal',     pants: '#2a9d8f' },
+  office:      { arms: 'ear',      top: 'white',    pants: '#34353f', sleeve: 'long', sleeveCol: '#ffffff' },
+  plumber:     { arms: 'leash',    top: 'yellow',   pants: '#2f7d4f' },
+  police:      { arms: 'wave',     top: 'navy',     pants: '#26355e', sleeve: 'long', sleeveCol: '#26355e' },
+  developer:   { arms: 'frontLow', top: 'purple',   pants: '#4372b8', sleeve: 'long', sleeveCol: '#8e5bd0' },
+  teacher:     { arms: 'read',     top: 'cream',    pants: '#7a5236' },
+  waiter:      { arms: 'throw',    top: 'white',    pants: '#1f1f26', sleeve: 'long', sleeveCol: '#ffffff' },
+};
+function drawPerson(c, noScale) {
+  if (!c.job) return drawPersonBase(c, noScale, null);
+  const J = JOB_DRESS[c.job];
+  return drawPersonBase(c, noScale, { pose: { arms: J.arms, legs: 'stand', mouth: 'smile' }, sleeve: J.sleeve, sleeveCol: J.sleeveCol,
+    over: (cc, w) => OVERS[c.job](w), hat: HATS[c.job], props: (cc, A) => ({ back: '', held: HELD[c.job](cc, A), fx: '' }) });
+}
+
+// ── tabellone: tutti i 16 lavori, una volta ciascuno ──
+function genBoard(n) {
+  const jobs = shuffle(JOB_LIST.slice());
+  const g = shuffle([...Array(8).fill('boy'), ...Array(8).fill('girl')]);
+  const gender = {}; jobs.forEach((j, i) => { gender[j] = g[i]; });
+  JOB_TWINS.forEach(([a, b]) => {   // gemelli: uno maschio e una femmina (si scambia con un altro lavoro)
+    if (gender[a] !== gender[b]) return;
+    const other = jobs.find(j => !JOB_TWINS.flat().includes(j) && gender[j] !== gender[a]);
+    if (other) { const t = gender[b]; gender[b] = gender[other]; gender[other] = t; }
+  });
+  const used = [];
+  return jobs.map(j => {
+    const c = genPerson(gender[j], used); used.push(c.name);
+    const D = JOB_DRESS[j];
+    c.job = j; c.action = 'book'; c.top = D.top; c.pants = D.pants; c.shoes = pick(['black', 'white', 'brown', 'blue']);
+    c.braces = false;   // il viso conta poco qui: niente apparecchio
+    return c;
+  });
+}
+function baseFeatures() {
+  const F = [];
+  ['boy', 'girl'].forEach(gg => F.push({ id: 'g_' + gg, cat: 'person', kind: 'who', word: `a ${gg}`, test: c => c.gender === gg }));
+  FACTS.forEach(f => F.push({ id: 'j_' + f.k, cat: f.cat, kind: 'be', word: `going to ${f.v}`, test: c => fact(c, f.k) }));
+  return F;
+}
+function boardFeatures() { return baseFeatures(); }
+function describe(c) {
+  const P = Pr(c), yes = FACTS.filter(f => fact(c, f.k)).map(f => f.v), no = FACTS.filter(f => !fact(c, f.k) && ['office', 'outside', 'clothes'].includes(f.k)).map(f => f.v);
+  return `${c.name} is going to be ${aJob(c)}. ${P}'s going to ${listJoin(yes.slice(0, 3))}.` + (no.length ? ` ${P} isn't going to ${no[0]}.` : '');
+}
+function cluesFor(c) {
+  const P = Pr(c), out = [{ t: `It's a ${c.gender}.`, f: x => x.gender === c.gender }];
+  FACTS.forEach(f => out.push(fact(c, f.k) ? { t: `${P}'s going to ${f.v}.`, f: x => fact(x, f.k) } : { t: `${P} isn't going to ${f.v}.`, f: x => !fact(x, f.k), neg: true }));
+  return out;
+}
+THEME = {
+  key: 'gwj', title: 'Guess Who? · Jobs', n: 16, oral: false,
+  cats: ['person', 'where', 'what', 'more'], catLbl: { person: '👤 Boy or girl?', where: '📍 Where?', what: '🛠️ What?', more: '➕ More' },
+  guessQ: c => `Is ${pr(c)} going to be ${aJob(c)}?`, guessYes: c => `Yes, ${pr(c)} is!`, guessNo: c => `No, ${pr(c)} isn't.`,
+  found: c => `Yes! ${c.name} is going to be ${aJob(c)}!`, notFound: c => `No! ${c.name} isn't the one. Try again!`, pickBtn: c => `✅ It's ${isMale(c) ? 'him' : 'her'}!`,
+  askHint: '💬 <b>Is he / she going to …?</b> (work in an office, wear special clothes, fix things…) · <b>Is it a boy / a girl?</b> · <b>Is he / she going to be a / an …?</b>',
+  bonusHint: s => `${Pr(s)}'s going to be ${art(jobWord(s))}… ${Pr(s)}'s going to… ${Pr(s)} isn't going to…`,
+  bonusRule: 'going to, a / an, lessico dei lavori',
+  vocab: [['Jobs', JOB_LIST.map(j => JOB_W[j]).concat(['waitress'])], ['Is he / she going to …?', FACTS.map(f => f.v)]],
+};
+
+
+// ══════════════════════════════════════════════════════════════════
+//  STATO
+// ══════════════════════════════════════════════════════════════════
+const state = {
+  mode: 'home', tap: 'zoom', board: [], down: new Set(), feats: [], secret: -1, zoom: -1,
+  home: { clues: [], shown: 0, done: false, wrong: 0, audio: false },
+  game: { teams: ['Team A', 'Team B'], score: [0, 0], turn: 0, round: 0, qc: 0, asked: [], hist: [], pron: 'he', last: null, won: false, winner: -1, bonus: null, tts: true },
+  oral: { c: null, q: null },
+};
+const G = state.game, H = state.home;
+const secretC = () => state.board[state.secret];
+const MAX_TEAMS = 6;
+G.autoFlip = (() => { try { return localStorage.getItem('gw_autoflip') !== '0'; } catch (e) { return true; } })();
+function setAutoFlip(on) { G.autoFlip = !!on; try { localStorage.setItem('gw_autoflip', on ? '1' : '0'); } catch (e) {} tapClass(); renderGame(); renderTW(); }
+try { const t = JSON.parse(localStorage.getItem('gw_teams') || 'null'); if (Array.isArray(t) && t.length >= 2 && t.length <= MAX_TEAMS) { G.teams = t.map(String); G.score = G.teams.map(() => 0); }
+  const all = JSON.parse(localStorage.getItem('gw_teams_all') || 'null'); if (Array.isArray(all)) G.allNames = all.map(String); } catch (e) {}
+
+let toastT;
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 1800); }
+function say(text) {
+  if (!window.speechSynthesis || !text) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text.replace(/[🎉⭐✓✗]/g, ''));
+  u.lang = 'en-GB'; u.rate = 0.9;
+  const v = speechSynthesis.getVoices().find(v => /en[-_]GB/i.test(v.lang)) || speechSynthesis.getVoices().find(v => /^en/i.test(v.lang));
+  if (v) u.voice = v;
+  speechSynthesis.speak(u);
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  TABELLONE
+// ══════════════════════════════════════════════════════════════════
+function newBoard() {
+  state.board = genBoard(THEME.n);
+  state.feats = boardFeatures(state.board);
+  state.secret = rnd(state.board.length);
+  state.down = new Set();
+  renderBoard();
+}
+function renderBoard() {
+  document.getElementById('board').innerHTML = state.board.map((c, i) => `<button type="button" class="card" data-i="${i}" aria-label="${esc(c.name)}">${svgCard(c)}<span class="nm">${esc(c.name)}</span><span class="zbtn" data-zoom title="Ingrandisci">🔍</span></button>`).join('');
+  updateCards(); fitBoard();
+}
+function updateCards(flipped) {
+  const won = (state.mode === 'class' && G.won) || (state.mode === 'home' && H.done);
+  document.querySelectorAll('#board .card').forEach(el => {
+    const i = +el.dataset.i;
+    el.classList.toggle('down', state.down.has(i));
+    el.classList.toggle('win', won && i === state.secret);
+    if (flipped && flipped.includes(i)) { el.classList.remove('flipping'); void el.offsetWidth; el.classList.add('flipping'); }
+  });
+}
+// carte grandi quanto basta: in classe 2 file da 10 che stanno nello schermo della LIM
+function fitBoard() {
+  const b = document.getElementById('board'); if (!b || !b.offsetParent) return;
+  const W = b.parentElement.clientWidth, gap = 8;
+  const half = THEME.n / 2, cols = W >= 880 ? half : W >= 560 ? (half % 5 ? 4 : 5) : 4;
+  let cw = (W - gap * (cols - 1)) / cols;
+  if (state.mode === 'class' && cols === half) {
+    const top = b.getBoundingClientRect().top;
+    const maxH = (window.innerHeight - top - 12 - gap) / 2;
+    const nameH = Math.max(18, Math.min(26, cw * 0.17));
+    cw = Math.max(60, Math.min(cw, (maxH - nameH) * 180 / 458));
+  }
+  b.style.setProperty('--cols', cols); b.style.setProperty('--cw', Math.floor(cw) + 'px');
+}
+window.addEventListener('resize', () => { clearTimeout(fitBoard.t); fitBoard.t = setTimeout(fitBoard, 120); });
+
+document.getElementById('board').addEventListener('click', e => {
+  const el = e.target.closest('.card'); if (!el) return;
+  const i = +el.dataset.i;
+  if (e.target.closest('[data-zoom]')) { openZoom(i); return; }
+  if (state.mode === 'home' && state.tap === 'flip' && !H.done) { toggleDown(i); return; }
+  if (state.mode === 'class' && !G.autoFlip) { toggleDown(i); return; }
+  openZoom(i);
+});
+function toggleDown(i) {
+  if (state.down.has(i)) state.down.delete(i); else state.down.add(i);
+  updateCards([i]);
+  if (state.zoom === i) openZoom(i);
+  if (state.mode === 'class') { autoPron(); renderGame(); renderTW(); }
+}
+function setTap(t) { state.tap = t; document.querySelectorAll('[data-tap]').forEach(b => b.setAttribute('aria-pressed', b.dataset.tap === t)); tapClass(); }
+// il tocco abbassa la carta (At home con ⬇️ Flip down, o in classe con le carte a mano): lo zoom resta sul 🔍
+function tapClass() { document.body.classList.toggle('tapflip', (state.mode === 'home' && state.tap === 'flip') || (state.mode === 'class' && !G.autoFlip)); }
+
+// ── zoom: la persona grande, con il viso in primo piano ──
+function openZoom(i) {
+  state.zoom = i;
+  const c = state.board[i], z = document.getElementById('zoom'), dn = state.down.has(i);
+  const hs = isMale(c) ? 'him' : 'her';
+  let btns = '';
+  if (state.mode === 'home') {
+    btns += `<button class="btn" onclick="toggleDown(${i})">${dn ? '⬆️ Stand up' : '⬇️ Flip down'}</button>`;
+    if (!H.done) btns += `<button class="btn gold" onclick="pickHome(${i})">${esc(THEME.pickBtn(c))}</button>`;
+  } else if (state.mode === 'class') {
+    if (!G.won && !dn) btns += `<button class="btn gold" onclick="guess(${i})">❓ ${esc(THEME.guessQ(c))}</button>`;
+    btns += `<button class="btn" onclick="toggleDown(${i})">${dn ? '⬆️ Stand up' : '⬇️ Flip down'}</button>`;
+    if (G.won && i === state.secret) btns = `<div class="zwin">🎉 ${esc(THEME.found(c))} ${esc(teamName(G.winner))} +${G.wonPts}${G.bonus === 'pending' ? `<br>⭐ Bonus +2: ${G.describer ? esc(dispOf(G.describer)) + ', d' : 'D'}escribe ${hs}!` : G.bonus === 'yes' ? '<br>⭐ +2 Great description!' : ''}</div>`;
+  }
+  z.innerHTML = `<div class="zbox ${dn ? 'down' : ''}" role="dialog" aria-label="${esc(c.name)}"><div class="zf"><svg viewBox="${VB}" xmlns="http://www.w3.org/2000/svg">${heightWall()}${drawPerson(c)}</svg></div>
+    <div class="zh">${svgHead(c)}<div class="zn">${esc(c.name)}</div><div class="zb">${btns}</div></div><button class="zx" onclick="closeZoom()" aria-label="Chiudi">✕</button></div>`;
+  z.hidden = false;
+}
+function closeZoom() { state.zoom = -1; document.getElementById('zoom').hidden = true; }
+document.getElementById('zoom').addEventListener('click', e => { if (e.target.id === 'zoom') closeZoom(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeZoom(); });
+
+// ══════════════════════════════════════════════════════════════════
+//  AT HOME: Who is it? (indizi uno alla volta)
+// ══════════════════════════════════════════════════════════════════
+// ordine degli indizi: ognuno toglie qualcuno, possibilmente circa la metà di chi resta
+function clueOrder(c, board) {
+  let rest = board.slice(), pool = cluesFor(c);
+  const seq = [];
+  while (rest.length > 1 && pool.length) {
+    const cand = pool.map(cl => ({ cl, after: rest.filter(cl.f).length })).filter(x => x.after < rest.length);
+    if (!cand.length) break;
+    cand.forEach(x => { x.s = Math.abs(x.after - rest.length / 2) + (x.cl.neg ? (seq.length ? 3 : 99) : 0) + Math.random() * 1.5; });   // mai un indizio negativo per primo
+    cand.sort((a, b) => a.s - b.s);
+    const ch = cand[0];
+    seq.push(ch.cl); rest = rest.filter(ch.cl.f); pool = pool.filter(p => p !== ch.cl);
+  }
+  return seq;
+}
+function newHome() {
+  closeZoom(); newBoard();
+  H.clues = clueOrder(secretC(), state.board); H.shown = 1; H.done = false; H.wrong = 0;
+  document.getElementById('h-result').textContent = ''; document.getElementById('h-result').className = 'result';
+  renderClues(); updateCards();
+  if (H.audio) say(H.clues[0].t);
+}
+function renderClues() {
+  const ul = document.getElementById('clues');
+  ul.innerHTML = H.clues.slice(0, H.shown).map((cl, i) => H.audio && !H.done
+    ? `<li class="hid"><span class="n">${i + 1}</span> 🔊 Clue ${i + 1} <button class="btn" onclick="say(H.clues[${i}].t)">🔊</button></li>`
+    : `<li><span class="n">${i + 1}</span> ${esc(cl.t)} <button class="btn" onclick="say(H.clues[${i}].t)" title="Ascolta">🔊</button></li>`).join('');
+  const b = document.getElementById('btn-clue');
+  b.disabled = H.done || H.shown >= H.clues.length;
+  b.textContent = H.shown >= H.clues.length && !H.done ? '💡 No more clues: choose!' : '💡 Next clue';
+}
+function nextClue() {
+  if (H.done || H.shown >= H.clues.length) return;
+  H.shown++; renderClues();
+  if (H.audio) say(H.clues[H.shown - 1].t);
+}
+function speakClues() { say(H.clues.slice(0, H.shown).map(c => c.t).join(' ')); }
+function toggleAudioOnly() { H.audio = !H.audio; document.getElementById('btn-audio').setAttribute('aria-pressed', H.audio); renderClues(); if (H.audio) say(H.clues[H.shown - 1].t); }
+function resetFlips() { state.down = new Set(); updateCards(); }
+function pickHome(i) {
+  if (H.done) return;
+  const c = state.board[i], r = document.getElementById('h-result');
+  if (i === state.secret) {
+    H.done = true;
+    const stars = Math.max(1, (H.shown <= 3 ? 3 : H.shown <= 5 ? 2 : 1) - H.wrong);
+    r.className = 'result ok';
+    r.innerHTML = `✅ ${esc(THEME.found(c))} ${'⭐'.repeat(stars)} <span class="note">(${H.shown} clue${H.shown > 1 ? 's' : ''}${H.wrong ? `, ${H.wrong} wrong guess${H.wrong > 1 ? 'es' : ''}` : ''})</span><div class="note" style="font-size:15px;color:var(--text);margin-top:6px">${esc(describe(c))}</div>`;
+    say(`${THEME.found(c)} ${describe(c)}`);
+    closeZoom(); renderClues(); updateCards();
+  } else {
+    H.wrong++; state.down.add(i); updateCards([i]); closeZoom();
+    r.className = 'result no'; r.textContent = `❌ ${THEME.notFound(c)}`;
+    say(THEME.notFound(c));
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  GUESS WHO IN CLASSE: due squadre, domande sì / no, il docente risponde dalla sua finestra
+// ══════════════════════════════════════════════════════════════════
+const defName = t => 'Team ' + 'ABCDEF'[t];
+const teamName = t => G.teams[t] || defName(t);
+// punti per chi indovina: 10 con zero domande, uno in meno per ogni domanda (e tentativo sbagliato) del round, almeno 2
+const PTS_MAX = 10, PTS_MIN = 2;
+const worth = () => Math.max(PTS_MIN, PTS_MAX - G.qc);
+const nTeams = () => G.teams.length;
+const nextTeam = (t = G.turn) => (t + 1) % nTeams();
+// i nomi di tutte e 6 le squadre restano in memoria: togliendo e rimettendo una squadra torna con il suo nome
+if (!G.allNames) G.allNames = [];
+G.teams.forEach((n, t) => { G.allNames[t] = n; });
+const saveTeams = () => { G.teams.forEach((n, t) => { G.allNames[t] = n; }); try { localStorage.setItem('gw_teams', JSON.stringify(G.teams)); localStorage.setItem('gw_teams_all', JSON.stringify(G.allNames)); } catch (e) {} };
+// quante squadre giocano (2–6): i nomi e i punti di quelle che restano non cambiano
+function setTeamCount(n) {
+  n = Math.max(2, Math.min(MAX_TEAMS, n));
+  while (G.teams.length < n) { G.teams.push(G.allNames[G.teams.length] || defName(G.teams.length)); G.score.push(0); }
+  G.teams.length = n; G.score.length = n;
+  // le squadre che si tolgono: i loro alunni restano senza squadra (🎲 Squadre a caso li ridistribuisce)
+  fixLineup(); saveLineup();
+  if (G.turn >= n) G.turn = 0;
+  if (G.winner >= n) { G.winner = -1; G.bonus = null; }
+  G.hist = G.hist.filter(h => h.turn < n);
+  saveTeams(); renderGame(); renderTW();
+}
+// ══ ALUNNI NELLE SQUADRE ══
+// Classi e alunni: dai dati di MyClass salvati in questo browser (come la finestra docente delle
+// attività orali), se no dall'elenco importato nei tornei VocabDuel (📂 Importa da MyClass).
+// k = nome completo (come in MyClass) · d = come lo chiama la LIM (il nome, + iniziale del cognome se doppio)
+function gwClasses() {
+  const out = [];
+  try {
+    const dd = JSON.parse(localStorage.getItem('myclass_gemini_data') || 'null');
+    let cl = dd && dd.classi; if (cl && !Array.isArray(cl)) cl = Object.values(cl);
+    (cl || []).forEach(c => {
+      let st = c.studenti || []; if (!Array.isArray(st)) st = Object.values(st);
+      const base = st.map(s => ({ n: String(s.nome || '').trim(), c: String(s.cognome || '').trim() })).filter(x => x.n || x.c);
+      const cnt = {}; base.forEach(x => { cnt[x.n] = (cnt[x.n] || 0) + 1; });
+      const list = base.map(x => ({ k: [x.c, x.n].filter(Boolean).join(' '), d: !x.n ? x.c : cnt[x.n] > 1 && x.c ? `${x.n} ${x.c[0]}.` : x.n }))
+        .sort((p, q) => p.k.localeCompare(q.k, 'it'));
+      if (list.length) out.push({ nome: String(c.nome || '?'), studenti: list });
+    });
+  } catch (e) {}
+  if (!out.length) {
+    try { (JSON.parse(localStorage.getItem('myclass_roster_v1') || '[]') || []).forEach(c => { if (c && c.studenti && c.studenti.length) out.push({ nome: String(c.nome || '?'), studenti: c.studenti.map(n => ({ k: String(n), d: String(n) })) }); }); } catch (e) {}
+  }
+  return out.sort((p, q) => p.nome.localeCompare(q.nome, 'it', { numeric: true }));
+}
+const TSET_KEY = 'gw_teamsets';
+const loadSets = () => { try { return JSON.parse(localStorage.getItem(TSET_KEY) || '{}') || {}; } catch (e) { return {}; } };
+G.cls = ''; G.lineup = []; G.ptr = []; G.describer = null;
+const classObj = () => gwClasses().find(c => c.nome === G.cls);
+const dispOf = k => { const c = classObj(), s = c && c.studenti.find(x => x.k === k); return s ? s.d : k; };
+function fixLineup() { while (G.lineup.length < nTeams()) G.lineup.push([]); G.lineup.length = nTeams(); while (G.ptr.length < nTeams()) G.ptr.push(0); G.ptr.length = nTeams(); }
+function saveLineup() { if (!G.cls) return; const s = loadSets(); s[G.cls] = G.lineup; try { localStorage.setItem(TSET_KEY, JSON.stringify(s)); localStorage.setItem('gw_cls', G.cls); } catch (e) {} }
+// la classe scelta: le squadre salvate per quella classe tornano com'erano (chi non c'è più nell'elenco si toglie)
+function selectClass(nome) {
+  G.cls = nome || ''; G.ptr = []; G.describer = null; G.absent = [];
+  const c = classObj(), keys = new Set(c ? c.studenti.map(x => x.k) : []);
+  const saved = G.cls && loadSets()[G.cls];
+  G.lineup = Array.isArray(saved) ? saved.map(t => (t || []).filter(k => keys.has(k))) : [];
+  fixLineup();
+  try { localStorage.setItem('gw_cls', G.cls); } catch (e) {}
+  renderGame(); renderTW();
+}
+// tutti gli alunni della classe (tranne chi è segnato assente) distribuiti a caso
+function dealTeams() {
+  const c = classObj(); if (!c) return;
+  const absent = new Set(G.absent || []);
+  const all = shuffle(c.studenti.map(x => x.k).filter(k => !absent.has(k)));
+  G.lineup = Array.from({ length: nTeams() }, () => []);
+  all.forEach((k, i) => G.lineup[i % nTeams()].push(k));
+  G.ptr = G.lineup.map(() => 0); G.describer = null;
+  saveLineup(); renderGame(); renderTW();
+}
+function teamOf(k) { return G.lineup.findIndex(t => t.includes(k)); }
+// clic su un alunno: squadra A → B → … → assente (non gioca) → A
+function cycleStudent(k) {
+  const t = teamOf(k);
+  G.absent = G.absent || [];
+  if (t >= 0) G.lineup[t] = G.lineup[t].filter(x => x !== k);
+  if (t < 0 && G.absent.includes(k)) { G.absent = G.absent.filter(x => x !== k); G.lineup[0].push(k); }
+  else if (t >= 0 && t + 1 < nTeams()) G.lineup[t + 1].push(k);
+  else if (t >= 0) G.absent.push(k);
+  else G.lineup[0].push(k);
+  saveLineup(); renderGame(); renderTW();
+}
+// chi fa la domanda adesso per la squadra t (a rotazione, uno dopo l'altro)
+function asker(t) { const L = G.lineup[t]; return L && L.length ? L[G.ptr[t] % L.length] : null; }
+const askerName = t => { const k = asker(t); return k ? dispOf(k) : ''; };
+const callName = t => askerName(t) ? `${askerName(t)} (${teamName(t)})` : teamName(t);
+function advance(t) { if (G.lineup[t] && G.lineup[t].length) G.ptr[t] = (G.ptr[t] || 0) + 1; }
+// bonus: un alunno a caso della squadra vincitrice (se possibile non quello che ha indovinato)
+function pickDescriber(t, avoid) {
+  const L = G.lineup[t] || []; if (!L.length) return null;
+  const pool = L.length > 1 ? L.filter(k => k !== avoid) : L;
+  return pick(pool);
+}
+
+function newRound() {
+  closeZoom(); newBoard();
+  G.round++; G.qc = 0; G.asked = []; G.hist = []; G.pron = 'he'; G.last = null; G.won = false; G.winner = -1; G.bonus = null; G.describer = null;
+  fixLineup();
+  G.turn = (G.round - 1) % nTeams();   // a ogni round inizia la squadra successiva
+  renderGame(); renderTW();
+}
+// pronome: si fissa quando tutte le persone rimaste sono maschi o femmine
+function autoPron() {
+  const up = state.board.filter((c, i) => !state.down.has(i));
+  if (up.length && up.every(isMale)) G.pron = 'he';
+  else if (up.length && up.every(c => !isMale(c))) G.pron = 'she';
+}
+function askFeature(id) {
+  if (G.won || state.secret < 0) return;
+  const f = state.feats.find(x => x.id === id); if (!f) return;
+  const s = secretC(), yes = !!f.test(s);
+  const q = questionText(f, G.pron), a = answerText(f, yes, G.pron, s);
+  const downed = [];
+  if (G.autoFlip) state.board.forEach((c, i) => { if (!state.down.has(i) && !!f.test(c) !== yes) { state.down.add(i); downed.push(i); } });
+  G.hist.push({ kind: 'q', turn: G.turn, downed, id, last: G.last, pron: G.pron, ptr: G.ptr.slice() });
+  advance(G.turn);
+  G.qc++; G.asked.push(id); G.last = { q, a, yes };
+  autoPron();
+  G.turn = nextTeam();
+  renderGame(true); updateCards(downed); renderTW();
+  if (G.tts) say(`${q} ${a}`);
+}
+function wrongQuestion() {
+  if (G.won) return;
+  G.hist.push({ kind: 'wrong', turn: G.turn, downed: [], last: G.last, pron: G.pron, ptr: G.ptr.slice() });
+  advance(G.turn);
+  G.last = { q: '✗ Check your question!', a: `Next: ${callName(nextTeam())}`, bad: true };
+  G.turn = nextTeam();
+  renderGame(true); renderTW();
+}
+function guess(i) {
+  if (G.won || state.down.has(i)) return;
+  closeZoom();
+  const c = state.board[i], q = THEME.guessQ(c);
+  if (i === state.secret) {
+    const pts = worth();
+    G.hist.push({ kind: 'win', turn: G.turn, downed: [], last: G.last, pron: G.pron, pts, ptr: G.ptr.slice() });
+    const who = asker(G.turn); advance(G.turn);
+    G.qc++; G.won = true; G.winner = G.turn; G.wonPts = pts; G.score[G.turn] += pts; G.bonus = 'pending';
+    G.describer = pickDescriber(G.turn, who);
+    G.last = { q, a: `${THEME.guessYes(c)} 🎉 ${teamName(G.turn)} +${pts}`, win: true };
+    renderGame(true); updateCards(); renderTW();
+    if (G.tts) say(`${q} ${THEME.guessYes(c)}`);
+    openZoom(i);
+  } else {
+    state.down.add(i);
+    G.hist.push({ kind: 'guess', turn: G.turn, downed: [i], last: G.last, pron: G.pron, ptr: G.ptr.slice() });
+    advance(G.turn);
+    G.qc++; G.last = { q, a: THEME.guessNo(c), yes: false };
+    autoPron(); G.turn = nextTeam();
+    renderGame(true); updateCards([i]); renderTW();
+    if (G.tts) say(`${q} ${THEME.guessNo(c)}`);
+  }
+}
+function setBonus(ok) {
+  if (!G.won || G.bonus !== 'pending') return;
+  G.bonus = ok ? 'yes' : 'no';
+  if (ok) G.score[G.winner] += 2;
+  renderGame(true); renderTW();
+  if (state.zoom === state.secret) openZoom(state.secret);
+  if (ok && G.tts) say('Great description! Two more points!');
+}
+function undo() {
+  const h = G.hist.pop(); if (!h) return;
+  h.downed.forEach(i => state.down.delete(i));
+  if (h.kind === 'q') G.asked.pop();
+  if (h.kind !== 'wrong') G.qc--;
+  if (h.kind === 'win') { G.score[h.turn] -= h.pts + (G.bonus === 'yes' ? 2 : 0); G.won = false; G.winner = -1; G.bonus = null; }
+  G.turn = h.turn; G.last = h.last; G.pron = h.pron;
+  if (h.ptr) G.ptr = h.ptr; if (h.kind === 'win') G.describer = null;
+  renderGame(); updateCards(); renderTW();
+}
+function renderGame(pop) {
+  if (state.mode !== 'class') return;
+  const mid = `<div class="gmid"><div class="rd">Round ${G.round}</div><div class="qc" id="g-qc"></div><div class="wt">${G.won ? `+${G.wonPts} pts` : `🏆 now: ${worth()} pts`}</div></div>`;
+  document.getElementById('gtop').innerHTML = mid + G.teams.map((n, t) => `<div class="team ${!G.won && G.turn === t ? 'on' : ''}"><span class="tn">${esc(teamName(t))}<small>${!G.won && G.turn === t ? '▶ ' + esc(askerName(t) || 'your turn') : ''}</small></span><span class="ts">${G.score[t]}</span></div>`).join('');
+  const up = state.board.length - state.down.size;
+  document.getElementById('g-qc').textContent = `${G.qc} question${G.qc === 1 ? '' : 's'} · ${up} left`;
+  const qa = document.getElementById('qa');
+  let h, h0 = '';
+  if (G.won) {
+    const s = secretC();
+    h = `<span class="q">${esc(G.last.q)}</span><span class="a win">${esc(G.last.a)}</span>`;
+    if (G.bonus === 'pending') h += `<div class="hint" style="width:100%">⭐ <b>Bonus +2:</b> ${G.describer ? `<b style="color:var(--gold);font-size:20px">${esc(dispOf(G.describer))}</b> (${esc(teamName(G.winner))})` : esc(teamName(G.winner))}, describe ${esc(s.name)}! <i>${esc(THEME.bonusHint(s))}</i></div>`;
+    else if (G.bonus === 'yes') h += `<div class="hint" style="width:100%">⭐ <b>+2</b> Great description! · ${esc(describe(s))}</div>`;
+    else h += `<div class="hint" style="width:100%">${esc(describe(s))}</div>`;
+  } else if (G.last) {
+    if (!G.autoFlip && !G.last.bad && G.last.yes !== undefined) h0 = `<div class="hint" style="width:100%">✋ Who can we flip down? <i>It isn't…</i></div>`;
+    h = `<span class="q">${esc(G.last.q)}</span><span class="a ${G.last.bad || G.last.yes === false ? 'no' : ''}">${esc(G.last.a)}</span><div class="hint" style="width:100%">${askerName(G.turn) ? `<b style="color:var(--gold);font-size:20px">${esc(askerName(G.turn))}</b> (${esc(teamName(G.turn))})` : esc(teamName(G.turn))}, your turn!</div>`;
+  } else {
+    h = `<span class="q">${esc(callName(G.turn))}, ask a question!</span><div class="hint" style="width:100%">${THEME.askHint}</div>`;
+  }
+  qa.innerHTML = h + h0;
+  qa.classList.remove('pop'); if (pop) { void qa.offsetWidth; qa.classList.add('pop'); }
+  const nt = document.getElementById('needtw'), hide = !!twOpen();
+  if (nt.hidden !== hide) { nt.hidden = hide; fitBoard(); }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  ORAL TEST: Describe the mystery person
+// ══════════════════════════════════════════════════════════════════
+function newOralPerson(silent) {
+  const prev = state.oral.c ? state.oral.c.name : null;
+  let c, t = 0;
+  do {
+    const g = pick(['boy', 'girl', 'man', 'woman']);
+    c = genPerson(g, prev ? [prev] : []); c.action = pick(Object.keys(ACT)); t++;
+  } while (t < 20 && Object.keys(FACE_W).filter(k => c[k]).length === 0 && Math.random() < 0.7);   // di solito almeno una cosa sul viso
+  state.oral.c = c; state.oral.q = null;
+  ck = ckNew();
+  renderOral();
+  if (!silent) { renderTW(); }
+}
+function renderOral() {
+  const c = state.oral.c; if (!c) return;
+  document.getElementById('o-full').innerHTML = `<svg viewBox="${VB}" xmlns="http://www.w3.org/2000/svg" aria-label="${esc(c.name)}">${heightWall()}${drawPerson(c)}</svg>`;
+  document.getElementById('o-head').innerHTML = svgHead(c);
+  document.getElementById('o-name').textContent = c.name;
+  document.getElementById('o-task').innerHTML = `Describe <b style="color:var(--accent2)">${esc(c.name)}</b>: age, height, body, hair, face… and what is ${pr(c)} doing?`;
+  document.getElementById('o-q').textContent = state.oral.q ? state.oral.q.q : `Describe ${c.name}.`;
+}
+function oralQuestions(c) {
+  const p = pr(c), P = Pr(c), his = isMale(c) ? 'his' : 'her';
+  const Q = [
+    { q: `How old is ${c.name}? Is ${p} young or old?`, a: `${P}'s ${c.age === 'young' ? 'young' : c.age}.` },
+    { q: `Is ${c.name} tall or short?`, a: `${P}'s ${HEIGHT_W[c.height]}.` },
+    { q: `Is ${p} slim or overweight?`, a: `${P}'s ${BODY_W[c.body]}.` },
+    { q: `What's ${his} hair like?`, a: c.bald ? `${P} hasn't got any hair: ${p}'s bald.` : `It's ${c.hairLen}, ${c.hairType} and ${c.hairCol}. (${P}'s got ${hairPhrase(c)}.)` },
+    { q: `What colour is ${his} hair?`, a: c.bald ? `${P}'s bald!` : `It's ${c.hairCol}.` },
+    { q: `Has ${p} got glasses?`, a: c.glasses ? `Yes, ${p} has.` : `No, ${p} hasn't.` },
+    { q: `What is ${c.name} doing?`, a: `${P}'s ${ACT[c.action].ing}.` },
+  ];
+  if (isMale(c) && c.age !== 'young') Q.push({ q: `Has ${p} got a beard or a moustache?`, a: c.beard && c.moustache ? `${P}'s got a beard and a moustache.` : c.beard ? `${P}'s got a beard.` : c.moustache ? `${P}'s got a moustache.` : `No, ${p} hasn't.` });
+  if (c.age === 'young') Q.push({ q: `Has ${p} got braces?`, a: c.braces ? `Yes, ${p} has.` : `No, ${p} hasn't.` });
+  Q.push({ q: `Has ${p} got freckles?`, a: c.freckles ? `Yes, ${p} has.` : `No, ${p} hasn't.` });
+  return Q;
+}
+function showOralQ(i) {
+  const c = state.oral.c; if (!c) return;
+  state.oral.q = { ...oralQuestions(c)[i], i };
+  renderOral(); renderTW();
+}
+
+// ── timer 3 minuti ──
+const TIMER_SEC = 180;
+const tmr = { startAt: null, acc: 0, iv: null };
+const timerElapsed = () => tmr.acc + (tmr.startAt ? (Date.now() - tmr.startAt) / 1000 : 0);
+const fmtTime = sec => { sec = Math.floor(sec); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); };
+function timerToggle() {
+  if (tmr.startAt) { tmr.acc = timerElapsed(); tmr.startAt = null; clearInterval(tmr.iv); tmr.iv = null; }
+  else { tmr.startAt = Date.now(); tmr.iv = setInterval(renderTimer, 250); }
+  renderTimer();
+}
+function timerReset() { clearInterval(tmr.iv); tmr.iv = null; tmr.startAt = null; tmr.acc = 0; renderTimer(); }
+function renderTimer() {
+  const el = timerElapsed(), left = TIMER_SEC - el, running = !!tmr.startAt;
+  const txt = left >= 0 ? fmtTime(Math.ceil(left - 1e-9)) : '+' + fmtTime(-left);
+  const cls = left < 0 ? 'over' : !running ? '' : left <= 30 ? 'warn' : 'run';
+  const btn = running ? '⏸ Pausa' : el > 0 ? '▶ Riprendi' : '⏱ Avvia 3:00';
+  const m = document.getElementById('tm-main');
+  if (m) { m.textContent = txt; m.className = 'timer ' + cls; document.getElementById('tm-btn').textContent = btn; }
+  if (twOpen() && tw('t-timer')) { tw('t-timer').textContent = txt; tw('t-timer').className = 'tv ' + cls; tw('t-tbtn').textContent = btn; tw('t-tlbl').textContent = left < 0 ? `⏰ Tempo scaduto · usati ${fmtTime(el)}` : running ? 'In corso…' : el > 0 ? 'In pausa' : "Tempo per l'interrogazione"; }
+}
+
+// ── checklist dal vivo: cosa dice l'alunno ──
+function oralItems(c) {
+  const it = [{ k: 'age', l: `${c.age} ${c.gender}` }, { k: 'height', l: HEIGHT_W[c.height] }, { k: 'body', l: BODY_W[c.body] }];
+  if (c.bald) it.push({ k: 'bald', l: 'bald' });
+  else it.push({ k: 'hlen', l: `${c.hairLen} (hair)` }, { k: 'htype', l: `${c.hairType} (hair)` }, { k: 'hcol', l: `${c.hairCol} hair` });
+  Object.keys(FACE_W).forEach(k => { if (c[k]) it.push({ k, l: FACE_W[k] }); });
+  it.push({ k: 'action', l: ACT[c.action].ing });
+  return it;
+}
+const CNT = [
+  { k: 'bh', l: 'errori be / have got', t: 'He has tall · She is long hair · He\'s got bald' },
+  { k: 'pc', l: 'errori present continuous', t: 'manca is / -ing: he reading, she read' },
+  { k: 'gq', l: 'domande guida', t: 'quante volte hai dovuto chiedere tu' },
+  { k: 'it', l: 'parole in italiano', t: 'ricorre all\'italiano' },
+];
+const PRON = ['moustache', 'beard', 'eyebrows', 'height', 'weight', 'overweight', 'middle-aged', 'young', 'curly', 'wavy', 'straight', 'blonde', 'grey', 'freckles', 'glasses', 'braces', 'bald', '-ing'];
+const ckNew = () => ({ items: {}, order: 0, cnt: { bh: 0, pc: 0, gq: 0, it: 0 }, pr: {} });
+let ck = ckNew();
+
+// ── griglia /16 ──
+const RUBRIC = [
+  { name: 'Comunicazione', max: 4, d: {
+    4: 'Descrive la persona in autonomia e in modo completo (età, altezza, corporatura, capelli, viso e azione), senza domande guida; risponde con sicurezza alle domande extra. Il messaggio arriva sempre chiaro.',
+    3: 'Descrizione chiara con al massimo una domanda guida; risponde alle domande extra, a volte con brevi esitazioni.',
+    2: 'Descrizione essenziale che richiede più domande guida (2–3); il messaggio si capisce nel complesso.',
+    1: 'Frasi isolate o parole singole, solo con supporto continuo (4 o più domande guida).',
+    0: 'Non comunica.' } },
+  { name: 'Lessico (descrizione fisica e azioni)', max: 4, d: {
+    4: 'Dice giusti almeno l\'80% dei tratti della persona (età, altezza, corporatura, capelli, viso) e l\'azione, senza parole sbagliate.',
+    3: 'Dice giusti almeno il 60% dei tratti, con al massimo una parola sbagliata (es. long al posto di medium-length).',
+    2: 'Dice giusti almeno il 40% dei tratti, oppure sbaglia due parole.',
+    1: 'Dice giusti meno del 40% dei tratti, oppure sbaglia più di due parole; ricorre all\'italiano.',
+    0: 'Non produce lessico pertinente.' } },
+  { name: 'Grammatica (be / have got, ordine degli aggettivi, present continuous)', max: 4, d: {
+    4: 'Sempre corretto: he\'s tall / he\'s got short hair (mai «he has tall» o «she is long hair»), capelli nell\'ordine length → type → colour, azione con is + -ing.',
+    3: 'Un solo errore isolato, anche se lo corregge da solo.',
+    2: 'Due o tre errori (be / have got scambiati, ordine degli aggettivi, manca is o -ing).',
+    1: 'Errori frequenti (quattro o più); usa le strutture solo se guidato.',
+    0: 'Non usa le strutture.' } },
+  { name: 'Pronuncia e fluenza', max: 4, d: {
+    4: 'Pronuncia chiara (moustache, beard, height, weight, curly, middle-aged…), ritmo scorrevole con pause naturali; al massimo un errore o un\'esitazione isolati.',
+    3: 'Pronuncia chiara con due o tre errori; qualche breve esitazione.',
+    2: 'Pronuncia comprensibile con errori ricorrenti (quattro o più); esitazioni frequenti ma non bloccanti.',
+    1: 'Molte pause e ripartenze; la pronuncia a volte rende difficile capire.',
+    0: 'Si blocca o risulta incomprensibile.' } },
+];
+const RUB_MAX = RUBRIC.reduce((s, r) => s + r.max, 0);   // 16
+const CONV = { 5: 4.5, 6: 5, 7: 5.5, 8: 6, 9: 6.5, 10: 7, 11: 7.5, 12: 8, 13: 8.5, 14: 9, 15: 9.5, 16: 10 };
+const CONV_MIN = 5;
+const voto = t => String(t < CONV_MIN ? 4 : CONV[t]).replace('.', ',');
+const GRID = { id: 'g_1795910400000_0', ver: 1, nome: 'Oral test · Guess Who? — physical descriptions (2ª)',
+  aree: RUBRIC.map(r => ({ nome: r.name, max: r.max, descrittori: Object.keys(r.d).map(Number).sort((a, b) => b - a).map(pt => ({ pt, testo: r.d[pt] })) })),
+  conversione_voto: Object.fromEntries(Array.from({ length: RUB_MAX + 1 }, (_, t) => [t, t < CONV_MIN ? 4 : CONV[t]])) };
+const rub = {}, rubManual = {};
+const rubDone = () => RUBRIC.every((r, i) => rub[i] !== undefined);
+const rubTot = () => RUBRIC.reduce((s, r, i) => s + (rub[i] || 0), 0);
+const GKEY = 'gw_voti';
+function loadGrades() { try { return JSON.parse(localStorage.getItem(GKEY)) || []; } catch (e) { return []; } }
+function storeGrades(g) { try { localStorage.setItem(GKEY, JSON.stringify(g)); } catch (e) {} }
+
+// punteggi suggeriti dalle spunte (il docente può sempre cambiarli)
+function hints() {
+  const c = state.oral.c; if (!c) return {};
+  const items = oralItems(c), vals = items.map(x => ck.items[x.k] || 0);
+  const ok = vals.filter(v => v === 1).length, bad = vals.filter(v => v === 2).length + ck.cnt.it;
+  if (!ok && !bad) return {};
+  const pct = ok / items.length;
+  const h = {};
+  h[1] = pct >= 0.8 && bad === 0 ? 4 : pct >= 0.6 && bad <= 1 ? 3 : pct >= 0.4 && bad <= 2 ? 2 : 1;
+  const ge = ck.cnt.bh + ck.cnt.pc + (ck.order === 2 ? 1 : 0);
+  h[2] = ge === 0 ? 4 : ge === 1 ? 3 : ge <= 3 ? 2 : 1;
+  const gq = ck.cnt.gq;
+  h[0] = gq === 0 ? 4 : gq === 1 ? 3 : gq <= 3 ? 2 : 1;
+  const pe = Object.values(ck.pr).reduce((s, v) => s + v, 0);
+  h[3] = pe <= 1 ? 4 : pe <= 3 ? 3 : pe <= 5 ? 2 : 1;
+  return h;
+}
+function applyHints() { const h = hints(); Object.keys(h).forEach(i => { if (!rubManual[i]) rub[i] = h[i]; }); }
+function composeNote() {
+  const c = state.oral.c; if (!c) return '';
+  const items = oralItems(c);
+  const okL = items.filter(x => ck.items[x.k] === 1).map(x => x.l), badL = items.filter(x => ck.items[x.k] === 2).map(x => x.l);
+  const parts = [];
+  if (okL.length || badL.length) {
+    parts.push(`Persona: ${c.name}`);
+    if (okL.length) parts.push(`Detto bene: ${okL.join(', ')}`);
+    if (badL.length) parts.push(`Parola sbagliata: ${badL.join(', ')}`);
+    const miss = items.filter(x => !ck.items[x.k]).map(x => x.l);
+    if (miss.length) parts.push(`Non detto: ${miss.join(', ')}`);
+  }
+  if (ck.order === 2) parts.push('Ordine degli aggettivi dei capelli sbagliato (length → type → colour)');
+  CNT.forEach(x => { if (ck.cnt[x.k]) parts.push(`${cap1(x.l)}: ${ck.cnt[x.k]}`); });
+  const prs = Object.keys(ck.pr).filter(k => ck.pr[k]).map(k => ck.pr[k] > 1 ? `${k} ×${ck.pr[k]}` : k);
+  if (prs.length) parts.push(`Pronuncia: ${prs.join(', ')}`);
+  const imp = twOpen() ? tw('t-note').value.trim() : '';
+  if (imp) parts.push(`Impressioni: ${imp}`);
+  return parts.join(' | ');
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  FINESTRA DOCENTE (secondo schermo): Guess Who e Oral test
+// ══════════════════════════════════════════════════════════════════
+let teacherWin = null;
+const TEACHER_HTML = `<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>Finestra docente – Guess Who?</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}
+body{margin:0;font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',sans-serif;background:#0f141f;color:#eef2f8;padding:18px 20px 40px;font-size:14px}
+h1{font-size:15px;margin:0 0 4px;color:#ffb547;letter-spacing:.04em;text-transform:uppercase}
+h2{font-size:12px;color:#97a3bd;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:18px 0 8px}
+.sub{color:#97a3bd;font-size:12.5px;margin-bottom:10px;line-height:1.45}
+.bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+button{font-family:inherit;font-size:13px;font-weight:700;border:1px solid rgba(255,255,255,.12);background:#1a2234;color:#eef2f8;padding:7px 11px;border-radius:9px;cursor:pointer}
+button:hover{border-color:#3ec6ff}button.pri{background:#3ec6ff;color:#06131c;border-color:transparent}button.or{background:#ffb547;color:#1d1300;border-color:transparent}button.pink{background:#ff5d8f;color:#fff;border-color:transparent}button.ok{background:#06d6a0;color:#032;border-color:transparent}
+button.on{outline:2px solid #ffd166}button.used{opacity:.4}button:disabled{opacity:.3;cursor:default}
+.sec{display:flex;gap:14px;align-items:center;background:#161e2e;border:1px solid rgba(255,209,102,.35);border-radius:14px;padding:10px 12px}
+.sec svg{width:120px;height:120px;background:#f4f7fb;border-radius:12px;flex:none}
+.sec .nm{font-size:26px;font-weight:900;color:#ffd166}.sec .lb{font-size:11px;color:#97a3bd;text-transform:uppercase;letter-spacing:.08em}.sec .ds{font-size:13.5px;color:#cfd8e6;margin-top:4px;line-height:1.45}
+.turn{font-size:16px;margin:12px 0 6px}.turn b{color:#ffd166}
+.cat{margin:8px 0}.cat .cl{font-size:12px;color:#97a3bd;font-weight:700;margin-bottom:4px}
+.cat button{font-size:12.5px;padding:6px 9px;margin:0 4px 4px 0}
+.gs button{margin:0 4px 4px 0}.gs button.sec2{border-color:#ffd166}
+.teams{display:grid;grid-template-columns:1fr 1fr;gap:8px}.tm{display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:#161e2e;border-radius:10px;padding:6px}.tm .mem{flex-basis:100%;font-size:12.5px;color:#cfd8e6;line-height:1.5;padding:0 4px}.tm .mem b{color:#ffd166;font-size:inherit;min-width:0}.stu{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 10px}.stu button{font-size:12px;padding:4px 8px;font-weight:600}.stu button i{font-style:normal;font-weight:900;margin-left:5px;padding:0 5px;border-radius:5px;color:#111}.stu button.ab{opacity:.45;text-decoration:line-through}.t0 i{background:#ffd166}.t1 i{background:#3ec6ff}.t2 i{background:#06d6a0}.t3 i{background:#ff8fbf}.t4 i{background:#c39bff}.t5 i{background:#ff9f5a}
+.tm input{flex:1;min-width:0}.tm b{font-size:22px;color:#ffd166;min-width:34px;text-align:center}
+.bonus{background:rgba(255,209,102,.12);border:1px solid rgba(255,209,102,.5);border-radius:12px;padding:10px 12px;margin-top:10px}
+.tmr{display:flex;align-items:center;gap:10px;margin:4px 0 12px;padding:10px 12px;border-radius:12px;background:#161e2e;border:1px solid rgba(255,255,255,.1);flex-wrap:wrap}
+.tv{font-size:44px;font-weight:900;line-height:1;min-width:120px;font-variant-numeric:tabular-nums}.tv.run{color:#06d6a0}.tv.warn{color:#ffd166}.tv.over{color:#ff4d6d}.tl{color:#97a3bd;font-size:12.5px}
+.model{background:#161e2e;border-left:3px solid #06d6a0;border-radius:0 10px 10px 0;padding:10px 12px;font-size:15px;line-height:1.55}
+.oq{display:flex;gap:8px;align-items:flex-start;margin:4px 0}.oq button{flex:none;font-size:12.5px;padding:5px 9px;text-align:left}.oq .a{color:#7cf0b0;font-size:13px;padding-top:5px}
+.ck{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:5px}
+.cy{padding:6px 9px;font-size:13px;border-radius:8px;text-align:left}
+.cy.ok{background:rgba(47,191,113,.28);color:#7cf0b0;border-color:transparent}.cy.no{background:rgba(239,68,68,.22);color:#ff9a9a;border-color:transparent}.cy.n{opacity:.75}
+.cnts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.cnt{display:inline-flex;align-items:center;gap:5px;background:#161e2e;border:1px solid rgba(255,255,255,.1);border-radius:9px;padding:3px 4px 3px 9px;font-size:12.5px}
+.cnt b{min-width:16px;text-align:center;color:#ffd166}.cnt button{padding:2px 8px;font-size:13px}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}.chips button{font-size:12px;padding:4px 8px;font-weight:600;opacity:.78}.chips button.on{opacity:1;background:#e63e62;color:#fff;border-color:transparent;outline:none}
+.fields{display:grid;grid-template-columns:2fr 1fr;gap:8px}
+input,textarea{width:100%;background:#1a2234;border:1px solid rgba(255,255,255,.12);color:#eef2f8;font-family:inherit;font-size:14px;padding:8px 10px;border-radius:9px}input:focus,textarea:focus{outline:none;border-color:#3ec6ff}
+.r{padding:9px 0;border-bottom:1px dashed rgba(255,255,255,.1)}.rh{display:flex;align-items:center;gap:8px}.rn{flex:1;font-weight:700}.rn small{color:#97a3bd;font-weight:500}
+.pts{display:flex;gap:4px}.pts button{width:32px;height:32px;padding:0;border-radius:8px}.pts button.on{background:#ffd166;color:#1a1300;border-color:transparent;outline:none}
+.rd{font-size:12.5px;color:#c9d2e2;margin-top:5px;line-height:1.45}
+.auto{font-size:11px;font-weight:700;color:#ffd166;background:rgba(255,209,102,.12);border:1px solid rgba(255,209,102,.35);border-radius:6px;padding:1px 6px;margin-left:4px}
+.tot{display:flex;align-items:baseline;gap:12px;margin:12px 0 8px}.tot .v{font-size:40px;font-weight:900;color:#ffd166;line-height:1}.tot .p{color:#97a3bd}
+.msg{min-height:18px;font-weight:700;color:#06d6a0;margin-top:6px}
+.link{min-height:16px;font-size:12.5px;color:#97a3bd;margin:2px 0 4px}.link.ok{color:#06d6a0}.link.err{color:#ffb547}
+table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}table.sv td,table.sv th{text-align:left;padding:5px;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}table.sv th{color:#97a3bd;font-size:11px;text-transform:uppercase}td.v{font-weight:800;color:#ffd166}
+.x{background:none;border:none;color:#97a3bd;padding:0 4px}.empty{color:#97a3bd;font-style:italic}
+</style></head><body>
+<h1>🖥️ Finestra docente · ${THEME.title}</h1>
+<div id="t-game">
+  <div class="sub">Tienila sul tuo schermo: alla LIM si vedono solo il tabellone, le domande e le risposte.</div>
+  <div class="sec" id="t-sec"></div>
+  <div class="turn" id="t-turn"></div>
+  <div class="bar"><button class="or" data-act="wrongq" title="Domanda formulata male: niente risposta, il turno passa">✗ Domanda sbagliata · passa il turno</button><button data-act="undo" title="Annulla l'ultima risposta (clic sbagliato)">↩ Annulla l'ultima</button></div>
+  <div class="bar" style="margin-top:8px">Pronome nella domanda: <button data-act="pron" data-v="he" id="t-pron-he">he</button><button data-act="pron" data-v="she" id="t-pron-she">she</button><label style="margin-left:10px;display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="t-tts" style="width:auto"> 🔊 Leggi domanda e risposta alla LIM</label></div>
+  <div class="bar" style="margin-top:8px">Carte: <button data-act="auto" data-v="1" id="t-auto1" title="Dopo ogni risposta si abbassano da sole quelle che non c'entrano">⚙️ Si abbassano da sole</button><button data-act="auto" data-v="0" id="t-auto0" title="Dopo la risposta i ragazzi dicono chi togliere e le abbassi tu">✋ Le abbasso io</button></div>
+  <div class="sub" style="margin-top:6px">Clicca la domanda che ha fatto la squadra (se è corretta): la LIM mostra la risposta breve e abbassa da sola chi non c'entra. Il pronome segue la domanda dei ragazzi e si fissa da solo quando restano solo maschi o solo femmine.</div>
+  <h2>Domande sì / no</h2><div id="t-feats"></div>
+  <h2>❓ Tentativo <span style="text-transform:none;letter-spacing:0;font-weight:500">(★ = il personaggio segreto)</span></h2><div class="gs" id="t-guess"></div>
+  <div id="t-manual"></div>
+  <div id="t-bonus"></div>
+  <h2>Squadre</h2>
+  <div class="bar" style="margin-bottom:8px">Quante squadre? <span id="t-nteams"></span></div>
+  <div class="bar" style="margin-bottom:6px">👥 Classe: <select id="t-gcls" style="font:inherit;font-size:13px;padding:6px 8px;border-radius:8px;background:#1a2234;color:#eef2f8;border:1px solid rgba(255,255,255,.2)"></select><button class="pri" data-act="deal" title="Distribuisce a caso nelle squadre tutti gli alunni presenti">🎲 Squadre a caso</button></div>
+  <div id="t-roster"></div>
+  <div class="teams" id="t-teams"></div>
+  <div class="bar" style="margin-top:10px"><button class="pri" data-act="newround">🎲 Nuovo round</button><button data-act="turn" title="Passa il turno alla squadra successiva">⇄ Squadra successiva</button><button data-act="resetscores">↺ Azzera i punteggi</button></div>
+  <div class="sub" style="margin-top:8px">Punti: chi indovina prende <b>10 punti meno uno per ogni domanda</b> già fatta nel round (anche i tentativi sbagliati), almeno 2 · descrizione completa e corretta del personaggio (${esc(THEME.bonusRule)}) → <b>+2</b>. Domanda sbagliata o tentativo sbagliato: il turno passa alla squadra successiva. A ogni round inizia una squadra diversa.</div>
+</div>
+<div id="t-oral" hidden>
+  <div class="tmr"><span class="tv" id="t-timer">3:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia 3:00</button><button data-act="treset" title="Azzera">↺</button><span class="tl" id="t-tlbl"></span></div>
+  <div class="sec" id="t-osec"></div>
+  <div class="bar" style="margin-top:8px"><button class="or" data-act="newperson">🎲 Nuova persona alla LIM</button></div>
+  <h2>Descrizione modello</h2><div class="model" id="t-model"></div>
+  <h2>❓ Domande extra <span style="text-transform:none;letter-spacing:0;font-weight:500">(clic = la domanda va alla LIM)</span></h2><div id="t-oqs"></div>
+  <h2>✅ Cosa dice <span style="text-transform:none;letter-spacing:0;font-weight:500">(clic: — → ✓ giusto → ✗ parola sbagliata)</span></h2>
+  <div class="ck" id="t-ck"></div>
+  <div class="cnts" id="t-cnt"></div>
+  <h2>🔊 Pronuncia <span style="text-transform:none;letter-spacing:0;font-weight:500">(un clic = sbagliata, di nuovo = ×2, poi si toglie)</span></h2><div class="chips" id="t-pr"></div>
+  <h2>📝 Impressioni</h2><textarea id="t-note" rows="2" placeholder="Impressioni, note generali sull'alunno…" autocomplete="off"></textarea>
+  <h2>Valutazione · /16</h2>
+  <div class="fields"><input id="t-name" placeholder="Nome dello studente" autocomplete="off"><input id="t-class" placeholder="Classe (es. 2C)" autocomplete="off"></div>
+  <div id="t-rub"></div>
+  <div class="link" id="t-link">🔗 I punteggi vanno anche nella LIVE di MyClass, se è aperta su questo computer.</div>
+  <div class="tot"><span class="v" id="t-voto">–</span><span class="p" id="t-pts">Scegli un punteggio per ogni area</span></div>
+  <div class="sub">Le spunte propongono i punteggi (✨ suggerito): cliccandone uno lo scegli tu. Spunte, contatori, pronuncia e impressioni vanno nella nota del voto e nel promemoria di MyClass.</div>
+  <div class="bar" style="margin-top:10px"><button class="pink" data-act="save">💾 Salva e prossimo</button><button data-act="reset">↺ Azzera</button></div>
+  <div class="msg" id="t-msg"></div>
+  <h2>Voti salvati</h2>
+  <div class="bar"><button data-act="copy">📋 Copia elenco</button><button data-rv="open" title="Rivedi alunno per alunno le valutazioni di questa attività (anche i promemoria di MyClass)">♻️ Rivedi / correggi</button><button data-act="clear">🗑 Svuota</button></div>
+  <div id="t-riv"></div>
+  <div id="t-saved"></div>
+</div>
+</body></html>`;
+
+const twOpen = () => teacherWin && !teacherWin.closed && teacherWin.document.getElementById('t-game');
+const tw = id => teacherWin.document.getElementById(id);
+function openTeacherWin() {
+  if (state.mode === 'home') return;
+  if (twOpen()) { teacherWin.focus(); renderTW(); return; }
+  teacherWin = window.open('', 'gw_teacher', 'popup,width=680,height=880');
+  if (!teacherWin) { alert('Il browser ha bloccato la finestra. Consenti i pop-up per questa pagina e riprova.'); return; }
+  const d = teacherWin.document; d.open(); d.write(TEACHER_HTML); d.close();
+  if (window.DrillZoom) DrillZoom.attach(d);
+  d.addEventListener('click', onTeacherClick);
+  d.addEventListener('focusin', e => { if (e.target.id === 't-name') nameFocus = e.target.value.trim(); });
+  d.addEventListener('change', e => {
+    const id = e.target.id;
+    if (id === 't-tts') G.tts = e.target.checked;
+    else if (id === 't-gcls') selectClass(e.target.value);
+    else if (/^t-team\d$/.test(id)) { const t = +id.slice(-1); G.teams[t] = e.target.value.trim() || defName(t); saveTeams(); renderGame(); renderTW(); }
+    else if (id === 't-name') { onNameChanged(e.target); pushLive(); }
+    else if (id === 't-class' || id === 't-note') pushLive();
+  });
+  if (review) review.bind();
+  renderTW(); renderTimer();
+  if (liveFollow) liveFollow.start();
+  if (window.MyClassLive && MyClassLive.request) MyClassLive.request('grid', { grid: GRID }, () => {});
+  renderGame();
+  moveTeacherWinToOtherScreen();
+}
+async function moveTeacherWinToOtherScreen() {
+  try {
+    if (!('getScreenDetails' in window)) return;
+    const sd = await window.getScreenDetails(); const other = sd.screens.find(x => x !== sd.currentScreen);
+    if (!other || !teacherWin || teacherWin.closed) return;
+    teacherWin.moveTo(other.availLeft + 30, other.availTop + 30); teacherWin.resizeTo(Math.min(720, other.availWidth - 60), other.availHeight - 60);
+  } catch (e) {}
+}
+// Segue la LIVE di MyClass: stato del collegamento e alunno selezionato (myclass-live-link.js)
+const liveFollow = window.MyClassLive && MyClassLive.follow && MyClassLive.follow(() => twOpen() && state.mode === 'oral' ? teacherWin.document : null, { nameId: 't-name', classId: 't-class',
+  onStudent: n => twMsg((autoMsg && Date.now() - autoMsg.t < 2000 ? autoMsg.s + ' · ' : '') + '👤 Dalla LIVE: ' + n),
+  beforeChange: (prev, next) => switchStudent(prev, next, false), savedToday: () => loadGrades().filter(g => g.date === new Date().toLocaleDateString('it-IT')).map(g => g.name) });
+// ♻️ Rivedi / correggi: valutazioni salvate qui e promemoria di MyClass, nota e punteggi correggibili
+const review = window.MyClassLive && MyClassLive.review && MyClassLive.review({ getDoc: () => twOpen() ? teacherWin.document : null, boxId: 't-riv', grid: GRID, loadGrades, localOk: g => +g.max === RUB_MAX, storeGrades, voto: t => voto(t), onLocalSaved: () => renderTeacherSaved() });
+
+function renderTW() {
+  if (!twOpen()) return;
+  const oral = state.mode === 'oral';
+  tw('t-game').hidden = oral; tw('t-oral').hidden = !oral;
+  teacherWin.document.title = (oral ? 'Finestra docente – Oral test · ' : 'Finestra docente – ') + THEME.title;
+  if (oral) renderTWOral(); else renderTWGame();
+}
+function renderTWGame() {
+  const s = secretC();
+  if (!s) { tw('t-sec').innerHTML = '<div class="empty">Premi 🎲 Nuovo round.</div>'; return; }
+  const up = state.board.length - state.down.size;
+  tw('t-sec').innerHTML = `${svgHead(s)}<div><div class="lb">Personaggio segreto · round ${G.round}</div><div class="nm">★ ${esc(s.name)}</div><div class="ds">${esc(describe(s))}</div><div class="ds" style="color:#97a3bd">In piedi: ${up} su ${state.board.length} · domande: ${G.qc}</div></div>`;
+  tw('t-turn').innerHTML = G.won ? `🎉 Round vinto da <b>${esc(teamName(G.winner))}</b>` : `Tocca a: <b>${esc(teamName(G.turn))}</b>${askerName(G.turn) ? ` — <b>${esc(askerName(G.turn))}</b>` : ''}`;
+  tw('t-pron-he').classList.toggle('on', G.pron === 'he'); tw('t-pron-she').classList.toggle('on', G.pron === 'she');
+  tw('t-tts').checked = G.tts;
+  tw('t-auto1').classList.toggle('on', G.autoFlip); tw('t-auto0').classList.toggle('on', !G.autoFlip);
+  tw('t-feats').innerHTML = THEME.cats.map(cat => `<div class="cat"><div class="cl">${THEME.catLbl[cat]}</div>${state.feats.filter(f => f.cat === cat).map(f => `<button data-act="ask" data-id="${f.id}" class="${G.asked.includes(f.id) ? 'used' : ''}" ${G.won ? 'disabled' : ''}>${esc(questionText(f, G.pron))}</button>`).join('')}</div>`).join('');
+  tw('t-guess').innerHTML = state.board.map((c, i) => state.down.has(i) ? '' : `<button data-act="guess" data-i="${i}" class="${i === state.secret ? 'sec2' : ''}" ${G.won ? 'disabled' : ''}>${i === state.secret ? '★ ' : ''}${esc(THEME.guessQ(c))}</button>`).join('');
+  // carte a mano: i ragazzi dicono chi togliere, tu clicchi (oppure tocchi la carta alla LIM)
+  tw('t-manual').innerHTML = G.autoFlip ? '' : `<h2>✋ Abbassa / rialza <span style="text-transform:none;letter-spacing:0;font-weight:500">(un clic qui o sulla carta alla LIM)</span></h2><div class="gs">${state.board.map((c, i) => `<button data-act="flip" data-i="${i}" class="${state.down.has(i) ? 'used' : ''}" title="${state.down.has(i) ? 'Rialza' : 'Abbassa'}">${state.down.has(i) ? '⬆️' : '⬇️'} ${i === state.secret ? '★ ' : ''}${esc(c.name)}</button>`).join('')}</div>`;
+  tw('t-bonus').innerHTML = G.won && G.bonus === 'pending' ? `<div class="bonus"><b>⭐ Bonus:</b> ${G.describer ? `<b style="color:#ffd166">${esc(dispOf(G.describer))}</b> (${esc(teamName(G.winner))})` : esc(teamName(G.winner))} descrive ${esc(s.name)}.${(G.lineup[G.winner] || []).length > 1 ? ' <button data-act="redraw" title="Estrai un altro alunno della squadra">🎲 Un altro</button>' : ''} Completa e corretta (${esc(THEME.bonusRule)})? <div class="bar" style="margin-top:8px"><button class="ok" data-act="bonus" data-v="1">⭐ Sì, +2</button><button data-act="bonus" data-v="0">✗ No</button><button class="pri" data-act="newround">🎲 Nuovo round</button></div></div>`
+    : G.won ? `<div class="bonus">${G.bonus === 'yes' ? '⭐ Bonus dato (+2).' : 'Nessun bonus.'} <button class="pri" data-act="newround" style="margin-left:8px">🎲 Nuovo round</button></div>` : '';
+  tw('t-nteams').innerHTML = [2, 3, 4, 5, 6].map(n => `<button data-act="nteams" data-n="${n}" class="${nTeams() === n ? 'on' : ''}">${n}</button>`).join('');
+  // classe e alunni
+  const classes = gwClasses(), sel = tw('t-gcls');
+  sel.innerHTML = `<option value="">— nessuna classe (solo nomi delle squadre) —</option>` + classes.map(c => `<option value="${esc(c.nome)}" ${c.nome === G.cls ? 'selected' : ''}>${esc(c.nome)} (${c.studenti.length})</option>`).join('');
+  const co = classObj(), ab = new Set(G.absent || []);
+  tw('t-roster').innerHTML = !classes.length ? '<div class="sub">👥 Nessun elenco di classi in questo browser: apri MyClass almeno una volta su questo computer (o importa l\'elenco in un torneo VocabDuel con 📂 Importa da MyClass).</div>'
+    : !co ? '<div class="sub">Scegli la classe: poi 🎲 Squadre a caso, oppure un clic sugli alunni per metterli in squadra.</div>'
+    : `<div class="sub" style="margin:0">Clic su un alunno: squadra ${G.teams.map((n, t) => 'ABCDEF'[t]).join(' → ')} → assente. ${co.studenti.filter(s => teamOf(s.k) < 0 && !ab.has(s.k)).length ? `<b style="color:#ffb547">${co.studenti.filter(s => teamOf(s.k) < 0 && !ab.has(s.k)).length} senza squadra</b>` : ''}</div><div class="stu">${co.studenti.map(s => { const t = teamOf(s.k); return `<button data-act="stu" data-k="${esc(s.k)}" class="${t >= 0 ? 't' + t : ab.has(s.k) ? 'ab' : ''}" title="${esc(s.k)}">${esc(s.d)}${t >= 0 ? `<i>${'ABCDEF'[t]}</i>` : ''}</button>`; }).join('')}</div>`;
+  const box = tw('t-teams');
+  if (+box.dataset.n !== nTeams()) {   // si ridisegna solo se cambia il numero: chi sta scrivendo un nome non perde il cursore
+    box.dataset.n = nTeams();
+    box.innerHTML = G.teams.map((n, t) => `<div class="tm"><input id="t-team${t}" autocomplete="off" aria-label="Nome squadra ${t + 1}"><button data-act="sc" data-t="${t}" data-d="-1">−</button><b id="t-sc${t}">0</b><button data-act="sc" data-t="${t}" data-d="1">+</button><div class="mem" id="t-mem${t}"></div></div>`).join('');
+  }
+  G.teams.forEach((n, t) => { const el = tw('t-team' + t); if (teacherWin.document.activeElement !== el) el.value = teamName(t); tw('t-sc' + t).textContent = G.score[t]; tw('t-sc' + t).parentElement.style.outline = !G.won && G.turn === t ? '2px solid #ffd166' : '';
+    const L = G.lineup[t] || [], cur = asker(t);
+    tw('t-mem' + t).innerHTML = L.length ? L.map(k => k === cur ? `<b>▶ ${esc(dispOf(k))}</b>` : esc(dispOf(k))).join(' · ') : (G.cls ? '<i style="opacity:.6">nessun alunno</i>' : ''); });
+}
+function renderTWOral() {
+  const c = state.oral.c; if (!c) return;
+  tw('t-osec').innerHTML = `${svgHead(c)}<div><div class="lb">Alla LIM</div><div class="nm">${esc(c.name)}</div><div class="ds">${esc(nounPhrase(c))} · ${esc(ACT[c.action].ing)}</div></div>`;
+  tw('t-model').textContent = describe(c);
+  const Q = oralQuestions(c);
+  tw('t-oqs').innerHTML = Q.map((x, i) => `<div class="oq"><button data-act="oq" data-i="${i}" class="${state.oral.q && state.oral.q.i === i ? 'on' : ''}">${esc(x.q)}</button><span class="a">${esc(x.a)}</span></div>`).join('');
+  const items = oralItems(c);
+  const cy = (v, lbl, act, data) => `<button class="cy ${v === 1 ? 'ok' : v === 2 ? 'no' : 'n'}" data-act="${act}" ${data}>${v === 1 ? '✓ ' : v === 2 ? '✗ ' : '— '}${esc(lbl)}</button>`;
+  let h = items.map(x => cy(ck.items[x.k] || 0, x.l, 'ck', `data-k="${x.k}"`)).join('');
+  if (!c.bald) h += cy(ck.order, ck.order === 2 ? 'ordine aggettivi sbagliato' : ck.order === 1 ? 'ordine aggettivi giusto' : 'ordine aggettivi (length → type → colour)', 'order', '');
+  tw('t-ck').innerHTML = h;
+  tw('t-cnt').innerHTML = CNT.map(x => `<span class="cnt" title="${esc(x.t)}">${esc(x.l)} <button data-act="cnt" data-k="${x.k}" data-d="-1">−</button><b>${ck.cnt[x.k]}</b><button data-act="cnt" data-k="${x.k}" data-d="1">+</button></span>`).join('');
+  tw('t-pr').innerHTML = PRON.map(w => `<button data-act="pr" data-w="${w}" class="${ck.pr[w] ? 'on' : ''}">${esc(w)}${ck.pr[w] > 1 ? ' ×' + ck.pr[w] : ''}</button>`).join('');
+  renderTeacherRubric(); renderTeacherSaved();
+}
+function renderTeacherRubric() {
+  if (!twOpen() || state.mode !== 'oral') return;
+  applyHints();
+  const hh = hints();
+  tw('t-rub').innerHTML = GRID.aree.map((a, i) => `<div class="r"><div class="rh"><div class="rn">${esc(a.nome)} <small>/ ${a.max}</small>${!rubManual[i] && hh[i] !== undefined ? ' <span class="auto">✨ suggerito</span>' : ''}</div><div class="pts">${a.descrittori.map(d => `<button class="${rub[i] === d.pt ? 'on' : ''}" data-act="pt" data-r="${i}" data-v="${d.pt}" title="${esc(d.testo)}">${d.pt}</button>`).join('')}</div></div>${rub[i] !== undefined ? `<div class="rd">${esc(a.descrittori.find(d => d.pt === rub[i]).testo)}</div>` : ''}</div>`).join('');
+  tw('t-voto').textContent = rubDone() ? voto(rubTot()) : '–';
+  tw('t-pts').textContent = rubDone() ? `${rubTot()} / ${RUB_MAX} punti` : 'Scegli un punteggio per ogni area';
+}
+function renderTeacherSaved() {
+  if (!twOpen()) return;
+  const g = loadGrades();
+  tw('t-saved').innerHTML = g.length ? `<table class="sv"><tr><th>Data</th><th>Cl.</th><th>Studente</th><th>Voto</th><th>C-L-G-P</th><th>Persona</th><th>Tempo</th><th></th></tr>${g.map((x, i) => `<tr><td>${esc(x.date)}</td><td>${esc(x.cls)}</td><td>${esc(x.name)}${x.note ? `<br><small>${esc(x.note)}</small>` : ''}</td><td class="v">${esc(x.voto)}</td><td>${esc(x.det)} <small>/${x.max}</small></td><td>${esc(x.persona || '')}</td><td>${esc(x.tempo || '')}</td><td><button class="x" data-act="del" data-i="${i}" title="Elimina">✕</button></td></tr>`).reverse().join('')}</table>` : '<div class="empty">Nessun voto salvato.</div>';
+}
+function twMsg(t) { if (!twOpen()) return; tw('t-msg').textContent = t; clearTimeout(twMsg.t); twMsg.t = setTimeout(() => { if (twOpen()) tw('t-msg').textContent = ''; }, 2600); }
+
+function onTeacherClick(e) {
+  const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+  const act = b.dataset.act;
+  // Guess Who
+  if (act === 'ask') askFeature(b.dataset.id);
+  else if (act === 'wrongq') wrongQuestion();
+  else if (act === 'undo') undo();
+  else if (act === 'pron') { G.pron = b.dataset.v; renderTW(); }
+  else if (act === 'auto') setAutoFlip(b.dataset.v === '1');
+  else if (act === 'flip') toggleDown(+b.dataset.i);
+  else if (act === 'guess') guess(+b.dataset.i);
+  else if (act === 'bonus') setBonus(b.dataset.v === '1');
+  else if (act === 'sc') { G.score[+b.dataset.t] = Math.max(0, G.score[+b.dataset.t] + +b.dataset.d); renderGame(); renderTW(); }
+  else if (act === 'newround') newRound();
+  else if (act === 'turn') { if (!G.won) { G.turn = nextTeam(); renderGame(); renderTW(); } }
+  else if (act === 'nteams') setTeamCount(+b.dataset.n);
+  else if (act === 'deal') { if (!classObj()) { teacherWin.alert('Scegli prima la classe.'); return; } if (G.lineup.some(t => t.length) && !teacherWin.confirm('Rifare le squadre a caso? Quelle di adesso si perdono.')) return; dealTeams(); }
+  else if (act === 'stu') cycleStudent(b.dataset.k);
+  else if (act === 'redraw') { G.describer = pickDescriber(G.winner, G.describer); renderGame(); renderTW(); if (state.zoom === state.secret) openZoom(state.secret); }
+  else if (act === 'resetscores') { if (teacherWin.confirm('Azzerare i punteggi di tutte le squadre?')) { G.score = G.teams.map(() => 0); G.round = 0; newRound(); } }
+  // Oral test
+  else if (act === 'timer') timerToggle();
+  else if (act === 'treset') timerReset();
+  else if (act === 'newperson') { newOralPerson(true); renderTW(); pushLive(); }
+  else if (act === 'oq') showOralQ(+b.dataset.i);
+  else if (act === 'ck') { const k = b.dataset.k; ck.items[k] = ((ck.items[k] || 0) + 1) % 3; renderTWOral(); pushLive(); }
+  else if (act === 'order') { ck.order = (ck.order + 1) % 3; renderTWOral(); pushLive(); }
+  else if (act === 'cnt') { const k = b.dataset.k; ck.cnt[k] = Math.max(0, ck.cnt[k] + +b.dataset.d); renderTWOral(); pushLive(); }
+  else if (act === 'pr') { const w = b.dataset.w; ck.pr[w] = ((ck.pr[w] || 0) + 1) % 3; renderTWOral(); pushLive(); }
+  else if (act === 'pt') { const r = +b.dataset.r; rub[r] = +b.dataset.v; rubManual[r] = true; renderTeacherRubric(); pushLive(); }
+  else if (act === 'reset') resetOral();
+  else if (act === 'save') saveGrade();
+  else if (act === 'copy') copyGrades();
+  else if (act === 'clear') { if (teacherWin.confirm('Cancellare tutti i voti salvati su questo computer?')) { storeGrades([]); renderTeacherSaved(); } }
+  else if (act === 'del') { const g = loadGrades(); g.splice(+b.dataset.i, 1); storeGrades(g); renderTeacherSaved(); }
+}
+function resetOral(keepName) {
+  Object.keys(rub).forEach(k => delete rub[k]); Object.keys(rubManual).forEach(k => delete rubManual[k]);
+  ck = ckNew();
+  if (twOpen()) { if (!keepName) tw('t-name').value = ''; tw('t-note').value = ''; }
+  nameFocus = '';
+  renderTW();
+}
+// o.auto: salvataggio automatico al cambio alunno (o.name = l'alunno di prima)
+function saveGrade(o = {}) {
+  const name = o.name || tw('t-name').value.trim();
+  if (!name) { twMsg('✏️ Scrivi il nome dello studente'); tw('t-name').focus(); return; }
+  if (!rubDone()) { twMsg('✏️ Completa tutte le aree della griglia'); return; }
+  const tot = rubTot(), g = loadGrades();
+  g.push({ id: Date.now().toString(36), name, cls: tw('t-class').value.trim(), date: new Date().toLocaleDateString('it-IT'), voto: voto(tot), punti: tot,
+    det: GRID.aree.map((a, i) => rub[i]).join('-'), max: RUB_MAX, persona: state.oral.c ? state.oral.c.name : '', tempo: timerElapsed() ? fmtTime(timerElapsed()) : '–', note: composeNote() });
+  storeGrades(g);
+  pushLive(true, o.auto ? name : '');   // salva il promemoria anche nella LIVE di MyClass
+  autoMsg = o.auto ? { t: Date.now(), s: `💾 ${name} salvato in automatico → ${voto(tot)}` } : null;
+  twMsg(o.auto ? autoMsg.s : `✅ Salvato qui: ${name} → ${voto(tot)}`);
+  timerReset();
+  newOralPerson(true);
+  resetOral(!!o.auto);
+  if (liveFollow && !o.auto) liveFollow.reset();
+}
+// ── Cambio alunno senza aver premuto Salva: si salva da solo quello di prima (myclass-live-link.js) ──
+let autoMsg = null;
+var nameFocus = '';
+const hasEval = () => RUBRIC.some((r, i) => rub[i] !== undefined) || !!composeNote();
+const switchStudent = window.MyClassLive && MyClassLive.switcher ? MyClassLive.switcher({ win: () => teacherWin, hasEval, complete: rubDone,
+  save: n => saveGrade({ name: n, auto: true }), discard: () => { timerReset(); resetOral(true); } }) : () => true;
+function onNameChanged(el) {
+  const prev = nameFocus, next = el.value.trim();
+  nameFocus = next;
+  if (!prev || !next || prev === next) return;
+  if (switchStudent(prev, next, true) === false) { el.value = nameFocus = prev; return; }
+  if (el.value.trim() !== next) el.value = next;
+}
+// ── Punteggi anche nella griglia della LIVE di MyClass (myclass-live-link.js) ──
+function pushLive(save, who) {
+  if (!window.MyClassLive || !twOpen() || state.mode !== 'oral') return;
+  const scores = GRID.aree.map((a, i) => rub[i] === undefined ? null : rub[i]);
+  if (scores.every(v => v === null)) return;
+  const student = who || tw('t-name').value.trim();
+  MyClassLive.send({ grid: GRID, scores, student, cls: tw('t-class').value.trim(), save: !!save, keepSel: !!who, note: composeNote() }, r => {
+    showLive(r);
+    if (save && r && !r.ok && twOpen()) teacherWin.alert(`⚠️ ${student}: voto salvato solo qui, NON in MyClass.\nMyClass: ${r.msg || 'errore'}\n\nPer mandarlo dopo: ♻️ Rivedi / correggi, con MyClass aperta in questo browser.`);
+  });
+}
+function showLive(r) {
+  if (!twOpen()) return;
+  const el = tw('t-link');
+  if (!r) { el.className = 'link'; el.textContent = '⚪ LIVE di MyClass non aperta: i punteggi restano solo qui.'; return; }
+  el.className = 'link ' + (r.ok ? 'ok' : 'err');
+  el.textContent = r.ok ? (r.saved ? `💾 Salvato in MyClass (${r.classe}): ${r.student} — promemoria ${String(r.voto10).replace('.', ',')}/10` : `🔗 Nella LIVE di MyClass (${r.classe}): ${r.student}`) : '⚠️ MyClass: ' + r.msg;
+}
+function copyGrades() {
+  const g = loadGrades();
+  const txt = g.map(x => [x.date, x.cls, x.name, x.voto, x.det, x.persona, x.note].join('\t')).join('\n');
+  const done = () => twMsg(`📋 Copiati ${g.length} voti`);
+  try { teacherWin.navigator.clipboard.writeText(txt).then(done, () => { teacherWin.prompt('Copia da qui:', txt); }); } catch (e) { teacherWin.prompt('Copia da qui:', txt); }
+}
+setInterval(() => { if (state.mode === 'class' && teacherWin && teacherWin.closed) { teacherWin = null; renderGame(); } }, 1500);
+window.addEventListener('beforeunload', () => { try { if (teacherWin && !teacherWin.closed) teacherWin.close(); } catch (e) {} });
+
+// ══════════════════════════════════════════════════════════════════
+//  MODALITÀ E AVVIO (Guess Who e Oral test solo per il docente: PIN, vedi teacher-lock.js)
+// ══════════════════════════════════════════════════════════════════
+const MODE_KEY = THEME.key + '_mode';
+const saved = {};
+function refreshLock() {
+  const ok = TeacherLock.isUnlocked();
+  document.body.classList.toggle('teacher', ok);
+  const b = document.getElementById('lock-btn');
+  b.textContent = ok ? '🔓' : '🔒';
+  b.title = ok ? 'Richiudi l\'area docente: su questo computer si vedrà solo At home' : 'Area docente: sblocca Guess Who e Oral test';
+}
+function toggleLock() {
+  if (TeacherLock.isUnlocked()) { TeacherLock.lock(); refreshLock(); if (state.mode !== 'home') setMode('home'); toast('🔒 Area docente richiusa'); }
+  else TeacherLock.ask(() => { refreshLock(); setMode('class'); });
+}
+function setMode(m) {
+  if (m === 'oral' && !THEME.oral) m = 'class';
+  if (m !== 'home' && !TeacherLock.isUnlocked()) { TeacherLock.ask(() => { refreshLock(); setMode(m); }); return; }
+  const prev = state.mode;
+  state.mode = m;
+  document.body.classList.remove('mode-home', 'mode-class', 'mode-oral');
+  document.body.classList.add('mode-' + m);
+  document.querySelectorAll('#mode-switch [data-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
+  document.getElementById('tw-top').hidden = m === 'home';
+  try { localStorage.setItem(MODE_KEY, m); } catch (e) {}
+  closeZoom(); tapClass();
+  document.getElementById('subtitle').textContent = m === 'oral' ? 'Oral test · describe the person: be, have got, present continuous' : (THEME.subtitle || 'Leggi gli indizi e trova la persona misteriosa');
+  // ogni modalità ha il suo tabellone: tornando al gioco la partita in corso è ancora lì
+  if (prev !== m && state.board.length && prev !== 'oral') saved[prev] = { board: state.board, feats: state.feats, secret: state.secret, down: state.down };
+  if (prev !== m || !state.board.length) {
+    const s = saved[m];
+    if (m !== 'oral' && s) { Object.assign(state, s); renderBoard(); if (m === 'home') renderClues(); }
+    else if (m === 'home') newHome();
+    else if (m === 'class') newRound();
+  }
+  if (m === 'oral') { if (!state.oral.c) newOralPerson(true); renderOral(); renderTimer(); }
+  renderTW(); renderGame(); fitBoard();
+}
+
+(function () { try { const c = localStorage.getItem('gw_cls'); if (c && gwClasses().some(x => x.nome === c)) selectClass(c); } catch (e) {} })();
+(function init() {
+  if (!THEME.oral) document.querySelectorAll('[data-mode=oral]').forEach(b => b.remove());
+  document.getElementById('vocab').innerHTML = (THEME.vocab || VOCAB).map(([h, ws]) => `<h4>${h}</h4><div class="w">${ws.map(w => `<span>${w}</span>`).join('')}</div>`).join('');
+  setTap('zoom');
+  const url = new URLSearchParams(location.search).get('mode');
+  let m = /^(class|classe|game)$/.test(url || '') ? 'class' : /^(oral|test)$/.test(url || '') ? 'oral' : url === 'home' || url === 'casa' ? 'home' : null;
+  if (!m) { try { m = localStorage.getItem(MODE_KEY); } catch (e) {} }
+  refreshLock();
+  state.mode = 'home';
+  setMode(m && m !== 'home' && TeacherLock.isUnlocked() ? m : 'home');
+  if (m && m !== 'home' && url && !TeacherLock.isUnlocked()) setMode(m);   // dal link ?mode=… compare la richiesta del PIN
+})();
+
+</script>
+</body>
+</html>
