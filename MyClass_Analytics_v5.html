@@ -38989,7 +38989,9 @@ Il docente lo importa in MyClass con "📥 Importa da Claude": lì rivede, modif
         // Sposta da bozza ad attivo
         _ppDraftScritto = _ppDraftScritto.filter(x => x.id !== id);
         _ppSavDraftScritto();
-        _ppActiveScritto[item.code] = { studentSafe: item.studentSafe, stuCode: await _mcCodeOf(item.studentSafe), studentName: item.studentName, classeNome: item.classeNome, unit: item.unit, voto: item.voto, lastScore: null, attemptCount: 0, status: 'pending' };
+        _ppActiveScritto[item.code] = { studentSafe: item.studentSafe, stuCode: await _mcCodeOf(item.studentSafe), studentName: item.studentName, classeNome: item.classeNome, unit: item.unit, voto: item.voto, lastScore: null, attemptCount: 0, status: 'pending',
+            // Che piano è: «🔄 Aggiorna dallo storico» toglie da solo solo i piani SCRITTI rimasti senza voto scritto
+            kind: item.soloOrale ? 'orale' : item.misto ? 'misto' : 'scritto', ...(item.soloOrale ? { orale: true } : {}) };
         _ppSavActive();
         // Nuova versione di un piano già inviato: prende il posto del vecchio
         if (item.replaces && item.replaces !== item.code) await _ppRemoveReplaced(item.replaces, item);
@@ -40968,7 +40970,10 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
 
         // 2. Piani già inviati nati da uno scritto che non c'è più (si tolgono solo se il docente conferma)
         for (const [code, a] of Object.entries(_ppActiveScritto)) {
-            if (!a || a.orale || a.status === 'expired') continue;
+            // Solo i piani di cui si SA che sono scritti: quelli inviati prima di questa
+            // distinzione (niente «kind») potevano essere speaking nati da un orale,
+            // e toglierli cancellava da StudentApp piani orali buoni.
+            if (!a || a.orale || a.kind !== 'scritto' || a.status === 'expired') continue;
             const stu = studenteDi(a.classeNome, a.studentSafe);
             if (!stu || ultimoScritto(stu, a.unit) || !ultimoOrale(stu, a.unit)) continue;
             const svolto = (a.attemptCount || 0) > 0 || a.lastScore != null || a.status === 'completed';
