@@ -3672,7 +3672,11 @@ function _obvKey(unit){ return String(unit||'').replace(/[.#$\[\]\/]/g,'_').slic
 // la vecchia chiave della sola unit (prima di questa modifica) vale come una qualsiasi.
 function _obvTipoV(l){ return l.tipo==='interrogazione' || (!l.tipo && /interrog/i.test(l.titolo||'')) ? 'orale' : 'scritto'; }
 function _obvKeyV(u, v){ return _obvKey(u.unit).slice(0,90) + '~' + _obvTipoV(v.l) + '~' + v.l.data; }
-function _obvCompleto(u, e){ return u.items.every(it=>!it.id || e?.r?.[it.id]!=null); }
+// Un obiettivo che ha già un esito (pubblicato dal docente, anche solo per una delle
+// prove) non si autovaluta più; gli altri sì, anche dopo gli esiti parziali.
+function _obvHaEsito(u, it){ return !!(u.esiti && it.s && it.s !== 'np'); }
+function _obvAperti(u){ return u.items.filter(it=>it.id && !_obvHaEsito(u, it)); }
+function _obvCompleto(u, e){ return _obvAperti(u).every(it=>e?.r?.[it.id]!=null); }
 // Verifiche della unit nei prossimi giorni, ognuna con la sua chiave
 function _obvVerifiche(u){
   return (S.lessons||[])
@@ -3684,7 +3688,7 @@ function _obvVerifiche(u){
 }
 // La verifica per cui l'alunno deve ancora compilare (la più vicina non completa)
 function _obvAttiva(u){
-  if(!u || u.esiti) return null;
+  if(!u || !_obvAperti(u).length) return null;
   return _obvVerifiche(u).find(v => !_obvCompleto(u, S.autoval?.[v.key])) || null;
 }
 // Autovalutazioni già salvate di questa unit, dalla più recente
@@ -3724,7 +3728,8 @@ function _obvRerender(){
 async function setAutoval(ord, id, v){
   if(_previewNo()) return;
   const u = _obvUnita().find(x=>x.ord===ord);
-  if(!u || u.esiti || S._autovalOff) return;
+  if(!u || S._autovalOff) return;
+  if(id!=null){ const it = u.items.find(x=>x.id===id); if(!it || _obvHaEsito(u, it)) return; }
   const k = _obvChiaveFacce(u);
   // prova successiva: al primo tocco (o con «Confermo così») si parte dalle faccine
   // dell'altra volta, che restano salvate anche nella loro autovalutazione
@@ -3736,9 +3741,10 @@ async function setAutoval(ord, id, v){
     u.items.forEach(it=>{ if(it.id && prec.r[it.id]!=null) e.r[it.id] = Number(prec.r[it.id]); });
     if(id!=null) e.r[id] = v;
   } else if(Number(e.r[id])===v) delete e.r[id]; else e.r[id] = v;   // secondo tocco: toglie
+  e.ts = Date.now();   // anche qui: l'ultima compilata si riconosce dall'orario
   _obvRerender();
   try {
-    await db.ref('studentapp/autovalutazione/'+S.code+'/'+k).set({ unit:u.unit, ts:Date.now(), r:e.r });
+    await db.ref('studentapp/autovalutazione/'+S.code+'/'+k).set({ unit:u.unit, ts:e.ts, r:e.r });
   } catch(err){
     console.warn('[Autovalutazione] salvataggio:', err && err.message);
     S._autovalOff = true; _obvRerender();
@@ -3750,25 +3756,25 @@ function confermaAutoval(ord){ return setAutoval(ord, null, null); }
 // big: caratteri più grandi (schermata a tutto schermo)
 function _obvRigheHtml(u, big){
   const z = big ? { ico:24, txt:19, sub:13, btn:15, pad:'8px 14px', row:'14px 0', gap:14 } : { ico:14, txt:13, sub:10, btn:11, pad:'3px 9px', row:'6px 0', gap:9 };
-  const puoi = !u.esiti && !S._autovalOff;
   return u.items.map(it=>{
+    const puoi = !S._autovalOff && !_obvHaEsito(u, it);
     const st = u.esiti ? (_OBV_STATI[it.s] || _OBV_STATI.np) : null;
     const mio = it.id ? _obvAutoOf(u, it.id) : null;
     const bottoni = puoi && it.id ? `<div style="display:flex;gap:5px;margin-top:5px;flex-wrap:wrap;">${_OBV_AUTO.map(([v,e,l])=>{
         const sel = mio && mio[0]===v;
         return `<button onclick="event.stopPropagation();setAutoval(${Number(u.ord)||0},'${esc(it.id)}',${v})" style="border:1px solid ${sel?'var(--purple)':'var(--border)'};background:${sel?'var(--purple-light)':'#fff'};color:${sel?'var(--purple-dark)':'var(--muted)'};border-radius:${big?20:14}px;padding:${z.pad};font-size:${z.btn}px;font-weight:${sel?700:500};cursor:pointer;font-family:inherit;">${e} ${l}</button>`;
       }).join('')}</div>` : '';
-    const tuo = u.esiti && mio ? `<span style="font-size:${z.sub}px;color:var(--muted);margin-left:6px;">· tu: ${mio[1]} ${mio[2].toLowerCase()}</span>` : '';
+    const tuo = u.esiti && mio && !puoi ? `<span style="font-size:${z.sub}px;color:var(--muted);margin-left:6px;">· tu: ${mio[1]} ${mio[2].toLowerCase()}</span>` : '';
     return `<div style="display:flex;gap:${z.gap}px;align-items:flex-start;padding:${z.row};border-top:0.5px solid var(--border);">
       <span style="font-size:${z.ico}px;line-height:1.35;flex-shrink:0;" title="${st?st.label:''}">${st?st.icon:'<span style="color:var(--purple);font-weight:800;">○</span>'}</span>
       <div style="flex:1;font-size:${z.txt}px;line-height:1.45;color:var(--text);">${esc(it.t)}${st?`<div style="font-size:${z.sub}px;color:var(--muted);margin-top:2px;">${it.s!=='raggiunto'?st.label:''}${tuo}</div>`:''}${bottoni}</div>
     </div>`;
   }).join('');
 }
-// Autovalutazione ancora da completare (prima degli esiti). Se il ramo Firebase
-// non è leggibile non si sa: la card continua a farsi notare.
+// Autovalutazione ancora da completare (sugli obiettivi senza esito). Se il ramo
+// Firebase non è leggibile non si sa: la card continua a farsi notare.
 function _obvDaCompilare(u){
-  if(!u || u.esiti) return false;
+  if(!u || !_obvAperti(u).length) return false;
   if(S._autovalOff) return true;
   return !_obvCompleto(u, S.autoval?.[_obvChiaveFacce(u)]);
 }
@@ -3804,15 +3810,16 @@ function _obvQuando(v){
 }
 // Invito all'autovalutazione sopra l'elenco (solo prima degli esiti)
 function _obvInvitoHtml(u, big){
-  if(u.esiti || S._autovalOff || !u.items.some(it=>it.id)) return '';
+  if(S._autovalOff || !_obvAperti(u).length) return '';
   const a = _obvAttiva(u), prec = a && !S.autoval?.[a.key]?.r ? _obvPrecedente(u) : null;
-  const fatti = prec ? 0 : u.items.filter(it=>it.id && _obvAutoOf(u, it.id)).length;
+  const ap = _obvAperti(u), fatti = prec ? 0 : ap.filter(it=>_obvAutoOf(u, it.id)).length;
+  const conEsito = u.esiti && ap.length < u.items.filter(it=>it.id).length ? ' Gli obiettivi che hanno già un esito non si autovalutano più.' : '';
   // prova successiva della unit (es. l'orale dopo lo scritto): si parte dalle faccine dell'altra volta
   const di = a ? (_obvTipoV(a.l)==='orale' ? "all'interrogazione" : 'alla verifica scritta') : '';
   return `<div style="font-size:${big?15:11}px;color:var(--purple-dark);background:var(--purple-light);border-radius:8px;padding:6px 9px;margin:4px 0 6px;line-height:1.4;">
-    ${prec?`Le faccine sono quelle che hai messo ${prec.per} (restano salvate): <b>rifallo pensando ${di}</b>. Cambia quelle che vuoi, oppure
+    ${prec?`Le faccine sono quelle che hai messo ${prec.per} (restano salvate): <b>rifallo pensando ${di}</b>. ${conEsito ? conEsito.trim() + ' ' : ''}Cambia quelle che vuoi, oppure
     <button onclick="event.stopPropagation();confermaAutoval(${Number(u.ord)||0})" style="border:1px solid var(--purple);background:#fff;color:var(--purple-dark);border-radius:14px;padding:${big?'6px 14px':'2px 9px'};font-size:${big?14:11}px;font-weight:700;cursor:pointer;font-family:inherit;margin:2px 0;">✅ Confermo così</button>`
-      :`Come ti senti su ogni obiettivo? Tocca una faccina: dopo la verifica la confronterai con il risultato.${fatti?` <b>${fatti}/${u.items.length}</b>`:''}`}
+      :`Come ti senti su ogni obiettivo? Tocca una faccina: dopo la verifica la confronterai con il risultato.${conEsito}${fatti?` <b>${fatti}/${ap.length}</b>`:''}`}
   </div>`;
 }
 // Raggiunti = pienamente (✅) + da consolidare (🟡): la barra li mostra in due colori
@@ -3845,7 +3852,7 @@ function renderObiettiviCard(){
   // calendario) finché l'alunno non ha messo la faccina a tutti gli obiettivi; poi
   // torna normale. L'autovalutazione sta su Firebase: completata su un
   // dispositivo, smette su tutti.
-  const vicina = !u.esiti ? (S._autovalOff ? _obvVerifiche(u)[0] : _obvAttiva(u)) || null : null;
+  const vicina = _obvAperti(u).length ? (S._autovalOff ? _obvVerifiche(u)[0] : _obvAttiva(u)) || null : null;
   const lampeggia = !!vicina;
   el.innerHTML=`<div class="card${lampeggia?' obv-blink':''}" style="border-color:var(--purple-mid);background:#f7f6ff;margin-bottom:12px;padding:12px 14px;">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;" onclick="openObiettiviFull(${Number(u.ord)||0})">
@@ -3856,7 +3863,7 @@ function renderObiettiviCard(){
       <span class="obv-open" title="Apri a tutto schermo">⤢ Apri</span>
       <button onclick="event.stopPropagation();toggleObiettiviCard()" title="${chiuso?'Mostra':'Nascondi'}" style="background:none;border:none;font-size:15px;color:var(--purple);flex-shrink:0;cursor:pointer;padding:2px 4px;">${chiuso?'▾':'▴'}</button>
     </div>
-    ${chiuso?'':`<div style="margin-top:8px;cursor:pointer;" onclick="openObiettiviFull(${Number(u.ord)||0})">${u.esiti?_obvConteggio(u):_obvInvitoHtml(u)}${_obvRigheHtml(u)}</div>
+    ${chiuso?'':`<div style="margin-top:8px;cursor:pointer;" onclick="openObiettiviFull(${Number(u.ord)||0})">${u.esiti?_obvConteggio(u):''}${_obvInvitoHtml(u)}${_obvRigheHtml(u)}</div>
     ${unita.length>1?`<div style="text-align:right;margin-top:6px;"><button onclick="navTab(2,'scr-stats')" style="background:none;border:none;color:var(--purple);font-size:12px;font-weight:600;cursor:pointer;padding:0;font-family:inherit;">Tutte le unit →</button></div>`:''}`}
   </div>`;
 }
@@ -3884,7 +3891,7 @@ function renderObiettiviFull(){
   document.getElementById('obv-title').textContent = '🎯 ' + (u.esiti ? 'I miei obiettivi' : 'In questa unit imparerai a…');
   document.getElementById('obv-sub').textContent = u.unit + (u.corrente ? ' · in corso' : '');
   body.innerHTML = (unita.length>1 ? `<div class="obv-units">${unita.map(x=>`<button class="obv-unit-btn${x===u?' active':''}" onclick="openObiettiviFull(${Number(x.ord)||0})">${esc(x.unit)}</button>`).join('')}</div>` : '')
-    + `<div class="card" style="padding:18px 20px;">${u.esiti?_obvConteggio(u,true):_obvInvitoHtml(u,true)}${_obvRigheHtml(u,true)}</div>`
+    + `<div class="card" style="padding:18px 20px;">${u.esiti?_obvConteggio(u,true):''}${_obvInvitoHtml(u,true)}${_obvRigheHtml(u,true)}</div>`
     + (u.esiti ? `<div style="font-size:13px;color:var(--muted);margin-top:4px;line-height:1.6;">✅ raggiunto pienamente · 🟡 raggiunto, da consolidare · 🔴 da rinforzare · ⬜ ancora da verificare</div>` : '');
 }
 function closeObiettiviFull(fromHistory){
@@ -3914,7 +3921,7 @@ function _obvStatsHtml(mc){
         ${u.esiti?`<span style="font-size:11px;font-weight:600;color:var(--muted);"> · ${_obvRaggiunti(u)}/${u.items.length} raggiunti</span>`:''}
         <button class="obv-open" style="margin-left:6px;" onclick="event.preventDefault();openObiettiviFull(${Number(u.ord)||0})" title="Apri a tutto schermo">⤢ Apri</button>
       </summary>
-      ${u.esiti?_obvConteggio(u):_obvInvitoHtml(u)}${_obvRigheHtml(u)}
+      ${u.esiti?_obvConteggio(u):''}${_obvInvitoHtml(u)}${_obvRigheHtml(u)}
     </details>`).join('')}
     ${unita.some(u=>u.esiti)?`<div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5;">✅ raggiunto pienamente · 🟡 raggiunto, da consolidare · 🔴 da rinforzare · ⬜ ancora da verificare${Object.keys(S.autoval||{}).length?' · «tu» = la tua autovalutazione':''}</div>`:''}
   </div>`;
