@@ -3676,7 +3676,7 @@ function _obvCompleto(u, e){ return u.items.every(it=>!it.id || e?.r?.[it.id]!=n
 // Verifiche della unit nei prossimi giorni, ognuna con la sua chiave
 function _obvVerifiche(u){
   return (S.lessons||[])
-    .filter(l => l && l.data && _isVerifica(l) && (!l.unit || !u.unit || _obvStessaUnit(l.unit, u.unit)))
+    .filter(l => l && l.data && _isVerifica(l) && _obvVerificaDi(l, u))
     .map(l => ({ l, d: daysUntil(l.data) }))
     .filter(x => x.d >= 0 && x.d <= OBV_GIORNI_PRIMA)
     .sort((a, b) => a.d - b.d)
@@ -3775,14 +3775,28 @@ function _obvDaCompilare(u){
 // Verifica o interrogazione della unit in calendario nei prossimi giorni (oggi
 // compreso): da 6 giorni prima la card degli obiettivi lampeggia con «Compila
 // prima della verifica», finché l'alunno non ha messo tutte le faccine.
-// La unit si confronta per numero («Unit 5» = «Unit 5 senza functions»); una
-// verifica in calendario senza unit vale per la unit in corso.
+// La unit si confronta come in MyClass; una verifica in calendario senza unit (o
+// con una unit senza obiettivi pubblicati) vale per la unit in corso.
 const OBV_GIORNI_PRIMA = 6;
-function _obvStessaUnit(a, b){
-  const num = x => { const m = String(x||'').toLowerCase().match(/\b(?:unit|unità|unita|u)\s*(\d+)/); return m ? m[1] : null; };
-  const na = num(a), nb = num(b);
-  if(na && nb) return na === nb;
-  return String(a||'').trim().toLowerCase() === String(b||'').trim().toLowerCase();
+// Stesso confronto di MyClass (_matchUnit): per numero di unit se le due ce l'hanno
+// («Unit 5» = «Unità 5 – Food» = «U5»), altrimenti sul nome descrittivo.
+function _obvStessaUnit(x, y){
+  if(!x || !y) return false;
+  const lcA = String(x).toLowerCase(), lcB = String(y).toLowerCase();
+  const num = t => { const m = t.match(/\bunit[aà]?\s*(?:test\s*)?0*(\d+)/i) || t.match(/\bu\s*0*(\d+)\b/i); return m ? parseInt(m[1], 10) : null; };
+  const nA = num(lcA), nB = num(lcB);
+  if(nA != null && nB != null) return nA === nB;
+  const norm = t => t.toLowerCase().replace(/^unit[aà]?\s*\d+\s*[:\-–]\s*/i,'').split(/[–\-]/)[0].trim();
+  const a = norm(String(x)), b = norm(String(y));
+  if(!a || !b) return false;
+  return a.includes(b) || b.includes(a) || lcA.includes(b) || lcB.includes(a);
+}
+// La verifica è di questa unit? Senza unit, o con una unit che non è tra quelle con
+// gli obiettivi pubblicati, vale per la unit in corso.
+function _obvVerificaDi(l, u){
+  if(!l.unit) return !!u.corrente;
+  if(_obvStessaUnit(l.unit, u.unit)) return true;
+  return !!u.corrente && !_obvUnita().some(x => _obvStessaUnit(l.unit, x.unit));
 }
 function _obvQuando(v){
   const cosa = _obvTipoV(v.l) === 'orale' ? 'Interrogazione' : 'Verifica scritta';
@@ -3821,7 +3835,10 @@ function renderObiettiviCard(){
   const el=document.getElementById('obiettivi-card');
   if(!el) return;
   const unita=_obvUnita();
-  const u=unita.find(x=>x.corrente) || unita[unita.length-1];
+  // con una verifica vicina ancora da compilare si mostra la sua unit (anche se in
+  // classe è già cominciata la unit dopo), altrimenti la unit in corso
+  const daFare = unita.map(x=>({ x, v:_obvAttiva(x) })).filter(o=>o.v).sort((a,b)=>a.v.d-b.v.d)[0];
+  const u=(daFare && daFare.x) || unita.find(x=>x.corrente) || unita[unita.length-1];
   if(!u){ el.innerHTML=''; return; }
   const chiuso=_obvChiuso();
   // Lampeggia da 6 giorni prima della verifica / interrogazione della unit (dal
