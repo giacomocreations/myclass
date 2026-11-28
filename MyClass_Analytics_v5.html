@@ -40837,15 +40837,19 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 [`studentapp/personal_plan/${k}/${oldCode}`]: null,
                 [`livelearn/history_priv/${k}/sessions/${oldCode}`]: null
             });
-            const classId = String(old.classeNome || item.classeNome || '').replace(/\s+/g, '_').toLowerCase();
-            if (classId) {
-                const ref = db2.ref('livelearn/board_priv/' + classId + '/' + k);
-                const msgs = (await ref.get()).val() || {};
-                const rm = {};
-                Object.entries(msgs).forEach(([key, m]) => { if (m && m.pianoCode === oldCode) rm[key] = null; });
-                if (Object.keys(rm).length) await ref.update(rm);
-            }
+            await _ppRemoveBoardMsgs(old.classeNome || item.classeNome, k, oldCode);
         } catch(e) { console.warn('[Piano] Sostituzione: rimozione del piano vecchio parziale:', e.message); }
+    }
+    // Toglie dalla Bacheca dell'alunno i messaggi che portano a un piano tolto
+    // (altrimenti resta un «▶ Accedi all'attività» che non apre più niente)
+    async function _ppRemoveBoardMsgs(classeNome, k, code) {
+        const classId = String(classeNome || '').replace(/\s+/g, '_').toLowerCase();
+        if (!classId || !k || !code) return;
+        const ref = firebase.database().ref('livelearn/board_priv/' + classId + '/' + k);
+        const msgs = (await ref.get()).val() || {};
+        const rm = {};
+        Object.entries(msgs).forEach(([key, m]) => { if (m && m.pianoCode === code) rm[key] = null; });
+        if (Object.keys(rm).length) await ref.update(rm);
     }
 
     // Vista della bozza aperta: anteprima completa (default) o modifica domande.
@@ -40935,6 +40939,7 @@ Lingua: inglese per domande ed esempi, italiano SOLO per le istruzioni ("Scegli"
                 [`studentapp/personal_plan/${k}/${code}`]: null,
                 [`livelearn/history_priv/${k}/sessions/${code}`]: null
             });
+            await _ppRemoveBoardMsgs(item.classeNome, k, code);
         } catch (e) { console.warn('[Piano] Rimozione Firebase parziale:', e.message); }
     }
 
