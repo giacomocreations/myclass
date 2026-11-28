@@ -970,7 +970,7 @@ function openZoom(i) {
   } else if (state.mode === 'class') {
     if (!G.won && !dn) btns += `<button class="btn gold" onclick="guess(${i})">❓ Is it ${esc(c.name)}?</button>`;
     btns += `<button class="btn" onclick="toggleDown(${i})">${dn ? '⬆️ Stand up' : '⬇️ Flip down'}</button>`;
-    if (G.won && i === state.secret) btns = `<div class="zwin">🎉 It's ${esc(c.name)}! ${esc(teamName(G.winner))} +5${G.bonus === 'pending' ? `<br>⭐ Bonus +2: describe ${hs}!` : G.bonus === 'yes' ? '<br>⭐ +2 Great description!' : ''}</div>`;
+    if (G.won && i === state.secret) btns = `<div class="zwin">🎉 It's ${esc(c.name)}! ${esc(teamName(G.winner))} +5${G.bonus === 'pending' ? `<br>⭐ Bonus +2: ${G.describer ? esc(dispOf(G.describer)) + ', d' : 'D'}escribe ${hs}!` : G.bonus === 'yes' ? '<br>⭐ +2 Great description!' : ''}</div>`;
   }
   z.innerHTML = `<div class="zbox ${dn ? 'down' : ''}" role="dialog" aria-label="${esc(c.name)}"><div class="zf"><svg viewBox="${VB}" xmlns="http://www.w3.org/2000/svg">${heightWall()}${drawPerson(c)}</svg></div>
     <div class="zh">${svgHead(c)}<div class="zn">${esc(c.name)}</div><div class="zb">${btns}</div></div><button class="zx" onclick="closeZoom()" aria-label="Chiudi">✕</button></div>`;
@@ -1054,14 +1054,91 @@ function setTeamCount(n) {
   n = Math.max(2, Math.min(MAX_TEAMS, n));
   while (G.teams.length < n) { G.teams.push(G.allNames[G.teams.length] || defName(G.teams.length)); G.score.push(0); }
   G.teams.length = n; G.score.length = n;
+  // le squadre che si tolgono: i loro alunni restano senza squadra (🎲 Squadre a caso li ridistribuisce)
+  fixLineup(); saveLineup();
   if (G.turn >= n) G.turn = 0;
   if (G.winner >= n) { G.winner = -1; G.bonus = null; }
   G.hist = G.hist.filter(h => h.turn < n);
   saveTeams(); renderGame(); renderTW();
 }
+// ══ ALUNNI NELLE SQUADRE ══
+// Classi e alunni: dai dati di MyClass salvati in questo browser (come la finestra docente delle
+// attività orali), se no dall'elenco importato nei tornei VocabDuel (📂 Importa da MyClass).
+// k = nome completo (come in MyClass) · d = come lo chiama la LIM (il nome, + iniziale del cognome se doppio)
+function gwClasses() {
+  const out = [];
+  try {
+    const dd = JSON.parse(localStorage.getItem('myclass_gemini_data') || 'null');
+    let cl = dd && dd.classi; if (cl && !Array.isArray(cl)) cl = Object.values(cl);
+    (cl || []).forEach(c => {
+      let st = c.studenti || []; if (!Array.isArray(st)) st = Object.values(st);
+      const base = st.map(s => ({ n: String(s.nome || '').trim(), c: String(s.cognome || '').trim() })).filter(x => x.n || x.c);
+      const cnt = {}; base.forEach(x => { cnt[x.n] = (cnt[x.n] || 0) + 1; });
+      const list = base.map(x => ({ k: [x.c, x.n].filter(Boolean).join(' '), d: !x.n ? x.c : cnt[x.n] > 1 && x.c ? `${x.n} ${x.c[0]}.` : x.n }))
+        .sort((p, q) => p.k.localeCompare(q.k, 'it'));
+      if (list.length) out.push({ nome: String(c.nome || '?'), studenti: list });
+    });
+  } catch (e) {}
+  if (!out.length) {
+    try { (JSON.parse(localStorage.getItem('myclass_roster_v1') || '[]') || []).forEach(c => { if (c && c.studenti && c.studenti.length) out.push({ nome: String(c.nome || '?'), studenti: c.studenti.map(n => ({ k: String(n), d: String(n) })) }); }); } catch (e) {}
+  }
+  return out.sort((p, q) => p.nome.localeCompare(q.nome, 'it', { numeric: true }));
+}
+const TSET_KEY = 'gw_teamsets';
+const loadSets = () => { try { return JSON.parse(localStorage.getItem(TSET_KEY) || '{}') || {}; } catch (e) { return {}; } };
+G.cls = ''; G.lineup = []; G.ptr = []; G.describer = null;
+const classObj = () => gwClasses().find(c => c.nome === G.cls);
+const dispOf = k => { const c = classObj(), s = c && c.studenti.find(x => x.k === k); return s ? s.d : k; };
+function fixLineup() { while (G.lineup.length < nTeams()) G.lineup.push([]); G.lineup.length = nTeams(); while (G.ptr.length < nTeams()) G.ptr.push(0); G.ptr.length = nTeams(); }
+function saveLineup() { if (!G.cls) return; const s = loadSets(); s[G.cls] = G.lineup; try { localStorage.setItem(TSET_KEY, JSON.stringify(s)); localStorage.setItem('gw_cls', G.cls); } catch (e) {} }
+// la classe scelta: le squadre salvate per quella classe tornano com'erano (chi non c'è più nell'elenco si toglie)
+function selectClass(nome) {
+  G.cls = nome || ''; G.ptr = []; G.describer = null; G.absent = [];
+  const c = classObj(), keys = new Set(c ? c.studenti.map(x => x.k) : []);
+  const saved = G.cls && loadSets()[G.cls];
+  G.lineup = Array.isArray(saved) ? saved.map(t => (t || []).filter(k => keys.has(k))) : [];
+  fixLineup();
+  try { localStorage.setItem('gw_cls', G.cls); } catch (e) {}
+  renderGame(); renderTW();
+}
+// tutti gli alunni della classe (tranne chi è segnato assente) distribuiti a caso
+function dealTeams() {
+  const c = classObj(); if (!c) return;
+  const absent = new Set(G.absent || []);
+  const all = shuffle(c.studenti.map(x => x.k).filter(k => !absent.has(k)));
+  G.lineup = Array.from({ length: nTeams() }, () => []);
+  all.forEach((k, i) => G.lineup[i % nTeams()].push(k));
+  G.ptr = G.lineup.map(() => 0); G.describer = null;
+  saveLineup(); renderGame(); renderTW();
+}
+function teamOf(k) { return G.lineup.findIndex(t => t.includes(k)); }
+// clic su un alunno: squadra A → B → … → assente (non gioca) → A
+function cycleStudent(k) {
+  const t = teamOf(k);
+  G.absent = G.absent || [];
+  if (t >= 0) G.lineup[t] = G.lineup[t].filter(x => x !== k);
+  if (t < 0 && G.absent.includes(k)) { G.absent = G.absent.filter(x => x !== k); G.lineup[0].push(k); }
+  else if (t >= 0 && t + 1 < nTeams()) G.lineup[t + 1].push(k);
+  else if (t >= 0) G.absent.push(k);
+  else G.lineup[0].push(k);
+  saveLineup(); renderGame(); renderTW();
+}
+// chi fa la domanda adesso per la squadra t (a rotazione, uno dopo l'altro)
+function asker(t) { const L = G.lineup[t]; return L && L.length ? L[G.ptr[t] % L.length] : null; }
+const askerName = t => { const k = asker(t); return k ? dispOf(k) : ''; };
+const callName = t => askerName(t) ? `${askerName(t)} (${teamName(t)})` : teamName(t);
+function advance(t) { if (G.lineup[t] && G.lineup[t].length) G.ptr[t] = (G.ptr[t] || 0) + 1; }
+// bonus: un alunno a caso della squadra vincitrice (se possibile non quello che ha indovinato)
+function pickDescriber(t, avoid) {
+  const L = G.lineup[t] || []; if (!L.length) return null;
+  const pool = L.length > 1 ? L.filter(k => k !== avoid) : L;
+  return pick(pool);
+}
+
 function newRound() {
   closeZoom(); newBoard();
-  G.round++; G.qc = 0; G.asked = []; G.hist = []; G.pron = 'he'; G.last = null; G.won = false; G.winner = -1; G.bonus = null;
+  G.round++; G.qc = 0; G.asked = []; G.hist = []; G.pron = 'he'; G.last = null; G.won = false; G.winner = -1; G.bonus = null; G.describer = null;
+  fixLineup();
   G.turn = (G.round - 1) % nTeams();   // a ogni round inizia la squadra successiva
   renderGame(); renderTW();
 }
@@ -1078,7 +1155,8 @@ function askFeature(id) {
   const q = questionText(f, G.pron), a = answerText(f, yes, G.pron, s);
   const downed = [];
   state.board.forEach((c, i) => { if (!state.down.has(i) && !!f.test(c) !== yes) { state.down.add(i); downed.push(i); } });
-  G.hist.push({ kind: 'q', turn: G.turn, downed, id, last: G.last, pron: G.pron });
+  G.hist.push({ kind: 'q', turn: G.turn, downed, id, last: G.last, pron: G.pron, ptr: G.ptr.slice() });
+  advance(G.turn);
   G.qc++; G.asked.push(id); G.last = { q, a, yes };
   autoPron();
   G.turn = nextTeam();
@@ -1087,8 +1165,9 @@ function askFeature(id) {
 }
 function wrongQuestion() {
   if (G.won) return;
-  G.hist.push({ kind: 'wrong', turn: G.turn, downed: [], last: G.last, pron: G.pron });
-  G.last = { q: '✗ Check your question!', a: `Next team: ${teamName(nextTeam())}`, bad: true };
+  G.hist.push({ kind: 'wrong', turn: G.turn, downed: [], last: G.last, pron: G.pron, ptr: G.ptr.slice() });
+  advance(G.turn);
+  G.last = { q: '✗ Check your question!', a: `Next: ${callName(nextTeam())}`, bad: true };
   G.turn = nextTeam();
   renderGame(true); renderTW();
 }
@@ -1097,15 +1176,18 @@ function guess(i) {
   closeZoom();
   const c = state.board[i], q = `Is it ${c.name}?`;
   if (i === state.secret) {
-    G.hist.push({ kind: 'win', turn: G.turn, downed: [], last: G.last, pron: G.pron, pts: 5 });
+    G.hist.push({ kind: 'win', turn: G.turn, downed: [], last: G.last, pron: G.pron, pts: 5, ptr: G.ptr.slice() });
+    const who = asker(G.turn); advance(G.turn);
     G.qc++; G.won = true; G.winner = G.turn; G.score[G.turn] += 5; G.bonus = 'pending';
+    G.describer = pickDescriber(G.turn, who);
     G.last = { q, a: `Yes, it is! 🎉 ${teamName(G.turn)} +5`, win: true };
     renderGame(true); updateCards(); renderTW();
     if (G.tts) say(`${q} Yes, it is!`);
     openZoom(i);
   } else {
     state.down.add(i);
-    G.hist.push({ kind: 'guess', turn: G.turn, downed: [i], last: G.last, pron: G.pron });
+    G.hist.push({ kind: 'guess', turn: G.turn, downed: [i], last: G.last, pron: G.pron, ptr: G.ptr.slice() });
+    advance(G.turn);
     G.qc++; G.last = { q, a: "No, it isn't.", yes: false };
     autoPron(); G.turn = nextTeam();
     renderGame(true); updateCards([i]); renderTW();
@@ -1127,12 +1209,13 @@ function undo() {
   if (h.kind !== 'wrong') G.qc--;
   if (h.kind === 'win') { G.score[h.turn] -= h.pts + (G.bonus === 'yes' ? 2 : 0); G.won = false; G.winner = -1; G.bonus = null; }
   G.turn = h.turn; G.last = h.last; G.pron = h.pron;
+  if (h.ptr) G.ptr = h.ptr; if (h.kind === 'win') G.describer = null;
   renderGame(); updateCards(); renderTW();
 }
 function renderGame(pop) {
   if (state.mode !== 'class') return;
   const mid = `<div class="gmid"><div class="rd">Round ${G.round}</div><div class="qc" id="g-qc"></div></div>`;
-  document.getElementById('gtop').innerHTML = mid + G.teams.map((n, t) => `<div class="team ${!G.won && G.turn === t ? 'on' : ''}"><span class="tn">${esc(teamName(t))}<small>${!G.won && G.turn === t ? '▶ your turn' : ''}</small></span><span class="ts">${G.score[t]}</span></div>`).join('');
+  document.getElementById('gtop').innerHTML = mid + G.teams.map((n, t) => `<div class="team ${!G.won && G.turn === t ? 'on' : ''}"><span class="tn">${esc(teamName(t))}<small>${!G.won && G.turn === t ? '▶ ' + esc(askerName(t) || 'your turn') : ''}</small></span><span class="ts">${G.score[t]}</span></div>`).join('');
   const up = state.board.length - state.down.size;
   document.getElementById('g-qc').textContent = `${G.qc} question${G.qc === 1 ? '' : 's'} · ${up} left`;
   const qa = document.getElementById('qa');
@@ -1140,13 +1223,13 @@ function renderGame(pop) {
   if (G.won) {
     const s = secretC();
     h = `<span class="q">${esc(G.last.q)}</span><span class="a win">${esc(G.last.a)}</span>`;
-    if (G.bonus === 'pending') h += `<div class="hint" style="width:100%">⭐ <b>Bonus +2:</b> ${esc(teamName(G.winner))}, describe ${esc(s.name)}! <i>${pr(s) === 'he' ? 'He' : 'She'}'s… ${pr(s) === 'he' ? 'He' : 'She'}'s got… ${pr(s) === 'he' ? 'He' : 'She'}'s …ing.</i></div>`;
+    if (G.bonus === 'pending') h += `<div class="hint" style="width:100%">⭐ <b>Bonus +2:</b> ${G.describer ? `<b style="color:var(--gold);font-size:20px">${esc(dispOf(G.describer))}</b> (${esc(teamName(G.winner))})` : esc(teamName(G.winner))}, describe ${esc(s.name)}! <i>${pr(s) === 'he' ? 'He' : 'She'}'s… ${pr(s) === 'he' ? 'He' : 'She'}'s got… ${pr(s) === 'he' ? 'He' : 'She'}'s …ing.</i></div>`;
     else if (G.bonus === 'yes') h += `<div class="hint" style="width:100%">⭐ <b>+2</b> Great description! · ${esc(describe(s))}</div>`;
     else h += `<div class="hint" style="width:100%">${esc(describe(s))}</div>`;
   } else if (G.last) {
-    h = `<span class="q">${esc(G.last.q)}</span><span class="a ${G.last.bad || G.last.yes === false ? 'no' : ''}">${esc(G.last.a)}</span><div class="hint" style="width:100%">${esc(teamName(G.turn))}, your turn!</div>`;
+    h = `<span class="q">${esc(G.last.q)}</span><span class="a ${G.last.bad || G.last.yes === false ? 'no' : ''}">${esc(G.last.a)}</span><div class="hint" style="width:100%">${askerName(G.turn) ? `<b style="color:var(--gold);font-size:20px">${esc(askerName(G.turn))}</b> (${esc(teamName(G.turn))})` : esc(teamName(G.turn))}, your turn!</div>`;
   } else {
-    h = `<span class="q">${esc(teamName(G.turn))}, ask a question!</span><div class="hint" style="width:100%">💬 <b>Is he / she …?</b> (tall, young, bald…) · <b>Has he / she got …?</b> (long hair, a beard, glasses…) · <b>Is he / she …ing?</b> · <b>Is it …?</b></div>`;
+    h = `<span class="q">${esc(callName(G.turn))}, ask a question!</span><div class="hint" style="width:100%">💬 <b>Is he / she …?</b> (tall, young, bald…) · <b>Has he / she got …?</b> (long hair, a beard, glasses…) · <b>Is he / she …ing?</b> · <b>Is it …?</b></div>`;
   }
   qa.innerHTML = h;
   qa.classList.remove('pop'); if (pop) { void qa.offsetWidth; qa.classList.add('pop'); }
@@ -1341,7 +1424,7 @@ button.on{outline:2px solid #ffd166}button.used{opacity:.4}button:disabled{opaci
 .cat{margin:8px 0}.cat .cl{font-size:12px;color:#97a3bd;font-weight:700;margin-bottom:4px}
 .cat button{font-size:12.5px;padding:6px 9px;margin:0 4px 4px 0}
 .gs button{margin:0 4px 4px 0}.gs button.sec2{border-color:#ffd166}
-.teams{display:grid;grid-template-columns:1fr 1fr;gap:8px}.tm{display:flex;gap:6px;align-items:center;background:#161e2e;border-radius:10px;padding:6px}
+.teams{display:grid;grid-template-columns:1fr 1fr;gap:8px}.tm{display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:#161e2e;border-radius:10px;padding:6px}.tm .mem{flex-basis:100%;font-size:12.5px;color:#cfd8e6;line-height:1.5;padding:0 4px}.tm .mem b{color:#ffd166;font-size:inherit;min-width:0}.stu{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 10px}.stu button{font-size:12px;padding:4px 8px;font-weight:600}.stu button i{font-style:normal;font-weight:900;margin-left:5px;padding:0 5px;border-radius:5px;color:#111}.stu button.ab{opacity:.45;text-decoration:line-through}.t0 i{background:#ffd166}.t1 i{background:#3ec6ff}.t2 i{background:#06d6a0}.t3 i{background:#ff8fbf}.t4 i{background:#c39bff}.t5 i{background:#ff9f5a}
 .tm input{flex:1;min-width:0}.tm b{font-size:22px;color:#ffd166;min-width:34px;text-align:center}
 .bonus{background:rgba(255,209,102,.12);border:1px solid rgba(255,209,102,.5);border-radius:12px;padding:10px 12px;margin-top:10px}
 .tmr{display:flex;align-items:center;gap:10px;margin:4px 0 12px;padding:10px 12px;border-radius:12px;background:#161e2e;border:1px solid rgba(255,255,255,.1);flex-wrap:wrap}
@@ -1380,6 +1463,8 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
   <div id="t-bonus"></div>
   <h2>Squadre</h2>
   <div class="bar" style="margin-bottom:8px">Quante squadre? <span id="t-nteams"></span></div>
+  <div class="bar" style="margin-bottom:6px">👥 Classe: <select id="t-gcls" style="font:inherit;font-size:13px;padding:6px 8px;border-radius:8px;background:#1a2234;color:#eef2f8;border:1px solid rgba(255,255,255,.2)"></select><button class="pri" data-act="deal" title="Distribuisce a caso nelle squadre tutti gli alunni presenti">🎲 Squadre a caso</button></div>
+  <div id="t-roster"></div>
   <div class="teams" id="t-teams"></div>
   <div class="bar" style="margin-top:10px"><button class="pri" data-act="newround">🎲 Nuovo round</button><button data-act="turn" title="Passa il turno alla squadra successiva">⇄ Squadra successiva</button><button data-act="resetscores">↺ Azzera i punteggi</button></div>
   <div class="sub" style="margin-top:8px">Punti: indovina il personaggio → <b>+5</b> · descrizione completa e corretta del personaggio (be, have got, ordine degli aggettivi, -ing) → <b>+2</b>. Domanda sbagliata o tentativo sbagliato: il turno passa alla squadra successiva. A ogni round inizia una squadra diversa.</div>
@@ -1424,6 +1509,7 @@ function openTeacherWin() {
   d.addEventListener('change', e => {
     const id = e.target.id;
     if (id === 't-tts') G.tts = e.target.checked;
+    else if (id === 't-gcls') selectClass(e.target.value);
     else if (/^t-team\d$/.test(id)) { const t = +id.slice(-1); G.teams[t] = e.target.value.trim() || defName(t); saveTeams(); renderGame(); renderTW(); }
     else if (id === 't-name') { onNameChanged(e.target); pushLive(); }
     else if (id === 't-class' || id === 't-note') pushLive();
@@ -1462,21 +1548,30 @@ function renderTWGame() {
   if (!s) { tw('t-sec').innerHTML = '<div class="empty">Premi 🎲 Nuovo round.</div>'; return; }
   const up = state.board.length - state.down.size;
   tw('t-sec').innerHTML = `${svgHead(s)}<div><div class="lb">Personaggio segreto · round ${G.round}</div><div class="nm">★ ${esc(s.name)}</div><div class="ds">${esc(describe(s))}</div><div class="ds" style="color:#97a3bd">In piedi: ${up} su ${state.board.length} · domande: ${G.qc}</div></div>`;
-  tw('t-turn').innerHTML = G.won ? `🎉 Round vinto da <b>${esc(teamName(G.winner))}</b>` : `Tocca a: <b>${esc(teamName(G.turn))}</b>`;
+  tw('t-turn').innerHTML = G.won ? `🎉 Round vinto da <b>${esc(teamName(G.winner))}</b>` : `Tocca a: <b>${esc(teamName(G.turn))}</b>${askerName(G.turn) ? ` — <b>${esc(askerName(G.turn))}</b>` : ''}`;
   tw('t-pron-he').classList.toggle('on', G.pron === 'he'); tw('t-pron-she').classList.toggle('on', G.pron === 'she');
   tw('t-tts').checked = G.tts;
   const cats = ['person', 'age', 'height', 'body', 'hlen', 'htype', 'hcol', 'face', 'action'];
   tw('t-feats').innerHTML = cats.map(cat => `<div class="cat"><div class="cl">${CAT_LBL[cat]}</div>${state.feats.filter(f => f.cat === cat).map(f => `<button data-act="ask" data-id="${f.id}" class="${G.asked.includes(f.id) ? 'used' : ''}" ${G.won ? 'disabled' : ''}>${esc(questionText(f, G.pron))}</button>`).join('')}</div>`).join('');
   tw('t-guess').innerHTML = state.board.map((c, i) => state.down.has(i) ? '' : `<button data-act="guess" data-i="${i}" class="${i === state.secret ? 'sec2' : ''}" ${G.won ? 'disabled' : ''}>${i === state.secret ? '★ ' : ''}Is it ${esc(c.name)}?</button>`).join('');
-  tw('t-bonus').innerHTML = G.won && G.bonus === 'pending' ? `<div class="bonus"><b>⭐ Bonus:</b> ${esc(teamName(G.winner))} descrive ${esc(s.name)}. Completa e corretta (be / have got, ordine degli aggettivi, -ing)? <div class="bar" style="margin-top:8px"><button class="ok" data-act="bonus" data-v="1">⭐ Sì, +2</button><button data-act="bonus" data-v="0">✗ No</button><button class="pri" data-act="newround">🎲 Nuovo round</button></div></div>`
+  tw('t-bonus').innerHTML = G.won && G.bonus === 'pending' ? `<div class="bonus"><b>⭐ Bonus:</b> ${G.describer ? `<b style="color:#ffd166">${esc(dispOf(G.describer))}</b> (${esc(teamName(G.winner))})` : esc(teamName(G.winner))} descrive ${esc(s.name)}.${(G.lineup[G.winner] || []).length > 1 ? ' <button data-act="redraw" title="Estrai un altro alunno della squadra">🎲 Un altro</button>' : ''} Completa e corretta (be / have got, ordine degli aggettivi, -ing)? <div class="bar" style="margin-top:8px"><button class="ok" data-act="bonus" data-v="1">⭐ Sì, +2</button><button data-act="bonus" data-v="0">✗ No</button><button class="pri" data-act="newround">🎲 Nuovo round</button></div></div>`
     : G.won ? `<div class="bonus">${G.bonus === 'yes' ? '⭐ Bonus dato (+2).' : 'Nessun bonus.'} <button class="pri" data-act="newround" style="margin-left:8px">🎲 Nuovo round</button></div>` : '';
   tw('t-nteams').innerHTML = [2, 3, 4, 5, 6].map(n => `<button data-act="nteams" data-n="${n}" class="${nTeams() === n ? 'on' : ''}">${n}</button>`).join('');
+  // classe e alunni
+  const classes = gwClasses(), sel = tw('t-gcls');
+  sel.innerHTML = `<option value="">— nessuna classe (solo nomi delle squadre) —</option>` + classes.map(c => `<option value="${esc(c.nome)}" ${c.nome === G.cls ? 'selected' : ''}>${esc(c.nome)} (${c.studenti.length})</option>`).join('');
+  const co = classObj(), ab = new Set(G.absent || []);
+  tw('t-roster').innerHTML = !classes.length ? '<div class="sub">👥 Nessun elenco di classi in questo browser: apri MyClass almeno una volta su questo computer (o importa l\'elenco in un torneo VocabDuel con 📂 Importa da MyClass).</div>'
+    : !co ? '<div class="sub">Scegli la classe: poi 🎲 Squadre a caso, oppure un clic sugli alunni per metterli in squadra.</div>'
+    : `<div class="sub" style="margin:0">Clic su un alunno: squadra ${G.teams.map((n, t) => 'ABCDEF'[t]).join(' → ')} → assente. ${co.studenti.filter(s => teamOf(s.k) < 0 && !ab.has(s.k)).length ? `<b style="color:#ffb547">${co.studenti.filter(s => teamOf(s.k) < 0 && !ab.has(s.k)).length} senza squadra</b>` : ''}</div><div class="stu">${co.studenti.map(s => { const t = teamOf(s.k); return `<button data-act="stu" data-k="${esc(s.k)}" class="${t >= 0 ? 't' + t : ab.has(s.k) ? 'ab' : ''}" title="${esc(s.k)}">${esc(s.d)}${t >= 0 ? `<i>${'ABCDEF'[t]}</i>` : ''}</button>`; }).join('')}</div>`;
   const box = tw('t-teams');
   if (+box.dataset.n !== nTeams()) {   // si ridisegna solo se cambia il numero: chi sta scrivendo un nome non perde il cursore
     box.dataset.n = nTeams();
-    box.innerHTML = G.teams.map((n, t) => `<div class="tm"><input id="t-team${t}" autocomplete="off" aria-label="Nome squadra ${t + 1}"><button data-act="sc" data-t="${t}" data-d="-1">−</button><b id="t-sc${t}">0</b><button data-act="sc" data-t="${t}" data-d="1">+</button></div>`).join('');
+    box.innerHTML = G.teams.map((n, t) => `<div class="tm"><input id="t-team${t}" autocomplete="off" aria-label="Nome squadra ${t + 1}"><button data-act="sc" data-t="${t}" data-d="-1">−</button><b id="t-sc${t}">0</b><button data-act="sc" data-t="${t}" data-d="1">+</button><div class="mem" id="t-mem${t}"></div></div>`).join('');
   }
-  G.teams.forEach((n, t) => { const el = tw('t-team' + t); if (teacherWin.document.activeElement !== el) el.value = teamName(t); tw('t-sc' + t).textContent = G.score[t]; tw('t-sc' + t).parentElement.style.outline = !G.won && G.turn === t ? '2px solid #ffd166' : ''; });
+  G.teams.forEach((n, t) => { const el = tw('t-team' + t); if (teacherWin.document.activeElement !== el) el.value = teamName(t); tw('t-sc' + t).textContent = G.score[t]; tw('t-sc' + t).parentElement.style.outline = !G.won && G.turn === t ? '2px solid #ffd166' : '';
+    const L = G.lineup[t] || [], cur = asker(t);
+    tw('t-mem' + t).innerHTML = L.length ? L.map(k => k === cur ? `<b>▶ ${esc(dispOf(k))}</b>` : esc(dispOf(k))).join(' · ') : (G.cls ? '<i style="opacity:.6">nessun alunno</i>' : ''); });
 }
 function renderTWOral() {
   const c = state.oral.c; if (!c) return;
@@ -1522,6 +1617,9 @@ function onTeacherClick(e) {
   else if (act === 'newround') newRound();
   else if (act === 'turn') { if (!G.won) { G.turn = nextTeam(); renderGame(); renderTW(); } }
   else if (act === 'nteams') setTeamCount(+b.dataset.n);
+  else if (act === 'deal') { if (!classObj()) { teacherWin.alert('Scegli prima la classe.'); return; } if (G.lineup.some(t => t.length) && !teacherWin.confirm('Rifare le squadre a caso? Quelle di adesso si perdono.')) return; dealTeams(); }
+  else if (act === 'stu') cycleStudent(b.dataset.k);
+  else if (act === 'redraw') { G.describer = pickDescriber(G.winner, G.describer); renderGame(); renderTW(); if (state.zoom === state.secret) openZoom(state.secret); }
   else if (act === 'resetscores') { if (teacherWin.confirm('Azzerare i punteggi di tutte le squadre?')) { G.score = G.teams.map(() => 0); G.round = 0; newRound(); } }
   // Oral test
   else if (act === 'timer') timerToggle();
@@ -1642,6 +1740,7 @@ function setMode(m) {
   renderTW(); renderGame(); fitBoard();
 }
 
+(function () { try { const c = localStorage.getItem('gw_cls'); if (c && gwClasses().some(x => x.nome === c)) selectClass(c); } catch (e) {} })();
 (function init() {
   document.getElementById('vocab').innerHTML = VOCAB.map(([h, ws]) => `<h4>${h}</h4><div class="w">${ws.map(w => `<span>${w}</span>`).join('')}</div>`).join('');
   setTap('zoom');
