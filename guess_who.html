@@ -53,16 +53,13 @@
   .zwin { background: #1a1630; color: #ffd166; border-radius: 12px; padding: 8px 12px; font-weight: 800; text-align: center; font-size: 17px; }
 
   /* ── Guess Who in classe: punteggi e domanda ── */
-  .gtop { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: stretch; margin-bottom: 8px; }
-  .team { background: var(--surface); border: 2px solid var(--border); border-radius: 14px; padding: 6px 14px; display: flex; align-items: center; gap: 12px; }
-  .team.r { flex-direction: row-reverse; text-align: right; }
-  .team .tn { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 1px; flex: 1; line-height: 1; }
-  .team .ts { font-family: 'Bebas Neue', sans-serif; font-size: 44px; color: var(--gold); line-height: 1; min-width: 50px; text-align: center; }
+  .gtop { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
+  .team { flex: 1 1 0; min-width: 0; background: var(--surface); border: 2px solid var(--border); border-radius: 14px; padding: 6px 12px; display: flex; align-items: center; gap: 10px; }
+  .team .tn { font-family: 'Bebas Neue', sans-serif; font-size: clamp(18px, 2vw, 28px); letter-spacing: 1px; flex: 1; min-width: 0; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .team .tn small { display: block; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 700; color: var(--gold); letter-spacing: 0; height: 15px; }
+  .team .ts { font-family: 'Bebas Neue', sans-serif; font-size: clamp(30px, 3vw, 44px); color: var(--gold); line-height: 1; min-width: 40px; text-align: center; }
   .team.on { border-color: var(--gold); background: rgba(255,209,102,.12); box-shadow: 0 0 22px rgba(255,209,102,.25); }
-  .team.on .tn::after { content: ' ← your turn'; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; color: var(--gold); letter-spacing: 0; }
-  .team.r.on .tn::after { content: ''; }
-  .team.r.on .tn::before { content: 'your turn → '; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; color: var(--gold); letter-spacing: 0; }
-  .gmid { text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 6px 16px; display: flex; flex-direction: column; justify-content: center; }
+  .gmid { flex: none; text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 6px 16px; display: flex; flex-direction: column; justify-content: center; }
   .gmid .rd { font-family: 'Bebas Neue', sans-serif; font-size: 24px; letter-spacing: 1px; line-height: 1; }
   .gmid .qc { font-size: 13px; color: var(--muted); font-weight: 600; }
   .qa { display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap; min-height: 58px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 8px 16px; margin-bottom: 8px; text-align: center; }
@@ -176,11 +173,7 @@
 
   <!-- ═══ GUESS WHO IN CLASSE: punteggi + domanda ═══ -->
   <div class="class-only">
-    <div class="gtop">
-      <div class="team" id="team0"><span class="tn" id="tn0">Team A</span><span class="ts" id="ts0">0</span></div>
-      <div class="gmid"><div class="rd" id="g-round">Round 1</div><div class="qc" id="g-qc">0 questions</div></div>
-      <div class="team r" id="team1"><span class="tn" id="tn1">Team B</span><span class="ts" id="ts1">0</span></div>
-    </div>
+    <div class="gtop" id="gtop"></div>
     <div class="qa" id="qa"></div>
     <div class="needtw" id="needtw"><button class="btn pink" onclick="openTeacherWin()">🖥️ Apri la finestra docente</button> <span class="note">Il personaggio segreto e le risposte si gestiscono da lì, sul tuo schermo.</span></div>
   </div>
@@ -896,7 +889,9 @@ const state = {
 };
 const G = state.game, H = state.home;
 const secretC = () => state.board[state.secret];
-try { const t = JSON.parse(localStorage.getItem('gw_teams') || 'null'); if (Array.isArray(t) && t.length === 2) G.teams = t.map(String); } catch (e) {}
+const MAX_TEAMS = 6;
+try { const t = JSON.parse(localStorage.getItem('gw_teams') || 'null'); if (Array.isArray(t) && t.length >= 2 && t.length <= MAX_TEAMS) { G.teams = t.map(String); G.score = G.teams.map(() => 0); }
+  const all = JSON.parse(localStorage.getItem('gw_teams_all') || 'null'); if (Array.isArray(all)) G.allNames = all.map(String); } catch (e) {}
 
 let toastT;
 function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 1800); }
@@ -1046,11 +1041,28 @@ function pickHome(i) {
 // ══════════════════════════════════════════════════════════════════
 //  GUESS WHO IN CLASSE: due squadre, domande sì / no, il docente risponde dalla sua finestra
 // ══════════════════════════════════════════════════════════════════
-const teamName = t => G.teams[t] || (t ? 'Team B' : 'Team A');
+const defName = t => 'Team ' + 'ABCDEF'[t];
+const teamName = t => G.teams[t] || defName(t);
+const nTeams = () => G.teams.length;
+const nextTeam = (t = G.turn) => (t + 1) % nTeams();
+// i nomi di tutte e 6 le squadre restano in memoria: togliendo e rimettendo una squadra torna con il suo nome
+if (!G.allNames) G.allNames = [];
+G.teams.forEach((n, t) => { G.allNames[t] = n; });
+const saveTeams = () => { G.teams.forEach((n, t) => { G.allNames[t] = n; }); try { localStorage.setItem('gw_teams', JSON.stringify(G.teams)); localStorage.setItem('gw_teams_all', JSON.stringify(G.allNames)); } catch (e) {} };
+// quante squadre giocano (2–6): i nomi e i punti di quelle che restano non cambiano
+function setTeamCount(n) {
+  n = Math.max(2, Math.min(MAX_TEAMS, n));
+  while (G.teams.length < n) { G.teams.push(G.allNames[G.teams.length] || defName(G.teams.length)); G.score.push(0); }
+  G.teams.length = n; G.score.length = n;
+  if (G.turn >= n) G.turn = 0;
+  if (G.winner >= n) { G.winner = -1; G.bonus = null; }
+  G.hist = G.hist.filter(h => h.turn < n);
+  saveTeams(); renderGame(); renderTW();
+}
 function newRound() {
   closeZoom(); newBoard();
   G.round++; G.qc = 0; G.asked = []; G.hist = []; G.pron = 'he'; G.last = null; G.won = false; G.winner = -1; G.bonus = null;
-  G.turn = (G.round + 1) % 2;   // le squadre iniziano un round per una
+  G.turn = (G.round - 1) % nTeams();   // a ogni round inizia la squadra successiva
   renderGame(); renderTW();
 }
 // pronome: si fissa quando tutte le persone rimaste sono maschi o femmine
@@ -1069,15 +1081,15 @@ function askFeature(id) {
   G.hist.push({ kind: 'q', turn: G.turn, downed, id, last: G.last, pron: G.pron });
   G.qc++; G.asked.push(id); G.last = { q, a, yes };
   autoPron();
-  G.turn = 1 - G.turn;
+  G.turn = nextTeam();
   renderGame(true); updateCards(downed); renderTW();
   if (G.tts) say(`${q} ${a}`);
 }
 function wrongQuestion() {
   if (G.won) return;
   G.hist.push({ kind: 'wrong', turn: G.turn, downed: [], last: G.last, pron: G.pron });
-  G.last = { q: '✗ Check your question!', a: `Next team: ${teamName(1 - G.turn)}`, bad: true };
-  G.turn = 1 - G.turn;
+  G.last = { q: '✗ Check your question!', a: `Next team: ${teamName(nextTeam())}`, bad: true };
+  G.turn = nextTeam();
   renderGame(true); renderTW();
 }
 function guess(i) {
@@ -1095,7 +1107,7 @@ function guess(i) {
     state.down.add(i);
     G.hist.push({ kind: 'guess', turn: G.turn, downed: [i], last: G.last, pron: G.pron });
     G.qc++; G.last = { q, a: "No, it isn't.", yes: false };
-    autoPron(); G.turn = 1 - G.turn;
+    autoPron(); G.turn = nextTeam();
     renderGame(true); updateCards([i]); renderTW();
     if (G.tts) say(`${q} No, it isn't.`);
   }
@@ -1119,12 +1131,8 @@ function undo() {
 }
 function renderGame(pop) {
   if (state.mode !== 'class') return;
-  [0, 1].forEach(t => {
-    document.getElementById('tn' + t).textContent = teamName(t);
-    document.getElementById('ts' + t).textContent = G.score[t];
-    document.getElementById('team' + t).classList.toggle('on', !G.won && G.turn === t);
-  });
-  document.getElementById('g-round').textContent = `Round ${G.round}`;
+  const mid = `<div class="gmid"><div class="rd">Round ${G.round}</div><div class="qc" id="g-qc"></div></div>`;
+  document.getElementById('gtop').innerHTML = mid + G.teams.map((n, t) => `<div class="team ${!G.won && G.turn === t ? 'on' : ''}"><span class="tn">${esc(teamName(t))}<small>${!G.won && G.turn === t ? '▶ your turn' : ''}</small></span><span class="ts">${G.score[t]}</span></div>`).join('');
   const up = state.board.length - state.down.size;
   document.getElementById('g-qc').textContent = `${G.qc} question${G.qc === 1 ? '' : 's'} · ${up} left`;
   const qa = document.getElementById('qa');
@@ -1371,9 +1379,10 @@ table.sv{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}tab
   <h2>❓ Is it …? <span style="text-transform:none;letter-spacing:0;font-weight:500">(★ = il personaggio segreto)</span></h2><div class="gs" id="t-guess"></div>
   <div id="t-bonus"></div>
   <h2>Squadre</h2>
-  <div class="teams"><div class="tm"><input id="t-team0" autocomplete="off"><button data-act="sc" data-t="0" data-d="-1">−</button><b id="t-sc0">0</b><button data-act="sc" data-t="0" data-d="1">+</button></div><div class="tm"><input id="t-team1" autocomplete="off"><button data-act="sc" data-t="1" data-d="-1">−</button><b id="t-sc1">0</b><button data-act="sc" data-t="1" data-d="1">+</button></div></div>
-  <div class="bar" style="margin-top:10px"><button class="pri" data-act="newround">🎲 Nuovo round</button><button data-act="turn" title="Cambia la squadra di turno">⇄ Cambia turno</button><button data-act="resetscores">↺ Azzera i punteggi</button></div>
-  <div class="sub" style="margin-top:8px">Punti: indovina il personaggio → <b>+5</b> · descrizione completa e corretta del personaggio (be, have got, ordine degli aggettivi, -ing) → <b>+2</b>. Domanda sbagliata o tentativo sbagliato: il turno passa.</div>
+  <div class="bar" style="margin-bottom:8px">Quante squadre? <span id="t-nteams"></span></div>
+  <div class="teams" id="t-teams"></div>
+  <div class="bar" style="margin-top:10px"><button class="pri" data-act="newround">🎲 Nuovo round</button><button data-act="turn" title="Passa il turno alla squadra successiva">⇄ Squadra successiva</button><button data-act="resetscores">↺ Azzera i punteggi</button></div>
+  <div class="sub" style="margin-top:8px">Punti: indovina il personaggio → <b>+5</b> · descrizione completa e corretta del personaggio (be, have got, ordine degli aggettivi, -ing) → <b>+2</b>. Domanda sbagliata o tentativo sbagliato: il turno passa alla squadra successiva. A ogni round inizia una squadra diversa.</div>
 </div>
 <div id="t-oral" hidden>
   <div class="tmr"><span class="tv" id="t-timer">3:00</span><button class="pri" id="t-tbtn" data-act="timer">⏱ Avvia 3:00</button><button data-act="treset" title="Azzera">↺</button><span class="tl" id="t-tlbl"></span></div>
@@ -1415,7 +1424,7 @@ function openTeacherWin() {
   d.addEventListener('change', e => {
     const id = e.target.id;
     if (id === 't-tts') G.tts = e.target.checked;
-    else if (id === 't-team0' || id === 't-team1') { G.teams[+id.slice(-1)] = e.target.value.trim() || (id === 't-team0' ? 'Team A' : 'Team B'); try { localStorage.setItem('gw_teams', JSON.stringify(G.teams)); } catch (err) {} renderGame(); }
+    else if (/^t-team\d$/.test(id)) { const t = +id.slice(-1); G.teams[t] = e.target.value.trim() || defName(t); saveTeams(); renderGame(); renderTW(); }
     else if (id === 't-name') { onNameChanged(e.target); pushLive(); }
     else if (id === 't-class' || id === 't-note') pushLive();
   });
@@ -1461,7 +1470,13 @@ function renderTWGame() {
   tw('t-guess').innerHTML = state.board.map((c, i) => state.down.has(i) ? '' : `<button data-act="guess" data-i="${i}" class="${i === state.secret ? 'sec2' : ''}" ${G.won ? 'disabled' : ''}>${i === state.secret ? '★ ' : ''}Is it ${esc(c.name)}?</button>`).join('');
   tw('t-bonus').innerHTML = G.won && G.bonus === 'pending' ? `<div class="bonus"><b>⭐ Bonus:</b> ${esc(teamName(G.winner))} descrive ${esc(s.name)}. Completa e corretta (be / have got, ordine degli aggettivi, -ing)? <div class="bar" style="margin-top:8px"><button class="ok" data-act="bonus" data-v="1">⭐ Sì, +2</button><button data-act="bonus" data-v="0">✗ No</button><button class="pri" data-act="newround">🎲 Nuovo round</button></div></div>`
     : G.won ? `<div class="bonus">${G.bonus === 'yes' ? '⭐ Bonus dato (+2).' : 'Nessun bonus.'} <button class="pri" data-act="newround" style="margin-left:8px">🎲 Nuovo round</button></div>` : '';
-  [0, 1].forEach(t => { const el = tw('t-team' + t); if (teacherWin.document.activeElement !== el) el.value = teamName(t); tw('t-sc' + t).textContent = G.score[t]; });
+  tw('t-nteams').innerHTML = [2, 3, 4, 5, 6].map(n => `<button data-act="nteams" data-n="${n}" class="${nTeams() === n ? 'on' : ''}">${n}</button>`).join('');
+  const box = tw('t-teams');
+  if (+box.dataset.n !== nTeams()) {   // si ridisegna solo se cambia il numero: chi sta scrivendo un nome non perde il cursore
+    box.dataset.n = nTeams();
+    box.innerHTML = G.teams.map((n, t) => `<div class="tm"><input id="t-team${t}" autocomplete="off" aria-label="Nome squadra ${t + 1}"><button data-act="sc" data-t="${t}" data-d="-1">−</button><b id="t-sc${t}">0</b><button data-act="sc" data-t="${t}" data-d="1">+</button></div>`).join('');
+  }
+  G.teams.forEach((n, t) => { const el = tw('t-team' + t); if (teacherWin.document.activeElement !== el) el.value = teamName(t); tw('t-sc' + t).textContent = G.score[t]; tw('t-sc' + t).parentElement.style.outline = !G.won && G.turn === t ? '2px solid #ffd166' : ''; });
 }
 function renderTWOral() {
   const c = state.oral.c; if (!c) return;
@@ -1505,8 +1520,9 @@ function onTeacherClick(e) {
   else if (act === 'bonus') setBonus(b.dataset.v === '1');
   else if (act === 'sc') { G.score[+b.dataset.t] = Math.max(0, G.score[+b.dataset.t] + +b.dataset.d); renderGame(); renderTW(); }
   else if (act === 'newround') newRound();
-  else if (act === 'turn') { if (!G.won) { G.turn = 1 - G.turn; renderGame(); renderTW(); } }
-  else if (act === 'resetscores') { if (teacherWin.confirm('Azzerare i punteggi delle due squadre?')) { G.score = [0, 0]; G.round = 0; newRound(); } }
+  else if (act === 'turn') { if (!G.won) { G.turn = nextTeam(); renderGame(); renderTW(); } }
+  else if (act === 'nteams') setTeamCount(+b.dataset.n);
+  else if (act === 'resetscores') { if (teacherWin.confirm('Azzerare i punteggi di tutte le squadre?')) { G.score = G.teams.map(() => 0); G.round = 0; newRound(); } }
   // Oral test
   else if (act === 'timer') timerToggle();
   else if (act === 'treset') timerReset();
